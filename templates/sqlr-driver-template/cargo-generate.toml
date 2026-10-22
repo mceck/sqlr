@@ -1,0 +1,12 @@
+[template]
+cargo_generate_version = ">=0.18.0"
+
+[placeholders.sdk_dependency]
+type = "string"
+prompt = "How should the crate depend on sqlr-driver-sdk? (a Cargo dependency value)"
+default = "\"0.1\""
+
+[placeholders.tests_dependency]
+type = "string"
+prompt = "How should the crate depend on sqlr-driver-tests (the conformance suite)?"
+default = "\"0.1\""

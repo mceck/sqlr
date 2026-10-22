@@ -1,0 +1,28 @@
+[package]
+name = "sqlr-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+sqlr-core = { path = "../crates/sqlr-core" }
+sqlr-sidecar = { path = "../crates/sqlr-sidecar" }
+
+[[bin]]
+name = "chunk_decode"
+path = "fuzz_targets/chunk_decode.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "frame_decode"
+path = "fuzz_targets/frame_decode.rs"
+test = false
+doc = false
+
+# Not a member of the sqlr workspace: fuzzing needs a nightly toolchain.
+[workspace]

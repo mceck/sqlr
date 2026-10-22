@@ -1,0 +1,302 @@
+use egui::{Color32, FontFamily, vec2};
+use sqlr_core::NodeKind;
+use sqlr_ui::theme::{self, Palette, contrast_ratio, icons};
+
+/// Runs `f` inside one frame of a fresh context (fonts exist only once a frame has run).
+fn in_frame(ctx: &egui::Context, f: impl FnOnce(&egui::Context)) {
+    let mut f = Some(f);
+    let mut out = ctx.run_ui(Default::default(), |ui| {
+        (f.take().expect("runs once"))(ui.ctx())
+    });
+    // No renderer consumes the font atlas upload here.
+    out.textures_delta.clear();
+}
+
+#[test]
+fn palettes_meet_contrast() {
+    for (name, p) in [("dark", Palette::dark()), ("light", Palette::light())] {
+        let text_editor = contrast_ratio(p.text, p.bg_editor);
+        let text_panel = contrast_ratio(p.text, p.bg_panel);
+        let muted_panel = contrast_ratio(p.text_muted, p.bg_panel);
+        let on_accent = contrast_ratio(p.accent_text, p.accent);
+        assert!(
+            text_editor >= 7.0,
+            "{name}: text on bg_editor {text_editor}"
+        );
+        assert!(text_panel >= 7.0, "{name}: text on bg_panel {text_panel}");
+        assert!(
+            muted_panel >= 4.5,
+            "{name}: text_muted on bg_panel {muted_panel}"
+        );
+        assert!(
+            on_accent >= 4.5,
+            "{name}: accent_text on accent {on_accent}"
+        );
+    }
+    // The WCAG formula itself: black on white is 21:1, a color on itself 1:1.
+    assert!((contrast_ratio(Color32::BLACK, Color32::WHITE) - 21.0).abs() < 0.01);
+    assert!((contrast_ratio(Color32::WHITE, Color32::BLACK) - 21.0).abs() < 0.01);
+    assert!((contrast_ratio(Color32::GRAY, Color32::GRAY) - 1.0).abs() < 0.001);
+}
+
+/// The dark theme uses a near-black editor and panels
+/// one step above it. Contrast against black is `1 + luminance / 0.05`, so it measures depth.
+#[test]
+fn a_custom_accent_keeps_its_text_readable() {
+    for base in [Palette::dark(), Palette::light()] {
+        // The built-in accent changes nothing.
+        assert_eq!(base.with_accent(Palette::DEFAULT_ACCENT), base);
+        for rgb in [
+            [0xE5, 0x39, 0x35],
+            [0xFF, 0xD5, 0x4F],
+            [0x20, 0x20, 0x20],
+            [0x2E, 0x7D, 0x32],
+        ] {
+            let p = base.with_accent(rgb);
+            assert_eq!(p.accent, Color32::from_rgb(rgb[0], rgb[1], rgb[2]));
+            // Black or white, whichever is better: at least 4.5:1 for these samples.
+            let on = contrast_ratio(p.accent_text, p.accent);
+            assert!(on >= 4.5, "{rgb:?}: {on}");
+            assert_ne!(p.accent_soft, base.accent_soft, "{rgb:?}");
+        }
+    }
+}
+
+#[test]
+fn dark_theme_is_deep() {
+    let p = Palette::dark();
+    let depth = |c: Color32| contrast_ratio(c, Color32::BLACK);
+    assert!(
+        depth(p.bg_editor) <= 1.20,
+        "bg_editor is too light: {:.3}",
+        depth(p.bg_editor)
+    );
+    assert!(
+        depth(p.bg_panel) <= 1.37,
+        "bg_panel is too light: {:.3}",
+        depth(p.bg_panel)
+    );
+    assert!(depth(p.bg_editor) < depth(p.bg_subtle));
+    assert!(depth(p.bg_subtle) < depth(p.bg_panel));
+}
+
+#[test]
+fn apply_sets_visuals() {
+    let ctx = egui::Context::default();
+    in_frame(&ctx, |ctx| theme::apply(ctx, &Palette::light(), 13.0));
+    let style = ctx.global_style();
+    let light = Palette::light();
+    assert!(!style.visuals.dark_mode);
+    assert_eq!(style.visuals.panel_fill, light.bg_panel);
+    assert_eq!(style.spacing.item_spacing, vec2(8.0, 6.0));
+    assert_eq!(theme::palette(&ctx), light);
+    assert_eq!(theme::monospace(&ctx).size, 13.0);
+
+    in_frame(&ctx, |ctx| theme::apply(ctx, &Palette::dark(), 16.0));
+    assert!(ctx.global_style().visuals.dark_mode);
+    assert_eq!(theme::palette(&ctx), Palette::dark());
+    assert_eq!(theme::monospace(&ctx), egui::FontId::monospace(16.0));
+}
+
+#[test]
+fn palette_defaults_to_dark() {
+    let ctx = egui::Context::default();
+    assert_eq!(theme::palette(&ctx), Palette::dark());
+}
+
+#[test]
+fn fonts_installed() {
+    // Any real font file stands in for the app's CJK fallback.
+    static EXTRA: &[u8] = include_bytes!("../assets/fonts/Inter-SemiBold.ttf");
+    let ctx = egui::Context::default();
+    theme::install_fonts(&ctx, &[("extra", EXTRA)]);
+    // `set_fonts` takes effect at the start of the next pass.
+    in_frame(&ctx, |_| {});
+    in_frame(&ctx, |ctx| {
+        ctx.fonts(|f| {
+            let families = &f.definitions().families;
+            let proportional = &families[&FontFamily::Proportional];
+            let monospace = &families[&FontFamily::Monospace];
+            assert_eq!(proportional[0], theme::fonts::INTER);
+            assert!(!monospace.is_empty());
+            // The fallback is appended to both families.
+            assert_eq!(proportional.last().map(String::as_str), Some("extra"));
+            assert_eq!(monospace.last().map(String::as_str), Some("extra"));
+            // Icons have their own family, Phosphor first: Inter has glyphs at some of
+            // Phosphor's private-use code points.
+            let icons = &families[&FontFamily::Name(theme::fonts::ICONS.into())];
+            assert_eq!(icons[0], theme::fonts::ICONS);
+            assert!(!proportional.iter().any(|n| n == theme::fonts::ICONS));
+            let semibold = &families[&FontFamily::Name(theme::fonts::INTER_SEMIBOLD.into())];
+            assert_eq!(semibold[0], theme::fonts::INTER_SEMIBOLD);
+        });
+    });
+}
+
+#[test]
+fn heading_uses_semibold_only_once_installed() {
+    let ctx = egui::Context::default();
+    in_frame(&ctx, |ctx| theme::apply(ctx, &Palette::dark(), 13.0));
+    let heading = ctx.global_style().text_styles[&egui::TextStyle::Heading].clone();
+    assert_eq!(
+        heading.family,
+        FontFamily::Proportional,
+        "no semibold font yet"
+    );
+
+    theme::install_fonts(&ctx, &[]);
+    in_frame(&ctx, |_| {});
+    in_frame(&ctx, |ctx| theme::apply(ctx, &Palette::dark(), 13.0));
+    let heading = ctx.global_style().text_styles[&egui::TextStyle::Heading].clone();
+    assert_eq!(
+        heading,
+        egui::FontId::new(15.0, FontFamily::Name(theme::fonts::INTER_SEMIBOLD.into()))
+    );
+}
+
+/// Every `NodeKind`; the match fails to compile when a variant is added and not listed.
+fn all_node_kinds() -> Vec<NodeKind> {
+    let all = vec![
+        NodeKind::Database,
+        NodeKind::Schema,
+        NodeKind::Folder,
+        NodeKind::Table,
+        NodeKind::View,
+        NodeKind::MaterializedView,
+        NodeKind::Column,
+        NodeKind::Index,
+        NodeKind::Function,
+        NodeKind::Procedure,
+        NodeKind::Sequence,
+        NodeKind::Trigger,
+    ];
+    for kind in &all {
+        match kind {
+            NodeKind::Database
+            | NodeKind::Schema
+            | NodeKind::Folder
+            | NodeKind::Table
+            | NodeKind::View
+            | NodeKind::MaterializedView
+            | NodeKind::Column
+            | NodeKind::Index
+            | NodeKind::Function
+            | NodeKind::Procedure
+            | NodeKind::Sequence
+            | NodeKind::Trigger => {}
+        }
+    }
+    all
+}
+
+#[test]
+fn icons_for_every_node_kind() {
+    let palette = Palette::dark();
+    for kind in all_node_kinds() {
+        let (glyph, color) = icons::for_node(kind);
+        assert!(!glyph.is_empty(), "{kind:?} has no icon");
+        assert_ne!(color(&palette), Color32::TRANSPARENT, "{kind:?}");
+    }
+    assert_eq!(
+        icons::for_node(NodeKind::Table).1(&palette),
+        palette.icon_table
+    );
+    assert_eq!(
+        icons::for_node(NodeKind::View).1(&palette),
+        palette.icon_view
+    );
+    assert_eq!(
+        icons::for_node(NodeKind::Index).1(&palette),
+        palette.icon_key
+    );
+    assert_eq!(
+        icons::for_node(NodeKind::Schema).1(&palette),
+        palette.icon_schema
+    );
+    assert_eq!(
+        icons::for_node(NodeKind::Function).1(&palette),
+        palette.icon_function
+    );
+}
+
+#[test]
+fn database_icons_follow_the_driver() {
+    use sqlr_ui::theme::icons::DbIcon;
+    assert_eq!(DbIcon::for_driver("postgres"), DbIcon::Postgres);
+    assert_eq!(DbIcon::for_driver("postgresql"), DbIcon::Postgres);
+    assert_eq!(DbIcon::for_driver("mysql"), DbIcon::MySql);
+    assert_eq!(DbIcon::for_driver("sqlite"), DbIcon::Sqlite);
+    assert_eq!(DbIcon::for_driver("redis"), DbIcon::Redis);
+    assert_eq!(DbIcon::for_driver("mongodb"), DbIcon::Mongo);
+    assert_eq!(DbIcon::for_driver("elasticsearch"), DbIcon::Elastic);
+    // The installable drivers have their own marks.
+    for id in ["hana", "sap-hana"] {
+        assert_eq!(DbIcon::for_driver(id), DbIcon::Sap, "{id}");
+    }
+    for id in ["oracle", "jdbc-oracle"] {
+        assert_eq!(DbIcon::for_driver(id), DbIcon::Oracle, "{id}");
+    }
+    for id in ["mssql", "sqlserver", "jdbc-sqlserver"] {
+        assert_eq!(DbIcon::for_driver(id), DbIcon::MsSql, "{id}");
+    }
+    assert_eq!(DbIcon::for_driver("jdbc-clickhouse"), DbIcon::ClickHouse);
+    // The explorer's fake driver and unknown ids use the generic mark.
+    assert_eq!(DbIcon::for_driver("fake"), DbIcon::Database);
+    assert_eq!(DbIcon::for_driver("mariadb"), DbIcon::Database);
+    assert_eq!(DbIcon::for_driver("unknown"), DbIcon::Database);
+}
+
+#[test]
+fn light_editor_colors_follow_the_brief() {
+    use sqlr_core::TokenKind;
+    let light = theme::EditorColors::light();
+    let hex = |v: u32| Color32::from_rgb((v >> 16) as u8, (v >> 8) as u8, v as u8);
+    assert_eq!(light.token(TokenKind::Keyword), hex(0x0033B3));
+    assert_eq!(light.token(TokenKind::String), hex(0x067D17));
+    assert_eq!(light.token(TokenKind::Number), hex(0x1750EB));
+    assert_eq!(light.token(TokenKind::Comment), hex(0x8C8C8C));
+    assert_eq!(light.token(TokenKind::Function), hex(0x00627A));
+    assert_eq!(light.token(TokenKind::Param), hex(0x871094));
+    assert_eq!(light.token(TokenKind::Ident), hex(0x080808));
+    // Dark keeps the Task 10 colors.
+    let dark = theme::EditorColors::dark();
+    assert_eq!(dark.token(TokenKind::Keyword), hex(0xCF8E6D));
+    assert_eq!(dark.token(TokenKind::Ident), hex(0xA9B7C6));
+    assert_eq!(theme::EditorColors::for_palette(&Palette::light()), light);
+    assert_eq!(theme::EditorColors::for_palette(&Palette::dark()), dark);
+}
+
+#[test]
+fn every_database_mark_paints_in_both_themes() {
+    // Building each texture checks its bitmap is the 32x32 RGBA the painter expects.
+    let drivers = [
+        "postgres",
+        "mysql",
+        "sqlite",
+        "redis",
+        "mongodb",
+        "elasticsearch",
+        "hana",
+        "jdbc-oracle",
+        "jdbc-sqlserver",
+        "jdbc-clickhouse",
+        "unknown",
+    ];
+    for dark in [false, true] {
+        let mut h = egui_kittest::Harness::builder()
+            .with_size((300.0, 60.0))
+            .build_ui(|ui| {
+                ui.ctx().set_visuals(if dark {
+                    egui::Visuals::dark()
+                } else {
+                    egui::Visuals::light()
+                });
+                ui.horizontal(|ui| {
+                    for d in drivers {
+                        sqlr_ui::theme::icons::paint_database(ui, d);
+                    }
+                });
+            });
+        h.run_steps(2);
+    }
+}

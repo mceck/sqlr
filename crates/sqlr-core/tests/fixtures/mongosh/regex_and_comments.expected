@@ -1,0 +1,48 @@
+// db.users.find({
+//   name: /^jo[/a-z]+\/x$/m, // a slash inside a class and an escaped one
+//   email: { $regex: "@example\\.com$", $options: "i" },
+//   'odd key': "a // not a comment",
+// })
+Find {
+    coll: "users",
+    filter: Document(
+        [
+            (
+                "name",
+                Regex {
+                    pattern: "^jo[/a-z]+\\/x$",
+                    options: "m",
+                },
+            ),
+            (
+                "email",
+                Document(
+                    [
+                        (
+                            "$regex",
+                            String(
+                                "@example\\.com$",
+                            ),
+                        ),
+                        (
+                            "$options",
+                            String(
+                                "i",
+                            ),
+                        ),
+                    ],
+                ),
+            ),
+            (
+                "odd key",
+                String(
+                    "a // not a comment",
+                ),
+            ),
+        ],
+    ),
+    projection: None,
+    sort: None,
+    limit: None,
+    skip: None,
+}

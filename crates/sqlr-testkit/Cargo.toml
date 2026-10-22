@@ -1,0 +1,15 @@
+[package]
+name = "sqlr-testkit"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+sqlr-core = { path = "../sqlr-core" }
+async-trait.workspace = true
+parking_lot.workspace = true
+tokio = { workspace = true, features = ["sync", "net", "io-util"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros", "time"] }

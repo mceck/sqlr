@@ -1,0 +1,17 @@
+[package]
+name = "{{project-name}}"
+version = "0.1.0"
+edition = "2024"
+
+# The driver is one executable that speaks the sqlr sidecar protocol on stdin and stdout.
+[[bin]]
+name = "{{project-name}}"
+path = "src/main.rs"
+
+[dependencies]
+sqlr-driver-sdk = {{sdk_dependency}}
+async-trait = "0.1"
+tokio = { version = "1", features = ["rt", "macros", "time"] }
+
+[dev-dependencies]
+sqlr-driver-tests = {{tests_dependency}}

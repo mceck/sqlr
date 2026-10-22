@@ -1,0 +1,7 @@
+db.c.insertMany([{ a: 1 }, { a: 2 }])
+db.c.updateOne({ a: 1 }, { $set: { b: 2 } }, { upsert: true })
+db.c.updateMany({}, [{ $set: { total: { $add: ["$a", 1] } } }])
+db.c.replaceOne({ a: 2 }, { a: 3 })
+db.c.deleteOne({ a: 3 })
+db.c.deleteMany({})
+db.c.findOneAndUpdate({ a: 1 }, { $inc: { n: 1 } }, { returnDocument: "after" })

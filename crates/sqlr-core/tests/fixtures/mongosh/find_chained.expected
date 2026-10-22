@@ -1,0 +1,63 @@
+// db.orders.find({ status: "A", qty: { $lt: 30 } }, { item: 1, _id: 0 }).sort({ created: -1 }).skip(20).limit(10)
+Find {
+    coll: "orders",
+    filter: Document(
+        [
+            (
+                "status",
+                String(
+                    "A",
+                ),
+            ),
+            (
+                "qty",
+                Document(
+                    [
+                        (
+                            "$lt",
+                            Int32(
+                                30,
+                            ),
+                        ),
+                    ],
+                ),
+            ),
+        ],
+    ),
+    projection: Some(
+        Document(
+            [
+                (
+                    "item",
+                    Int32(
+                        1,
+                    ),
+                ),
+                (
+                    "_id",
+                    Int32(
+                        0,
+                    ),
+                ),
+            ],
+        ),
+    ),
+    sort: Some(
+        Document(
+            [
+                (
+                    "created",
+                    Int32(
+                        -1,
+                    ),
+                ),
+            ],
+        ),
+    ),
+    limit: Some(
+        10,
+    ),
+    skip: Some(
+        20,
+    ),
+}

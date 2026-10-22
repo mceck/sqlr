@@ -1,0 +1,1 @@
+error at 25: `.limit()` cannot follow insertOne(): sqlr runs a subset of the mongo shell without a JavaScript engine; use db.runCommand({...}) for anything else

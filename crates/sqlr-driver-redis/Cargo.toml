@@ -1,0 +1,18 @@
+[package]
+name = "sqlr-driver-redis"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+sqlr-core = { path = "../sqlr-core" }
+async-trait.workspace = true
+redis.workspace = true
+rustls.workspace = true
+tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+
+[dev-dependencies]
+rcgen.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "net", "io-util"] }
+testcontainers-modules = { workspace = true, features = ["redis"] }

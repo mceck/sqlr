@@ -1,0 +1,265 @@
+// db.types.insertOne({
+//   _id: ObjectId("650ABCDEF0123456789abcde"),
+//   iso: ISODate("2024-02-29T12:34:56.789Z"),
+//   isoDay: ISODate("2024-02-29"),
+//   offset: new Date("2020-01-01T01:00:00+01:00"),
+//   epoch: new Date(0),
+//   long: NumberLong("9007199254740993"),
+//   longNum: NumberLong(5),
+//   int: NumberInt(5),
+//   dec: NumberDecimal("1.10"),
+//   uuid: UUID("00010203-0405-0607-0809-0a0b0c0d0e0f"),
+//   bin: BinData(0, "AAEC"),
+//   ts: Timestamp(1700000000, 2),
+//   re: /a[/]b\/c/i,
+//   min: MinKey,
+//   max: MaxKey(),
+//   bools: [true, false, null, undefined],
+//   'single': 'it\'s',
+//   "quoted key": "tab\there è",
+//   nums: [1, -2, 3.5, 1e3, 3000000000, Infinity, -Infinity, NaN, 0x1F],
+//   ejson: { $oid: "650abcdef0123456789abcde" },
+//   nested: { a: { b: [ { c: 1, }, ], }, },
+// })
+InsertOne {
+    coll: "types",
+    doc: Document(
+        [
+            (
+                "_id",
+                ObjectId(
+                    [
+                        101,
+                        10,
+                        188,
+                        222,
+                        240,
+                        18,
+                        52,
+                        86,
+                        120,
+                        154,
+                        188,
+                        222,
+                    ],
+                ),
+            ),
+            (
+                "iso",
+                DateTime(
+                    1709210096789,
+                ),
+            ),
+            (
+                "isoDay",
+                DateTime(
+                    1709164800000,
+                ),
+            ),
+            (
+                "offset",
+                DateTime(
+                    1577836800000,
+                ),
+            ),
+            (
+                "epoch",
+                DateTime(
+                    0,
+                ),
+            ),
+            (
+                "long",
+                Int64(
+                    9007199254740993,
+                ),
+            ),
+            (
+                "longNum",
+                Int64(
+                    5,
+                ),
+            ),
+            (
+                "int",
+                Int32(
+                    5,
+                ),
+            ),
+            (
+                "dec",
+                Decimal128(
+                    "1.10",
+                ),
+            ),
+            (
+                "uuid",
+                Binary {
+                    subtype: 4,
+                    bytes: [
+                        0,
+                        1,
+                        2,
+                        3,
+                        4,
+                        5,
+                        6,
+                        7,
+                        8,
+                        9,
+                        10,
+                        11,
+                        12,
+                        13,
+                        14,
+                        15,
+                    ],
+                },
+            ),
+            (
+                "bin",
+                Binary {
+                    subtype: 0,
+                    bytes: [
+                        0,
+                        1,
+                        2,
+                    ],
+                },
+            ),
+            (
+                "ts",
+                Timestamp {
+                    t: 1700000000,
+                    i: 2,
+                },
+            ),
+            (
+                "re",
+                Regex {
+                    pattern: "a[/]b\\/c",
+                    options: "i",
+                },
+            ),
+            (
+                "min",
+                MinKey,
+            ),
+            (
+                "max",
+                MaxKey,
+            ),
+            (
+                "bools",
+                Array(
+                    [
+                        Bool(
+                            true,
+                        ),
+                        Bool(
+                            false,
+                        ),
+                        Null,
+                        Undefined,
+                    ],
+                ),
+            ),
+            (
+                "single",
+                String(
+                    "it's",
+                ),
+            ),
+            (
+                "quoted key",
+                String(
+                    "tab\there è",
+                ),
+            ),
+            (
+                "nums",
+                Array(
+                    [
+                        Int32(
+                            1,
+                        ),
+                        Int32(
+                            -2,
+                        ),
+                        Double(
+                            3.5,
+                        ),
+                        Double(
+                            1000.0,
+                        ),
+                        Int64(
+                            3000000000,
+                        ),
+                        Double(
+                            inf,
+                        ),
+                        Double(
+                            -inf,
+                        ),
+                        Double(
+                            NaN,
+                        ),
+                        Int32(
+                            31,
+                        ),
+                    ],
+                ),
+            ),
+            (
+                "ejson",
+                ObjectId(
+                    [
+                        101,
+                        10,
+                        188,
+                        222,
+                        240,
+                        18,
+                        52,
+                        86,
+                        120,
+                        154,
+                        188,
+                        222,
+                    ],
+                ),
+            ),
+            (
+                "nested",
+                Document(
+                    [
+                        (
+                            "a",
+                            Document(
+                                [
+                                    (
+                                        "b",
+                                        Array(
+                                            [
+                                                Document(
+                                                    [
+                                                        (
+                                                            "c",
+                                                            Int32(
+                                                                1,
+                                                            ),
+                                                        ),
+                                                    ],
+                                                ),
+                                            ],
+                                        ),
+                                    ),
+                                ],
+                            ),
+                        ),
+                    ],
+                ),
+            ),
+        ],
+    ),
+}

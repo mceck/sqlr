@@ -1,0 +1,202 @@
+// db.c.insertMany([{ a: 1 }, { a: 2 }])
+InsertMany {
+    coll: "c",
+    docs: [
+        Document(
+            [
+                (
+                    "a",
+                    Int32(
+                        1,
+                    ),
+                ),
+            ],
+        ),
+        Document(
+            [
+                (
+                    "a",
+                    Int32(
+                        2,
+                    ),
+                ),
+            ],
+        ),
+    ],
+    options: None,
+}
+// db.c.updateOne({ a: 1 }, { $set: { b: 2 } }, { upsert: true })
+UpdateOne {
+    coll: "c",
+    filter: Document(
+        [
+            (
+                "a",
+                Int32(
+                    1,
+                ),
+            ),
+        ],
+    ),
+    update: Document(
+        [
+            (
+                "$set",
+                Document(
+                    [
+                        (
+                            "b",
+                            Int32(
+                                2,
+                            ),
+                        ),
+                    ],
+                ),
+            ),
+        ],
+    ),
+    options: Some(
+        Document(
+            [
+                (
+                    "upsert",
+                    Bool(
+                        true,
+                    ),
+                ),
+            ],
+        ),
+    ),
+}
+// db.c.updateMany({}, [{ $set: { total: { $add: ["$a", 1] } } }])
+UpdateMany {
+    coll: "c",
+    filter: Document(
+        [],
+    ),
+    update: Array(
+        [
+            Document(
+                [
+                    (
+                        "$set",
+                        Document(
+                            [
+                                (
+                                    "total",
+                                    Document(
+                                        [
+                                            (
+                                                "$add",
+                                                Array(
+                                                    [
+                                                        String(
+                                                            "$a",
+                                                        ),
+                                                        Int32(
+                                                            1,
+                                                        ),
+                                                    ],
+                                                ),
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                            ],
+                        ),
+                    ),
+                ],
+            ),
+        ],
+    ),
+    options: None,
+}
+// db.c.replaceOne({ a: 2 }, { a: 3 })
+ReplaceOne {
+    coll: "c",
+    filter: Document(
+        [
+            (
+                "a",
+                Int32(
+                    2,
+                ),
+            ),
+        ],
+    ),
+    replacement: Document(
+        [
+            (
+                "a",
+                Int32(
+                    3,
+                ),
+            ),
+        ],
+    ),
+    options: None,
+}
+// db.c.deleteOne({ a: 3 })
+DeleteOne {
+    coll: "c",
+    filter: Document(
+        [
+            (
+                "a",
+                Int32(
+                    3,
+                ),
+            ),
+        ],
+    ),
+}
+// db.c.deleteMany({})
+DeleteMany {
+    coll: "c",
+    filter: Document(
+        [],
+    ),
+}
+// db.c.findOneAndUpdate({ a: 1 }, { $inc: { n: 1 } }, { returnDocument: "after" })
+FindOneAndUpdate {
+    coll: "c",
+    filter: Document(
+        [
+            (
+                "a",
+                Int32(
+                    1,
+                ),
+            ),
+        ],
+    ),
+    update: Document(
+        [
+            (
+                "$inc",
+                Document(
+                    [
+                        (
+                            "n",
+                            Int32(
+                                1,
+                            ),
+                        ),
+                    ],
+                ),
+            ),
+        ],
+    ),
+    options: Some(
+        Document(
+            [
+                (
+                    "returnDocument",
+                    String(
+                        "after",
+                    ),
+                ),
+            ],
+        ),
+    ),
+}

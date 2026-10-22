@@ -1,0 +1,65 @@
+// db.runCommand({ listCollections: 1, filter: {}, nameOnly: true })
+RunCommand(
+    Document(
+        [
+            (
+                "listCollections",
+                Int32(
+                    1,
+                ),
+            ),
+            (
+                "filter",
+                Document(
+                    [],
+                ),
+            ),
+            (
+                "nameOnly",
+                Bool(
+                    true,
+                ),
+            ),
+        ],
+    ),
+)
+// db.getCollectionNames()
+GetCollectionNames
+// db.runCommand(
+//   {
+//     find: "c",
+//     filter: { "a.b": { $exists: true } },
+//   }
+// )
+RunCommand(
+    Document(
+        [
+            (
+                "find",
+                String(
+                    "c",
+                ),
+            ),
+            (
+                "filter",
+                Document(
+                    [
+                        (
+                            "a.b",
+                            Document(
+                                [
+                                    (
+                                        "$exists",
+                                        Bool(
+                                            true,
+                                        ),
+                                    ),
+                                ],
+                            ),
+                        ),
+                    ],
+                ),
+            ),
+        ],
+    ),
+)

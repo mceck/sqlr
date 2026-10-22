@@ -1,0 +1,39 @@
+// db.getCollection("my coll").find()
+Find {
+    coll: "my coll",
+    filter: Document(
+        [],
+    ),
+    projection: None,
+    sort: None,
+    limit: None,
+    skip: None,
+}
+// db["a-b"].countDocuments({})
+CountDocuments {
+    coll: "a-b",
+    filter: Document(
+        [],
+    ),
+    options: None,
+}
+// db.system.users.findOne({ user: "x" })
+Find {
+    coll: "system.users",
+    filter: Document(
+        [
+            (
+                "user",
+                String(
+                    "x",
+                ),
+            ),
+        ],
+    ),
+    projection: None,
+    sort: None,
+    limit: Some(
+        1,
+    ),
+    skip: None,
+}

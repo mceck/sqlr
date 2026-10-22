@@ -1,0 +1,57 @@
+// db.c.distinct("dept", { status: "A" })
+Distinct {
+    coll: "c",
+    field: "dept",
+    filter: Some(
+        Document(
+            [
+                (
+                    "status",
+                    String(
+                        "A",
+                    ),
+                ),
+            ],
+        ),
+    ),
+}
+// db.c.distinct('dept')
+Distinct {
+    coll: "c",
+    field: "dept",
+    filter: None,
+}
+// db.c.estimatedDocumentCount()
+EstimatedDocumentCount {
+    coll: "c",
+}
+// db.c.countDocuments()
+CountDocuments {
+    coll: "c",
+    filter: Document(
+        [],
+    ),
+    options: None,
+}
+// db.c.countDocuments({ ord_dt: { $gt: new Date('2012-01-01') } })
+CountDocuments {
+    coll: "c",
+    filter: Document(
+        [
+            (
+                "ord_dt",
+                Document(
+                    [
+                        (
+                            "$gt",
+                            DateTime(
+                                1325376000000,
+                            ),
+                        ),
+                    ],
+                ),
+            ),
+        ],
+    ),
+    options: None,
+}

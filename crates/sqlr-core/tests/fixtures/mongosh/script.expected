@@ -1,0 +1,23 @@
+// use shop-2024
+Use(
+    "shop-2024",
+)
+// show collections
+ShowCollections
+// db.items.find()
+Find {
+    coll: "items",
+    filter: Document(
+        [],
+    ),
+    projection: None,
+    sort: None,
+    limit: None,
+    skip: None,
+}
+// show dbs
+ShowDbs
+// show databases
+ShowDbs
+// show tables
+ShowCollections

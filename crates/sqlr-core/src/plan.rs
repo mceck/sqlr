@@ -1,0 +1,620 @@
+//! Query plans (spec §8.6): the plan tree model and the parsers of each server's explain
+//! output. Parsing is pure text in, tree out; the drivers run the statements.
+
+use serde_json::Value as Json;
+
+use crate::error::{DriverError, ErrorKind};
+use crate::syntax::{LexState, SqlSyntax};
+use crate::value::Value;
+
+/// How a server's explain output becomes a [`PlanTree`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExplainParser {
+    PgJson,
+    MysqlTree,
+    MysqlJson,
+    SqliteRows,
+}
+
+impl ExplainParser {
+    /// Parses the rows the explain statement returned.
+    pub fn parse(self, rows: &[Vec<Value>]) -> Result<PlanTree, DriverError> {
+        let text = |r: &Vec<Value>| {
+            r.first()
+                .map(|v| v.display().into_owned())
+                .unwrap_or_default()
+        };
+        match self {
+            ExplainParser::PgJson => {
+                parse_pg_json(&rows.iter().map(text).collect::<Vec<_>>().join("\n"))
+            }
+            ExplainParser::MysqlTree => {
+                parse_mysql_tree(&rows.iter().map(text).collect::<Vec<_>>().join("\n"))
+            }
+            ExplainParser::MysqlJson => {
+                parse_mysql_json(&rows.iter().map(text).collect::<Vec<_>>().join("\n"))
+            }
+            ExplainParser::SqliteRows => {
+                let int = |v: Option<&Value>| match v {
+                    Some(Value::Int(i)) => *i,
+                    _ => 0,
+                };
+                let parsed: Vec<(i64, i64, String)> = rows
+                    .iter()
+                    .map(|r| {
+                        (
+                            int(r.first()),
+                            int(r.get(1)),
+                            r.get(3)
+                                .map(|v| v.display().into_owned())
+                                .unwrap_or_default(),
+                        )
+                    })
+                    .collect();
+                parse_sqlite_rows(&parsed)
+            }
+        }
+    }
+}
+
+/// The statements that explain one statement: run `before`, then `sql` (its rows are the
+/// plan), then `after` (always, even when the plan failed).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExplainSpec {
+    pub before: Vec<String>,
+    pub sql: String,
+    pub after: Vec<String>,
+    pub parser: ExplainParser,
+}
+
+/// `sql` as the one statement to explain, or why it cannot be: several statements, DDL and
+/// anything but a query or a data change have no plan to show.
+pub fn explain_check(syntax: &SqlSyntax, sql: &str) -> Result<String, DriverError> {
+    let ranges = syntax.split(sql, LexState::default());
+    let unsupported = |m: &str| DriverError::new(ErrorKind::Unsupported, m);
+    let [range] = ranges.as_slice() else {
+        return Err(unsupported(
+            "Explain works on one statement at a time: put the caret in the statement to explain",
+        ));
+    };
+    let statement = sql[range.clone()].trim().to_string();
+    let first = statement
+        .split(|c: char| !c.is_alphanumeric())
+        .next()
+        .unwrap_or("")
+        .to_ascii_uppercase();
+    if !matches!(
+        first.as_str(),
+        "SELECT"
+            | "WITH"
+            | "VALUES"
+            | "TABLE"
+            | "INSERT"
+            | "UPDATE"
+            | "DELETE"
+            | "REPLACE"
+            | "MERGE"
+    ) {
+        return Err(unsupported(
+            "Explain shows the plan of a query or a data change, not of this kind of statement",
+        ));
+    }
+    Ok(statement)
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PlanNode {
+    pub label: String,
+    pub kind: String,
+    pub relation: Option<String>,
+    /// `(startup, total)` estimated cost.
+    pub cost: Option<(f64, f64)>,
+    pub rows_estimate: Option<f64>,
+    pub rows_actual: Option<f64>,
+    pub loops: Option<f64>,
+    /// Inclusive time over all loops, in milliseconds.
+    pub time_ms: Option<f64>,
+    /// Time spent in the node itself.
+    pub self_time_ms: Option<f64>,
+    pub buffers: Vec<(String, i64)>,
+    pub extra: Vec<(String, String)>,
+    pub children: Vec<PlanNode>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PlanTree {
+    pub root: PlanNode,
+    pub planning_ms: Option<f64>,
+    pub execution_ms: Option<f64>,
+    /// The plan as the server printed it.
+    pub raw: String,
+    /// `json`, `tree` or `text`.
+    pub format: String,
+}
+
+impl PlanNode {
+    /// What makes the node expensive: its own time when timed, else its own cost.
+    pub fn weight(&self) -> f64 {
+        if let Some(t) = self.self_time_ms {
+            return t;
+        }
+        let total = self.cost.map_or(0.0, |c| c.1);
+        let below: f64 = self
+            .children
+            .iter()
+            .filter_map(|c| c.cost.map(|c| c.1))
+            .sum();
+        (total - below).max(0.0)
+    }
+
+    fn fill_self_times(&mut self) {
+        for c in &mut self.children {
+            c.fill_self_times();
+        }
+        if let Some(total) = self.time_ms {
+            let below: f64 = self.children.iter().filter_map(|c| c.time_ms).sum();
+            self.self_time_ms = Some((total - below).max(0.0));
+        }
+    }
+}
+
+impl PlanTree {
+    /// The paths (child indexes from the root) of the `n` heaviest nodes, heaviest first.
+    pub fn hottest(&self, n: usize) -> Vec<Vec<usize>> {
+        fn walk(node: &PlanNode, path: &mut Vec<usize>, out: &mut Vec<(f64, Vec<usize>)>) {
+            out.push((node.weight(), path.clone()));
+            for (i, c) in node.children.iter().enumerate() {
+                path.push(i);
+                walk(c, path, out);
+                path.pop();
+            }
+        }
+        let mut all = Vec::new();
+        walk(&self.root, &mut Vec::new(), &mut all);
+        all.retain(|(w, _)| *w > 0.0);
+        all.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        all.into_iter().take(n).map(|(_, p)| p).collect()
+    }
+
+    pub fn node(&self, path: &[usize]) -> Option<&PlanNode> {
+        path.iter().try_fold(&self.root, |n, &i| n.children.get(i))
+    }
+}
+
+fn bad(message: impl Into<String>) -> DriverError {
+    DriverError::new(ErrorKind::Other, message)
+}
+
+fn num(v: &Json, key: &str) -> Option<f64> {
+    match v.get(key)? {
+        Json::Number(n) => n.as_f64(),
+        Json::String(s) => s.parse().ok(),
+        _ => None,
+    }
+}
+
+/// PostgreSQL `EXPLAIN (FORMAT JSON)`, with or without `ANALYZE`.
+pub fn parse_pg_json(text: &str) -> Result<PlanTree, DriverError> {
+    let json: Json = serde_json::from_str(text).map_err(|e| bad(format!("plan: {e}")))?;
+    let top = json.get(0).unwrap_or(&json);
+    let plan = top.get("Plan").ok_or_else(|| bad("the plan has no root"))?;
+    fn node(v: &Json) -> PlanNode {
+        const BUFFERS: [&str; 6] = [
+            "Shared Hit Blocks",
+            "Shared Read Blocks",
+            "Shared Dirtied Blocks",
+            "Local Hit Blocks",
+            "Temp Read Blocks",
+            "Temp Written Blocks",
+        ];
+        let loops = num(v, "Actual Loops");
+        let mut n = PlanNode {
+            label: v["Node Type"].as_str().unwrap_or("?").to_string(),
+            kind: v["Node Type"].as_str().unwrap_or("?").to_string(),
+            relation: v["Relation Name"].as_str().map(String::from),
+            cost: num(v, "Startup Cost").zip(num(v, "Total Cost")),
+            rows_estimate: num(v, "Plan Rows"),
+            rows_actual: num(v, "Actual Rows"),
+            loops,
+            // `Actual Total Time` is per loop.
+            time_ms: num(v, "Actual Total Time").map(|t| t * loops.unwrap_or(1.0)),
+            ..PlanNode::default()
+        };
+        for b in BUFFERS {
+            if let Some(x) = v.get(b).and_then(Json::as_i64) {
+                n.buffers.push((b.to_string(), x));
+            }
+        }
+        if let Some(obj) = v.as_object() {
+            for (k, val) in obj {
+                let known = matches!(
+                    k.as_str(),
+                    "Node Type"
+                        | "Relation Name"
+                        | "Plans"
+                        | "Startup Cost"
+                        | "Total Cost"
+                        | "Plan Rows"
+                        | "Plan Width"
+                        | "Actual Rows"
+                        | "Actual Loops"
+                        | "Actual Startup Time"
+                        | "Actual Total Time"
+                        | "Parallel Aware"
+                        | "Async Capable"
+                ) || BUFFERS.contains(&k.as_str());
+                if known {
+                    continue;
+                }
+                match val {
+                    Json::String(s) => n.extra.push((k.clone(), s.clone())),
+                    Json::Number(x) => n.extra.push((k.clone(), x.to_string())),
+                    Json::Bool(b) => n.extra.push((k.clone(), b.to_string())),
+                    _ => {}
+                }
+            }
+        }
+        n.children = v["Plans"]
+            .as_array()
+            .map(|a| a.iter().map(node).collect())
+            .unwrap_or_default();
+        n
+    }
+    let mut root = node(plan);
+    root.fill_self_times();
+    Ok(PlanTree {
+        root,
+        planning_ms: num(top, "Planning Time"),
+        execution_ms: num(top, "Execution Time"),
+        raw: text.to_string(),
+        format: "json".into(),
+    })
+}
+
+/// MySQL 8 `EXPLAIN FORMAT=TREE` / `EXPLAIN ANALYZE`: one `-> node` per line, nested by
+/// indentation.
+pub fn parse_mysql_tree(text: &str) -> Result<PlanTree, DriverError> {
+    fn numbers(line: &str, key: &str) -> Option<f64> {
+        let at = line.find(key)? + key.len();
+        let rest = &line[at..];
+        let end = rest
+            .find(|c: char| !(c.is_ascii_digit() || c == '.' || c == 'e' || c == '-'))
+            .unwrap_or(rest.len());
+        rest[..end].parse().ok()
+    }
+    let mut stack: Vec<(usize, PlanNode)> = Vec::new();
+    let mut roots: Vec<PlanNode> = Vec::new();
+    for line in text.lines() {
+        let Some(arrow) = line.find("-> ") else {
+            continue;
+        };
+        let body = &line[arrow + 3..];
+        let depth = arrow;
+        // "Label  (cost=1.2 rows=3) (actual time=0.1..0.4 rows=3 loops=2)"
+        let label = body.split("  (").next().unwrap_or(body).trim().to_string();
+        let cost = numbers(body, "cost=").map(|c| (0.0, c));
+        let loops = numbers(body, "loops=");
+        let mut n = PlanNode {
+            kind: label.split([':', ' ']).next().unwrap_or("").to_string(),
+            relation: label
+                .split(" on ")
+                .nth(1)
+                .and_then(|r| r.split_whitespace().next())
+                .map(String::from),
+            label,
+            cost,
+            rows_estimate: numbers(body, "rows="),
+            loops,
+            ..PlanNode::default()
+        };
+        if let Some(at) = body.find("actual time=") {
+            let part = &body[at..];
+            n.time_ms = part
+                .split("..")
+                .nth(1)
+                .and_then(|r| r.split_whitespace().next())
+                .and_then(|t| t.parse::<f64>().ok())
+                .map(|t| t * loops.unwrap_or(1.0));
+            n.rows_actual = numbers(part, "rows=");
+        }
+        while stack.last().is_some_and(|(d, _)| *d >= depth) {
+            let (_, done) = stack.pop().unwrap();
+            match stack.last_mut() {
+                Some((_, parent)) => parent.children.push(done),
+                None => roots.push(done),
+            }
+        }
+        stack.push((depth, n));
+    }
+    while let Some((_, done)) = stack.pop() {
+        match stack.last_mut() {
+            Some((_, parent)) => parent.children.push(done),
+            None => roots.push(done),
+        }
+    }
+    let mut root = match roots.len() {
+        0 => return Err(bad("the plan is empty")),
+        1 => roots.remove(0),
+        _ => PlanNode {
+            label: "Plan".into(),
+            kind: "Plan".into(),
+            children: roots,
+            ..PlanNode::default()
+        },
+    };
+    root.fill_self_times();
+    Ok(PlanTree {
+        execution_ms: root.time_ms,
+        root,
+        planning_ms: None,
+        raw: text.to_string(),
+        format: "tree".into(),
+    })
+}
+
+/// MySQL and MariaDB `EXPLAIN FORMAT=JSON` (and MariaDB's `ANALYZE FORMAT=JSON`).
+pub fn parse_mysql_json(text: &str) -> Result<PlanTree, DriverError> {
+    let json: Json = serde_json::from_str(text).map_err(|e| bad(format!("plan: {e}")))?;
+    let block = json
+        .get("query_block")
+        .ok_or_else(|| bad("the plan has no query block"))?;
+    fn table(v: &Json) -> PlanNode {
+        let access = v["access_type"].as_str().unwrap_or("table");
+        let name = v["table_name"].as_str().unwrap_or("?");
+        let cost = v["cost_info"].get("prefix_cost").and_then(|c| match c {
+            Json::String(s) => s.parse::<f64>().ok(),
+            Json::Number(n) => n.as_f64(),
+            _ => None,
+        });
+        let mut n = PlanNode {
+            label: format!("{access} on {name}"),
+            kind: access.to_string(),
+            relation: Some(name.to_string()),
+            cost: cost.map(|c| (0.0, c)),
+            rows_estimate: num(v, "rows_examined_per_scan").or_else(|| num(v, "rows")),
+            rows_actual: num(v, "r_rows"),
+            loops: num(v, "r_loops"),
+            time_ms: num(v, "r_total_time_ms"),
+            ..PlanNode::default()
+        };
+        if let Some(key) = v["key"].as_str() {
+            n.extra.push(("key".into(), key.to_string()));
+        }
+        if let Some(c) = v["attached_condition"].as_str() {
+            n.extra.push(("condition".into(), c.to_string()));
+        }
+        n
+    }
+    fn walk(label: &str, v: &Json) -> PlanNode {
+        let mut n = PlanNode {
+            label: label.to_string(),
+            kind: label.to_string(),
+            cost: v["cost_info"]
+                .get("query_cost")
+                .and_then(|c| {
+                    c.as_str()
+                        .and_then(|s| s.parse().ok())
+                        .or_else(|| c.as_f64())
+                })
+                .map(|c| (0.0, c)),
+            ..PlanNode::default()
+        };
+        let Some(obj) = v.as_object() else {
+            return n;
+        };
+        for (k, val) in obj {
+            match (k.as_str(), val) {
+                ("table", t) if t.is_object() => n.children.push(table(t)),
+                ("nested_loop", Json::Array(items)) => {
+                    for item in items {
+                        if let Some(t) = item.get("table") {
+                            n.children.push(table(t));
+                        }
+                    }
+                }
+                (
+                    "ordering_operation"
+                    | "grouping_operation"
+                    | "duplicates_removal"
+                    | "buffer_result"
+                    | "materialized_from_subquery"
+                    | "union_result",
+                    inner,
+                ) if inner.is_object() => n.children.push(walk(&k.replace('_', " "), inner)),
+                _ => {}
+            }
+        }
+        n
+    }
+    let mut root = walk("Query block", block);
+    root.fill_self_times();
+    Ok(PlanTree {
+        root,
+        planning_ms: None,
+        execution_ms: block.get("r_total_time_ms").and_then(Json::as_f64),
+        raw: text.to_string(),
+        format: "json".into(),
+    })
+}
+
+/// SQLite `EXPLAIN QUERY PLAN` rows: `(id, parent, detail)`.
+pub fn parse_sqlite_rows(rows: &[(i64, i64, String)]) -> Result<PlanTree, DriverError> {
+    fn build(rows: &[(i64, i64, String)], parent: i64) -> Vec<PlanNode> {
+        rows.iter()
+            .filter(|(_, p, _)| *p == parent)
+            .map(|(id, _, detail)| {
+                let relation = detail
+                    .split_whitespace()
+                    .skip_while(|w| !matches!(*w, "SCAN" | "SEARCH"))
+                    .nth(1)
+                    .map(String::from);
+                PlanNode {
+                    kind: detail.split_whitespace().next().unwrap_or("").to_string(),
+                    label: detail.clone(),
+                    relation,
+                    children: build(rows, *id),
+                    ..PlanNode::default()
+                }
+            })
+            .collect()
+    }
+    let mut top = build(rows, 0);
+    let root = match top.len() {
+        0 => return Err(bad("the plan is empty")),
+        1 if !top[0].children.is_empty() => top.remove(0),
+        _ => PlanNode {
+            label: "Query plan".into(),
+            kind: "QUERY PLAN".into(),
+            children: top,
+            ..PlanNode::default()
+        },
+    };
+    Ok(PlanTree {
+        root,
+        planning_ms: None,
+        execution_ms: None,
+        raw: rows
+            .iter()
+            .map(|(id, p, d)| format!("{id} {p} {d}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        format: "text".into(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const PG: &str = r#"[{"Plan": {"Node Type": "Nested Loop", "Startup Cost": 0.0, "Total Cost": 30.0,
+      "Plan Rows": 10, "Actual Rows": 8, "Actual Loops": 1, "Actual Total Time": 5.0,
+      "Plans": [
+        {"Node Type": "Seq Scan", "Relation Name": "big", "Startup Cost": 0.0, "Total Cost": 20.0,
+         "Plan Rows": 100, "Actual Rows": 100, "Actual Loops": 1, "Actual Total Time": 3.0,
+         "Filter": "(x > 1)", "Shared Hit Blocks": 7},
+        {"Node Type": "Index Scan", "Relation Name": "small", "Index Name": "small_pk",
+         "Startup Cost": 0.1, "Total Cost": 0.5, "Plan Rows": 1, "Actual Rows": 1,
+         "Actual Loops": 4, "Actual Total Time": 0.25}]},
+     "Planning Time": 0.3, "Execution Time": 5.5}]"#;
+
+    #[test]
+    fn pg_json_parsed_with_self_times() {
+        let plan = parse_pg_json(PG).unwrap();
+        assert_eq!(plan.root.kind, "Nested Loop");
+        assert_eq!(plan.planning_ms, Some(0.3));
+        assert_eq!(plan.execution_ms, Some(5.5));
+        let seq = &plan.root.children[0];
+        assert_eq!(seq.relation.as_deref(), Some("big"));
+        assert_eq!(seq.cost, Some((0.0, 20.0)));
+        assert_eq!(seq.buffers, [("Shared Hit Blocks".to_string(), 7)]);
+        assert!(seq.extra.contains(&("Filter".into(), "(x > 1)".into())));
+        // Time is per loop: 0.25 ms × 4 loops.
+        assert_eq!(plan.root.children[1].time_ms, Some(1.0));
+        // The join itself: 5.0 − (3.0 + 1.0).
+        assert_eq!(plan.root.self_time_ms, Some(1.0));
+        assert!(parse_pg_json("[]").is_err());
+    }
+
+    #[test]
+    fn explain_check_accepts_one_query() {
+        let syntax = SqlSyntax::ansi();
+        assert_eq!(explain_check(&syntax, " SELECT 1; ").unwrap(), "SELECT 1");
+        assert!(explain_check(&syntax, "UPDATE t SET a = 1").is_ok());
+        for bad in [
+            "SELECT 1; SELECT 2",
+            "CREATE TABLE t (a int)",
+            "DROP TABLE t",
+            "BEGIN",
+            "",
+        ] {
+            let e = explain_check(&syntax, bad).unwrap_err();
+            assert_eq!(e.kind, ErrorKind::Unsupported, "{bad}");
+            assert!(!e.message.contains("Error"), "{}", e.message);
+        }
+    }
+
+    #[test]
+    fn explain_parsers_read_rows() {
+        let rows = vec![vec![Value::Text(PG.into())]];
+        assert_eq!(
+            ExplainParser::PgJson.parse(&rows).unwrap().root.kind,
+            "Nested Loop"
+        );
+        let sqlite = vec![vec![
+            Value::Int(2),
+            Value::Int(0),
+            Value::Int(0),
+            Value::Text("SCAN t".into()),
+        ]];
+        let plan = ExplainParser::SqliteRows.parse(&sqlite).unwrap();
+        assert_eq!(plan.root.children[0].label, "SCAN t");
+    }
+
+    #[test]
+    fn plan_hottest() {
+        let plan = parse_pg_json(PG).unwrap();
+        // By self time: the scan of `big` (3.0), then the join and the index scan (1.0 each).
+        assert_eq!(plan.hottest(1), vec![vec![0]]);
+        assert_eq!(plan.hottest(3), vec![vec![0], vec![], vec![1]]);
+        assert_eq!(plan.node(&[1]).unwrap().relation.as_deref(), Some("small"));
+        // Without timings the estimate decides: own cost = total − children's.
+        let estimate = PG.replace("\"Actual Total Time\"", "\"X\"");
+        let plan = parse_pg_json(&estimate).unwrap();
+        assert_eq!(plan.hottest(1), vec![vec![0]]);
+    }
+
+    #[test]
+    fn mysql_tree_parsed() {
+        let text = "-> Nested loop inner join  (cost=2.5 rows=4) (actual time=0.1..0.9 rows=4 loops=1)\n\
+                    \x20   -> Table scan on a  (cost=0.5 rows=2) (actual time=0.02..0.1 rows=2 loops=1)\n\
+                    \x20   -> Single-row index lookup on b using PRIMARY (id=a.id)  (cost=0.3 rows=1) (actual time=0.1..0.2 rows=1 loops=2)\n";
+        let plan = parse_mysql_tree(text).unwrap();
+        assert_eq!(plan.root.label, "Nested loop inner join");
+        assert_eq!(plan.root.cost, Some((0.0, 2.5)));
+        assert_eq!(plan.root.children.len(), 2);
+        let scan = &plan.root.children[0];
+        assert_eq!(scan.relation.as_deref(), Some("a"));
+        assert_eq!(scan.rows_actual, Some(2.0));
+        assert_eq!(plan.root.children[1].loops, Some(2.0));
+        assert_eq!(plan.execution_ms, Some(0.9));
+        assert!(parse_mysql_tree("nothing").is_err());
+    }
+
+    #[test]
+    fn mysql_json_parsed() {
+        let text = r#"{"query_block": {"select_id": 1, "cost_info": {"query_cost": "3.40"},
+          "nested_loop": [
+            {"table": {"table_name": "t1", "access_type": "ALL", "rows_examined_per_scan": 10,
+                       "cost_info": {"prefix_cost": "1.0"}}},
+            {"table": {"table_name": "t2", "access_type": "ref", "key": "idx",
+                       "rows_examined_per_scan": 2, "cost_info": {"prefix_cost": "3.4"}}}]}}"#;
+        let plan = parse_mysql_json(text).unwrap();
+        assert_eq!(plan.root.cost, Some((0.0, 3.4)));
+        assert_eq!(plan.root.children.len(), 2);
+        assert_eq!(plan.root.children[1].relation.as_deref(), Some("t2"));
+        assert!(
+            plan.root.children[1]
+                .extra
+                .contains(&("key".into(), "idx".into()))
+        );
+    }
+
+    #[test]
+    fn sqlite_plan_rows_parsed() {
+        let rows = vec![
+            (
+                2,
+                0,
+                "SEARCH orders USING INDEX idx (user_id=?)".to_string(),
+            ),
+            (3, 0, "SCAN users".to_string()),
+            (5, 3, "USE TEMP B-TREE FOR ORDER BY".to_string()),
+        ];
+        let plan = parse_sqlite_rows(&rows).unwrap();
+        assert_eq!(plan.root.label, "Query plan");
+        assert_eq!(plan.root.children.len(), 2);
+        assert_eq!(plan.root.children[0].relation.as_deref(), Some("orders"));
+        assert_eq!(plan.root.children[1].children.len(), 1);
+        assert!(parse_sqlite_rows(&[]).is_err());
+    }
+}

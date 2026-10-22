@@ -1,0 +1,11 @@
+[package]
+name = "sqlr-driver-tests"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The conformance suite every sqlr driver must pass, in-process or as a sidecar."
+
+[dependencies]
+sqlr-core = { path = "../sqlr-core" }
+tokio = { workspace = true, features = ["time", "rt", "macros"] }

@@ -1,0 +1,51 @@
+[package]
+name = "sqlr-app"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# The app menu on macOS is named after the executable; call it sqlr, like the product.
+[[bin]]
+name = "sqlr"
+path = "src/main.rs"
+
+[dependencies]
+sqlr-core = { path = "../sqlr-core" }
+sqlr-driver-elastic = { path = "../sqlr-driver-elastic" }
+sqlr-driver-mongo = { path = "../sqlr-driver-mongo" }
+sqlr-driver-mysql = { path = "../sqlr-driver-mysql" }
+sqlr-driver-postgres = { path = "../sqlr-driver-postgres" }
+sqlr-driver-redis = { path = "../sqlr-driver-redis" }
+sqlr-driver-sqlite = { path = "../sqlr-driver-sqlite" }
+sqlr-engine = { path = "../sqlr-engine" }
+sqlr-store = { path = "../sqlr-store" }
+sqlr-ui = { path = "../sqlr-ui" }
+anyhow.workspace = true
+eframe.workspace = true
+egui.workspace = true
+egui_dock.workspace = true
+egui_extras = { workspace = true, features = ["image"] }
+image.workspace = true
+jiff.workspace = true
+rfd.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+tracing-appender.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+serde_json.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# The native menu bar and About panel; eframe/winit only provide the minimal app menu.
+muda.workspace = true
+objc2.workspace = true
+objc2-app-kit.workspace = true
+objc2-foundation.workspace = true
+
+[dev-dependencies]
+# `wgpu` renders the screenshots of the ignored `screenshots` test; eframe already builds wgpu.
+egui_kittest = { workspace = true, features = ["wgpu"] }
+sqlr-testkit = { path = "../sqlr-testkit" }
+tempfile.workspace = true
+# Writes a foreign `demo.sqlite` and reads the generated demo database back.
+rusqlite.workspace = true

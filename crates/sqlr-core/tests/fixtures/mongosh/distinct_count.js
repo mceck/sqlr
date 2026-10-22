@@ -1,0 +1,5 @@
+db.c.distinct("dept", { status: "A" })
+db.c.distinct('dept')
+db.c.estimatedDocumentCount()
+db.c.countDocuments()
+db.c.countDocuments({ ord_dt: { $gt: new Date('2012-01-01') } })

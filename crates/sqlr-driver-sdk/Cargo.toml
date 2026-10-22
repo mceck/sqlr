@@ -1,0 +1,18 @@
+[package]
+name = "sqlr-driver-sdk"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Write an sqlr driver as a sidecar process: implement `Driver`, call `run`."
+
+[dependencies]
+sqlr-core = { path = "../sqlr-core" }
+sqlr-sidecar = { path = "../sqlr-sidecar" }
+tokio = { workspace = true, features = ["rt", "macros", "io-std"] }
+
+[dev-dependencies]
+sqlr-driver-sqlite = { path = "../sqlr-driver-sqlite" }
+async-trait.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "macros", "io-std", "time"] }

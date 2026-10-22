@@ -1,0 +1,30 @@
+[package]
+name = "sqlr-registry"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+sqlr-core = { path = "../sqlr-core" }
+sqlr-sidecar = { path = "../sqlr-sidecar" }
+flate2 = "1"
+minisign-verify = "0.2"
+reqwest.workspace = true
+rustls.workspace = true
+rustls-native-certs.workspace = true
+semver = "1"
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.11"
+tar = "0.4"
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt", "fs", "io-util", "time", "macros", "process"] }
+toml.workspace = true
+tracing.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+minisign = "0.7"
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "time"] }

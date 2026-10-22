@@ -1,0 +1,23 @@
+[package]
+name = "sqlr-driver-hana"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "SAP HANA driver for sqlr, a sidecar built on hdbconnect_async."
+
+[dependencies]
+sqlr-driver-sdk = { path = "../../crates/sqlr-driver-sdk" }
+async-trait.workspace = true
+hdbconnect_async = "0.33"
+rustls.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt", "macros", "time", "sync"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+sqlr-sidecar = { path = "../../crates/sqlr-sidecar" }
+bigdecimal = "0.4"
+sqlr-driver-tests = { path = "../../crates/sqlr-driver-tests" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

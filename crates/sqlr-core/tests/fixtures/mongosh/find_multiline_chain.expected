@@ -1,0 +1,70 @@
+// db.inventory
+//   .find(
+//     { tags: { $all: ['red', 'blank'] } }, // filter
+//     /* projection */ { item: 1 },
+//   )
+//   .projection({ item: 1, size: 1 })
+//   .sort({ item: 1 })
+//   .limit(5)
+//   .pretty()
+Find {
+    coll: "inventory",
+    filter: Document(
+        [
+            (
+                "tags",
+                Document(
+                    [
+                        (
+                            "$all",
+                            Array(
+                                [
+                                    String(
+                                        "red",
+                                    ),
+                                    String(
+                                        "blank",
+                                    ),
+                                ],
+                            ),
+                        ),
+                    ],
+                ),
+            ),
+        ],
+    ),
+    projection: Some(
+        Document(
+            [
+                (
+                    "item",
+                    Int32(
+                        1,
+                    ),
+                ),
+                (
+                    "size",
+                    Int32(
+                        1,
+                    ),
+                ),
+            ],
+        ),
+    ),
+    sort: Some(
+        Document(
+            [
+                (
+                    "item",
+                    Int32(
+                        1,
+                    ),
+                ),
+            ],
+        ),
+    ),
+    limit: Some(
+        5,
+    ),
+    skip: None,
+}

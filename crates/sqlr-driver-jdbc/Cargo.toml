@@ -1,0 +1,19 @@
+[package]
+name = "sqlr-driver-jdbc"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Launcher of the sqlr JDBC bridge: finds a JRE, assembles the class path, starts the Java sidecar."
+build = "build.rs"
+
+[dependencies]
+
+[dev-dependencies]
+sqlr-driver-sdk = { path = "../sqlr-driver-sdk" }
+sqlr-driver-tests = { path = "../sqlr-driver-tests" }
+sqlr-registry = { path = "../sqlr-registry" }
+sqlr-sidecar = { path = "../sqlr-sidecar" }
+sha2 = "0.11"
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

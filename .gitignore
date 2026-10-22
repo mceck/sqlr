@@ -1,0 +1,8 @@
+.superpowers/
+.DS_Store
+.claude/worktrees/
+# build output of crates outside the workspace (tools/, fuzz/, templates/)
+target/
+*.jar
+!/docs/**/*.jar
+/dist/

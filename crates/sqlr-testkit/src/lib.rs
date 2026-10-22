@@ -1,0 +1,1338 @@
+//! Test fakes for the driver API. Use as a dev-dependency only.
+
+use std::collections::HashMap;
+mod doc;
+mod kv;
+
+pub use doc::{FakeDocDriver, FakeDocScript};
+pub use kv::{FakeKvDriver, FakeKvScript};
+
+use std::pin::pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+use parking_lot::Mutex;
+use sqlr_core::{
+    Admin, AdminSupport, Grant, LockInfo, RoleDef, ServerProperty, SessionInfo, TableStats,
+};
+use sqlr_core::{
+    CancelHandle, Capabilities, Cell, ChunkBuilder, ColumnKind, ColumnMeta, Connection,
+    ConnectionConfig, Dialect, DisplayHint, Driver, DriverError, DriverManifest, ErrorKind,
+    Execution, Family, FieldSpec, FieldType, Introspect, Node, NodeKind, NodePath, ObjectDef,
+    ObjectEditing, ObjectKind, ObjectRef, Placement, RelationalConn, ResultChunk, RowStream,
+    SchemaCatalog, SchemaChange, Secrets, ServerInfo, TableDef, TableInfo, TableRef, Value,
+};
+use tokio::sync::{Notify, Semaphore};
+
+#[derive(Clone, Default)]
+pub struct FakeScript {
+    /// Rows returned by any query; column "n" Int, values 0..rows.
+    pub rows: usize,
+    pub connect_error: Option<DriverError>,
+    /// Parks the connect future until it is dropped.
+    pub block_on_connect: bool,
+    /// Returned by `execute`.
+    pub query_error: Option<DriverError>,
+    /// When set, `execute` fails (`ErrorKind::Syntax`) for any SQL containing this text.
+    pub fail_matching: Option<String>,
+    /// When set, `execute` returns `Execution::Affected` with this count instead of rows.
+    pub affected: Option<u64>,
+    /// `next_chunk` waits until cancelled, then returns `ErrorKind::Cancelled`.
+    pub block_on_fetch: bool,
+    /// `next_chunk` returns this error after N successful chunks.
+    pub fail_after_chunks: Option<(usize, DriverError)>,
+    /// `browse(path)` returns the nodes whose path is a direct child of `path`, in order.
+    pub tree: Vec<Node>,
+    /// `catalog(schema)` returns the entry with that schema name; any other schema fails
+    /// with `ErrorKind::Other` "no such schema".
+    pub catalog: Vec<SchemaCatalog>,
+    /// Returned by `catalog` instead of the entries above.
+    pub catalog_error: Option<DriverError>,
+    /// The dialect's `default_schemas()`.
+    pub default_schemas: Vec<String>,
+    /// The dialect's `database_is_schema()` (MySQL-like).
+    pub database_is_schema: bool,
+    /// Other databases the connection can switch to on demand.
+    pub databases: Vec<String>,
+    /// `Connection::database_name()` of the connection's own connection.
+    pub own_database: Option<String>,
+    /// `Connection::schema_path()` of the connection's own database (default: the root).
+    pub schema_path: NodePath,
+    /// When set, each `catalog` call takes one permit before answering, so a test can
+    /// hold catalog loads in flight.
+    pub catalog_gate: Option<Arc<Semaphore>>,
+    /// Like `block_on_fetch`, only for streams whose SQL contains this text.
+    pub block_fetch_matching: Option<String>,
+    /// When set, `execute` fails with `ErrorKind::Connection` for any SQL containing this
+    /// text, as if the server had closed the connection.
+    pub connection_error_matching: Option<String>,
+    /// The dialect's `ddl_commits_transaction()` (MySQL-like).
+    pub ddl_commits_transaction: bool,
+    /// The dialect's `error_aborts_transaction()` (PostgreSQL-like).
+    pub error_aborts_transaction: bool,
+    /// The dialect's `read_only_sql` returns `SET READ ONLY` / `SET READ WRITE`.
+    pub read_only_sql: bool,
+    /// `connect` opens a TCP connection to the config's `host:port`, writes `ping\n` and
+    /// expects it echoed back (to test tunnels); `ping()` repeats that exchange.
+    pub tcp_echo: bool,
+    /// When set, `connect` fails with `ErrorKind::Auth` unless the secrets hold this
+    /// `password`.
+    pub password: Option<String>,
+    /// `describe(table)` returns the entry with that table name (and schema, when both
+    /// name one); any other table fails with `ErrorKind::Other` "no such table".
+    pub tables: Vec<TableInfo>,
+    /// The manifest's object editing support. When set, the connection introspects
+    /// [`FakeScript::objects`] and its dialect writes DDL (see [`FakeDdl`]).
+    pub editing: Option<ObjectEditing>,
+    /// Definitions `load_object` returns, matched by kind and name. Applied DDL the fake
+    /// dialect wrote changes them (and the tree).
+    pub objects: Vec<ObjectDef>,
+    /// Where tables created by applied DDL appear in the tree.
+    pub tables_folder: Option<NodePath>,
+    /// Row counts of the `INSERT`, `UPDATE` and `DELETE` statements run through
+    /// `execute_with`, in call order; once used up (and by default) each affects 1 row.
+    pub dml_affected: Vec<u64>,
+    /// The dialect quotes identifiers in ANSI double quotes (by default it leaves them as
+    /// they are).
+    pub quote_idents: bool,
+    /// When set, every `SELECT` returns these columns and rows instead of the "n" rows.
+    pub result: Option<FakeResult>,
+    /// When set, `check_origin` fails with this error.
+    pub origin_error: Option<DriverError>,
+    /// The manifest declares `editable_results`.
+    pub editable: bool,
+    /// The manifest declares native dump/restore (`Capabilities::dump`).
+    pub dump: bool,
+    /// When set, the connection answers administration (see [`FakeAdmin`]).
+    pub admin: Option<FakeAdmin>,
+}
+
+/// What the fake connection's [`Admin`] answers. Each fake connection's server session id
+/// is its number, from 1 in connect order: a session in [`FakeAdmin::sessions`] with the
+/// asking connection's id is marked `own`. Calls are recorded ([`FakeDriver::admin_calls`]).
+/// Role and grant DDL is plain text, identifiers unquoted.
+#[derive(Clone, Debug, Default)]
+pub struct FakeAdmin {
+    pub support: AdminSupport,
+    pub roles: Vec<RoleDef>,
+    /// Filtered by grantee and by object name.
+    pub grants: Vec<Grant>,
+    pub sessions: Vec<SessionInfo>,
+    pub locks: Vec<LockInfo>,
+    pub properties: Vec<ServerProperty>,
+    pub sizes: Vec<(String, i64)>,
+    /// Filtered by schema.
+    pub stats: Vec<TableStats>,
+    pub current_user: Option<String>,
+}
+
+/// A scripted rows result: columns (with their origins) and rows.
+#[derive(Clone, Debug, Default)]
+pub struct FakeResult {
+    pub columns: Vec<ColumnMeta>,
+    pub rows: Vec<Vec<Value>>,
+}
+
+struct Shared {
+    script: FakeScript,
+    cancel: Notify,
+    cancelled: AtomicBool,
+    closed: AtomicUsize,
+    browses: AtomicUsize,
+    catalogs: AtomicUsize,
+    executed: Mutex<Vec<(Option<String>, String)>>,
+    /// Connections (own and other databases) not dropped yet.
+    open: AtomicUsize,
+    connects: Mutex<Vec<(ConnectionConfig, Secrets)>>,
+    executed_with: Mutex<Vec<(String, Vec<Value>)>>,
+    /// The tree and object definitions as applied DDL left them.
+    live: Mutex<Live>,
+    ddl: Arc<FakeDdl>,
+    /// DML statements run through `execute_with` so far.
+    dml_calls: AtomicUsize,
+    /// Connections opened so far (each one's id is the count after it opened).
+    connections: AtomicUsize,
+    admin_calls: Mutex<Vec<String>>,
+}
+
+struct Live {
+    tree: Vec<Node>,
+    objects: Vec<ObjectDef>,
+}
+
+/// What running a statement the fake dialect wrote does to the fake's objects and tree.
+#[derive(Clone, Debug)]
+enum Effect {
+    Change(SchemaChange),
+    /// The table (by its old name) becomes this definition.
+    ReplaceTable(String, TableDef),
+}
+
+/// The fake dialect's DDL generator: one plain statement per change (identifiers are not
+/// quoted), remembered so that running it changes [`FakeScript::objects`] and the tree.
+/// `CREATE DATABASE` and `PRAGMA foreign_keys = OFF` run alone, `PRAGMA foreign_keys = ON`
+/// as cleanup.
+#[derive(Default)]
+pub struct FakeDdl {
+    effects: Mutex<HashMap<String, Effect>>,
+}
+
+fn kind_word(kind: ObjectKind) -> &'static str {
+    kind.keyword()
+}
+
+fn statement(change: &SchemaChange) -> String {
+    match change {
+        SchemaChange::Create(def) => create_statement(def),
+        SchemaChange::Drop { object, cascade } => format!(
+            "DROP {} {}{}",
+            kind_word(object.kind),
+            object.name,
+            if *cascade { " CASCADE" } else { "" }
+        ),
+        SchemaChange::Rename { object, to } => {
+            format!(
+                "ALTER {} {} RENAME TO {to}",
+                kind_word(object.kind),
+                object.name
+            )
+        }
+        SchemaChange::AddColumn { table, column } => format!(
+            "ALTER TABLE {} ADD COLUMN {} {}",
+            table.name, column.name, column.type_name
+        ),
+        SchemaChange::DropColumn { table, name } => {
+            format!("ALTER TABLE {} DROP COLUMN {name}", table.name)
+        }
+        SchemaChange::AlterColumn {
+            table,
+            before,
+            after,
+        } => format!(
+            "ALTER TABLE {} ALTER COLUMN {} TO {} {}",
+            table.name, before.name, after.name, after.type_name
+        ),
+        SchemaChange::AddConstraint { table, constraint } => format!(
+            "ALTER TABLE {} ADD CONSTRAINT {}",
+            table.name,
+            constraint.name().unwrap_or("")
+        ),
+        SchemaChange::DropConstraint { table, name } => {
+            format!("ALTER TABLE {} DROP CONSTRAINT {name}", table.name)
+        }
+        SchemaChange::AddIndex { table, index, .. } => {
+            format!("CREATE INDEX {} ON {}", index.name, table.name)
+        }
+        SchemaChange::DropIndex { name, .. } => format!("DROP INDEX {name}"),
+        SchemaChange::SetComment { object, .. } => {
+            format!("COMMENT ON {} {}", kind_word(object.kind), object.name)
+        }
+        SchemaChange::ReplaceView(v) => format!("CREATE OR REPLACE VIEW {}", v.view.name),
+        SchemaChange::ReplaceRoutine(r) => format!("CREATE OR REPLACE ROUTINE {}", r.name),
+        SchemaChange::SetOptions { object, .. } => {
+            format!(
+                "ALTER {} {} SET OPTIONS",
+                kind_word(object.kind),
+                object.name
+            )
+        }
+        SchemaChange::AttachPartition { table, partition } => format!(
+            "ALTER TABLE {} ATTACH PARTITION {}",
+            table.name, partition.table.name
+        ),
+        SchemaChange::Truncate { table, cascade } => format!(
+            "TRUNCATE TABLE {}{}",
+            table.name,
+            if *cascade { " CASCADE" } else { "" }
+        ),
+        SchemaChange::DetachPartition { table, partition } => {
+            format!(
+                "ALTER TABLE {} DETACH PARTITION {}",
+                table.name, partition.name
+            )
+        }
+    }
+}
+
+fn create_statement(def: &ObjectDef) -> String {
+    match def {
+        ObjectDef::Table(t) => {
+            let columns: Vec<String> = t
+                .columns
+                .iter()
+                .map(|c| format!("{} {}", c.name, c.type_name))
+                .collect();
+            format!("CREATE TABLE {} ({})", t.table.name, columns.join(", "))
+        }
+        other => format!(
+            "CREATE {} {}",
+            kind_word(other.kind()),
+            other.object_ref().name
+        ),
+    }
+}
+
+impl FakeDdl {
+    fn remember(&self, sql: &str, effect: Effect) {
+        self.effects.lock().insert(sql.to_string(), effect);
+    }
+
+    fn effect(&self, sql: &str) -> Option<Effect> {
+        self.effects.lock().get(sql).cloned()
+    }
+}
+
+impl sqlr_core::DdlGen for FakeDdl {
+    fn ddl(&self, changes: &[SchemaChange]) -> Result<Vec<String>, DriverError> {
+        Ok(changes
+            .iter()
+            .map(|change| {
+                let sql = statement(change);
+                self.remember(&sql, Effect::Change(change.clone()));
+                sql
+            })
+            .collect())
+    }
+
+    fn create_ddl(&self, def: &ObjectDef) -> Result<String, DriverError> {
+        Ok(format!("{};", create_statement(def)))
+    }
+
+    fn table_ddl(&self, before: &TableDef, after: &TableDef) -> Result<Vec<String>, DriverError> {
+        let statements: Vec<String> = sqlr_core::diff_table(before, after)
+            .iter()
+            .map(statement)
+            .collect();
+        for sql in &statements {
+            self.remember(
+                sql,
+                Effect::ReplaceTable(before.table.name.clone(), after.clone()),
+            );
+        }
+        Ok(statements)
+    }
+
+    fn placement(&self, statement: &str) -> Placement {
+        if statement.starts_with("CREATE DATABASE") || statement == "PRAGMA foreign_keys = OFF" {
+            Placement::Alone
+        } else if statement == "PRAGMA foreign_keys = ON" {
+            Placement::Cleanup
+        } else {
+            Placement::Transaction
+        }
+    }
+}
+
+/// The object kind an explorer node of `kind` stands for.
+fn object_kind(kind: NodeKind) -> Option<ObjectKind> {
+    Some(match kind {
+        NodeKind::Database => ObjectKind::Database,
+        NodeKind::Schema => ObjectKind::Schema,
+        NodeKind::Table => ObjectKind::Table,
+        NodeKind::View => ObjectKind::View,
+        NodeKind::MaterializedView => ObjectKind::MaterializedView,
+        NodeKind::Index => ObjectKind::Index,
+        NodeKind::Function => ObjectKind::Function,
+        NodeKind::Procedure => ObjectKind::Procedure,
+        NodeKind::Sequence => ObjectKind::Sequence,
+        NodeKind::Trigger => ObjectKind::Trigger,
+        NodeKind::Folder | NodeKind::Column => return None,
+    })
+}
+
+fn node_kind(kind: ObjectKind) -> Option<NodeKind> {
+    Some(match kind {
+        ObjectKind::Table => NodeKind::Table,
+        ObjectKind::View => NodeKind::View,
+        ObjectKind::MaterializedView => NodeKind::MaterializedView,
+        ObjectKind::Sequence => NodeKind::Sequence,
+        ObjectKind::Function => NodeKind::Function,
+        ObjectKind::Procedure => NodeKind::Procedure,
+        ObjectKind::Index => NodeKind::Index,
+        ObjectKind::Trigger => NodeKind::Trigger,
+        ObjectKind::Schema => NodeKind::Schema,
+        ObjectKind::Database => NodeKind::Database,
+        ObjectKind::Role => return None,
+    })
+}
+
+impl Live {
+    fn apply(&mut self, effect: Effect, folder: Option<&NodePath>) {
+        match effect {
+            Effect::Change(SchemaChange::Create(def)) => {
+                if let (ObjectDef::Table(t), Some(folder)) = (&def, folder) {
+                    self.tree.push(Node {
+                        path: folder.child(&t.table.name),
+                        name: t.table.name.clone(),
+                        kind: NodeKind::Table,
+                        has_children: false,
+                        detail: None,
+                    });
+                }
+                self.objects.push(def);
+            }
+            Effect::Change(SchemaChange::Drop { object, .. }) => {
+                self.objects
+                    .retain(|d| !(d.kind() == object.kind && d.object_ref().name == object.name));
+                let kind = node_kind(object.kind);
+                self.tree
+                    .retain(|n| !(Some(n.kind) == kind && n.name == object.name));
+            }
+            Effect::Change(SchemaChange::Rename { object, to }) => {
+                for d in &mut self.objects {
+                    if d.kind() == object.kind && d.object_ref().name == object.name {
+                        rename(d, &to);
+                    }
+                }
+                self.rename_node(node_kind(object.kind), &object.name, &to);
+            }
+            Effect::ReplaceTable(old, after) => {
+                let new = after.table.name.clone();
+                for d in &mut self.objects {
+                    if matches!(d, ObjectDef::Table(t) if t.table.name == old) {
+                        *d = ObjectDef::Table(after.clone());
+                    }
+                }
+                self.rename_node(Some(NodeKind::Table), &old, &new);
+            }
+            Effect::Change(_) => {}
+        }
+    }
+
+    fn rename_node(&mut self, kind: Option<NodeKind>, from: &str, to: &str) {
+        for n in &mut self.tree {
+            if Some(n.kind) == kind && n.name == from {
+                let mut segments = n.path.segments().to_vec();
+                if let Some(last) = segments.last_mut() {
+                    *last = to.to_string();
+                }
+                n.path = NodePath(segments);
+                n.name = to.to_string();
+            }
+        }
+    }
+}
+
+fn rename(def: &mut ObjectDef, to: &str) {
+    let to = to.to_string();
+    match def {
+        ObjectDef::Database(d) => d.name = to,
+        ObjectDef::Schema(s) => s.name = to,
+        ObjectDef::Table(t) => t.table.name = to,
+        ObjectDef::View(v) => v.view.name = to,
+        ObjectDef::Sequence(s) => s.sequence.name = to,
+        ObjectDef::Routine(r) => r.name = to,
+        ObjectDef::Trigger(t) => t.name = to,
+        ObjectDef::Index { index, .. } => index.name = to,
+        ObjectDef::Role(r) => r.name = to,
+    }
+}
+
+pub struct FakeDriver {
+    manifest: DriverManifest,
+    shared: Arc<Shared>,
+}
+
+impl FakeDriver {
+    pub fn new(script: FakeScript) -> Arc<Self> {
+        let field =
+            |key: &str, label: &str, ty, default: Option<&str>, required, secret| FieldSpec {
+                free_form: false,
+                key: key.into(),
+                label: label.into(),
+                ty,
+                default: default.map(Into::into),
+                required,
+                secret,
+                group: "Main".into(),
+            };
+        let manifest = DriverManifest {
+            id: "fake".into(),
+            name: "Fake".into(),
+            family: Family::Relational,
+            capabilities: Capabilities {
+                editable_results: script.editable,
+                dump: script.dump,
+                ..Capabilities::default()
+            },
+            fields: vec![
+                field(
+                    "host",
+                    "Host",
+                    FieldType::Text,
+                    Some("fake-host"),
+                    true,
+                    false,
+                ),
+                field("port", "Port", FieldType::Port, Some("1"), true, false),
+                field(
+                    "password",
+                    "Password",
+                    FieldType::Password,
+                    None,
+                    false,
+                    true,
+                ),
+            ],
+            dialect: "fake".into(),
+            url_schemes: Vec::new(),
+            default_port: None,
+            editing: script.editing.clone(),
+        };
+        let live = Live {
+            tree: script.tree.clone(),
+            objects: script.objects.clone(),
+        };
+        Arc::new(Self {
+            manifest,
+            shared: Arc::new(Shared {
+                script,
+                cancel: Notify::new(),
+                cancelled: AtomicBool::new(false),
+                closed: AtomicUsize::new(0),
+                browses: AtomicUsize::new(0),
+                catalogs: AtomicUsize::new(0),
+                executed: Mutex::new(Vec::new()),
+                open: AtomicUsize::new(0),
+                connects: Mutex::new(Vec::new()),
+                executed_with: Mutex::new(Vec::new()),
+                live: Mutex::new(live),
+                ddl: Arc::new(FakeDdl::default()),
+                dml_calls: AtomicUsize::new(0),
+                connections: AtomicUsize::new(0),
+                admin_calls: Mutex::new(Vec::new()),
+            }),
+        })
+    }
+
+    /// The tree as applied DDL left it.
+    pub fn tree(&self) -> Vec<Node> {
+        self.shared.live.lock().tree.clone()
+    }
+
+    /// The object definitions as applied DDL left them.
+    pub fn objects(&self) -> Vec<ObjectDef> {
+        self.shared.live.lock().objects.clone()
+    }
+
+    /// A fake whose manifest declares the `ssh` capability (the engine adds SSH fields).
+    pub fn with_ssh(script: FakeScript) -> Arc<Self> {
+        let mut fake = Arc::into_inner(Self::new(script)).expect("a new fake is unshared");
+        fake.manifest.capabilities.ssh = true;
+        Arc::new(fake)
+    }
+
+    /// Connections opened and not dropped yet.
+    /// The config and secrets of every `connect` call, in order.
+    pub fn connects(&self) -> Vec<(ConnectionConfig, Secrets)> {
+        self.shared.connects.lock().clone()
+    }
+
+    pub fn open_connections(&self) -> usize {
+        self.shared.open.load(Ordering::SeqCst)
+    }
+
+    /// Number of streams on which `close()` was called (each counted once).
+    pub fn closed_streams(&self) -> usize {
+        self.shared.closed.load(Ordering::SeqCst)
+    }
+
+    /// Every SQL string passed to `execute`, in order.
+    pub fn executed(&self) -> Vec<String> {
+        self.shared
+            .executed
+            .lock()
+            .iter()
+            .map(|(_, sql)| sql.clone())
+            .collect()
+    }
+
+    /// Every SQL string passed to `execute`, with the database it ran on (`None` for the
+    /// connection's own database), in order.
+    pub fn executed_on(&self) -> Vec<(Option<String>, String)> {
+        self.shared.executed.lock().clone()
+    }
+
+    /// Every SQL string passed to `execute_with`, with its parameters, in order. These
+    /// statements are also listed by [`FakeDriver::executed`].
+    pub fn executed_with(&self) -> Vec<(String, Vec<Value>)> {
+        self.shared.executed_with.lock().clone()
+    }
+
+    pub fn browse_calls(&self) -> usize {
+        self.shared.browses.load(Ordering::SeqCst)
+    }
+
+    pub fn catalog_calls(&self) -> usize {
+        self.shared.catalogs.load(Ordering::SeqCst)
+    }
+
+    /// Every administration call, in order: `roles`, `grants <grantee or *>[ on <name>]`,
+    /// `sessions`, `locks`, `properties`, `sizes`, `stats <schema or *>`, `cancel <id>`,
+    /// `terminate <id>`.
+    pub fn admin_calls(&self) -> Vec<String> {
+        self.shared.admin_calls.lock().clone()
+    }
+
+    fn fake_dialect(&self) -> FakeDialect {
+        let script = &self.shared.script;
+        FakeDialect {
+            default_schemas: script.default_schemas.clone(),
+            database_is_schema: script.database_is_schema,
+            ddl_commits_transaction: script.ddl_commits_transaction,
+            error_aborts_transaction: script.error_aborts_transaction,
+            read_only_sql: script.read_only_sql,
+            ddl: script.editing.is_some().then(|| self.shared.ddl.clone()),
+            quote_idents: script.quote_idents,
+        }
+    }
+}
+
+/// A TCP connection that echoes `ping\n` (see [`FakeScript::tcp_echo`]).
+type EchoStream = tokio::sync::Mutex<tokio::net::TcpStream>;
+
+async fn echo_ping(stream: &mut tokio::net::TcpStream) -> Result<(), DriverError> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let io = |e: std::io::Error| DriverError::new(ErrorKind::Connection, e.to_string());
+    stream.write_all(b"ping\n").await.map_err(io)?;
+    let mut buf = [0u8; 5];
+    stream.read_exact(&mut buf).await.map_err(io)?;
+    if &buf != b"ping\n" {
+        return Err(DriverError::new(ErrorKind::Protocol, "no echo"));
+    }
+    Ok(())
+}
+
+async fn echo_connect(cfg: &ConnectionConfig) -> Result<EchoStream, DriverError> {
+    let host = cfg.values.get("host").map_or("", String::as_str);
+    let port: u16 = cfg
+        .values
+        .get("port")
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(0);
+    let mut stream = tokio::net::TcpStream::connect((host, port))
+        .await
+        .map_err(|e| DriverError::new(ErrorKind::Connection, e.to_string()))?;
+    echo_ping(&mut stream).await?;
+    Ok(tokio::sync::Mutex::new(stream))
+}
+
+#[async_trait::async_trait]
+impl Driver for FakeDriver {
+    fn manifest(&self) -> &DriverManifest {
+        &self.manifest
+    }
+
+    async fn connect(
+        &self,
+        cfg: &ConnectionConfig,
+        secrets: &Secrets,
+    ) -> Result<Arc<dyn Connection>, DriverError> {
+        self.shared
+            .connects
+            .lock()
+            .push((cfg.clone(), secrets.clone()));
+        if self.shared.script.block_on_connect {
+            std::future::pending::<()>().await;
+        }
+        if let Some(expected) = &self.shared.script.password
+            && secrets.0.get("password") != Some(expected)
+        {
+            return Err(DriverError::new(
+                ErrorKind::Auth,
+                "password authentication failed",
+            ));
+        }
+        if let Some(e) = &self.shared.script.connect_error {
+            return Err(e.clone());
+        }
+        let echo = match self.shared.script.tcp_echo {
+            true => Some(echo_connect(cfg).await?),
+            false => None,
+        };
+        Ok(FakeConnection::new(
+            self.shared.clone(),
+            self.fake_dialect(),
+            None,
+            echo,
+        ))
+    }
+
+    fn dialect(&self) -> Option<Arc<dyn Dialect>> {
+        Some(Arc::new(self.fake_dialect()))
+    }
+}
+
+struct FakeConnection {
+    shared: Arc<Shared>,
+    dialect: FakeDialect,
+    /// `None` for the connection's own database.
+    database: Option<String>,
+    echo: Option<EchoStream>,
+    /// Its server session id (see [`FakeAdmin`]).
+    id: usize,
+}
+
+impl FakeConnection {
+    fn new(
+        shared: Arc<Shared>,
+        dialect: FakeDialect,
+        database: Option<String>,
+        echo: Option<EchoStream>,
+    ) -> Arc<Self> {
+        shared.open.fetch_add(1, Ordering::SeqCst);
+        let id = shared.connections.fetch_add(1, Ordering::SeqCst) + 1;
+        Arc::new(Self {
+            id,
+            shared,
+            dialect,
+            database,
+            echo,
+        })
+    }
+}
+
+impl Drop for FakeConnection {
+    fn drop(&mut self) {
+        self.shared.open.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+#[async_trait::async_trait]
+impl Connection for FakeConnection {
+    async fn ping(&self) -> Result<ServerInfo, DriverError> {
+        if let Some(echo) = &self.echo {
+            echo_ping(&mut *echo.lock().await).await?;
+        }
+        Ok(ServerInfo {
+            product: "Fake".into(),
+            version: "1.0".into(),
+        })
+    }
+
+    async fn browse(&self, path: &NodePath) -> Result<Vec<Node>, DriverError> {
+        self.shared.browses.fetch_add(1, Ordering::SeqCst);
+        Ok(self
+            .shared
+            .live
+            .lock()
+            .tree
+            .iter()
+            .filter(|n| {
+                let s = n.path.segments();
+                s.len() == path.segments().len() + 1 && s.starts_with(path.segments())
+            })
+            .cloned()
+            .collect())
+    }
+
+    fn cancel_handle(&self) -> Arc<dyn CancelHandle> {
+        Arc::new(FakeCancel {
+            shared: self.shared.clone(),
+        })
+    }
+
+    fn relational(&self) -> Option<&dyn RelationalConn> {
+        Some(self)
+    }
+
+    fn database_name(&self) -> Option<&str> {
+        self.database
+            .as_deref()
+            .or(self.shared.script.own_database.as_deref())
+    }
+
+    fn schema_path(&self) -> NodePath {
+        match self.database {
+            None => self.shared.script.schema_path.clone(),
+            Some(_) => NodePath::root(),
+        }
+    }
+
+    fn database_for_path(&self, path: &NodePath) -> Option<String> {
+        let first = path.segments().first()?;
+        self.shared
+            .script
+            .databases
+            .contains(first)
+            .then(|| first.clone())
+    }
+
+    async fn connect_database(&self, database: &str) -> Result<Arc<dyn Connection>, DriverError> {
+        if !self.shared.script.databases.iter().any(|d| d == database) {
+            return Err(DriverError::new(
+                ErrorKind::Unsupported,
+                format!("no database \"{database}\""),
+            ));
+        }
+        Ok(FakeConnection::new(
+            self.shared.clone(),
+            self.dialect.clone(),
+            Some(database.to_string()),
+            None,
+        ))
+    }
+}
+
+struct FakeCancel {
+    shared: Arc<Shared>,
+}
+
+#[async_trait::async_trait]
+impl CancelHandle for FakeCancel {
+    async fn cancel(&self) -> Result<(), DriverError> {
+        self.shared.cancelled.store(true, Ordering::SeqCst);
+        self.shared.cancel.notify_waiters();
+        Ok(())
+    }
+}
+
+#[async_trait::async_trait]
+impl RelationalConn for FakeConnection {
+    async fn execute(&self, sql: &str) -> Result<Execution, DriverError> {
+        self.shared
+            .executed
+            .lock()
+            .push((self.database.clone(), sql.to_string()));
+        if let Some(echo) = &self.echo {
+            echo_ping(&mut *echo.lock().await).await?;
+        }
+        if let Some(e) = &self.shared.script.query_error {
+            return Err(e.clone());
+        }
+        if let Some(pattern) = &self.shared.script.fail_matching
+            && sql.contains(pattern.as_str())
+        {
+            return Err(DriverError::new(
+                ErrorKind::Syntax,
+                format!("syntax error near \"{pattern}\""),
+            ));
+        }
+        if let Some(pattern) = &self.shared.script.connection_error_matching
+            && sql.contains(pattern.as_str())
+        {
+            return Err(DriverError::new(
+                ErrorKind::Connection,
+                "server closed the connection unexpectedly",
+            ));
+        }
+        if let Some(effect) = self.shared.ddl.effect(sql) {
+            let folder = self.shared.script.tables_folder.as_ref();
+            self.shared.live.lock().apply(effect, folder);
+            return Ok(Execution::Affected(0));
+        }
+        if let Some(n) = self.shared.script.affected {
+            return Ok(Execution::Affected(n));
+        }
+        // A cancel targets the currently running query, so a new one starts clean.
+        self.shared.cancelled.store(false, Ordering::SeqCst);
+        if let Some(result) = &self.shared.script.result
+            && sql.trim_start().to_ascii_lowercase().starts_with("select")
+        {
+            return Ok(Execution::Rows(Box::new(ScriptedStream {
+                columns: Arc::from(result.columns.clone()),
+                rows: result.rows.clone(),
+                next_row: 0,
+            })));
+        }
+        let columns: Arc<[ColumnMeta]> = Arc::from(vec![ColumnMeta::new(
+            "n",
+            "int8",
+            ColumnKind::Int,
+            DisplayHint::Number,
+        )]);
+        let block = self.shared.script.block_on_fetch
+            || self
+                .shared
+                .script
+                .block_fetch_matching
+                .as_ref()
+                .is_some_and(|p| sql.contains(p.as_str()));
+        Ok(Execution::Rows(Box::new(FakeStream {
+            shared: self.shared.clone(),
+            columns,
+            next_row: 0,
+            chunks: 0,
+            closed: false,
+            block,
+        })))
+    }
+
+    /// Records `params`, then behaves like `execute`, except that `INSERT`, `UPDATE` and
+    /// `DELETE` affect the next count of [`FakeScript::dml_affected`] (1 once used up).
+    async fn execute_with(&self, sql: &str, params: &[Value]) -> Result<Execution, DriverError> {
+        self.shared
+            .executed_with
+            .lock()
+            .push((sql.to_string(), params.to_vec()));
+        let verb = sql.trim_start().to_ascii_lowercase();
+        let dml = ["insert", "update", "delete"]
+            .iter()
+            .any(|v| verb.starts_with(v));
+        if !dml {
+            return self.execute(sql).await;
+        }
+        let outcome = self.execute(sql).await?;
+        if let Execution::Rows(mut stream) = outcome {
+            stream.close().await?;
+        }
+        let call = self.shared.dml_calls.fetch_add(1, Ordering::SeqCst);
+        let n = self
+            .shared
+            .script
+            .dml_affected
+            .get(call)
+            .copied()
+            .unwrap_or(1);
+        Ok(Execution::Affected(n))
+    }
+
+    async fn check_origin(&self, _table: &TableRef) -> Result<(), DriverError> {
+        match &self.shared.script.origin_error {
+            Some(e) => Err(e.clone()),
+            None => Ok(()),
+        }
+    }
+
+    async fn describe(&self, table: &TableRef) -> Result<TableInfo, DriverError> {
+        self.shared
+            .script
+            .tables
+            .iter()
+            .find(|t| {
+                t.table.name == table.name
+                    && (table.schema.is_none() || t.table.schema == table.schema)
+            })
+            .cloned()
+            .ok_or_else(|| DriverError::new(ErrorKind::Other, "no such table"))
+    }
+
+    fn dialect(&self) -> &dyn Dialect {
+        &self.dialect
+    }
+
+    /// Nodes of object kinds stand for the object of their name (no schema).
+    fn object_ref(&self, node: &Node) -> Option<ObjectRef> {
+        self.shared.script.editing.as_ref()?;
+        Some(ObjectRef {
+            kind: object_kind(node.kind)?,
+            database: None,
+            schema: None,
+            name: node.name.clone(),
+            parent: None,
+            signature: None,
+        })
+    }
+
+    fn introspect(&self) -> Option<&dyn Introspect> {
+        self.shared.script.editing.as_ref().map(|_| self as _)
+    }
+
+    fn admin(&self) -> Option<&dyn Admin> {
+        self.shared.script.admin.as_ref().map(|_| self as _)
+    }
+
+    async fn catalog(&self, schema: &str) -> Result<SchemaCatalog, DriverError> {
+        self.shared.catalogs.fetch_add(1, Ordering::SeqCst);
+        if let Some(gate) = &self.shared.script.catalog_gate {
+            gate.acquire().await.expect("catalog gate open").forget();
+        }
+        if let Some(e) = &self.shared.script.catalog_error {
+            return Err(e.clone());
+        }
+        self.shared
+            .script
+            .catalog
+            .iter()
+            .find(|c| c.schema == schema)
+            .cloned()
+            .ok_or_else(|| DriverError::new(ErrorKind::Other, "no such schema"))
+    }
+}
+
+/// How [`FakeDriver::admin_calls`] records a session action: `<verb> <id>`, then
+/// ` started <ms>` when the start was given.
+fn action_call(verb: &str, id: &str, started_ms: Option<i64>) -> String {
+    match started_ms {
+        Some(ms) => format!("{verb} {id} started {ms}"),
+        None => format!("{verb} {id}"),
+    }
+}
+
+/// How the fake's DDL names an object: `schema.name`, or `name`.
+fn fake_object_name(object: &ObjectRef) -> String {
+    match &object.schema {
+        Some(schema) => format!("{schema}.{}", object.name),
+        None => object.name.clone(),
+    }
+}
+
+impl FakeConnection {
+    fn admin_script(&self) -> &FakeAdmin {
+        self.shared
+            .script
+            .admin
+            .as_ref()
+            .expect("admin is scripted")
+    }
+
+    fn record(&self, call: String) {
+        self.shared.admin_calls.lock().push(call);
+    }
+}
+
+#[async_trait::async_trait]
+impl Admin for FakeConnection {
+    fn supports(&self) -> AdminSupport {
+        self.admin_script().support.clone()
+    }
+
+    fn current_user(&self) -> Option<String> {
+        self.admin_script().current_user.clone()
+    }
+
+    fn session_ids(&self) -> Vec<String> {
+        vec![self.id.to_string()]
+    }
+
+    async fn roles(&self) -> Result<Vec<RoleDef>, DriverError> {
+        self.record("roles".into());
+        Ok(self.admin_script().roles.clone())
+    }
+
+    async fn grants(
+        &self,
+        grantee: Option<&str>,
+        object: Option<&ObjectRef>,
+    ) -> Result<Vec<Grant>, DriverError> {
+        let mut call = format!("grants {}", grantee.unwrap_or("*"));
+        if let Some(o) = object {
+            call.push_str(&format!(" on {}", o.name));
+        }
+        self.record(call);
+        Ok(self
+            .admin_script()
+            .grants
+            .iter()
+            .filter(|g| grantee.is_none_or(|w| g.grantee == w))
+            .filter(|g| object.is_none_or(|o| g.object.name == o.name))
+            .cloned()
+            .collect())
+    }
+
+    fn role_ddl(&self, before: Option<&RoleDef>, after: &RoleDef) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut words = Vec::new();
+        let was = |f: fn(&RoleDef) -> bool| before.map(f);
+        if was(|r| r.login) != Some(after.login) && (before.is_some() || after.login) {
+            words.push(if after.login { "LOGIN" } else { "NOLOGIN" }.to_string());
+        }
+        if was(|r| r.superuser) != Some(after.superuser) && (before.is_some() || after.superuser) {
+            words.push(
+                if after.superuser {
+                    "SUPERUSER"
+                } else {
+                    "NOSUPERUSER"
+                }
+                .to_string(),
+            );
+        }
+        if before.map(|r| r.connection_limit) != Some(after.connection_limit)
+            && let Some(n) = after.connection_limit
+        {
+            words.push(format!("CONNECTION LIMIT {n}"));
+        }
+        if let Some(p) = &after.password {
+            words.push(format!("PASSWORD '{}'", p.expose()));
+        } else if after.clear_password {
+            words.push("PASSWORD NULL".into());
+        }
+        let tail = |words: &[String]| words.iter().map(|w| format!(" {w}")).collect::<String>();
+        let member_before: &[String] = before.map_or(&[], |b| b.member_of.as_slice());
+        match before {
+            None => out.push(format!("CREATE ROLE {}{}", after.name, tail(&words))),
+            Some(b) => {
+                if b.name != after.name {
+                    out.push(format!("ALTER ROLE {} RENAME TO {}", b.name, after.name));
+                }
+                if !words.is_empty() {
+                    out.push(format!("ALTER ROLE {}{}", after.name, tail(&words)));
+                }
+                for r in member_before
+                    .iter()
+                    .filter(|r| !after.member_of.contains(r))
+                {
+                    out.push(format!("REVOKE {r} FROM {}", after.name));
+                }
+            }
+        }
+        for r in after
+            .member_of
+            .iter()
+            .filter(|r| !member_before.contains(r))
+        {
+            out.push(format!("GRANT {r} TO {}", after.name));
+        }
+        out
+    }
+
+    fn drop_role_ddl(&self, role: &RoleDef) -> Vec<String> {
+        vec![format!("DROP ROLE {}", role.name)]
+    }
+
+    fn grant_ddl(&self, add: &[Grant], revoke: &[Grant]) -> Vec<String> {
+        let revokes = revoke.iter().map(|g| {
+            let option = if g.grantable { "GRANT OPTION FOR " } else { "" };
+            format!(
+                "REVOKE {option}{} ON {} FROM {}",
+                g.privilege,
+                fake_object_name(&g.object),
+                g.grantee
+            )
+        });
+        let grants = add.iter().map(|g| {
+            let option = if g.grantable {
+                " WITH GRANT OPTION"
+            } else {
+                ""
+            };
+            format!(
+                "GRANT {} ON {} TO {}{option}",
+                g.privilege,
+                fake_object_name(&g.object),
+                g.grantee
+            )
+        });
+        revokes.chain(grants).collect()
+    }
+
+    async fn sessions(&self) -> Result<Vec<SessionInfo>, DriverError> {
+        self.record("sessions".into());
+        let me = self.id.to_string();
+        Ok(self
+            .admin_script()
+            .sessions
+            .iter()
+            .map(|s| SessionInfo {
+                own: s.id == me,
+                ..s.clone()
+            })
+            .collect())
+    }
+
+    async fn locks(&self) -> Result<Vec<LockInfo>, DriverError> {
+        self.record("locks".into());
+        Ok(self.admin_script().locks.clone())
+    }
+
+    async fn cancel_session(&self, id: &str, started_ms: Option<i64>) -> Result<(), DriverError> {
+        self.record(action_call("cancel", id, started_ms));
+        Ok(())
+    }
+
+    async fn terminate_session(
+        &self,
+        id: &str,
+        started_ms: Option<i64>,
+    ) -> Result<(), DriverError> {
+        self.record(action_call("terminate", id, started_ms));
+        Ok(())
+    }
+
+    async fn properties(&self) -> Result<Vec<ServerProperty>, DriverError> {
+        self.record("properties".into());
+        Ok(self.admin_script().properties.clone())
+    }
+
+    async fn database_sizes(&self) -> Result<Vec<(String, i64)>, DriverError> {
+        self.record("sizes".into());
+        Ok(self.admin_script().sizes.clone())
+    }
+
+    async fn table_stats(&self, schema: Option<&str>) -> Result<Vec<TableStats>, DriverError> {
+        self.record(format!("stats {}", schema.unwrap_or("*")));
+        Ok(self
+            .admin_script()
+            .stats
+            .iter()
+            .filter(|s| schema.is_none_or(|w| s.table.schema.as_deref() == Some(w)))
+            .cloned()
+            .collect())
+    }
+}
+
+#[async_trait::async_trait]
+impl Introspect for FakeConnection {
+    async fn load_object(&self, object: &ObjectRef) -> Result<ObjectDef, DriverError> {
+        self.shared
+            .live
+            .lock()
+            .objects
+            .iter()
+            .find(|d| d.kind() == object.kind && d.object_ref().name == object.name)
+            .cloned()
+            .ok_or_else(|| DriverError::new(ErrorKind::Other, format!("{} not found", object.name)))
+    }
+
+    async fn list_roles(&self) -> Result<Vec<String>, DriverError> {
+        Ok(Vec::new())
+    }
+}
+
+struct FakeStream {
+    shared: Arc<Shared>,
+    columns: Arc<[ColumnMeta]>,
+    next_row: usize,
+    chunks: usize,
+    closed: bool,
+    /// `next_chunk` waits until cancelled.
+    block: bool,
+}
+
+#[async_trait::async_trait]
+impl RowStream for FakeStream {
+    fn columns(&self) -> Arc<[ColumnMeta]> {
+        self.columns.clone()
+    }
+
+    async fn next_chunk(&mut self, max_rows: usize) -> Result<Option<ResultChunk>, DriverError> {
+        if self.block {
+            // Register before checking the flag so a concurrent cancel is never missed.
+            let mut notified = pin!(self.shared.cancel.notified());
+            notified.as_mut().enable();
+            if !self.shared.cancelled.load(Ordering::SeqCst) {
+                notified.await;
+            }
+            return Err(DriverError::new(ErrorKind::Cancelled, "cancelled"));
+        }
+        if let Some((n, err)) = &self.shared.script.fail_after_chunks
+            && self.chunks >= *n
+        {
+            return Err(err.clone());
+        }
+        let total = self.shared.script.rows;
+        if self.next_row >= total {
+            return Ok(None);
+        }
+        let end = total.min(self.next_row + max_rows);
+        let mut b = ChunkBuilder::new(self.columns.clone());
+        for i in self.next_row..end {
+            b.push_row(&[Cell::Int(i as i64)])
+                .expect("fake row matches column");
+        }
+        self.next_row = end;
+        self.chunks += 1;
+        Ok(Some(b.finish()))
+    }
+
+    async fn close(&mut self) -> Result<(), DriverError> {
+        if !self.closed {
+            self.closed = true;
+            self.shared.closed.fetch_add(1, Ordering::SeqCst);
+        }
+        Ok(())
+    }
+}
+
+/// Streams the rows of a [`FakeResult`].
+struct ScriptedStream {
+    columns: Arc<[ColumnMeta]>,
+    rows: Vec<Vec<Value>>,
+    next_row: usize,
+}
+
+#[async_trait::async_trait]
+impl RowStream for ScriptedStream {
+    fn columns(&self) -> Arc<[ColumnMeta]> {
+        self.columns.clone()
+    }
+
+    async fn next_chunk(&mut self, max_rows: usize) -> Result<Option<ResultChunk>, DriverError> {
+        if self.next_row >= self.rows.len() {
+            return Ok(None);
+        }
+        let end = self.rows.len().min(self.next_row + max_rows);
+        let mut b = ChunkBuilder::new(self.columns.clone());
+        for row in &self.rows[self.next_row..end] {
+            let cells: Vec<Cell<'_>> = row.iter().map(Value::as_cell).collect();
+            b.push_row(&cells)
+                .map_err(|e| DriverError::new(ErrorKind::Protocol, e.to_string()))?;
+        }
+        self.next_row = end;
+        Ok(Some(b.finish()))
+    }
+
+    async fn close(&mut self) -> Result<(), DriverError> {
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+struct FakeDialect {
+    default_schemas: Vec<String>,
+    database_is_schema: bool,
+    ddl_commits_transaction: bool,
+    error_aborts_transaction: bool,
+    read_only_sql: bool,
+    ddl: Option<Arc<FakeDdl>>,
+    quote_idents: bool,
+}
+
+/// `ident` in ANSI double quotes.
+fn ansi_quote(ident: &str) -> String {
+    format!("\"{}\"", ident.replace('"', "\"\""))
+}
+
+impl Dialect for FakeDialect {
+    fn savepoint_sql(&self, name: &str) -> String {
+        format!("SAVEPOINT {}", ansi_quote(name))
+    }
+
+    fn rollback_to_sql(&self, name: &str) -> String {
+        format!("ROLLBACK TO SAVEPOINT {}", ansi_quote(name))
+    }
+
+    fn read_only_sql(&self, on: bool) -> Option<String> {
+        self.read_only_sql
+            .then(|| format!("SET READ {}", if on { "ONLY" } else { "WRITE" }))
+    }
+
+    fn ddl_commits_transaction(&self) -> bool {
+        self.ddl_commits_transaction
+    }
+
+    fn error_aborts_transaction(&self) -> bool {
+        self.error_aborts_transaction
+    }
+
+    fn quote_ident(&self, ident: &str) -> String {
+        if self.quote_idents {
+            ansi_quote(ident)
+        } else {
+            ident.to_string()
+        }
+    }
+
+    fn select_all(&self, node: &Node, limit: Option<usize>) -> Option<String> {
+        if !node.kind.opens_data() {
+            return None;
+        }
+        let mut sql = format!("SELECT * FROM {}", self.quote_ident(&node.name));
+        if let Some(n) = limit {
+            sql.push_str(&format!(" LIMIT {n}"));
+        }
+        Some(sql)
+    }
+
+    fn default_schemas(&self) -> Vec<String> {
+        self.default_schemas.clone()
+    }
+
+    fn database_is_schema(&self) -> bool {
+        self.database_is_schema
+    }
+
+    fn ddl_gen(&self) -> Option<&dyn sqlr_core::DdlGen> {
+        self.ddl.as_deref().map(|d| d as _)
+    }
+}

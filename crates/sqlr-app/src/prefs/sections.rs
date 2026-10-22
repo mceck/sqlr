@@ -1,0 +1,124 @@
+//! The rows of the preferences window: one per setting, with where its value comes from.
+
+use egui::{Align, Layout, RichText};
+use sqlr_core::{Level, Levels, Safety, SettingDef, SettingKind, SettingValue};
+use sqlr_store::LayeredSettings;
+use sqlr_ui::theme::{self, Spacing};
+use sqlr_ui::{override_dot, setting_editor};
+
+use super::resolve::Scopes;
+
+/// Width of the label column of the rows that have one.
+const LABEL_WIDTH: f32 = 230.0;
+
+/// What the rows edit: the live settings at one level.
+pub(super) struct Editing<'a> {
+    pub live: &'a mut LayeredSettings,
+    pub scope: &'a Level,
+    pub scopes: &'a Scopes,
+    pub error: &'a mut Option<String>,
+}
+
+impl Editing<'_> {
+    /// Whether the setting can be edited at the level being edited.
+    pub(super) fn applies(&self, def: &SettingDef) -> bool {
+        *self.scope == Level::Global || def.levels == Levels::All
+    }
+
+    /// The rows of `defs` that apply here.
+    pub(super) fn rows(&mut self, ui: &mut egui::Ui, defs: &[&'static SettingDef]) {
+        for def in defs {
+            if self.applies(def) {
+                self.row(ui, def);
+            }
+        }
+    }
+
+    fn row(&mut self, ui: &mut egui::Ui, def: &'static SettingDef) {
+        let key = self.scopes.resolve_key(self.scope);
+        let (effective, from) = self.live.get(def.id, key);
+        // At the global level a value is "set" when it differs from the default.
+        let overridden = self
+            .live
+            .value_at(def.id, self.scope)
+            .is_some_and(|v| *self.scope != Level::Global || *v != def.default);
+        // A flag a higher level switched on cannot be loosened here.
+        let locked = def.safety == Safety::TightenOnly
+            && *self.scope != Level::Global
+            && effective.as_bool()
+            && from != *self.scope;
+
+        let mut edited = effective.clone();
+        let mut changed = false;
+        let mut reset = false;
+        ui.add_space(Spacing::XS);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = Spacing::M;
+            if overridden {
+                let tip = match self.scope {
+                    Level::Global => "Changed from the default".to_string(),
+                    scope => format!("Set for {}", self.scopes.name(scope)),
+                };
+                override_dot(ui, &tip);
+            } else {
+                ui.add_space(9.0 + ui.spacing().item_spacing.x);
+            }
+            if def.kind != SettingKind::Bool {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(LABEL_WIDTH, ui.spacing().interact_size.y),
+                    Layout::left_to_right(Align::Center),
+                    |ui| {
+                        ui.set_min_width(LABEL_WIDTH);
+                        ui.add(egui::Label::new(def.label).truncate())
+                            .on_hover_text(def.label);
+                    },
+                );
+            }
+            ui.add_enabled_ui(!locked, |ui| {
+                changed = setting_editor(ui, def, &mut edited);
+            });
+            if overridden
+                && ui
+                    .small_button("Reset")
+                    .on_hover_text("Clear the value")
+                    .clicked()
+            {
+                reset = true;
+            }
+            if !overridden && *self.scope != Level::Global {
+                let from = self.scopes.name(&from);
+                theme::hint(ui, &format!("from {from}"));
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.add_space(9.0 + 2.0 * ui.spacing().item_spacing.x);
+            ui.add(egui::Label::new(RichText::new(def.description).small().weak()).wrap());
+        });
+        ui.add_space(Spacing::S);
+
+        if reset {
+            self.store(def, None);
+        } else if changed {
+            self.store(def, Some(edited));
+        }
+    }
+
+    fn store(&mut self, def: &'static SettingDef, value: Option<SettingValue>) {
+        // Below the global level a flag that is not on is no override at all.
+        let value = match value {
+            Some(v)
+                if def.safety == Safety::TightenOnly
+                    && *self.scope != Level::Global
+                    && !v.as_bool() =>
+            {
+                None
+            }
+            v => v,
+        };
+        *self.error = self
+            .live
+            .set(def.id, self.scope.clone(), value)
+            .err()
+            .map(|e| format!("Could not change the setting: {e}"));
+    }
+}

@@ -1,0 +1,67 @@
+// db.people.createIndex({ last: 1, first: -1 }, { unique: true, name: "by_name" })
+CreateIndex {
+    coll: "people",
+    keys: Document(
+        [
+            (
+                "last",
+                Int32(
+                    1,
+                ),
+            ),
+            (
+                "first",
+                Int32(
+                    -1,
+                ),
+            ),
+        ],
+    ),
+    options: Some(
+        Document(
+            [
+                (
+                    "unique",
+                    Bool(
+                        true,
+                    ),
+                ),
+                (
+                    "name",
+                    String(
+                        "by_name",
+                    ),
+                ),
+            ],
+        ),
+    ),
+}
+// db.people.dropIndex("by_name")
+DropIndex {
+    coll: "people",
+    index: String(
+        "by_name",
+    ),
+}
+// db.people.dropIndex({ age: 1 })
+DropIndex {
+    coll: "people",
+    index: Document(
+        [
+            (
+                "age",
+                Int32(
+                    1,
+                ),
+            ),
+        ],
+    ),
+}
+// db.people.getIndexes()
+GetIndexes {
+    coll: "people",
+}
+// db.people.drop()
+Drop {
+    coll: "people",
+}

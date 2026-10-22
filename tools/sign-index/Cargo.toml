@@ -1,0 +1,13 @@
+[package]
+name = "sign-index"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Signs a driver registry index and its artifacts with a minisign key."
+
+[dependencies]
+minisign = "0.7"
+sha2 = "0.11"
+
+# Not a member of the sqlr workspace: a release tool for the registry maintainers.
+[workspace]
