@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sqlr — a universal database client in native Rust</title>
+<meta name="description" content="sqlr is a lightweight, universal database client written in native Rust with egui. One app for relational, document and key-value databases, extended by drivers you write in Rust. MIT licensed.">
+<style>
+  :root {
+    --bg: #0b0e14;
+    --bg-soft: #10151f;
+    --panel: #141b27;
+    --line: #243049;
+    --text: #e8edf5;
+    --muted: #9aa7bd;
+    --dim: #6b7a93;
+    --accent: #4fd1a5;
+    --accent-soft: rgba(79, 209, 165, 0.14);
+    --blue: #6ea8fe;
+    --amber: #f2b352;
+    --red: #f0767a;
+    --mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+  /* Top bar */
+  .topbar {
+    position: sticky; top: 0; z-index: 10;
+    background: rgba(11, 14, 20, 0.85);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar .wrap { display: flex; align-items: center; gap: 20px; height: 60px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; letter-spacing: -0.01em; }
+  .brand img { width: 28px; height: 28px; border-radius: 6px; }
+  .tagline { color: var(--dim); font-size: 13px; margin-left: auto; }
+  nav { display: flex; gap: 18px; font-size: 14px; }
+  nav a { color: var(--muted); }
+  nav a:hover { color: var(--text); text-decoration: none; }
+
+  /* Hero */
+  .hero { padding: 88px 0 48px; text-align: center; position: relative; }
+  .hero::before {
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(600px 300px at 50% 0%, var(--accent-soft), transparent 70%);
+    pointer-events: none;
+  }
+  .hero img.icon { width: 112px; height: 112px; border-radius: 22px; margin-bottom: 18px;
+    box-shadow: 0 12px 44px rgba(79, 209, 165, 0.18); }
+  .hero h1 { margin: 0 0 10px; font-size: 44px; letter-spacing: -0.03em; font-weight: 800; }
+  .hero h1 .dot { color: var(--accent); }
+  .hero p.lede { max-width: 640px; margin: 0 auto; color: var(--muted); font-size: 18px; }
+  .badges { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 22px; }
+  .badge {
+    font-size: 12.5px; padding: 5px 12px; border-radius: 999px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--muted);
+    font-family: var(--mono);
+  }
+  .badge b { color: var(--accent); font-weight: 600; }
+
+  /* Sections */
+  section { padding: 56px 0; border-top: 1px solid var(--line); }
+  section:first-of-type { border-top: 0; }
+  h2 { font-size: 30px; letter-spacing: -0.02em; margin: 0 0 8px; }
+  h2 .num { color: var(--accent); font-family: var(--mono); font-weight: 600; margin-right: 10px; font-size: 20px; }
+  .sub { color: var(--muted); margin: 0 0 22px; max-width: 720px; }
+
+  /* Feature cards */
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 18px 18px 16px;
+  }
+  .card h3 { margin: 0 0 8px; font-size: 16.5px; font-weight: 700; }
+  .card p { margin: 0; color: var(--muted); font-size: 14.5px; }
+  .card .chip {
+    display: inline-block; font-family: var(--mono); font-size: 12px;
+    color: var(--accent); background: var(--accent-soft); padding: 1px 7px; border-radius: 6px; margin-right: 6px;
+  }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 14.5px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: 0.05em; }
+  tr:last-child td { border-bottom: 0; }
+  td .mono { font-family: var(--mono); font-size: 13px; color: var(--blue); }
+  tr:hover td { background: rgba(255,255,255,0.015); }
+
+  /* Code blocks */
+  pre {
+    background: var(--bg-soft); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px 16px; font-family: var(--mono); font-size: 13.5px;
+    overflow-x: auto; color: var(--text); line-height: 1.6;
+  }
+  pre .cm { color: var(--dim); }
+  pre .st { color: var(--amber); }
+  pre .kw { color: var(--accent); }
+
+  /* Two column */
+  .cols { display: grid; grid-template-columns: 1.2fr 1fr; gap: 28px; align-items: start; }
+  ul.tight { margin: 0; padding-left: 0; list-style: none; }
+  ul.tight li { padding: 7px 0 7px 22px; position: relative; color: var(--muted); font-size: 15px; }
+  ul.tight li::before { content: "▸"; position: absolute; left: 0; color: var(--accent); }
+  ul.tight li b { color: var(--text); }
+
+  /* Docs list */
+  .doclinks a {
+    display: block; padding: 11px 14px; border: 1px solid var(--line); border-radius: 10px;
+    background: var(--panel); color: var(--text); font-size: 14.5px; margin-bottom: 8px;
+  }
+  .doclinks a .path { font-family: var(--mono); font-size: 12px; color: var(--dim); float: right; }
+  .doclinks a:hover { border-color: var(--accent); text-decoration: none; }
+
+  /* Footer */
+  footer { border-top: 1px solid var(--line); padding: 28px 0 34px; color: var(--dim); font-size: 13.5px; text-align: center; }
+
+  @media (max-width: 760px) {
+    .cards { grid-template-columns: 1fr; }
+    .cols { grid-template-columns: 1fr; }
+    .hero h1 { font-size: 34px; }
+    .topbar nav { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="wrap">
+    <div class="brand">
+      <img src="media/icon.png" alt="sqlr icon">
+      sqlr
+    </div>
+    <nav>
+      <a href="#features">Features</a>
+      <a href="#databases">Databases</a>
+      <a href="#performance">Performance</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#drivers">Drivers</a>
+      <a href="#build">Build</a>
+      <a href="#docs">Docs</a>
+    </nav>
+  </div>
+</div>
+
+<header class="wrap">
+  <div class="hero">
+    <img class="icon" src="media/icon.png" alt="sqlr icon">
+    <h1>sqlr<span class="dot">.</span></h1>
+    <p class="lede">
+      A universal database client: native Rust, egui, no webview. One app for relational,
+      document and key-value databases — and any other database you add by writing a driver.
+      Open source, MIT licensed.
+    </p>
+    <div class="badges">
+      <span class="badge"><b>Rust</b> native + egui</span>
+      <span class="badge"><b>No</b> webview</span>
+      <span class="badge"><b>MIT</b> licensed</span>
+      <span class="badge"><b>60 fps</b> on 1M+ rows</span>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+<section id="features">
+  <h2><span class="num">01</span>What it does</h2>
+  <p class="sub">A complete set of database development tools in a fast native UI. The highlights:</p>
+  <div class="cards">
+    <div class="card">
+      <h3>Grid editing</h3>
+      <p>Double-click a cell, add, duplicate or delete rows. Changes are tinted until you <b>Preview</b> the generated SQL, then <b>Apply</b> or <b>Discard</b>. Concurrent changes from other sessions are detected and named.</p>
+    </div>
+    <div class="card">
+      <h3>SQL editor for big scripts</h3>
+      <p>Only visible lines are laid out: a 10 MB file scrolls and takes typing in well under a frame. Statement coloring, autocomplete, find/replace, multi-caret editing, formatting (⌥⌘L) and a command palette (⌘K) over commands, snippets and history.</p>
+    </div>
+    <div class="card">
+      <h3>Profiles &amp; commit modes</h3>
+      <p>Each connection gets a <b>Development</b>, <b>Test</b> or <b>Production</b> profile — with its color, commit mode (Auto, Manual, Smart), a read-only flag and confirmation rules for writes and destructive statements.</p>
+    </div>
+    <div class="card">
+      <h3>Object editors</h3>
+      <p>Tables, views, indexes, sequences, functions, triggers, schemas and databases open in tabs with sub-tabs for structure, definition, dependencies and sample data.</p>
+    </div>
+    <div class="card">
+      <h3>Transfer tools</h3>
+      <p>Export queries to CSV/JSON, import files back, and copy between connections — including between two different database engines, row by row.</p>
+    </div>
+    <div class="card">
+      <h3>NoSQL, first class</h3>
+      <p>MongoDB and Elasticsearch get document views with expandable JSON trees; Redis gets a key-value browser. A MongoDB shell subset covers the everyday commands.</p>
+    </div>
+  </div>
+</section>
+
+<section id="databases">
+  <h2><span class="num">02</span>Supported databases</h2>
+  <p class="sub">Built-in drivers ship in the app; the rest can be installed from the signed driver registry.</p>
+  <table>
+    <tr><th>Database</th><th>Type</th><th>How it ships</th><th>Notes</th></tr>
+    <tr><td>PostgreSQL</td><td>Relational</td><td><span class="mono">bundled</span></td><td>Full driver: catalog, queries, grid editing, object editors.</td></tr>
+    <tr><td>MySQL / MariaDB</td><td>Relational</td><td><span class="mono">bundled</span></td><td>Full driver with dialect-aware queries and metadata.</td></tr>
+    <tr><td>SQLite</td><td>Relational</td><td><span class="mono">bundled</span></td><td>File-per-database, no server required; backups and traces.</td></tr>
+    <tr><td>MongoDB</td><td>Document</td><td><span class="mono">bundled</span></td><td>Collections, document viewer, shell-subset commands.</td></tr>
+    <tr><td>Elasticsearch</td><td>Search / document</td><td><span class="mono">bundled</span></td><td>Indices, documents, query DSL.</td></tr>
+    <tr><td>Redis</td><td>Key-value</td><td><span class="mono">bundled</span></td><td>KV browser with type-aware values.</td></tr>
+    <tr><td>SAP HANA</td><td>Relational</td><td><span class="mono">sidecar</span></td><td>Spoken to the HANA client over the JDBC/ODBC bridge.</td></tr>
+    <tr><td>Any JDBC database</td><td>Relational</td><td><span class="mono">sidecar</span></td><td>Java 17+ bridge: add a database by dropping in its JDBC driver.</td></tr>
+  </table>
+</section>
+
+<section id="performance">
+  <h2><span class="num">03</span>Performance budgets</h2>
+  <p class="sub">These numbers are hard requirements enforced in CI — “not aspirations.” They are what keep sqlr from becoming Electron or a JVM app.</p>
+  <table>
+    <tr><th>Budget</th><th>Target</th><th>Why it matters</th></tr>
+    <tr><td>Cold start</td><td><b>&lt; 1 s</b></td><td>The app must feel instant, like a terminal tool.</td></tr>
+    <tr><td>Idle memory</td><td><b>&lt; 150 MB</b></td><td>No retained heaps; columns live only as needed.</td></tr>
+    <tr><td>Grid with 1M+ rows</td><td><b>60 fps</b></td><td>Editing and scrolling stay fluid on big result sets.</td></tr>
+    <tr><td>Autocomplete / open table</td><td><b>&lt; 50 ms</b></td><td>Catalog lookups must not lag behind typing.</td></tr>
+    <tr><td>Distributed binary</td><td><b>&lt; 50 MB</b></td><td>A lightweight client you can carry anywhere.</td></tr>
+  </table>
+  <p class="sub" style="margin-top:14px">See <a href="performance-budgets.md">performance-budgets.md</a> for the exact CI checks and measurement method.</p>
+</section>
+
+<section id="architecture">
+  <h2><span class="num">04</span>Architecture</h2>
+  <p class="sub">A small set of crates with strict boundaries. The UI thread never does I/O; all database work runs on the tokio runtime off the main thread.</p>
+  <table>
+    <tr><th>Crate</th><th>Role</th></tr>
+    <tr><td><span class="mono">sqlr-core</span></td><td>Domain types, columnar chunks, driver traits. Depends on nothing internal.</td></tr>
+    <tr><td><span class="mono">sqlr-driver-*</span></td><td>One driver per database (tokio-postgres, …).</td></tr>
+    <tr><td><span class="mono">sqlr-engine</span></td><td>Tokio runtime off the UI thread: sessions, explorer/catalog cache, results, history, installed sidecar drivers.</td></tr>
+    <tr><td><span class="mono">sqlr-sidecar</span></td><td>Sidecar protocol, <span class="mono">SidecarDriver</span> client, the <span class="mono">serve</span> loop.</td></tr>
+    <tr><td><span class="mono">sqlr-registry</span></td><td>Signed driver registry: installs and versions, no UI.</td></tr>
+    <tr><td><span class="mono">sqlr-driver-sdk</span></td><td>Write a driver as a sidecar: re-exports the API and <span class="mono">run</span>.</td></tr>
+    <tr><td><span class="mono">sqlr-driver-tests</span></td><td>Conformance suite for drivers (dev-dependency only).</td></tr>
+    <tr><td><span class="mono">sqlr-store</span></td><td>Connections TOML, OS keychain secrets, settings.</td></tr>
+    <tr><td><span class="mono">sqlr-ui</span></td><td>egui widgets: grid, tree, forms, docked panels.</td></tr>
+  </table>
+  <div class="cols" style="margin-top:18px">
+    <div>
+      <ul class="tight">
+        <li><b>Security:</b> no OpenSSL (rustls only); secrets live only in the OS keychain and arrive at <span class="mono">connect</span> time.</li>
+        <li><b>Threads:</b> the UI thread never does I/O; every engine call is async on tokio.</li>
+        <li><b>Caching:</b> catalog explorer and autocomplete share one in-memory cache with bounded size.</li>
+      </ul>
+    </div>
+    <pre><span class="cm">// the whole app is:</span>
+<span class="kw">native Rust</span> + <span class="kw">egui</span> + <span class="kw">tokio</span>
+<span class="cm">// and deliberately not:</span>
+<span class="st">no webview · no Electron · no JVM</span></pre>
+  </div>
+</section>
+
+<section id="drivers">
+  <h2><span class="num">05</span>Adding a database: sidecars</h2>
+  <p class="sub">
+    A database sqlr doesn’t ship with becomes a <b>sidecar driver</b>: a separate executable that
+    sqlr starts and talks to over stdio. Frame protocol v1.0.0 — each message is one length-prefixed frame:
+  </p>
+  <table>
+    <tr><th>bytes</th><th>field</th></tr>
+    <tr><td>4</td><td><span class="mono">length</span> — big-endian u32, size of everything after it (9 + payload)</td></tr>
+    <tr><td>1</td><td><span class="mono">type</span></td></tr>
+    <tr><td>8</td><td><span class="mono">request id</span> — big-endian u64</td></tr>
+    <tr><td>…</td><td>payload (MessagePack for control frames)</td></tr>
+  </table>
+  <p class="sub" style="margin-top:14px">Frames are capped at 64 MiB; a driver can be written in Rust with
+    <span class="mono">sqlr-driver-sdk</span> — or in any language that can read and write the frames.</p>
+  <pre><span class="cm"># scaffold a driver from the template</span>
+cargo generate --path templates/sqlr-driver-template --name my-driver
+cd my-driver
+cargo test</pre>
+</section>
+
+<section id="build">
+  <h2><span class="num">06</span>Build &amp; run</h2>
+  <p class="sub">Requires Rust 1.98+ (workspace edition 2024). The default <span class="mono">cargo</span> commands act on the app; sidecar drivers are extra binaries.</p>
+  <pre>
+<span class="cm"># run the app</span>
+cargo run
+
+<span class="cm"># release build</span>
+cargo build --release
+
+<span class="cm"># test the workspace + driver conformance</span>
+cargo test
+
+<span class="cm"># exercise the HANA/JDBC sidecars</span>
+cargo test -p sqlr-driver-hana</pre>
+</section>
+
+<section id="docs">
+  <h2><span class="num">07</span>Documentation</h2>
+  <p class="sub">The full design specification and developer docs live in this repository:</p>
+  <div class="doclinks">
+    <a href="spec/sqlr-design.md">Product specification <span class="path">docs/spec/sqlr-design.md</span></a>
+    <a href="writing-a-driver.md">Writing a driver <span class="path">docs/writing-a-driver.md</span></a>
+    <a href="driver-protocol.md">Sidecar driver protocol v1.0.0 <span class="path">docs/driver-protocol.md</span></a>
+    <a href="performance-budgets.md">Performance budgets <span class="path">docs/performance-budgets.md</span></a>
+    <a href="mongo-shell-subset.md">MongoDB shell subset <span class="path">docs/mongo-shell-subset.md</span></a>
+    <a href="drivers/hana.md">HANA sidecar notes <span class="path">docs/drivers/hana.md</span></a>
+    <a href="drivers/jdbc.md">JDBC bridge notes <span class="path">docs/drivers/jdbc.md</span></a>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    sqlr — MIT licensed. Native Rust + egui. No webview, no telemetry, no installers.
+  </div>
+</footer>
+
+</body>
+</html>
