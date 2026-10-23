@@ -408,6 +408,14 @@ impl SqlrApp {
         app
     }
 
+    /// Polls background work without drawing, including while the window is hidden.
+    pub fn logic(&mut self, ctx: &egui::Context) {
+        self.sync_profiles();
+        self.poll_store();
+        self.agents_tick(ctx);
+        self.poll_settings_save(ctx);
+    }
+
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         sqlr_ui::keymap::normalize_platform_clipboard(ui.ctx(), &self.keymap.keymap);
         // Sampled before anything else sees the key: what is open now gets Esc first.
@@ -443,10 +451,9 @@ impl SqlrApp {
         }) {
             self.dispatch_action(action, ui.ctx());
         }
-        self.sync_profiles();
-        self.poll_store();
-        self.agents_frame(ui.ctx());
-        self.poll_settings_save(ui.ctx());
+        // Also support embedders that drive the UI without an eframe logic hook.
+        self.logic(ui.ctx());
+        self.approval_ui(ui.ctx());
         self.open_pending_redis();
         self.forget_failed_secrets();
         let failures = self.engine.take_notices();

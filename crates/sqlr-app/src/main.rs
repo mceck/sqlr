@@ -12,6 +12,10 @@ struct Shell {
 }
 
 impl eframe::App for Shell {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.app.logic(ctx);
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         egui::CentralPanel::no_frame().show(ui, |ui| self.app.ui(ui));
         if let Some(started) = self.started.take() {
@@ -112,4 +116,150 @@ fn main() -> eframe::Result {
             }))
         }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use eframe::App as _;
+    use serde_json::{Value, json};
+    use sqlr_app::AppDeps;
+    use sqlr_engine::{DriverRegistry, Engine};
+    use sqlr_store::{ConnectionRepo, MemoryMcpTokenStore, MemorySecretStore, Settings};
+    use sqlr_testkit::{FakeDriver, FakeScript};
+    use std::time::Duration;
+
+    async fn rpc(
+        client: &reqwest::Client,
+        url: &str,
+        session: Option<&str>,
+        body: Value,
+    ) -> (Value, Option<String>) {
+        let mut request = client.post(url).json(&body);
+        if let Some(session) = session {
+            request = request.header("mcp-session-id", session);
+        }
+        let response = request.send().await.unwrap().error_for_status().unwrap();
+        let session = response
+            .headers()
+            .get("mcp-session-id")
+            .map(|value| value.to_str().unwrap().to_string());
+        let text = response.text().await.unwrap();
+        let value = text
+            .lines()
+            .filter_map(|line| line.strip_prefix("data:"))
+            .find_map(|data| serde_json::from_str(data.trim()).ok())
+            .unwrap_or(Value::Null);
+        (value, session)
+    }
+
+    #[test]
+    fn hidden_window_serves_mcp_requests_and_connection_write_acknowledgements() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let dir = tempfile::tempdir().unwrap();
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let mut drivers = DriverRegistry::default();
+        drivers.register(FakeDriver::new(FakeScript::default()));
+        let secrets = Arc::new(MemorySecretStore::default());
+        let engine = Engine::new(drivers, Arc::new(|| {}));
+        engine.set_secret_store(secrets.clone());
+        let ctx = egui::Context::default();
+        let app = SqlrApp::new(
+            AppDeps {
+                engine,
+                repo: ConnectionRepo::open(dir.path(), Box::new(secrets)).unwrap(),
+                settings: Settings {
+                    agents_enabled: true,
+                    agents_port: port,
+                    ..Settings::default()
+                },
+                config_dir: dir.path().into(),
+                data_dir: Some(dir.path().into()),
+                startup_notice: None,
+                storage_warning: None,
+                mcp_token_store: Some(Arc::new(MemoryMcpTokenStore::with_token("hidden-test"))),
+            },
+            &ctx,
+        );
+        let mut shell = Shell {
+            app,
+            started: None,
+            budget: None,
+        };
+        let mut frame = eframe::Frame::_new_kittest();
+        let mut input = egui::RawInput::default();
+        input
+            .viewports
+            .get_mut(&egui::ViewportId::ROOT)
+            .unwrap()
+            .occluded = Some(true);
+        let tick = |shell: &mut Shell, frame: &mut eframe::Frame| {
+            let _ = ctx.run_logic(&input, |ctx| shell.logic(ctx, frame));
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !shell.app.mcp_running_for_tests() {
+            tick(&mut shell, &mut frame);
+            assert!(
+                Instant::now() < deadline,
+                "MCP did not start without a UI pass"
+            );
+        }
+
+        let client = std::thread::spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(async move {
+                    let mut headers = reqwest::header::HeaderMap::new();
+                    headers.insert("Authorization", "Bearer hidden-test".parse().unwrap());
+                    headers.insert("Accept", "application/json, text/event-stream".parse().unwrap());
+                    let client = reqwest::Client::builder()
+                        .default_headers(headers)
+                        .timeout(Duration::from_secs(5))
+                        .build()
+                        .unwrap();
+                    let url = format!("http://127.0.0.1:{port}/mcp");
+                    let (init, session) = rpc(&client, &url, None, json!({
+                        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                        "params": {"protocolVersion": "2025-11-25", "capabilities": {},
+                            "clientInfo": {"name": "hidden-test", "version": "1"}}
+                    })).await;
+                    assert_eq!(init["result"]["serverInfo"]["name"], "sqlr");
+                    let session = session.unwrap();
+                    rpc(&client, &url, Some(&session), json!({
+                        "jsonrpc": "2.0", "method": "notifications/initialized"
+                    })).await;
+                    let (tabs, _) = rpc(&client, &url, Some(&session), json!({
+                        "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                        "params": {"name": "list_query_tabs", "arguments": {}}
+                    })).await;
+                    assert_eq!(tabs["result"]["structuredContent"]["tabs"][0]["title"], "Query 1");
+                    let (write, _) = rpc(&client, &url, Some(&session), json!({
+                        "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                        "params": {"name": "config_write", "arguments": {
+                            "target": "connection", "payload": {"name": "Hidden write", "driver": "fake"}
+                        }}
+                    })).await;
+                    assert_eq!(write["result"]["isError"], false, "{write}");
+                    client.delete(&url).header("mcp-session-id", session)
+                        .send().await.unwrap().error_for_status().unwrap();
+                });
+        });
+        while !client.is_finished() {
+            tick(&mut shell, &mut frame);
+        }
+        client.join().unwrap();
+        let saved = std::fs::read_to_string(dir.path().join("connections.toml")).unwrap();
+        assert!(saved.contains("Hidden write"));
+        shell.app.set_mcp_enabled_for_tests(false);
+        tick(&mut shell, &mut frame);
+        assert!(shell.app.mcp_stopped_for_tests());
+        assert!(!dir.path().join("mcp.json").exists());
+    }
 }

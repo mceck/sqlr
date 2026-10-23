@@ -55,3 +55,5 @@ sqlr-testkit = { path = "../sqlr-testkit" }
 tempfile.workspace = true
 # Writes a foreign `demo.sqlite` and reads the generated demo database back.
 rusqlite.workspace = true
+reqwest = { workspace = true, features = ["json"] }
+rustls.workspace = true

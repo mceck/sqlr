@@ -372,7 +372,7 @@ async fn describe_object(state: &Arc<ServerState>, args: &Args) -> ToolResult<Ca
             "describe_object is relational; use browse for this family",
         ));
     }
-    let key = ensure_connected(
+    ensure_connected(
         state,
         &ToolContext {
             session_id: "describe".into(),
@@ -387,7 +387,9 @@ async fn describe_object(state: &Arc<ServerState>, args: &Args) -> ToolResult<Ca
         schema: args.opt_str("schema").map(str::to_string),
         name: name.to_string(),
     };
-    state.engine.describe(&key, table.clone());
+    // Catalog reads use the live explorer session. Agent sessions open lazily on
+    // their first query; prepare_agent_session alone does not connect one.
+    state.engine.describe(&SessionKey::meta(id), table.clone());
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         match state.engine.table_info(id, &table) {
@@ -981,13 +983,14 @@ async fn close_result(
     args: &Args,
 ) -> ToolResult<CallToolResult> {
     let id = args.str("query_id")?;
-    let Some((q, kind)) = state.results.get(id) else {
+    let Some((q, kind)) = state.results.remove(id) else {
         return Ok(CallToolResult::structured(
             json!({"query_id": id, "closed": false}),
         ));
     };
-    state.results.close(id);
-    results::close_engine_result(state.engine.as_ref(), q, kind);
+    if let Some(q) = q {
+        results::close_engine_result(state.engine.as_ref(), q, kind);
+    }
     let _ = ctx;
     Ok(CallToolResult::structured(
         json!({"query_id": id, "closed": true}),

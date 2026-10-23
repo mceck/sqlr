@@ -473,6 +473,84 @@ async fn exposure_read_write_and_query_contract() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn describe_object_connects_without_an_agent_query_session() {
+    let store = Arc::new(MemoryMcpTokenStore::with_token("t"));
+    let (server, host, _dir, port, token) = setup(AgentAccess::Write, store).await;
+    let mut writer = Client::new(port, &token);
+    writer.initialize().await;
+    let created = writer
+        .tool(
+            2,
+            "run_query",
+            json!({"connection_id":"c1","query":"create table PuckDraft (id integer primary key, title text not null)"}),
+        )
+        .await;
+    assert_eq!(created["status"], "ready", "{created}");
+
+    // Metadata must work for Read exposure and before this client runs any query.
+    host.state.lock().unwrap().config.agent_access = AgentAccess::Read;
+    let mut reader = Client::new(port, &token);
+    reader.initialize().await;
+    reader
+        .rpc(2, "tools/call", json!({"name":"get_guide","arguments":{}}))
+        .await;
+    for call_id in [3, 4] {
+        let described = reader
+            .tool(
+                call_id,
+                "describe_object",
+                json!({"connection_id":"c1","name":"PuckDraft"}),
+            )
+            .await;
+        assert!(described.get("error").is_none(), "{described}");
+        assert_eq!(described["table"]["name"], "PuckDraft");
+        assert_eq!(described["columns"][0]["name"], "id");
+        assert_eq!(described["columns"][1]["name"], "title");
+        assert_eq!(described["columns"][1]["nullable"], false);
+        assert_eq!(described["primary_key"], json!(["id"]));
+    }
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn close_result_releases_native_replies() {
+    let dir = tempfile::tempdir().unwrap();
+    let manifest = SqliteDriver::new().manifest().clone();
+    let host = Arc::new(TestHost::new(
+        sqlite_config(dir.path(), AgentAccess::Read),
+        manifest,
+    ));
+    let engine = Arc::new(Engine::new(DriverRegistry::default(), Arc::new(|| {})));
+    let state = Arc::new(sqlr_mcp::state::ServerState::new(
+        engine,
+        host,
+        0,
+        "test-token".into(),
+    ));
+    let ctx = state.context("reader");
+    let id = state
+        .results
+        .insert_reply("reader", &sqlr_core::RespValue::Int(42));
+    let arguments = json!({"query_id":id});
+
+    let closed = sqlr_mcp::tools::call(&state, &ctx, "close_result", arguments.as_object())
+        .await
+        .unwrap();
+    assert_eq!(closed.structured_content.unwrap()["closed"], true);
+    let page = sqlr_mcp::tools::call(&state, &ctx, "get_query_result", arguments.as_object())
+        .await
+        .unwrap();
+    assert_eq!(
+        page.structured_content.unwrap()["error"]["code"],
+        "not_found"
+    );
+    let closed_again = sqlr_mcp::tools::call(&state, &ctx, "close_result", arguments.as_object())
+        .await
+        .unwrap();
+    assert_eq!(closed_again.structured_content.unwrap()["closed"], false);
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn not_exposed_connections_are_invisible() {
     let store = Arc::new(MemoryMcpTokenStore::with_token("t"));
     let (server, _host, _dir, port, token) = setup(AgentAccess::None, store).await;

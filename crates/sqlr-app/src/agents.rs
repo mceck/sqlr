@@ -933,12 +933,35 @@ impl SqlrApp {
         snapshot.text_between((0, 0), (snapshot.rows - 1, snapshot.cols - 1))
     }
 
-    pub(crate) fn agents_frame(&mut self, ctx: &egui::Context) {
+    pub(crate) fn agents_tick(&mut self, ctx: &egui::Context) {
         self.ui_ctx = Some(ctx.clone());
         while let Ok(task) = self.host_jobs.try_recv() {
             task(self);
         }
-        self.approval_ui(ctx);
+        let now = Instant::now();
+        self.pending_approvals.retain_mut(|pending| {
+            if pending
+                .reply
+                .as_ref()
+                .is_some_and(oneshot::Sender::is_closed)
+            {
+                return false;
+            }
+            if now >= pending.deadline {
+                tracing::info!(
+                    target: "sqlr_mcp",
+                    client = %pending.request.client_name,
+                    session = %pending.request.session_id,
+                    risk = pending.request.risk.label(),
+                    allowed = false,
+                    reason = "timeout",
+                    "agent approval decided"
+                );
+                pending.answer(Err(ToolError::timeout()));
+                return false;
+            }
+            true
+        });
         if !self.settings.agents_enabled && self.mcp.status != McpStatus::Stopped {
             while let Some(mut pending) = self.pending_approvals.pop_front() {
                 pending.answer(Err(ToolError::denied()));
@@ -963,16 +986,7 @@ impl SqlrApp {
         }
     }
 
-    fn approval_ui(&mut self, ctx: &egui::Context) {
-        // A disconnected MCP client drops its receiver: deny and forget the request.
-        while self
-            .pending_approvals
-            .front()
-            .and_then(|pending| pending.reply.as_ref())
-            .is_some_and(tokio::sync::oneshot::Sender::is_closed)
-        {
-            self.pending_approvals.pop_front();
-        }
+    pub(crate) fn approval_ui(&mut self, ctx: &egui::Context) {
         let Some(pending) = self.pending_approvals.front() else {
             return;
         };
@@ -1219,7 +1233,7 @@ mod tests {
         });
         let deadline = Instant::now() + Duration::from_secs(5);
         let presence = loop {
-            app.agents_frame(&ctx);
+            app.agents_tick(&ctx);
             match rx.try_recv() {
                 Ok(result) => break result.unwrap(),
                 Err(mpsc::TryRecvError::Empty) => {
@@ -1231,5 +1245,45 @@ mod tests {
         };
         worker.join().unwrap();
         assert_eq!(presence.get("password"), Some(&true));
+    }
+
+    #[test]
+    fn hidden_logic_expires_queued_approvals_and_discards_disconnected_requests() {
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = egui::Context::default();
+        let mut app = SqlrApp::new(
+            AppDeps {
+                engine: Engine::new(DriverRegistry::default(), Arc::new(|| {})),
+                repo: ConnectionRepo::open(dir.path(), Box::new(MemorySecretStore::default()))
+                    .unwrap(),
+                settings: Settings::default(),
+                config_dir: dir.path().into(),
+                data_dir: None,
+                startup_notice: None,
+                storage_warning: None,
+                mcp_token_store: None,
+            },
+            &ctx,
+        );
+        let mut waiting = app.queue_approval_for_tests();
+        let mut expired = app.queue_approval_for_tests();
+        app.pending_approvals.back_mut().unwrap().deadline =
+            Instant::now() - Duration::from_secs(1);
+        drop(app.queue_approval_for_tests());
+
+        let _ = ctx.run_logic(&egui::RawInput::default(), |ctx| app.logic(ctx));
+        assert_eq!(
+            expired
+                .try_recv()
+                .expect("an expired approval must be answered while hidden")
+                .unwrap_err()
+                .code,
+            "timeout"
+        );
+        assert!(matches!(
+            waiting.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
+        assert_eq!(app.pending_approvals.len(), 1);
     }
 }
