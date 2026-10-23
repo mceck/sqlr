@@ -975,3 +975,31 @@ CREATE VIEW tv AS SELECT id FROM t",
         .unwrap();
     assert!(err.message.contains("no deletes"), "{err:?}");
 }
+
+/// A column stops being generated: the rebuild copies its stored values instead of
+/// losing them (a plain column cannot be recomputed).
+#[tokio::test]
+async fn rebuild_keeps_the_values_of_a_column_that_stops_being_generated() {
+    let env = Env::new(
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, a INTEGER, twice INTEGER GENERATED ALWAYS AS (a * 2) STORED);
+INSERT INTO t (id, a) VALUES (1, 10), (2, 21)",
+    )
+    .await;
+    let before = env.table("t").await;
+    let mut after = before.clone();
+    let twice = after
+        .columns
+        .iter_mut()
+        .find(|c| c.name == "twice")
+        .expect("the generated column");
+    twice.generated = None;
+    twice.generated_stored = false;
+    env.alter(&before, &after).await;
+    assert_eq!(
+        env.query("SELECT id, twice FROM t ORDER BY id").await,
+        [
+            vec![Value::Int(1), Value::Int(20)],
+            vec![Value::Int(2), Value::Int(42)],
+        ]
+    );
+}

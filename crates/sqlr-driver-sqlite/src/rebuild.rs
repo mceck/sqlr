@@ -91,7 +91,9 @@ pub(crate) fn rebuild(
     let (targets, sources): (Vec<String>, Vec<String>) = pair_columns(before, after)
         .into_iter()
         .filter_map(|pair| match pair {
-            (Some(b), Some(a)) if b.generated.is_none() && a.generated.is_none() => {
+            // A column generated in the new table is computed: it takes no values. One
+            // that was generated before and is plain now keeps the values it had.
+            (Some(b), Some(a)) if a.generated.is_none() => {
                 Some((d.quote_ident(&a.name), d.quote_ident(&b.name)))
             }
             _ => None,
