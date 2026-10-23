@@ -179,7 +179,7 @@ impl DataFormats {
         let t = meta.type_name.to_lowercase();
         let (pattern, kind) = if t.contains("timestamptz")
             || t.contains("with time zone")
-            || t.contains("timestamp with")
+            || t.contains("with local time zone")
         {
             (&self.timestamptz, Temporal::Zoned)
         } else if t.contains("timestamp") || t.contains("datetime") {
@@ -404,6 +404,26 @@ mod tests {
         assert_eq!(f.format(&bytes, Cell::Bytes(b"Ma")), "TWE=");
         assert_eq!(f.format(&bytes, Cell::Bytes(b"M")), "TQ==");
         assert_eq!(f.format(&bytes, Cell::Bytes(b"")), "");
+    }
+
+    #[test]
+    fn timestamps_without_a_time_zone_use_the_timestamp_format() {
+        // PostgreSQL names the type "timestamp without time zone": the "timestamp with"
+        // substring must not route it to the zoned formatter, which cannot parse a naive
+        // value and would leave the configured format unused.
+        let f = formats(&[
+            ("formats.timestamp", text("%d/%m/%Y %H:%M")),
+            ("formats.timestamptz", text("%Y-%m-%d %H:%M %:z")),
+        ]);
+        let naive = meta(
+            "timestamp without time zone",
+            ColumnKind::Text,
+            DisplayHint::Temporal,
+        );
+        assert_eq!(
+            f.format(&naive, Cell::Text("2024-03-05 10:11:12")),
+            "05/03/2024 10:11"
+        );
     }
 
     #[test]
