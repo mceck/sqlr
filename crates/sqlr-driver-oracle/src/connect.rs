@@ -1,16 +1,18 @@
 //! Connection setup for the Oracle driver (`oracle-rs`, no Oracle client libraries).
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use oracle_rs::{Config, Connection as OraConnection};
 use sqlr_core::{
     CancelHandle, Connection, ConnectionConfig, Dialect, Driver, DriverError, DriverManifest,
-    ErrorKind, Execution, Introspect, Node, NodeKind, NodePath, ObjectDef, ObjectRef,
-    RelationalConn, Secrets, ServerInfo, TableInfo, TableRef, Value,
+    ErrorKind, Execution, Introspect, LexState, Node, NodeKind, NodePath, ObjectDef, ObjectRef,
+    RelationalConn, Secrets, ServerInfo, TableInfo, TableRef, TokenKind, Value,
 };
 
 use crate::dialect::OracleDialect;
+use crate::syntax::oracle_syntax;
 use crate::{browse, catalog, describe, execute, introspect, manifest, map_error};
 
 pub struct OracleDriver {
@@ -31,6 +33,50 @@ pub struct OracleConnection {
     config: Config,
     service: String,
     dialect: OracleDialect,
+    /// The session runs an explicit transaction: the engine opened it with `SET
+    /// TRANSACTION` (Manual and Smart modes, applies, imports). Its statements must not
+    /// commit on their own.
+    explicit_transaction: AtomicBool,
+}
+
+/// What a statement does to Oracle's implicit transaction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TxEffect {
+    /// It neither writes nor changes the transaction (queries, `SAVEPOINT`, `ROLLBACK TO`).
+    Reads,
+    /// `SET TRANSACTION`: the engine's `begin_sql`, which starts an explicit transaction.
+    Opens,
+    /// `COMMIT` or `ROLLBACK`: the transaction ends.
+    Ends,
+    /// It writes. On a server with autocommit off it leaves a transaction open.
+    Writes,
+}
+
+/// The first two significant words of `sql`, upper-cased (comments skipped).
+fn leading_words(sql: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    oracle_syntax().lex(sql, LexState::Normal, &mut tokens);
+    tokens
+        .iter()
+        .filter(|t| {
+            matches!(
+                t.kind,
+                TokenKind::Keyword | TokenKind::Ident | TokenKind::Function
+            )
+        })
+        .take(2)
+        .map(|t| sql[t.start..t.end].to_ascii_uppercase())
+        .collect()
+}
+
+fn tx_effect(sql: &str) -> TxEffect {
+    let words = leading_words(sql);
+    match words.as_slice() {
+        [word] if word == "COMMIT" || word == "ROLLBACK" => TxEffect::Ends,
+        [first, second] if first == "SET" && second == "TRANSACTION" => TxEffect::Opens,
+        _ if oracle_syntax().classify_script(sql).modifies() => TxEffect::Writes,
+        _ => TxEffect::Reads,
+    }
 }
 
 #[async_trait::async_trait]
@@ -85,6 +131,7 @@ impl Driver for OracleDriver {
             config,
             service,
             dialect: OracleDialect,
+            explicit_transaction: AtomicBool::new(false),
         }))
     }
 }
@@ -107,10 +154,55 @@ impl OracleConnection {
             Ok(fresh) => {
                 let fresh = Arc::new(fresh);
                 *self.conn.lock().unwrap_or_else(|e| e.into_inner()) = fresh.clone();
+                // The old session's transaction did not survive the new connection.
+                self.explicit_transaction.store(false, Ordering::SeqCst);
                 fresh
             }
             Err(_) => current,
         }
+    }
+
+    /// Runs `sql` with the session's autocommit rules. oracle-rs never commits by itself
+    /// and the engine sends no COMMIT in Auto mode, so a statement outside an explicit
+    /// transaction must commit its own work (spec §7.9: "every statement commits on its
+    /// own"). DDL commits on the server, so a success or failure there ends the explicit
+    /// transaction too.
+    async fn run_statement(&self, sql: &str, params: &[Value]) -> Result<Execution, DriverError> {
+        let effect = tx_effect(sql);
+        let explicit = self.explicit_transaction.load(Ordering::SeqCst);
+        let conn = self.live().await;
+        let result = self
+            .healed(execute::execute(conn.clone(), sql, params).await)
+            .await;
+        let committing_ddl = oracle_syntax().is_schema_change(sql);
+        match &result {
+            Ok(_) => {
+                if committing_ddl {
+                    // Oracle commits before and after DDL whatever the session was doing.
+                    self.explicit_transaction.store(false, Ordering::SeqCst);
+                } else {
+                    match effect {
+                        TxEffect::Opens => self.explicit_transaction.store(true, Ordering::SeqCst),
+                        TxEffect::Ends => self.explicit_transaction.store(false, Ordering::SeqCst),
+                        TxEffect::Reads => {}
+                        TxEffect::Writes if !explicit => {
+                            conn.commit().await.map_err(map_error)?;
+                        }
+                        TxEffect::Writes => {}
+                    }
+                }
+            }
+            Err(e) if e.kind == ErrorKind::Connection => {
+                self.explicit_transaction.store(false, Ordering::SeqCst)
+            }
+            // A failed statement outside an explicit transaction must not leave its
+            // transaction (and locks) open, or the next `SET TRANSACTION` is refused.
+            Err(_) if !explicit && effect == TxEffect::Writes => {
+                let _ = conn.rollback().await;
+            }
+            Err(_) => {}
+        }
+        result
     }
 
     /// Oracle Free closes the connection on a failed statement, and the library reports that
@@ -124,6 +216,7 @@ impl OracleConnection {
         };
         if let Ok(fresh) = OraConnection::connect_with_config(self.config.clone()).await {
             *self.conn.lock().unwrap_or_else(|e| e.into_inner()) = Arc::new(fresh);
+            self.explicit_transaction.store(false, Ordering::SeqCst);
             error.message = format!(
                 "{} (the connection was reopened: an open transaction was lost)",
                 error.message
@@ -173,13 +266,11 @@ impl Connection for OracleConnection {
 #[async_trait::async_trait]
 impl RelationalConn for OracleConnection {
     async fn execute(&self, sql: &str) -> Result<Execution, DriverError> {
-        self.healed(execute::execute(self.live().await, sql, &[]).await)
-            .await
+        self.run_statement(sql, &[]).await
     }
 
     async fn execute_with(&self, sql: &str, params: &[Value]) -> Result<Execution, DriverError> {
-        self.healed(execute::execute(self.live().await, sql, params).await)
-            .await
+        self.run_statement(sql, params).await
     }
 
     async fn describe(&self, table: &TableRef) -> Result<TableInfo, DriverError> {
@@ -267,5 +358,42 @@ impl CancelHandle for OracleCancel {
             ErrorKind::Unsupported,
             "Oracle cannot cancel a running statement without closing the connection",
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn statements_open_end_and_write_to_the_implicit_transaction() {
+        // The engine's begin_sql opens the explicit transaction.
+        assert_eq!(tx_effect("SET TRANSACTION READ WRITE"), TxEffect::Opens);
+        assert_eq!(
+            tx_effect("-- note\nset transaction read only"),
+            TxEffect::Opens
+        );
+        assert_eq!(tx_effect("COMMIT"), TxEffect::Ends);
+        assert_eq!(tx_effect("rollback"), TxEffect::Ends);
+        assert_eq!(tx_effect("ROLLBACK TO SAVEPOINT s"), TxEffect::Reads);
+        assert_eq!(tx_effect("SAVEPOINT s"), TxEffect::Reads);
+        assert_eq!(tx_effect("SELECT 1 FROM dual"), TxEffect::Reads);
+        assert_eq!(tx_effect("INSERT INTO t VALUES (1)"), TxEffect::Writes);
+        assert_eq!(tx_effect("UPDATE t SET a = 1"), TxEffect::Writes);
+        // A PL/SQL block is not a transaction begin, and its DML must be committed.
+        assert_eq!(tx_effect("BEGIN NULL; END;"), TxEffect::Reads);
+        assert_eq!(
+            tx_effect("BEGIN INSERT INTO t VALUES (1); END;"),
+            TxEffect::Writes
+        );
+        // DDL commits on the server; the driver still recognizes it as a write.
+        assert_eq!(tx_effect("CREATE TABLE t (a NUMBER)"), TxEffect::Writes);
+    }
+
+    #[test]
+    fn ddl_is_detected_as_an_implicit_commit() {
+        assert!(oracle_syntax().is_schema_change("CREATE TABLE t (a NUMBER)"));
+        assert!(oracle_syntax().is_schema_change("TRUNCATE TABLE t"));
+        assert!(!oracle_syntax().is_schema_change("INSERT INTO t VALUES (1)"));
     }
 }

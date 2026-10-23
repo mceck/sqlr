@@ -49,6 +49,11 @@ impl Dialect for OracleDialect {
         true
     }
 
+    /// Oracle has no `RELEASE SAVEPOINT`: a savepoint ends with its transaction.
+    fn release_savepoint_sql(&self, _name: &str) -> Option<String> {
+        None
+    }
+
     /// Oracle has no `ON CONFLICT`: a `MERGE` over a one-row `SELECT … FROM dual`.
     fn upsert_row_sql(
         &self,
@@ -164,6 +169,15 @@ mod tests {
             .explain_spec("SELECT 1 FROM dual", true)
             .unwrap_err();
         assert_eq!(err.kind, sqlr_core::ErrorKind::Unsupported);
+    }
+
+    #[test]
+    fn savepoints_are_rolled_back_to_but_never_released() {
+        assert_eq!(
+            OracleDialect.rollback_to_sql("sp"),
+            "ROLLBACK TO SAVEPOINT \"sp\""
+        );
+        assert_eq!(OracleDialect.release_savepoint_sql("sp"), None);
     }
 
     #[test]

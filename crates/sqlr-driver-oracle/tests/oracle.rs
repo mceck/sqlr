@@ -174,6 +174,10 @@ async fn transactions_roll_back_and_commit() {
     let conn = support::connect().await;
     let name = unique_name("SQLR_TX").to_uppercase();
     run(&conn, &format!("CREATE TABLE {name} (id NUMBER(10))")).await;
+    // Outside an explicit transaction every statement commits on its own (Auto mode);
+    // the engine opens one with the dialect's `begin_sql` (spec §7.9).
+    let begin = conn.relational().unwrap().dialect().begin_sql().to_string();
+    run(&conn, &begin).await;
     run(&conn, &format!("INSERT INTO {name} VALUES (1)")).await;
     run(&conn, "ROLLBACK").await;
     assert_eq!(
@@ -182,6 +186,7 @@ async fn transactions_roll_back_and_commit() {
             .to_string(),
         "0"
     );
+    run(&conn, &begin).await;
     run(&conn, &format!("INSERT INTO {name} VALUES (2)")).await;
     run(&conn, "COMMIT").await;
     assert_eq!(
@@ -324,4 +329,25 @@ async fn wrong_password_is_an_auth_error() {
         Err(e) => e,
     };
     assert_eq!(err.kind, ErrorKind::Auth, "{err:?}");
+}
+
+/// Auto mode (spec §7.9): every statement commits on its own. The engine runs no COMMIT
+/// after a statement, so the driver must leave no transaction open. A second connection
+/// only sees a row that was really committed.
+#[tokio::test]
+async fn a_statement_commits_on_its_own() {
+    sqlr_testkit::skip_container_tests!();
+    let conn = support::connect().await;
+    let name = unique_name("SQLR_AUTOCOMMIT").to_uppercase();
+    run(&conn, &format!("CREATE TABLE {name} (id NUMBER(10))")).await;
+    run(&conn, &format!("INSERT INTO {name} VALUES (1)")).await;
+    let other = support::connect().await;
+    assert_eq!(
+        query(&other, &format!("SELECT COUNT(*) FROM {name}")).await[0][0]
+            .display()
+            .to_string(),
+        "1",
+        "the insert is still uncommitted in auto-commit mode"
+    );
+    drop_table(&conn, &name).await;
 }
