@@ -32,6 +32,36 @@ async fn run(conn: &Arc<dyn sqlr_core::Connection>, sql: &str) {
 }
 
 #[tokio::test]
+async fn transaction_commands_succeed_without_procedure_transaction_count_errors() {
+    sqlr_testkit::skip_container_tests!();
+    let (_lock, conn) = server().await;
+    let rel = conn.relational().unwrap();
+    run(&conn, "CREATE TABLE #transaction_commands (id INT)").await;
+    for ending in ["COMMIT", "ROLLBACK"] {
+        run(&conn, "-- open a transaction\nBEGIN TRANSACTION;").await;
+        rel.execute_with(
+            "INSERT INTO #transaction_commands VALUES (@P1)",
+            &[Value::Int(1)],
+        )
+        .await
+        .unwrap();
+        run(&conn, ending).await;
+        for sql in [
+            "SELECT @@TRANCOUNT",
+            "SELECT COUNT(*) FROM #transaction_commands",
+        ] {
+            let Execution::Rows(mut rows) = rel.execute(sql).await.unwrap() else {
+                panic!("expected rows");
+            };
+            let chunk = rows.next_chunk(1).await.unwrap().unwrap();
+            let expected = if sql == "SELECT @@TRANCOUNT" { 0 } else { 1 };
+            assert_eq!(Value::from_cell(chunk.cell(0, 0)), Value::Int(expected));
+            rows.close().await.unwrap();
+        }
+    }
+}
+
+#[tokio::test]
 async fn schema_corners_and_object_loading() {
     sqlr_testkit::skip_container_tests!();
     let (_c, conn) = server().await;

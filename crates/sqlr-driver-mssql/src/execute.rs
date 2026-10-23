@@ -29,9 +29,17 @@ pub(crate) async fn execute(
     };
     // `CREATE VIEW`, `CREATE SCHEMA` and the like must be the first statement of a batch, and
     // a `SET SHOWPLAN_…` only holds for the session when it is one: a statement run with
-    // `execute` travels inside `sp_executesql`. These go as a plain batch (they have no row
-    // count to report anyway).
-    if params.is_empty() && (syntax.is_ddl(&sql) || first_word(&sql).eq_ignore_ascii_case("SET")) {
+    // `execute` travels inside `sp_executesql`. Transaction commands must also be plain
+    // batches: changing @@TRANCOUNT inside that procedure raises error 266 even though
+    // the command took effect. These statements have no row count to report.
+    if params.is_empty()
+        && (syntax.is_ddl(&sql)
+            || first_word(&sql).eq_ignore_ascii_case("SET")
+            || matches!(
+                syntax.classify(&sql),
+                sqlr_core::StatementClass::Transaction(_)
+            ))
+    {
         client
             .simple_query(sql.as_ref())
             .await
