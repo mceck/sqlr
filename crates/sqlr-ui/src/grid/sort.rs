@@ -25,9 +25,93 @@ pub(crate) fn cycle(sort: &[(usize, bool)], col: usize) -> Vec<(usize, bool)> {
     }
 }
 
+/// An exact decimal text as `(negative, significant digits, power of ten)`: the value is
+/// `digits * 10^exp`. `None` for text that is not a plain decimal (NaN, infinity, …).
+fn parse_decimal(text: &str) -> Option<(bool, String, i128)> {
+    let text = text.trim();
+    let (neg, rest) = match text.as_bytes().first()? {
+        b'-' => (true, &text[1..]),
+        b'+' => (false, &text[1..]),
+        _ => (false, text),
+    };
+    let (mantissa, exponent) = match rest.find(['e', 'E']) {
+        Some(at) => (&rest[..at], rest[at + 1..].parse::<i128>().ok()?),
+        None => (rest, 0),
+    };
+    let (int, frac) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    if (int.is_empty() && frac.is_empty())
+        || !int.bytes().all(|b| b.is_ascii_digit())
+        || !frac.bytes().all(|b| b.is_ascii_digit())
+    {
+        return None;
+    }
+    let mut digits = format!("{int}{frac}");
+    let mut exp = exponent - frac.len() as i128;
+    let first = digits.find(|c: char| c != '0');
+    let Some(first) = first else {
+        return Some((false, String::new(), 0)); // zero
+    };
+    digits.drain(..first);
+    while digits.ends_with('0') {
+        digits.pop();
+        exp += 1;
+    }
+    Some((neg, digits, exp))
+}
+
+/// Exact comparison of two decimal texts. The `f64` fast path in [`compare_values`] can
+/// tie on values that differ beyond its precision (large integers, long fractions), so a
+/// tie is settled here.
+fn compare_decimals(a: &str, b: &str) -> Ordering {
+    let (Some((neg_a, digits_a, exp_a)), Some((neg_b, digits_b, exp_b))) =
+        (parse_decimal(a), parse_decimal(b))
+    else {
+        return compare_cells(Cell::Text(a), Cell::Text(b));
+    };
+    let zero_a = digits_a.is_empty();
+    let zero_b = digits_b.is_empty();
+    match (zero_a, zero_b) {
+        (true, true) => return Ordering::Equal,
+        (true, false) => {
+            return if neg_b {
+                Ordering::Greater
+            } else {
+                Ordering::Less
+            };
+        }
+        (false, true) => {
+            return if neg_a {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            };
+        }
+        (false, false) => {}
+    }
+    if neg_a != neg_b {
+        return if neg_a {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        };
+    }
+    // The decimal point's position relative to the significant digits: larger is larger.
+    let magnitude_a = digits_a.len() as i128 + exp_a;
+    let magnitude_b = digits_b.len() as i128 + exp_b;
+    let ordinal = magnitude_a.cmp(&magnitude_b).then_with(|| {
+        let len = digits_a.len().max(digits_b.len());
+        let digit = |digits: &str, i: usize| digits.as_bytes().get(i).copied().unwrap_or(b'0');
+        (0..len)
+            .map(|i| digit(&digits_a, i).cmp(&digit(&digits_b, i)))
+            .find(|o| *o != Ordering::Equal)
+            .unwrap_or(Ordering::Equal)
+    });
+    if neg_a { ordinal.reverse() } else { ordinal }
+}
+
 /// Typed comparison of two non-NULL cells. Exact decimals carried as text compare as
-/// numbers (`total_cmp`); in such a column, text that is not a number sorts after every
-/// number, among itself byte-wise, so the order stays total.
+/// numbers (`total_cmp`, then exactly); in such a column, text that is not a number sorts
+/// after every number, among itself byte-wise, so the order stays total.
 fn compare_values(meta: &ColumnMeta, a: Cell<'_>, b: Cell<'_>) -> Ordering {
     if matches!(meta.hint, DisplayHint::Decimal | DisplayHint::Number) {
         let number = |c: Cell<'_>| match c {
@@ -35,9 +119,9 @@ fn compare_values(meta: &ColumnMeta, a: Cell<'_>, b: Cell<'_>) -> Ordering {
             _ => None,
         };
         match (a, b) {
-            (Cell::Text(_), Cell::Text(_)) => {
+            (Cell::Text(x), Cell::Text(y)) => {
                 return match (number(a), number(b)) {
-                    (Some(x), Some(y)) => x.total_cmp(&y),
+                    (Some(fx), Some(fy)) => fx.total_cmp(&fy).then_with(|| compare_decimals(x, y)),
                     (Some(_), None) => Ordering::Less,
                     (None, Some(_)) => Ordering::Greater,
                     (None, None) => compare_cells(a, b),
@@ -120,6 +204,49 @@ mod tests {
         assert_eq!(cycle(&[(2, false)], 2), [(2, true)]);
         assert!(cycle(&[(2, true)], 2).is_empty());
         assert_eq!(cycle(&[(1, true)], 2), [(2, false)]);
+    }
+
+    #[test]
+    fn decimals_beyond_f64_precision_sort_exactly() {
+        let cols: Arc<[ColumnMeta]> = Arc::from(vec![ColumnMeta::new(
+            "d",
+            "numeric",
+            ColumnKind::Text,
+            DisplayHint::Decimal,
+        )]);
+        let mut buf = RowBuffer::new(cols.clone());
+        let mut b = ChunkBuilder::new(cols);
+        // The first two are the same f64; only an exact comparison tells them apart.
+        for v in [
+            "9007199254740993",
+            "9007199254740992",
+            "1.0000000000000002",
+            "1.0000000000000001",
+            "0",
+            "-0.5",
+        ] {
+            b.push_row(&[Cell::Text(v)]).unwrap();
+        }
+        buf.push_chunk(b.finish());
+        assert_eq!(
+            compute(&buf, &[(0, false)], true, &[]),
+            [5, 4, 3, 2, 1, 0],
+            "negative, zero, fractions, then large integers"
+        );
+        assert_eq!(compute(&buf, &[(0, true)], true, &[]), [0, 1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn decimals_in_exponent_form_compare_exactly() {
+        assert_eq!(
+            compare_decimals("1e20", "100000000000000000000"),
+            Ordering::Equal
+        );
+        assert_eq!(compare_decimals("1.2e3", "1200"), Ordering::Equal);
+        assert_eq!(compare_decimals("1.2e3", "1201"), Ordering::Less);
+        assert_eq!(compare_decimals("-1e20", "-1e21"), Ordering::Greater);
+        assert_eq!(compare_decimals("0.000", "-0"), Ordering::Equal);
+        assert_eq!(compare_decimals("0", "-0.1"), Ordering::Greater);
     }
 
     #[test]
