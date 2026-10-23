@@ -327,11 +327,22 @@ impl MongoConnection {
                         ("n", cmd(vec![("$sum", DocValue::Int32(1))])),
                     ]),
                 )]));
-                let c = cmd(vec![
+                let mut c = cmd(vec![
                     ("aggregate", s(&coll)),
                     ("pipeline", DocValue::Array(pipeline)),
                     ("cursor", cmd(vec![])),
                 ]);
+                // skip/limit are pipeline stages; the remaining count options belong
+                // to the aggregate command (notably collation, hint and maxTimeMS).
+                if let Some(DocValue::Document(opts)) = &options {
+                    let opts = DocValue::Document(
+                        opts.iter()
+                            .filter(|(key, _)| !matches!(key.as_str(), "skip" | "limit"))
+                            .cloned()
+                            .collect(),
+                    );
+                    merge(&mut c, Some(&opts));
+                }
                 let docs = cursor_docs(self, db, &c).await?;
                 DocExecution::Value(DocValue::Int64(
                     int_of(docs.first().and_then(|d| d.get("n"))) as i64,

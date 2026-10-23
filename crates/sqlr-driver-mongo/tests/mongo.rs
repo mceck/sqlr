@@ -166,6 +166,32 @@ fn written(exec: DocExecution) -> (u64, u64, u64, u64, Vec<DocValue>) {
     }
 }
 
+#[tokio::test]
+async fn count_documents_honors_collation_options() {
+    sqlr_testkit::skip_container_tests!();
+    let server = start().await;
+    let conn = connect(&server).await;
+    run(
+        &conn,
+        "db.names.insertMany([{name: 'Ada'}, {name: 'ADA'}, {name: 'Grace'}])",
+    )
+    .await;
+    assert_eq!(
+        value(
+            run(
+                &conn,
+                "db.names.countDocuments({name: 'ada'}, {collation: {locale: 'en', strength: 2}})"
+            )
+            .await
+        ),
+        DocValue::Int64(2)
+    );
+    assert_eq!(
+        value(run(&conn, "db.names.countDocuments({name: 'ada'}, {collation: {locale: 'en', strength: 2}, skip: 1, limit: 1})").await),
+        DocValue::Int64(1)
+    );
+}
+
 /// Rows of a tabular result as text.
 async fn rows(exec: DocExecution) -> (Vec<String>, Vec<Vec<String>>) {
     let DocExecution::Rows(mut stream) = exec else {
