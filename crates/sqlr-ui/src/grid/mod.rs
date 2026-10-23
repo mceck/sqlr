@@ -12,8 +12,9 @@ mod selection;
 mod sort;
 
 use std::borrow::Cow;
+use std::collections::BTreeSet;
 use std::hash::{Hash, Hasher};
-use std::ops::{Range, RangeInclusive};
+use std::ops::Range;
 use std::sync::Arc;
 
 use egui::text::{CCursor, CCursorRange, LayoutJob};
@@ -26,6 +27,7 @@ use sqlr_core::{
 pub use doc_table::{DocTableState, doc_table};
 pub use edit::{EditBuffer, INSERTED_ROW_BASE, RowState, is_inserted_row, parse_hex, parse_input};
 use header::{Geometry, HEADER_HEIGHT, Hit};
+use selection::subtract;
 pub use selection::{CopyFormat, Selection};
 use sort::ViewKey;
 
@@ -68,8 +70,11 @@ pub struct GridState {
     /// buffer, or an inserted row's number (see [`INSERTED_ROW_BASE`]). `None` without a
     /// selection.
     pub selected: Option<(usize, usize)>,
-    /// The selected rectangle, in view coordinates; meaningful while `selected` is set.
+    /// The primary selected rectangle, in view coordinates; meaningful while `selected`
+    /// is set. Its cursor is the active cell.
     pub selection: Selection,
+    /// Additional rectangles selected with ⌘, in view coordinates.
+    extra: Vec<Selection>,
     /// `(column, descending)`; applied locally when the result is complete.
     pub sort: Vec<(usize, bool)>,
     /// The server-side condition typed into the WHERE field.
@@ -184,23 +189,145 @@ impl GridState {
         let Some((_, view)) = &self.view else {
             return Vec::new();
         };
-        if self.selected.is_none() {
-            return Vec::new();
-        }
-        self.selection
-            .rows()
+        self.selected_view_rows()
+            .into_iter()
             .filter_map(|r| view.get(r).copied())
             .collect()
     }
 
-    pub fn selected_cols(&self) -> RangeInclusive<usize> {
-        self.selection.cols()
+    /// The view rows with at least one selected cell, in order.
+    fn selected_view_rows(&self) -> Vec<usize> {
+        if self.selected.is_none() {
+            return Vec::new();
+        }
+        let mut rows = BTreeSet::new();
+        for selection in self.all_selections() {
+            rows.extend(selection.rows());
+        }
+        rows.into_iter().collect()
+    }
+
+    /// The columns with at least one selected cell, in order.
+    pub fn selected_cols(&self) -> Vec<usize> {
+        if self.selected.is_none() {
+            return Vec::new();
+        }
+        let mut cols = BTreeSet::new();
+        for selection in self.all_selections() {
+            cols.extend(selection.cols());
+        }
+        cols.into_iter().collect()
     }
 
     /// The selection spans every shown row (whole columns, or everything).
     pub fn whole_columns(&self) -> bool {
         let shown = self.view.as_ref().map_or(0, |(_, v)| v.len());
         self.selected.is_some() && shown > 0 && self.selection.rows() == (0..=shown - 1)
+    }
+
+    /// Whether the selection is one rectangle: copying a large selection through the engine
+    /// needs a rectangle.
+    fn single_selection(&self) -> bool {
+        self.extra.is_empty()
+    }
+
+    /// The number of selected cells; the rectangles never overlap.
+    fn selected_cells(&self) -> usize {
+        if self.selected.is_none() {
+            return 0;
+        }
+        self.all_selections().map(|s| s.cell_count()).sum()
+    }
+
+    /// Whether a view cell is part of any selected rectangle.
+    pub fn is_selected(&self, row: usize, col: usize) -> bool {
+        self.selected.is_some()
+            && self
+                .all_selections()
+                .any(|selection| selection.contains(row, col))
+    }
+
+    /// The primary rectangle and the ones added with ⌘.
+    fn all_selections(&self) -> impl Iterator<Item = Selection> + '_ {
+        std::iter::once(self.selection).chain(self.extra.iter().copied())
+    }
+
+    /// Replaces every rectangle, the first becoming the primary one.
+    fn set_selections(&mut self, mut selections: Vec<Selection>) {
+        if selections.is_empty() {
+            self.selected = None;
+            self.selection = Selection::default();
+            self.extra.clear();
+            return;
+        }
+        self.selection = selections.remove(0);
+        self.extra = selections;
+        self.sync_selected();
+    }
+
+    /// Adds a rectangle, subtracting its area from the rectangles already selected.
+    fn add_selection(&mut self, selection: Selection) {
+        let mut kept = Vec::new();
+        if self.selected.is_some() {
+            for existing in self.all_selections() {
+                kept.extend(subtract(&existing, &selection));
+            }
+        }
+        self.selection = selection;
+        self.extra = kept;
+        self.sync_selected();
+    }
+
+    /// Removes a rectangle from everything selected.
+    fn remove_selection(&mut self, selection: Selection) {
+        if self.selected.is_none() {
+            return;
+        }
+        let mut kept = Vec::new();
+        for existing in self.all_selections() {
+            kept.extend(subtract(&existing, &selection));
+        }
+        self.set_selections(kept);
+    }
+
+    /// ⌘+click on a cell: adds it, or removes it when it is already selected.
+    fn toggle_cell(&mut self, row: usize, col: usize) -> bool {
+        if self.is_selected(row, col) {
+            self.remove_selection(Selection::cell(row, col));
+        } else {
+            self.add_selection(Selection::cell(row, col));
+        }
+        true
+    }
+
+    /// ⌘+click on a row number.
+    fn toggle_row(&mut self, row: usize, last_col: usize) -> bool {
+        let whole = Selection {
+            anchor: (row, 0),
+            cursor: (row, last_col),
+        };
+        let full = (0..=last_col).all(|col| self.is_selected(row, col));
+        if full {
+            self.remove_selection(whole);
+        } else {
+            self.add_selection(whole);
+        }
+        true
+    }
+
+    /// ⌘+click on a column header.
+    fn toggle_column(&mut self, col: usize, last_row: usize) -> bool {
+        let whole = Selection {
+            anchor: (0, col),
+            cursor: (last_row, col),
+        };
+        let full = (0..=last_row).all(|row| self.is_selected(row, col));
+        if full {
+            self.remove_selection(whole);
+        } else {
+            self.add_selection(whole);
+        }
+        true
     }
 
     /// Appends a row of defaults and reveals it (the result bar's "Add row").
@@ -269,6 +396,8 @@ impl GridState {
             return;
         }
         let view = sort::compute(rows, &key.sort, true, &key.inserted);
+        // Extra selections are view coordinates; a re-sort or reload invalidates them.
+        self.extra.clear();
         self.view = Some((key, view));
     }
 
@@ -285,8 +414,10 @@ impl GridState {
     }
 
     fn select(&mut self, selection: Selection) -> bool {
-        let changed = self.selected.is_none() || self.selection != selection;
+        let changed =
+            self.selected.is_none() || self.selection != selection || !self.extra.is_empty();
         self.selection = selection;
+        self.extra.clear();
         self.sync_selected();
         changed
     }
@@ -679,7 +810,7 @@ fn pointer(
     let Some(hit) = geo.hit(pos) else {
         return false;
     };
-    let shift = ui.input(|i| i.modifiers.shift);
+    let (shift, command) = ui.input(|i| (i.modifiers.shift, i.modifiers.command));
     let last_col = geo.columns().saturating_sub(1);
     let last_row = geo.view_rows.saturating_sub(1);
     let anchor = state.selection.anchor;
@@ -693,6 +824,14 @@ fn pointer(
         return false;
     }
     if response.clicked() {
+        if command && geo.view_rows > 0 {
+            match hit {
+                Hit::Cell(r, c) => return state.toggle_cell(r, c),
+                Hit::Gutter(r) => return state.toggle_row(r, last_col),
+                Hit::Header(c) => return state.toggle_column(c, last_row),
+                Hit::Corner => return false,
+            }
+        }
         let next = match hit {
             Hit::Cell(r, c) if shift && has => Selection {
                 anchor,
@@ -744,7 +883,7 @@ fn pointer(
             Hit::Gutter(r) => (r, 0, true),
             _ => return false,
         };
-        if has && state.selection.contains(r, c) {
+        if state.is_selected(r, c) {
             return false;
         }
         return state.select(if whole_row {
@@ -886,10 +1025,11 @@ fn copy_selection(
     format: CopyFormat,
 ) {
     let rows = input.rows;
-    let cells = state.selection.cell_count();
+    let cells = state.selected_cells();
     let total = (rows.row_count() * rows.columns().len()).max(1);
     let estimate = rows.byte_size() as f64 * cells as f64 / total as f64;
-    if cells > MAX_COPY_CELLS || estimate > MAX_COPY_BYTES as f64 {
+    // The engine copies a rectangle; a disjoint selection is built here instead.
+    if state.single_selection() && (cells > MAX_COPY_CELLS || estimate > MAX_COPY_BYTES as f64) {
         state.actions.push(GridAction::Copy(format));
         return;
     }
@@ -902,13 +1042,23 @@ fn copy_selection(
         ctx.copy_text(value.display().into_owned());
         return;
     }
-    let cols: Vec<usize> = state.selected_cols().collect();
+    let view_rows = state.selected_view_rows();
+    let cols = state.selected_cols();
     let metas: Vec<ColumnMeta> = cols.iter().map(|&c| rows.columns()[c].clone()).collect();
     let header = state.whole_columns();
-    let values = state.selected_rows().into_iter().map(|r| {
-        cols.iter()
-            .map(|&c| state.value(rows, r, c).unwrap_or(Value::Null))
-            .collect()
+    let values = view_rows.into_iter().filter_map(|view_row| {
+        let row = state.source(view_row)?;
+        Some(
+            cols.iter()
+                .map(|&col| {
+                    if state.is_selected(view_row, col) {
+                        state.value(rows, row, col).unwrap_or(Value::Null)
+                    } else {
+                        Value::Null
+                    }
+                })
+                .collect::<Vec<_>>(),
+        )
     });
     let text = selection::encode(
         format.text_format(header, input.table),
@@ -951,6 +1101,8 @@ fn paste_text(state: &mut GridState, input: &GridInput<'_>, text: &str) {
     let start_row = *state.selection.rows().start();
     let start_col = *state.selection.cols().start();
     let fill = rows.len() == 1 && rows[0].len() == 1;
+    let fill_rows = state.selected_view_rows();
+    let fill_cols = state.selected_cols();
     let mut trial = edits.clone();
     let mut changes = Vec::new();
     let mut error = None;
@@ -966,8 +1118,11 @@ fn paste_text(state: &mut GridState, input: &GridInput<'_>, text: &str) {
         Ok(())
     };
     if fill {
-        'rows: for row in state.selection.rows() {
-            for col in state.selection.cols() {
+        'rows: for row in fill_rows {
+            for &col in &fill_cols {
+                if !state.is_selected(row, col) {
+                    continue;
+                }
                 if let Err(e) = apply(row, col, rows[0][0].clone()) {
                     error = Some(e);
                     break 'rows;
@@ -1187,7 +1342,7 @@ fn paint_rows(
         }
         for (col, meta) in columns.iter().enumerate().take(last_col).skip(first_col) {
             let rect = geo.cell_rect(vr, col);
-            if state.selected.is_some() && state.selection.contains(vr, col) {
+            if state.is_selected(vr, col) {
                 painter.rect_filled(rect, 0.0, palette.selection);
             }
             let edited = state.edits.as_ref().is_some_and(|e| e.is_edited(src, col));

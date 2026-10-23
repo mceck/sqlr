@@ -497,7 +497,7 @@ impl SqlrApp {
         let pending = PendingCopy {
             q,
             rows: grid.selected_rows(),
-            cols: grid.selected_cols().collect(),
+            cols: grid.selected_cols(),
             format: format.text_format(grid.whole_columns(), table.as_deref()),
         };
         if pending.cells() > MAX_COPY_CELLS {

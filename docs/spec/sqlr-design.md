@@ -378,7 +378,8 @@ All widgets take data in and return action values. None of them calls the engine
 **`ResultGrid`**
 - Virtualized on both rows and columns.
 - Column widths are measured on a sample and can be resized. Columns can be frozen.
-- Rectangular selection and spreadsheet-like keyboard navigation.
+- Rectangular selection and spreadsheet-like keyboard navigation; ⌘-click adds or
+  removes separate cell and row ranges.
 - Copy as TSV, CSV, JSON, SQL `INSERT` or Markdown.
 - Paste tab-separated text into the selection (a single value fills it); ⌘⌫ marks the
   selected rows deleted.

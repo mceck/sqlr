@@ -25,9 +25,9 @@ How dates, numbers, booleans, binary data and JSON look is up to you. See [Setti
 
 ### Selecting and copying
 
-Click and drag to select a rectangle of cells, and move around with the arrow keys as in a spreadsheet. You can freeze columns so they stay in view while you scroll sideways.
+Click and drag to select a rectangle of cells, and move around with the arrow keys as in a spreadsheet. Hold **⌘** (Ctrl on Windows and Linux) and click cells or row numbers to add separate, non-contiguous ranges; click one again to remove it. You can freeze columns so they stay in view while you scroll sideways.
 
-**Copy** puts the selection on the clipboard as tab-separated text. **Copy as** offers CSV, JSON, SQL `INSERT` statements and Markdown, which is handy for pasting into a chat, a ticket or a README.
+**Copy** puts the selection on the clipboard as tab-separated text. For a non-contiguous selection it keeps the selected rows and columns, with empty fields where a cell was not selected. **Copy as** offers CSV, JSON, SQL `INSERT` statements and Markdown, which is handy for pasting into a chat, a ticket or a README.
 
 **Paste** (⌘V) writes tab-separated clipboard text back into an editable result. A single value fills every selected cell; a block of cells starts at the top-left corner of the selection.
 

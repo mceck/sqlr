@@ -194,6 +194,67 @@ fn shift_arrow_extends_selection_and_copy_tsv() {
 }
 
 #[test]
+fn command_click_builds_a_non_contiguous_selection() {
+    let mut h = harness(sequential(5));
+    click(&mut h, "name 0");
+    h.get_by_label("name 2").click_modifiers(Modifiers::COMMAND);
+    h.run_steps(2);
+    assert!(h.state().state.is_selected(0, 1));
+    assert!(h.state().state.is_selected(2, 1));
+    assert!(!h.state().state.is_selected(1, 1));
+    h.event(Event::Copy);
+    h.step();
+    assert_eq!(copied(&h).as_deref(), Some("name 0\nname 2\n"));
+}
+
+#[test]
+fn command_click_a_header_toggles_the_column() {
+    let mut h = harness(sequential(3));
+    click(&mut h, "0");
+    h.get_by_label("name").click_modifiers(Modifiers::COMMAND);
+    h.run_steps(2);
+    assert!(h.state().state.sort.is_empty(), "⌘-click must not sort");
+    for row in 0..3 {
+        assert!(h.state().state.is_selected(row, 1), "row {row}");
+    }
+    h.get_by_label("name").click_modifiers(Modifiers::COMMAND);
+    h.run_steps(2);
+    assert!(!h.state().state.is_selected(1, 1));
+}
+
+#[test]
+fn command_click_again_removes_the_cell() {
+    let mut h = harness(sequential(5));
+    click(&mut h, "name 0");
+    h.get_by_label("name 2").click_modifiers(Modifiers::COMMAND);
+    h.get_by_label("name 2").click_modifiers(Modifiers::COMMAND);
+    h.run_steps(2);
+    assert!(h.state().state.is_selected(0, 1));
+    assert!(!h.state().state.is_selected(2, 1));
+}
+
+#[test]
+fn a_plain_click_clears_the_extra_selections() {
+    let mut h = harness(sequential(5));
+    click(&mut h, "name 0");
+    h.get_by_label("name 2").click_modifiers(Modifiers::COMMAND);
+    click(&mut h, "name 4");
+    assert!(!h.state().state.is_selected(0, 1));
+    assert!(h.state().state.is_selected(4, 1));
+}
+
+#[test]
+fn copy_a_non_contiguous_selection_keeps_the_grid_shape() {
+    let mut h = harness(sequential(5));
+    click(&mut h, "name 0");
+    h.get_by_label("1").click_modifiers(Modifiers::COMMAND);
+    h.run_steps(2);
+    h.event(Event::Copy);
+    h.step();
+    assert_eq!(copied(&h).as_deref(), Some("\tname 0\n1\t\n"));
+}
+
+#[test]
 fn paste_one_cell_marks_it_pending() {
     let mut h = harness_with(sequential(5), false, editable());
     click(&mut h, "name 1");
@@ -450,6 +511,25 @@ fn command_delete_marks_a_multi_row_selection_deleted() {
     assert_eq!(struck(&h, "name 0"), Some(true));
     assert_eq!(struck(&h, "name 2"), Some(true));
     assert_eq!(struck(&h, "name 3"), Some(false));
+}
+
+#[test]
+fn command_delete_deletes_non_contiguous_selected_rows() {
+    let mut h = harness_with(sequential(5), false, editable());
+    h.get_by_label("Row 1").click_modifiers(Modifiers::COMMAND);
+    h.get_by_label("Row 3").click_modifiers(Modifiers::COMMAND);
+    h.run_steps(2);
+    press(&mut h, Modifiers::COMMAND, Key::Backspace);
+    assert!(
+        h.state()
+            .actions
+            .contains(&GridAction::DeleteRows(vec![0, 2]))
+    );
+    let edits = h.state().state.edits.as_ref().unwrap();
+    assert_eq!(edits.pending(), 2);
+    assert_eq!(struck(&h, "name 0"), Some(true));
+    assert_eq!(struck(&h, "name 1"), Some(false));
+    assert_eq!(struck(&h, "name 2"), Some(true));
 }
 
 #[test]

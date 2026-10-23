@@ -44,6 +44,42 @@ impl Selection {
     }
 }
 
+/// `selection` without `cut`, as up to four rectangles.
+pub(crate) fn subtract(selection: &Selection, cut: &Selection) -> Vec<Selection> {
+    let (r0, r1) = (*selection.rows().start(), *selection.rows().end());
+    let (c0, c1) = (*selection.cols().start(), *selection.cols().end());
+    let (cr0, cr1) = (*cut.rows().start(), *cut.rows().end());
+    let (cc0, cc1) = (*cut.cols().start(), *cut.cols().end());
+    if cr1 < r0 || cr0 > r1 || cc1 < c0 || cc0 > c1 {
+        return vec![*selection];
+    }
+    let mut out = Vec::new();
+    if cr0 > r0 {
+        out.push(rect(r0, cr0 - 1, c0, c1));
+    }
+    if cr1 < r1 {
+        out.push(rect(cr1 + 1, r1, c0, c1));
+    }
+    let mid_r0 = cr0.max(r0);
+    let mid_r1 = cr1.min(r1);
+    if mid_r0 <= mid_r1 {
+        if cc0 > c0 {
+            out.push(rect(mid_r0, mid_r1, c0, cc0 - 1));
+        }
+        if cc1 < c1 {
+            out.push(rect(mid_r0, mid_r1, cc1 + 1, c1));
+        }
+    }
+    out
+}
+
+fn rect(r0: usize, r1: usize, c0: usize, c1: usize) -> Selection {
+    Selection {
+        anchor: (r0, c0),
+        cursor: (r1, c1),
+    }
+}
+
 /// The text formats of "Copy" (TSV) and "Copy as ▸".
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CopyFormat {
@@ -107,4 +143,46 @@ pub(crate) fn encode(
     }
     encoder.footer(&mut out);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sel(r0: usize, r1: usize, c0: usize, c1: usize) -> Selection {
+        Selection {
+            anchor: (r0, c0),
+            cursor: (r1, c1),
+        }
+    }
+
+    #[test]
+    fn subtracting_a_cell_splits_the_rectangle() {
+        assert_eq!(
+            subtract(&sel(0, 3, 0, 3), &Selection::cell(1, 1)),
+            [
+                sel(0, 0, 0, 3),
+                sel(2, 3, 0, 3),
+                sel(1, 1, 0, 0),
+                sel(1, 1, 2, 3)
+            ]
+        );
+    }
+
+    #[test]
+    fn subtracting_a_row_leaves_the_rows_around_it() {
+        assert_eq!(
+            subtract(&sel(0, 3, 0, 3), &sel(1, 1, 0, 3)),
+            [sel(0, 0, 0, 3), sel(2, 3, 0, 3)]
+        );
+    }
+
+    #[test]
+    fn subtracting_a_disjoint_or_covering_rectangle() {
+        assert_eq!(
+            subtract(&sel(0, 1, 0, 1), &sel(2, 3, 2, 3)),
+            [sel(0, 1, 0, 1)]
+        );
+        assert!(subtract(&sel(0, 1, 0, 1), &sel(0, 1, 0, 1)).is_empty());
+    }
 }
