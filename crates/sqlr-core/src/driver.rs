@@ -292,6 +292,26 @@ pub trait Dialect: Send + Sync {
     fn upsert_sql(&self, _insert: &str, _key: &[String], _update: &[String]) -> Option<String> {
         None
     }
+    /// A one-row insert-or-update of `table` (already quoted and qualified): `columns` are
+    /// the raw names, `placeholders` the matching bound parameters. The default writes the
+    /// plain insert and hands it to [`Dialect::upsert_sql`]; dialects that cannot extend an
+    /// `INSERT` (`MERGE`) override it.
+    fn upsert_row_sql(
+        &self,
+        table: &str,
+        columns: &[String],
+        placeholders: &[String],
+        key: &[String],
+        update: &[String],
+    ) -> Option<String> {
+        let names: Vec<String> = columns.iter().map(|c| self.quote_ident(c)).collect();
+        let insert = format!(
+            "INSERT INTO {table} ({}) VALUES ({})",
+            names.join(", "),
+            placeholders.join(", ")
+        );
+        self.upsert_sql(&insert, key, update)
+    }
     /// The statements that switch foreign keys (and unique checks, where the server has
     /// them) off for a bulk load, and the ones that switch them back on. They run outside
     /// the load's transaction. `None` when the dialect cannot.
@@ -323,6 +343,45 @@ pub trait Dialect: Send + Sync {
     fn ddl_gen(&self) -> Option<&dyn DdlGen> {
         None
     }
+}
+
+/// A one-row `MERGE` of `table`: `source` is the row as a derived table whose columns are
+/// `columns`; `update` columns are set on a match (none: a match keeps the row).
+pub fn merge_sql(
+    dialect: &dyn Dialect,
+    table: &str,
+    source: &str,
+    columns: &[String],
+    key: &[String],
+    update: &[String],
+) -> String {
+    let q = |c: &String| dialect.quote_ident(c);
+    let on: Vec<String> = key
+        .iter()
+        .map(|k| format!("sqlr_t.{0} = sqlr_s.{0}", q(k)))
+        .collect();
+    let mut sql = format!(
+        "MERGE INTO {table} sqlr_t USING {source} ON ({})",
+        on.join(" AND ")
+    );
+    if !update.is_empty() {
+        let sets: Vec<String> = update
+            .iter()
+            .map(|c| format!("sqlr_t.{0} = sqlr_s.{0}", q(c)))
+            .collect();
+        sql.push_str(&format!(
+            " WHEN MATCHED THEN UPDATE SET {}",
+            sets.join(", ")
+        ));
+    }
+    let names: Vec<String> = columns.iter().map(q).collect();
+    let values: Vec<String> = columns.iter().map(|c| format!("sqlr_s.{}", q(c))).collect();
+    sql.push_str(&format!(
+        " WHEN NOT MATCHED THEN INSERT ({}) VALUES ({})",
+        names.join(", "),
+        values.join(", ")
+    ));
+    sql
 }
 
 /// Loads object definitions from the server's catalogs.

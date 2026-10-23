@@ -2,11 +2,55 @@
 
 use std::sync::Arc;
 
-use sqlr_core::{Dialect, Node, NodeKind, SqlSyntax, wrap_subquery};
+use sqlr_core::{
+    Dialect, LexState, Node, NodeKind, SqlSyntax, Token, TokenKind, merge_sql, trim_statement_in,
+    wrap_subquery,
+};
 
 use crate::syntax::tsql_syntax;
 
 pub struct MsDialect;
+
+/// `sql` ready to sit in a subquery: T-SQL rejects a top-level `ORDER BY` there unless the
+/// query also has `TOP` or an `OFFSET`, so a bare one gets `OFFSET 0 ROWS`.
+fn as_subquery(syntax: &SqlSyntax, sql: &str) -> String {
+    let sql = trim_statement_in(syntax, sql);
+    let mut tokens: Vec<Token> = Vec::new();
+    syntax.lex(&sql, LexState::Normal, &mut tokens);
+    let (mut depth, mut order_by, mut limited) = (0usize, false, false);
+    let mut prev_order = false;
+    for t in &tokens {
+        match t.kind {
+            TokenKind::Comment => continue,
+            TokenKind::Punct => match &sql[t.start..t.end] {
+                "(" => depth += 1,
+                ")" => depth = depth.saturating_sub(1),
+                _ => {}
+            },
+            TokenKind::Keyword | TokenKind::Ident | TokenKind::Function if depth == 0 => {
+                let word = &sql[t.start..t.end];
+                if word.eq_ignore_ascii_case("BY") && prev_order {
+                    order_by = true;
+                }
+                if ["TOP", "OFFSET", "FETCH"]
+                    .iter()
+                    .any(|k| word.eq_ignore_ascii_case(k))
+                {
+                    limited = true;
+                }
+                prev_order = word.eq_ignore_ascii_case("ORDER");
+                continue;
+            }
+            _ => {}
+        }
+        prev_order = false;
+    }
+    if order_by && !limited {
+        format!("{sql}\nOFFSET 0 ROWS")
+    } else {
+        sql.into_owned()
+    }
+}
 
 impl Dialect for MsDialect {
     fn quote_ident(&self, ident: &str) -> String {
@@ -64,7 +108,15 @@ impl Dialect for MsDialect {
                 format!("CASE WHEN {quoted} IS NULL THEN 1 ELSE 0 END, {quoted}{dir}")
             })
             .collect();
-        wrap_subquery(&self.syntax(), sql, &keys)
+        wrap_subquery(&self.syntax(), &as_subquery(&self.syntax(), sql), &keys)
+    }
+
+    fn wrap_where(&self, sql: &str, condition: &str) -> String {
+        format!(
+            "SELECT * FROM (\n{}\n) sqlr_q WHERE {}",
+            as_subquery(&self.syntax(), sql),
+            condition.trim()
+        )
     }
 
     /// `N'…'` keeps characters outside the database's code page.
@@ -74,6 +126,27 @@ impl Dialect for MsDialect {
 
     fn bool_literal(&self, value: bool) -> &'static str {
         if value { "1" } else { "0" }
+    }
+
+    /// T-SQL has no `ON CONFLICT`: a `MERGE` over the row's values (it ends in `;`).
+    fn upsert_row_sql(
+        &self,
+        table: &str,
+        columns: &[String],
+        placeholders: &[String],
+        key: &[String],
+        update: &[String],
+    ) -> Option<String> {
+        let names: Vec<String> = columns.iter().map(|c| self.quote_ident(c)).collect();
+        let source = format!(
+            "(VALUES ({})) sqlr_s ({})",
+            placeholders.join(", "),
+            names.join(", ")
+        );
+        Some(format!(
+            "{};",
+            merge_sql(self, table, &source, columns, key, update)
+        ))
     }
 
     /// `sp_MSforeachtable` reaches every table; `WITH CHECK` makes the re-enabled
@@ -129,6 +202,45 @@ mod tests {
         assert_eq!(MsDialect.string_literal("città"), "N'città'");
         assert_eq!(MsDialect.bool_literal(true), "1");
         assert_eq!(MsDialect.bool_literal(false), "0");
+    }
+
+    #[test]
+    fn an_ordered_query_can_be_wrapped() {
+        let d = MsDialect;
+        let filtered = d.wrap_where("SELECT * FROM t ORDER BY a;", "b = 1");
+        assert_eq!(
+            filtered,
+            "SELECT * FROM (\nSELECT * FROM t ORDER BY a\nOFFSET 0 ROWS\n) sqlr_q WHERE b = 1"
+        );
+        let sorted = d.wrap_order("SELECT * FROM t ORDER BY a", &[("b".into(), false)]);
+        assert!(sorted.contains("ORDER BY a\nOFFSET 0 ROWS\n)"), "{sorted}");
+        // TOP already allows it; an ORDER BY in a nested query or a string is not top-level.
+        for sql in [
+            "SELECT TOP 5 * FROM t ORDER BY a",
+            "SELECT * FROM t ORDER BY a OFFSET 5 ROWS",
+            "SELECT * FROM (SELECT TOP 9 * FROM u ORDER BY a) x",
+            "SELECT 'order by' FROM t",
+            "SELECT * FROM t",
+        ] {
+            assert!(!d.wrap_where(sql, "1=1").contains("OFFSET 0"), "{sql}");
+        }
+    }
+
+    #[test]
+    fn upsert_is_a_merge() {
+        let cols = ["id".to_string(), "v".to_string()];
+        let ph = ["@P1".to_string(), "@P2".to_string()];
+        assert_eq!(
+            MsDialect
+                .upsert_row_sql("[dbo].[t]", &cols, &ph, &["id".into()], &["v".into()])
+                .as_deref(),
+            Some(
+                "MERGE INTO [dbo].[t] sqlr_t USING (VALUES (@P1, @P2)) sqlr_s ([id], [v]) \
+                 ON (sqlr_t.[id] = sqlr_s.[id]) WHEN MATCHED THEN UPDATE SET \
+                 sqlr_t.[v] = sqlr_s.[v] WHEN NOT MATCHED THEN INSERT ([id], [v]) \
+                 VALUES (sqlr_s.[id], sqlr_s.[v]);"
+            )
+        );
     }
 
     #[test]

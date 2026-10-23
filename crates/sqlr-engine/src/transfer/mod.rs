@@ -704,7 +704,9 @@ impl Shared {
                 .filter(|c| !upsert_key.iter().any(|k| k.eq_ignore_ascii_case(&c.name)))
                 .map(|c| c.name.clone())
                 .collect();
-            insert = match dialect.upsert_sql(&insert, upsert_key, &update) {
+            let raw: Vec<String> = columns.iter().map(|c| c.name.clone()).collect();
+            insert = match dialect.upsert_row_sql(&table, &raw, &placeholders, upsert_key, &update)
+            {
                 Some(sql) => sql,
                 None => {
                     return JobOutcome::Failed(DriverError::new(

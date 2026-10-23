@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use sqlr_core::{Dialect, Node, SqlSyntax, hex_bytes};
+use sqlr_core::{Dialect, Node, SqlSyntax, hex_bytes, merge_sql};
 
 use crate::syntax::oracle_syntax;
 
@@ -49,6 +49,24 @@ impl Dialect for OracleDialect {
         true
     }
 
+    /// Oracle has no `ON CONFLICT`: a `MERGE` over a one-row `SELECT … FROM dual`.
+    fn upsert_row_sql(
+        &self,
+        table: &str,
+        columns: &[String],
+        placeholders: &[String],
+        key: &[String],
+        update: &[String],
+    ) -> Option<String> {
+        let selected: Vec<String> = placeholders
+            .iter()
+            .zip(columns)
+            .map(|(p, c)| format!("{p} {}", self.quote_ident(c)))
+            .collect();
+        let source = format!("(SELECT {} FROM dual) sqlr_s", selected.join(", "));
+        Some(merge_sql(self, table, &source, columns, key, update))
+    }
+
     fn bool_literal(&self, value: bool) -> &'static str {
         if value { "1" } else { "0" }
     }
@@ -85,6 +103,22 @@ mod tests {
         assert_eq!(
             OracleDialect.select_all(&n, None).as_deref(),
             Some("SELECT * FROM \"SCOTT\".\"EMP\"")
+        );
+    }
+
+    #[test]
+    fn upsert_is_a_merge_without_a_trailing_semicolon() {
+        let cols = ["ID".to_string(), "V".to_string()];
+        let ph = [":1".to_string(), ":2".to_string()];
+        assert_eq!(
+            OracleDialect
+                .upsert_row_sql("\"S\".\"T\"", &cols, &ph, &["ID".into()], &[])
+                .as_deref(),
+            Some(
+                "MERGE INTO \"S\".\"T\" sqlr_t USING (SELECT :1 \"ID\", :2 \"V\" FROM dual) sqlr_s \
+                 ON (sqlr_t.\"ID\" = sqlr_s.\"ID\") WHEN NOT MATCHED THEN INSERT (\"ID\", \"V\") \
+                 VALUES (sqlr_s.\"ID\", sqlr_s.\"V\")"
+            )
         );
     }
 
