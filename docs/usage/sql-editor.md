@@ -61,4 +61,4 @@ Save a query you use often as a snippet with **Save as snippet** from the Query 
 
 ## Explain
 
-**Explain** and **Explain Analyze** (⌥⌘E and ⌥⇧⌘E) show how the database plans to run, or did run, your query, as a tree with cost, rows and time per step. See [Schema tools](schema-tools.md#query-plans).
+**Explain** and **Explain Analyze** (⌥⌘E and ⌥⇧⌘E), or the **Explain** button in the strip above the results, show how the database plans to run, or did run, your query in the **Plan** pane: a summary, a hot path bar and a tree of operator cards with cost, rows and time. See [Schema tools](schema-tools.md#query-plans).

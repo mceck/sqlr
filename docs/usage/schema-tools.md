@@ -24,9 +24,11 @@ Export the diagram as **SVG** for documentation or slides. The SVG is exact and 
 
 ## Query plans
 
-Choose **Explain** (⌥⌘E) to see how the database intends to run the statement, or **Explain Analyze** (⌥⇧⌘E) to run it and see what really happened. The plan appears as a tree, one node per step, with the cost, the number of rows and the time of each. In Explain Analyze, badges compare the estimated rows with the actual ones, which is often where a slow query gives itself away. The most expensive nodes are highlighted, and you can copy the raw plan.
+Choose **Explain** (⌥⌘E) to see how the database intends to run the statement, or **Explain Analyze** (⌥⇧⌘E) to run it and see what really happened. The **Explain** button in the strip above the results does the same, with the chevron beside it for Analyze. The plan opens in a **Plan** pane and stays there until you recompute it, even if you switch back to the result.
 
-Explain Analyze runs the statement for real. For a statement that changes data, run it inside a transaction you can roll back.
+The pane starts with a summary: execution and planning time, cost, rows, the mix of operators and, when something looks wrong, warnings in plain words. A row estimate off by 10× or more, a full scan over a large table, a node run thousands of times and a sort that spills to disk are called out by name. Below it, the hot path bar splits the time (or the cost, without Analyze) between nodes: hover a segment to see it and click it to select its node. The operators themselves are cards connected as a tree; each shows its estimated and actual rows, cost and share of the time, and the heaviest ones are marked **HOT**. Select a card to read its filters, indexes, loops, buffers and other properties in the inspector on the right. **Collapse all** folds long plans, **Raw** shows the server's own plan, and **Copy raw plan** takes it with you.
+
+Explain Analyze runs the statement for real. For a statement that changes data the app asks first and runs it inside a transaction that is rolled back; triggers and other side effects still happen. A running explain can be stopped, and the statement is explained on the tab's own session, so temporary tables and session settings apply.
 
 ## Generate test data
 

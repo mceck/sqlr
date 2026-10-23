@@ -17,12 +17,10 @@ impl Engine {
         let job = self.shared.jobs.create(JobKind::Explain);
         let id = job.id;
         let io = {
-            let inner = self.shared.inner.lock();
-            inner
-                .sessions
-                .get(key)
-                .filter(|s| s.is_live())
-                .map(|s| s.io.clone())
+            let mut inner = self.shared.inner.lock();
+            // A tab's own session may have never run a statement: open it like a query
+            // would, so the plan sees the tab's temporary tables and settings.
+            self.shared.live_or_reopen(&mut inner, key)
         };
         match io {
             None => self

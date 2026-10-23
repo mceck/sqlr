@@ -66,6 +66,7 @@ pub(crate) fn manifest() -> DriverManifest {
         name: "Oracle".into(),
         family: Family::Relational,
         capabilities: Capabilities {
+            explain: true,
             transactions: true,
             // oracle-rs has no out-of-band cancel: a running statement must finish or the
             // connection must be closed.

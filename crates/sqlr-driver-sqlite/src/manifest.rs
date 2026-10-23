@@ -29,6 +29,7 @@ fn base_manifest() -> DriverManifest {
         name: "SQLite".into(),
         family: Family::Relational,
         capabilities: Capabilities {
+            explain: true,
             transactions: true,
             server_cancel: true,
             editable_results: true,

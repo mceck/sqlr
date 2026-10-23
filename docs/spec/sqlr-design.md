@@ -67,7 +67,7 @@ These targets rule out Electron, any webview, and the JVM. They are why the UI i
 22. **Chrome:** a main toolbar with an app mark, a connection chip (switch, connect, edit, reconnect, disconnect), a combined Run/Stop button and Run script; a breadcrumb under the tab strip (connection › database › schema › tab); toasts for short confirmations and background errors; a status bar with connection state, commit mode and transaction state, Ln/Col, rows · time and encoding.
 23. **Explorer polish:** a header with the connection count and filter/refresh/add actions; object counts on folder rows; driver or file detail on connection rows; an inline connection error with Retry; context menus (new console, select 100 rows, open DDL, copy name, refresh, edit, disconnect, remove).
 24. **DDL viewer:** "Open DDL" shows an object's DDL in a read-only editor tab (from the server where it can produce it: `sqlite_schema.sql`, `SHOW CREATE`, `pg_get_*def`). The same DDL action is available for all supported object types.
-25. **Results, extended:** a row-number column, a Messages tab per run (statements, timings, affected rows, notices, truncation), a client-side row filter field, per-statement timings, and typed rendering for every value class (null, bool, integers, exact decimals, floats, text, bytes, JSON, XML, date/time/timestamp(tz)/interval, UUID, arrays, geometry) with NULL in italic grey and numbers right-aligned.
+25. **Results, extended:** a row-number column, Messages and Plan panes per run (statements, timings, affected rows, notices, truncation; the visual plan), a client-side row filter field, per-statement timings, and typed rendering for every value class (null, bool, integers, exact decimals, floats, text, bytes, JSON, XML, date/time/timestamp(tz)/interval, UUID, arrays, geometry) with NULL in italic grey and numbers right-aligned.
 26. **Editor, extended:** a tint on the statement under the caret, optional soft wrap, optional line numbers, and a "Query history" view that can insert into the editor, copy, clear, and reopen an entry with its original connection and database.
 27. **Preferences, extended:** UI scale, editor font size, line numbers, soft wrap, result row cap, page size, theme; "Open settings folder"; command-line `--version` and `--help`.
 
@@ -357,7 +357,7 @@ Every connection uses a **connection profile**. A profile decides how transactio
 
 - **Left:** a Connections / Explorer tree with every connection, organized in expandable folders and reorderable by drag and drop, and color-tagged.
 - **Center top:** editor and object tabs (SQL files, open tables, Mongo collections, Redis databases).
-- **Center bottom:** result tabs plus Output, History, Log and, Operations.
+- **Center bottom:** result panes (Result, Messages, Plan) plus Output, History, Log and Operations.
 - **Right:** the value panel for the selected cell or document.
 - **Toolbar:** the active connection and schema picker, Run (⌘↵), Stop and Refresh.
 - **Status bar:** row count, timing, "Fetch: N ▾" and "Fetch all".
@@ -374,6 +374,10 @@ All widgets take data in and return action values. None of them calls the engine
 - Multi-cursor, grouped undo/redo, find and replace, auto-indent, bracket pairing, and toggle comment (⌘/).
 - Context-aware autocomplete fed by the catalog cache: tables after `FROM` and `JOIN`, columns after `alias.`, keywords and functions from the `Dialect`. The popup is drawn by the widget itself.
 - ⌘↵ runs the statement under the cursor or the selection. ⇧⌘↵ runs the script. Syntax errors with a position are underlined.
+
+**`PlanView`**
+- The visual explain plan: a summary of the plan's measured or estimated time, cost, rows, operator mix and warnings; a stacked hot path bar whose segments select a node; and the operators as collapsible cards connected as a tree. The selected node's metrics, filters, indexes, buffers and extras sit in an inspector beside the tree.
+- The raw plan is one toggle away. A plan is a snapshot: when the statement at the caret changes, the pane offers a recompute instead of clearing it.
 
 **`ResultGrid`**
 - Virtualized on both rows and columns.
@@ -442,7 +446,7 @@ All widgets take data in and return action values. None of them calls the engine
 
 - **Compare** two schemas or databases (same or different connections of the same engine): a tree of differences per object, a side-by-side DDL diff, and a generated migration script that opens in the editor. Objects can be excluded.
 - **ER diagrams** for a schema or a selection of tables: automatic layout from foreign keys, drag to rearrange, layout saved per schema, export to PNG/SVG.
-- **Visual explain plan:** `EXPLAIN (ANALYZE, FORMAT JSON)` and equivalents rendered as a tree with costs, rows and time per node, highlighting the most expensive nodes.
+- **Visual explain plan:** `EXPLAIN (ANALYZE, FORMAT JSON)` and equivalents shown in the tab's Plan pane, on the tab's own session. The strip above the results carries an **Explain** split button (Explain, or Explain Analyze from its chevron). The pane summarizes execution and planning time, cost, rows and the operator mix, lists plain-language warnings (a row estimate off by 10×, a full scan over 10,000 rows, a node run 1,000 times, a spill to disk), and draws the plan as a hot path bar plus collapsible operator cards; the selected node's details sit beside it and the raw plan is a toggle away. Explain Analyze of a statement that writes asks inline first and runs inside a transaction that is rolled back; a running explain can be stopped. The plan is a snapshot, kept until the user recomputes it.
 - **Test-data generator:** per-column generators (sequences, random ranges, names, emails, dates, foreign-key-aware picks) writing through the transfer engine.
 
 ### 8.7 Configurability

@@ -140,7 +140,95 @@ pub struct PlanTree {
     pub format: String,
 }
 
+/// What an operator does, for the summary counts and the card colors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlanRole {
+    Join,
+    Scan,
+    Sort,
+    Aggregate,
+    Other,
+}
+
+/// How serious a [`PlanIssue`] is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PlanIssueLevel {
+    /// Worth knowing, not a problem (the plan carries no measured times).
+    Note,
+    Warning,
+}
+
+/// One thing the summary says about a plan node in plain words.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlanIssue {
+    pub level: PlanIssueLevel,
+    /// The node the issue is about, as child indexes from the root (`[]` is the root).
+    pub path: Vec<usize>,
+    /// The node as "Seq Scan on orders"; empty for a plan-wide note.
+    pub node: String,
+    pub message: String,
+}
+
+/// The composition of a plan and its issues: what the summary shows above the tree.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PlanInsights {
+    pub nodes: usize,
+    /// The deepest node, the root counting as 1.
+    pub depth: usize,
+    pub joins: usize,
+    pub scans: usize,
+    pub sorts: usize,
+    pub aggregates: usize,
+    /// Whether the plan carries measured times (`EXPLAIN ANALYZE`).
+    pub timed: bool,
+    /// Warnings first, then plan-wide notes.
+    pub issues: Vec<PlanIssue>,
+}
+
 impl PlanNode {
+    /// The node as one line: "Seq Scan on orders" (the relation is added when the label
+    /// does not already name it).
+    pub fn title(&self) -> String {
+        match &self.relation {
+            Some(relation) if !self.label.contains(relation.as_str()) => {
+                format!("{} on {relation}", self.label)
+            }
+            _ => self.label.clone(),
+        }
+    }
+
+    /// What the operator does, from the kinds and labels the parsers produce.
+    pub fn role(&self) -> PlanRole {
+        let text = format!("{} {}", self.kind, self.label).to_ascii_lowercase();
+        if text.contains("join") || text.contains("nested loop") {
+            return PlanRole::Join;
+        }
+        if text.contains("scan")
+            || text.contains("search")
+            || text.contains("table access")
+            || text.contains("index lookup")
+            // MySQL's JSON plan names the access method instead of a "scan".
+            || matches!(
+                self.kind.to_ascii_lowercase().as_str(),
+                "all" | "ref" | "eq_ref" | "range" | "index" | "index_merge" | "fulltext"
+            )
+        {
+            return PlanRole::Scan;
+        }
+        if text.contains("sort") || text.contains("order by") || text.contains("ordering operation")
+        {
+            return PlanRole::Sort;
+        }
+        if text.contains("aggregate")
+            || text.contains("group by")
+            || text.contains("grouping operation")
+            || text.contains("windowagg")
+        {
+            return PlanRole::Aggregate;
+        }
+        PlanRole::Other
+    }
+
     /// What makes the node expensive: its own time when timed, else its own cost.
     pub fn weight(&self) -> f64 {
         if let Some(t) = self.self_time_ms {
@@ -186,6 +274,169 @@ impl PlanTree {
 
     pub fn node(&self, path: &[usize]) -> Option<&PlanNode> {
         path.iter().try_fold(&self.root, |n, &i| n.children.get(i))
+    }
+
+    /// The counts, the depth and the issues the summary shows. Every number comes from the
+    /// plan itself; the warnings use thresholds that hold across the supported engines.
+    pub fn insights(&self) -> PlanInsights {
+        /// Measured rows ≥ this many times the estimate (or the other way round).
+        const ESTIMATE_FACTOR: f64 = 10.0;
+        /// A full scan on a relation this large is worth reporting.
+        const FULL_SCAN_ROWS: f64 = 10_000.0;
+        /// A node run this often hints at a nested loop over many rows.
+        const MANY_LOOPS: f64 = 1_000.0;
+
+        fn walk(node: &PlanNode, path: &mut Vec<usize>, depth: usize, out: &mut PlanInsights) {
+            out.nodes += 1;
+            out.depth = out.depth.max(depth);
+            match node.role() {
+                PlanRole::Join => out.joins += 1,
+                PlanRole::Scan => out.scans += 1,
+                PlanRole::Sort => out.sorts += 1,
+                PlanRole::Aggregate => out.aggregates += 1,
+                PlanRole::Other => {}
+            }
+            let title = node.title();
+            let warn = |message: String| PlanIssue {
+                level: PlanIssueLevel::Warning,
+                path: path.clone(),
+                node: title.clone(),
+                message,
+            };
+            let loops = node.loops.unwrap_or(1.0).max(1.0);
+            let measured_rows = node.rows_actual.map(|rows| rows * loops);
+            let scanned = measured_rows.or(node.rows_estimate);
+
+            // The estimate was far off: the planner may have picked the wrong join order.
+            // Both counts are per loop, as the plan reports them.
+            if let (Some(estimate), Some(actual)) = (node.rows_estimate, node.rows_actual) {
+                let (estimate, actual) = (estimate.max(1.0), actual.max(1.0));
+                let (more, ratio) = if actual >= estimate {
+                    (true, actual / estimate)
+                } else {
+                    (false, estimate / actual)
+                };
+                if ratio >= ESTIMATE_FACTOR {
+                    out.issues.push(warn(format!(
+                        "{}: {} rows estimated, {} read{} ({}× {})",
+                        title,
+                        grouped(estimate),
+                        grouped(actual),
+                        if loops > 1.0 { " per loop" } else { "" },
+                        grouped(ratio),
+                        if more { "more" } else { "fewer" }
+                    )));
+                }
+            }
+
+            // A full scan over a large relation.
+            let full = {
+                let label = node.label.to_ascii_lowercase();
+                let kind = node.kind.to_ascii_lowercase();
+                label.contains("seq scan")
+                    || label.contains("table scan")
+                    || label.contains("table access full")
+                    || label.contains("full scan")
+                    || kind == "scan"
+                    || kind == "all"
+            };
+            if full && scanned.is_some_and(|rows| rows >= FULL_SCAN_ROWS) {
+                let rows = scanned.unwrap_or_default();
+                let verb = if measured_rows.is_some() {
+                    "reads"
+                } else {
+                    "is expected to read"
+                };
+                out.issues.push(warn(format!(
+                    "{} {verb} {} rows (full scan)",
+                    title,
+                    grouped(rows)
+                )));
+            }
+
+            // The inner side of a nested loop run thousands of times.
+            if let Some(loops) = node.loops
+                && loops >= MANY_LOOPS
+            {
+                out.issues
+                    .push(warn(format!("{} runs {} times", title, grouped(loops))));
+            }
+
+            // Work spilled out of memory.
+            let temp: i64 = node
+                .buffers
+                .iter()
+                .filter(|(name, _)| name.starts_with("Temp "))
+                .map(|(_, value)| *value)
+                .sum();
+            if temp > 0 {
+                out.issues.push(warn(format!(
+                    "{} spills to disk ({} temp blocks)",
+                    title,
+                    grouped(temp as f64)
+                )));
+            } else if let Some((_, method)) = node
+                .extra
+                .iter()
+                .find(|(name, _)| name == "Sort Method")
+                .filter(|(_, value)| value.to_ascii_lowercase().contains("external"))
+            {
+                out.issues
+                    .push(warn(format!("{} spills to disk ({method})", title)));
+            } else if node
+                .extra
+                .iter()
+                .any(|(name, value)| name == "Using temporary" && value == "true")
+            {
+                out.issues
+                    .push(warn(format!("{} uses a temporary table", title)));
+            } else if node
+                .extra
+                .iter()
+                .any(|(name, value)| name == "Using filesort" && value == "true")
+            {
+                out.issues
+                    .push(warn(format!("{} sorts with filesort", title)));
+            }
+
+            for (i, child) in node.children.iter().enumerate() {
+                path.push(i);
+                walk(child, path, depth + 1, out);
+                path.pop();
+            }
+        }
+
+        fn grouped(value: f64) -> String {
+            let value = value.round() as i64;
+            let digits = value.unsigned_abs().to_string();
+            let mut out = String::new();
+            for (i, c) in digits.chars().enumerate() {
+                if i > 0 && (digits.len() - i).is_multiple_of(3) {
+                    out.push(',');
+                }
+                out.push(c);
+            }
+            if value < 0 { format!("-{out}") } else { out }
+        }
+
+        let mut out = PlanInsights::default();
+        walk(&self.root, &mut Vec::new(), 1, &mut out);
+        fn timed(node: &PlanNode) -> bool {
+            node.time_ms.is_some() || node.self_time_ms.is_some() || node.children.iter().any(timed)
+        }
+        out.timed = self.execution_ms.is_some() || timed(&self.root);
+        if !out.timed {
+            out.issues.push(PlanIssue {
+                level: PlanIssueLevel::Note,
+                path: Vec::new(),
+                node: String::new(),
+                message: "Estimated plan: row counts and costs are estimates, not measured times"
+                    .into(),
+            });
+        }
+        out.issues
+            .sort_by(|a, b| b.level.cmp(&a.level).then_with(|| a.path.cmp(&b.path)));
+        out
     }
 }
 
@@ -865,5 +1116,140 @@ mod tests {
         assert_eq!(plan.root.children[0].relation.as_deref(), Some("orders"));
         assert_eq!(plan.root.children[1].children.len(), 1);
         assert!(parse_sqlite_rows(&[]).is_err());
+    }
+
+    const ANALYZED: &str = r#"[{"Plan": {"Node Type": "Nested Loop", "Startup Cost": 0.0,
+      "Total Cost": 30.0, "Plan Rows": 10, "Actual Rows": 8, "Actual Loops": 1,
+      "Actual Total Time": 5.0, "Plans": [
+        {"Node Type": "Seq Scan", "Relation Name": "big", "Startup Cost": 0.0, "Total Cost": 20.0,
+         "Plan Rows": 100, "Actual Rows": 15000, "Actual Loops": 1, "Actual Total Time": 3.0,
+         "Shared Hit Blocks": 2, "Filter": "(x > 1)"},
+        {"Node Type": "Index Scan", "Relation Name": "small", "Startup Cost": 0.1,
+         "Total Cost": 0.5, "Plan Rows": 1, "Actual Rows": 1, "Actual Loops": 40000,
+         "Actual Total Time": 0.25},
+        {"Node Type": "Sort", "Startup Cost": 0.0, "Total Cost": 0.5, "Plan Rows": 10,
+         "Actual Rows": 10, "Actual Loops": 1, "Actual Total Time": 0.1,
+         "Temp Read Blocks": 12, "Temp Written Blocks": 12}]},
+      "Planning Time": 0.3, "Execution Time": 5.5}]"#;
+
+    #[test]
+    fn insights_count_the_operators_the_depth_and_the_roles() {
+        let plan = parse_pg_json(ANALYZED).unwrap();
+        let insights = plan.insights();
+        assert_eq!(insights.nodes, 4);
+        assert_eq!(insights.depth, 2);
+        assert_eq!(insights.joins, 1);
+        assert_eq!(insights.scans, 2);
+        assert_eq!(insights.sorts, 1);
+        assert_eq!(insights.aggregates, 0);
+        assert!(insights.timed);
+        assert_eq!(plan.root.title(), "Nested Loop");
+        assert_eq!(plan.root.children[0].title(), "Seq Scan on big");
+        assert_eq!(plan.root.children[0].role(), PlanRole::Scan);
+        assert_eq!(plan.root.role(), PlanRole::Join);
+    }
+
+    #[test]
+    fn insights_flag_a_bad_estimate_a_full_scan_many_loops_and_spills() {
+        let plan = parse_pg_json(ANALYZED).unwrap();
+        let insights = plan.insights();
+        let messages: Vec<&str> = insights.issues.iter().map(|i| i.message.as_str()).collect();
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("100 rows estimated, 15,000 read (150× more)")),
+            "{messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("Seq Scan on big reads 15,000 rows (full scan)")),
+            "{messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("Index Scan on small runs 40,000 times")),
+            "{messages:?}"
+        );
+        assert!(
+            messages.iter().any(|m| m.contains("spills to disk")),
+            "{messages:?}"
+        );
+        // Both counts are per loop: 1 estimated and 1 read 40,000 times is not a bad
+        // estimate, only a lot of loops.
+        assert!(
+            !messages
+                .iter()
+                .any(|m| m.contains("Index Scan on small: 1 rows estimated")),
+            "{messages:?}"
+        );
+        // Warnings name the node they are about, and the paths point at it.
+        let spill = insights
+            .issues
+            .iter()
+            .find(|i| i.message.contains("spills to disk"))
+            .unwrap();
+        assert_eq!(spill.node, "Sort");
+        assert_eq!(spill.path, vec![2]);
+    }
+
+    #[test]
+    fn a_plan_without_timings_gets_a_note_not_a_warning() {
+        let plan = parse_pg_json(
+            r#"[{"Plan": {"Node Type": "Seq Scan", "Relation Name": "t",
+                 "Startup Cost": 0.0, "Total Cost": 12.0, "Plan Rows": 500}}]"#,
+        )
+        .unwrap();
+        let insights = plan.insights();
+        assert!(!insights.timed);
+        assert_eq!(insights.issues.len(), 1);
+        assert_eq!(insights.issues[0].level, PlanIssueLevel::Note);
+        assert!(insights.issues[0].message.contains("Estimated plan"));
+        // The estimate alone is too small to be worth a scan warning.
+        assert!(
+            insights
+                .issues
+                .iter()
+                .all(|i| i.level != PlanIssueLevel::Warning)
+        );
+    }
+
+    #[test]
+    fn mysql_and_sqlite_full_scans_are_recognized() {
+        let mysql = parse_mysql_json(
+            r#"{"query_block": {"select_id": 1, "table": {"table_name": "orders",
+                 "access_type": "ALL", "rows_examined_per_scan": 20000}}}"#,
+        )
+        .unwrap();
+        let insights = mysql.insights();
+        assert_eq!(insights.scans, 1);
+        assert!(
+            insights
+                .issues
+                .iter()
+                .any(|i| i.message == "ALL on orders is expected to read 20,000 rows (full scan)"),
+            "{:?}",
+            insights.issues
+        );
+
+        let sqlite = parse_sqlite_rows(&[(1, 0, "SCAN orders".into())]).unwrap();
+        let insights = sqlite.insights();
+        assert_eq!(insights.scans, 1);
+        assert_eq!(insights.sorts, 0);
+        assert!(!insights.timed);
+    }
+
+    #[test]
+    fn a_sqlite_sort_under_a_scan_is_counted() {
+        let plan = parse_sqlite_rows(&[
+            (1, 0, "SCAN orders".into()),
+            (2, 1, "USE TEMP B-TREE FOR ORDER BY".into()),
+        ])
+        .unwrap();
+        let insights = plan.insights();
+        assert_eq!(insights.scans, 1);
+        assert_eq!(insights.sorts, 1);
+        assert_eq!(insights.depth, 2);
     }
 }

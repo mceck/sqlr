@@ -88,7 +88,7 @@ pub use palette::{
     PALETTE_ROWS, PaletteGroup, PaletteItem, PaletteMode, PaletteOutput, PaletteState, fuzzy_rank,
     palette,
 };
-pub use plan_view::{PlanAction, PlanViewState, plan_view};
+pub use plan_view::{PlanAction, PlanChrome, PlanViewState, plan_view};
 pub use prefs_widgets::{override_dot, setting_editor};
 pub use result_bar::{
     ChangesAction, ResultBarAction, ResultBarView, read_only_bar, result_bar, result_bar_frame,

@@ -4,15 +4,19 @@
 use sqlr_ui::ToastKind;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Instant;
 
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Color32, FontId, Id, RichText, Stroke, WidgetText};
-use sqlr_core::{ConnectionConfig, Dialect, DriverError, SqlSyntax};
-use sqlr_engine::{Engine, QueryId, QueryStatus, ScriptId, ScriptOnError, SessionKey};
+use sqlr_core::{ConnectionConfig, Dialect, DriverError, PlanTree, SqlSyntax, StatementClass};
+use sqlr_engine::{
+    Engine, JobId, JobOutcome, QueryId, QueryStatus, ScriptId, ScriptOnError, SessionKey,
+};
 use sqlr_ui::theme::{self, Palette, Spacing, icons};
 use sqlr_ui::{
-    ChangesAction, EditorState, GridAction, GridInput, GridState, Marker, ResultBarAction,
-    ResultBarView, RunRequest, data_grid, query_editor, result_bar, result_bar_frame,
+    ChangesAction, EditorState, GridAction, GridInput, GridState, Marker, PlanChrome,
+    PlanViewState, ResultBarAction, ResultBarView, RunRequest, data_grid, plan_view, query_editor,
+    result_bar, result_bar_frame,
 };
 
 use crate::app::{SqlrApp, tab_mut};
@@ -41,6 +45,7 @@ pub enum ScriptPane {
     Result(usize),
     Output,
     Messages,
+    Plan,
 }
 
 /// The part of a single statement's run shown below the editor.
@@ -49,6 +54,98 @@ pub enum SinglePane {
     #[default]
     Result,
     Messages,
+    Plan,
+}
+
+/// An Analyze of a statement that writes, waiting for the user's confirmation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlanRequest {
+    pub sql: String,
+    pub analyze: bool,
+}
+
+/// The Plan pane of a tab: the last plan, the job computing a new one, and the confirmation
+/// an Analyze of a write needs.
+#[derive(Default)]
+pub struct PlanPane {
+    pub job: Option<JobId>,
+    pub tree: Option<PlanTree>,
+    pub error: Option<String>,
+    /// The statement the current plan (or the last attempt) is about.
+    pub sql: String,
+    /// The last plan was computed with ANALYZE.
+    pub analyzed: bool,
+    pub pending: Option<PlanRequest>,
+    pub view: PlanViewState,
+    pub started: Option<Instant>,
+}
+
+impl PlanPane {
+    /// Whether the pane has anything to show (or to wait for).
+    pub fn has_content(&self) -> bool {
+        self.job.is_some() || self.tree.is_some() || self.error.is_some() || self.pending.is_some()
+    }
+
+    /// Whether the statement at the caret differs from the one the plan is about.
+    pub fn stale(&self, current: Option<&str>) -> bool {
+        self.tree.is_some() && current.is_none_or(|sql| sql.trim() != self.sql.trim())
+    }
+
+    /// Starts explaining `sql`, keeping the previous plan visible until the new one arrives.
+    pub fn start(&mut self, engine: &Engine, key: &SessionKey, sql: String, analyze: bool) {
+        self.release(engine);
+        self.error = None;
+        self.sql = sql.clone();
+        self.analyzed = analyze;
+        self.pending = None;
+        self.started = Some(Instant::now());
+        self.view.selected = None;
+        self.view.collapsed.clear();
+        self.view.scroll_to = None;
+        self.job = Some(engine.explain(key, sql, analyze));
+    }
+
+    /// Collects the job's outcome, once it has one.
+    pub fn poll(&mut self, engine: &Engine) {
+        let Some(job) = self.job else {
+            return;
+        };
+        let Some(outcome) = engine.job(job).and_then(|state| state.outcome) else {
+            return;
+        };
+        engine.forget_job(job);
+        self.job = None;
+        self.started = None;
+        match outcome {
+            JobOutcome::Plan(plan) => {
+                self.tree = Some(plan);
+                self.error = None;
+            }
+            JobOutcome::Failed(e) => self.error = Some(e.message),
+            _ => {}
+        }
+    }
+
+    /// Asks the server to stop the running explain.
+    pub fn cancel(&self, engine: &Engine) {
+        if let Some(job) = self.job {
+            engine.cancel_job(job);
+        }
+    }
+
+    /// Stops and forgets the job; the plan itself stays.
+    pub fn release(&mut self, engine: &Engine) {
+        if let Some(job) = self.job.take() {
+            engine.cancel_job(job);
+            engine.forget_job(job);
+        }
+        self.started = None;
+    }
+
+    /// The elapsed time of a running explain.
+    pub fn elapsed_ms(&self) -> Option<u128> {
+        self.started.map(|started| started.elapsed().as_millis())
+    }
 }
 
 /// The editing state of one result: the table its rows come from, why it is read-only,
@@ -86,6 +183,8 @@ pub struct QueryTab {
     pub edits: HashMap<QueryId, ResultEdit>,
     /// The pane of a single statement's run.
     pub pane: SinglePane,
+    /// The Plan pane: the last plan and the job computing one.
+    pub plan: PlanPane,
     /// The server-side sort and filter the current run applies.
     pub server: Option<ServerView>,
     /// A cell edited in the value panel.
@@ -131,6 +230,7 @@ impl QueryTab {
             grids: HashMap::new(),
             edits: HashMap::new(),
             pane: SinglePane::Result,
+            plan: PlanPane::default(),
             server: None,
             value_edit: None,
             page_size,
@@ -179,6 +279,64 @@ impl QueryTab {
         }
     }
 
+    /// Collects a finished explain job, whether its pane is shown or not.
+    pub fn poll_plan(&mut self, engine: &Engine) {
+        self.plan.poll(engine);
+    }
+
+    /// Explains `sql` in this tab's session and shows the Plan pane. An Analyze of a
+    /// statement that writes waits for the confirmation banner instead of starting.
+    pub fn start_explain(
+        &mut self,
+        engine: &Engine,
+        conn: &str,
+        sql: String,
+        analyze: bool,
+        writes: bool,
+    ) {
+        self.pane = SinglePane::Plan;
+        if let Some(TabRun::Script { pane, .. }) = &mut self.run {
+            *pane = ScriptPane::Plan;
+        }
+        if analyze && writes {
+            self.plan.pending = Some(PlanRequest { sql, analyze });
+            return;
+        }
+        let key = self.session(engine, conn);
+        self.plan.start(engine, &key, sql, analyze);
+    }
+
+    /// Runs the Analyze the confirmation banner was waiting for.
+    pub fn confirm_plan(&mut self, engine: &Engine, conn: &str) {
+        let Some(request) = self.plan.pending.take() else {
+            return;
+        };
+        let key = self.session(engine, conn);
+        self.plan.start(engine, &key, request.sql, request.analyze);
+    }
+
+    /// Explains the current target again, with the same Analyze setting as the last plan.
+    pub fn recompute_plan(
+        &mut self,
+        engine: &Engine,
+        conn: &str,
+        dialect: Option<&dyn Dialect>,
+        analyze: bool,
+    ) -> bool {
+        let Some(target) = self.editor.run_target() else {
+            return false;
+        };
+        let writes =
+            dialect.is_none_or(|d| d.syntax().classify(&target.sql) != StatementClass::Read);
+        self.start_explain(engine, conn, target.sql, analyze, writes);
+        true
+    }
+
+    /// Stops and forgets a plan job when the tab closes.
+    pub fn close_plan(&mut self, engine: &Engine) {
+        self.plan.release(engine);
+    }
+
     /// Closes the previous run's results and forgets its grids and markers.
     pub fn close_run(&mut self, engine: &Engine) {
         match self.run.take() {
@@ -222,6 +380,7 @@ impl QueryTab {
         origin: Option<usize>,
     ) -> QueryId {
         self.close_run(engine);
+        self.pane = SinglePane::Result;
         let key = self.session(engine, conn);
         let q = engine.execute_in(&key, self.database.as_deref(), sql, self.page_size);
         self.run = Some(TabRun::Single { q, origin });
@@ -232,6 +391,7 @@ impl QueryTab {
     /// Manual transaction, so the editor's own applies are not refused for it.
     pub fn run_page(&mut self, engine: &Engine, conn: &str, sql: String) -> QueryId {
         self.close_run(engine);
+        self.pane = SinglePane::Result;
         let key = self.session(engine, conn);
         let q = engine.read_in(&key, self.database.as_deref(), sql, self.page_size);
         self.run = Some(TabRun::Single { q, origin: None });
@@ -247,6 +407,7 @@ impl QueryTab {
         on_error: ScriptOnError,
     ) {
         self.close_run(engine);
+        self.pane = SinglePane::Result;
         let origins = targets.iter().map(|t| t.origin).collect();
         let statements = targets.into_iter().map(|t| t.sql).collect();
         let id = engine.execute_script_in(
@@ -412,6 +573,8 @@ pub struct Viewer<'a> {
     pub connections: &'a [ConnectionConfig],
     /// Connections whose driver edits results.
     pub editable: &'a HashSet<String>,
+    /// Connections whose driver produces query plans.
+    pub explain: &'a HashSet<String>,
     /// Profile colors of the saved connections that have one, by connection id.
     pub tints: &'a HashMap<String, [u8; 3]>,
     /// Built-in and user connection profiles.
@@ -525,6 +688,7 @@ impl egui_dock::TabViewer for Viewer<'_> {
         // The grids below read the formats of this tab's connection.
         let formats = self.formats.for_conn(tab.conn.as_deref());
         sqlr_ui::set_data_formats(ui.ctx(), formats.clone());
+        tab.poll_plan(self.engine);
         if let (Some(redis), Some(conn)) = (tab.redis.as_deref_mut(), tab.conn.as_deref()) {
             crate::nosql::redis_ui(ui, tab.key, conn, redis, self.engine, &mut self.commands);
             return;
@@ -615,6 +779,7 @@ impl egui_dock::TabViewer for Viewer<'_> {
             engine: self.engine,
             dialect: dialect.map(|d| &**d),
             editable: tab.conn.as_ref().is_some_and(|c| self.editable.contains(c)),
+            explain: tab.conn.as_ref().is_some_and(|c| self.explain.contains(c)),
             commands: &mut self.commands,
         };
         run_view(ui, tab, &mut cx);
@@ -672,6 +837,7 @@ impl Viewer<'_> {
             engine: self.engine,
             dialect: dialect.map(|d| &**d),
             editable: self.editable.contains(&conn),
+            explain: false,
             commands: &mut self.commands,
         };
         match &tab.run {
@@ -686,13 +852,10 @@ impl Viewer<'_> {
 
 fn run_view(ui: &mut egui::Ui, tab: &mut QueryTab, cx: &mut ViewCx<'_>) {
     match &tab.run {
-        None => hint(
-            ui,
-            "Run the statement at the caret with ⌘↵, or the script with ⇧⌘↵",
-        ),
+        None => single_view(ui, tab, cx, None),
         Some(TabRun::Single { q, .. }) => {
             let q = *q;
-            single_view(ui, tab, cx, q);
+            single_view(ui, tab, cx, Some(q));
         }
         Some(TabRun::Script { id, pane, .. }) => {
             let (id, pane) = (*id, *pane);
@@ -708,20 +871,26 @@ pub(crate) struct ViewCx<'a> {
     pub dialect: Option<&'a dyn Dialect>,
     /// The tab connection's driver edits results.
     pub editable: bool,
+    /// The tab connection's driver produces query plans.
+    pub explain: bool,
     pub commands: &'a mut Vec<TabCommand>,
 }
 
 /// The strip of panes above a run: `labels` as selectable tabs (returns the one clicked).
+/// A label is `(text, selected, enabled)`.
 fn pane_strip(
     ui: &mut egui::Ui,
-    labels: &[(String, bool)],
+    labels: &[(String, bool, bool)],
     extra: impl FnOnce(&mut egui::Ui),
 ) -> Option<usize> {
     let mut picked = None;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = Spacing::S;
-        for (i, (label, selected)) in labels.iter().enumerate() {
-            if ui.selectable_label(*selected, label).clicked() {
+        for (i, (label, selected, enabled)) in labels.iter().enumerate() {
+            let response = ui
+                .add_enabled_ui(*enabled, |ui| ui.selectable_label(*selected, label))
+                .inner;
+            if response.clicked() {
                 picked = Some(i);
             }
         }
@@ -730,28 +899,255 @@ fn pane_strip(
     picked
 }
 
-fn single_view(ui: &mut egui::Ui, tab: &mut QueryTab, cx: &mut ViewCx<'_>, q: QueryId) {
-    let labels = [
-        ("Result 1".to_string(), tab.pane == SinglePane::Result),
-        ("Messages".to_string(), tab.pane == SinglePane::Messages),
+/// The Explain split button at the right of a run's strip: `Explain` on a click, the
+/// chevron for `Explain Analyze`.
+fn explain_controls(ui: &mut egui::Ui, tab: &mut QueryTab, cx: &mut ViewCx<'_>) {
+    let p = theme::palette(ui.ctx());
+    let target = tab.editor.run_target();
+    let conn = tab.conn.clone();
+    let enabled = cx.explain && conn.is_some() && target.is_some();
+    let tip = if !cx.explain {
+        "This database does not provide query plans".to_string()
+    } else if conn.is_none() {
+        "Open a connection to explain this statement".to_string()
+    } else if let Some(target) = &target {
+        format!(
+            "Explain the statement at the caret (⌥⌘E)\n{}",
+            target.sql.lines().next().unwrap_or_default()
+        )
+    } else {
+        "Put the caret in a statement to explain".to_string()
+    };
+    let mut requested: Option<bool> = None;
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        let arrow = icons::text(ui, icons::CARET_DOWN, 10.0).color(if enabled {
+            p.accent
+        } else {
+            p.text_disabled
+        });
+        let chevron = ui
+            .add_enabled(
+                enabled,
+                egui::Button::new(arrow)
+                    .frame(false)
+                    .min_size(egui::vec2(18.0, 22.0)),
+            )
+            .on_hover_text(if enabled {
+                "Explain options"
+            } else {
+                tip.as_str()
+            });
+        chevron.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, "Explain options")
+        });
+        if enabled {
+            egui::Popup::menu(&chevron).show(|ui| {
+                if icons::menu_item(ui, icons::PLAN, "Explain").clicked() {
+                    requested = Some(false);
+                    ui.close();
+                }
+                if icons::menu_item(ui, icons::PLAN, "Explain Analyze").clicked() {
+                    requested = Some(true);
+                    ui.close();
+                }
+            });
+        }
+        let glyph = icons::text(ui, icons::PLAN, icons::SIZE).color(if enabled {
+            p.accent
+        } else {
+            p.text_disabled
+        });
+        let label =
+            RichText::new("Explain").color(if enabled { p.accent } else { p.text_disabled });
+        let primary = egui::Button::new((glyph, label))
+            .fill(if enabled {
+                p.accent_soft
+            } else {
+                Color32::TRANSPARENT
+            })
+            .corner_radius(egui::CornerRadius::same(Spacing::RADIUS_S));
+        let response = ui.add_enabled(enabled, primary).on_hover_text(tip.as_str());
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, "Explain")
+        });
+        if response.clicked() {
+            requested = Some(false);
+        }
+    });
+    if let (Some(analyze), Some(target), Some(conn)) = (requested, target, conn) {
+        let writes = cx
+            .dialect
+            .is_none_or(|d| d.syntax().classify(&target.sql) != StatementClass::Read);
+        tab.start_explain(cx.engine, &conn, target.sql, analyze, writes);
+    }
+}
+
+fn single_view(ui: &mut egui::Ui, tab: &mut QueryTab, cx: &mut ViewCx<'_>, q: Option<QueryId>) {
+    let has_plan = tab.plan.has_content();
+    let run = q.is_some();
+    let mut labels = vec![
+        (
+            "Result 1".to_string(),
+            tab.pane == SinglePane::Result && run,
+            run,
+        ),
+        (
+            "Messages".to_string(),
+            tab.pane == SinglePane::Messages && run,
+            run,
+        ),
     ];
-    let picked = pane_strip(ui, &labels, |_| {});
+    if has_plan {
+        labels.push(("Plan".to_string(), tab.pane == SinglePane::Plan, true));
+    }
+    let picked = pane_strip(ui, &labels, |ui| explain_controls(ui, tab, cx));
     match picked {
-        Some(0) => tab.pane = SinglePane::Result,
-        Some(1) => tab.pane = SinglePane::Messages,
+        Some(0) if run => tab.pane = SinglePane::Result,
+        Some(1) if run => tab.pane = SinglePane::Messages,
+        Some(2) if has_plan => tab.pane = SinglePane::Plan,
         _ => {}
     }
     ui.separator();
     match tab.pane {
-        SinglePane::Result => result_view(ui, tab, cx, q, 0),
-        SinglePane::Messages => {
-            let messages = cx
-                .engine
-                .result(q)
-                .map(|r| r.read().messages.clone())
-                .unwrap_or_default();
-            messages_view(ui, ("messages", tab.key), &messages);
+        SinglePane::Plan => plan_pane(ui, tab, cx),
+        _ => match q {
+            None => hint(
+                ui,
+                "Run the statement at the caret with ⌘↵, or the script with ⇧⌘↵",
+            ),
+            Some(q) if tab.pane == SinglePane::Messages => {
+                let messages = cx
+                    .engine
+                    .result(q)
+                    .map(|r| r.read().messages.clone())
+                    .unwrap_or_default();
+                messages_view(ui, ("messages", tab.key), &messages);
+            }
+            Some(q) => result_view(ui, tab, cx, q, 0),
+        },
+    }
+}
+
+/// The Plan pane: the confirmation an Analyze of a write needs, the running job, an error,
+/// then the plan itself.
+fn plan_pane(ui: &mut egui::Ui, tab: &mut QueryTab, cx: &mut ViewCx<'_>) {
+    let p = theme::palette(ui.ctx());
+    let engine = cx.engine;
+    let conn = tab.conn.clone();
+    let current = tab
+        .plan
+        .tree
+        .is_some()
+        .then(|| tab.editor.run_target().map(|target| target.sql))
+        .flatten();
+    let mut confirm = false;
+    let mut discard = false;
+    let mut stop = false;
+    let mut retry = false;
+    let mut recompute = false;
+
+    if let Some(request) = &tab.plan.pending {
+        egui::Frame::new()
+            .fill(p.warning.gamma_multiply(0.12))
+            .corner_radius(egui::CornerRadius::same(Spacing::RADIUS_M))
+            .inner_margin(egui::Margin::same(Spacing::M as i8))
+            .show(ui, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing.x = Spacing::S;
+                    icons::paint(ui, icons::WARNING, p.warning);
+                    ui.label(
+                        RichText::new(format!(
+                            "Explain Analyze runs this statement: {}",
+                            request.sql.lines().next().unwrap_or_default()
+                        ))
+                        .color(p.warning),
+                    );
+                });
+                theme::hint(
+                    ui,
+                    "Its changes are rolled back, but triggers and other side effects still happen.",
+                );
+                ui.horizontal(|ui| {
+                    if ui
+                        .add(theme::primary_button(ui.ctx(), "Run Explain Analyze"))
+                        .clicked()
+                    {
+                        confirm = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        discard = true;
+                    }
+                });
+            });
+    }
+
+    if tab.plan.job.is_some() {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = Spacing::S;
+            ui.spinner();
+            let elapsed = tab.plan.elapsed_ms().unwrap_or_default();
+            ui.label(format!("Explaining… {elapsed} ms"));
+            if icons::button(ui, true, icons::STOP, Some(p.error), "Stop").clicked() {
+                stop = true;
+            }
+        });
+    }
+    if let Some(error) = &tab.plan.error {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = Spacing::S;
+            icons::paint(ui, icons::FAILED, p.error);
+            ui.label(RichText::new(error).color(p.error));
+            if ui.button("Retry").clicked() {
+                retry = true;
+            }
+        });
+    }
+
+    let stale = tab.plan.stale(current.as_deref());
+    let running = tab.plan.job.is_some() || tab.plan.pending.is_some();
+    let sql = tab.plan.sql.clone();
+    let analyzed = tab.plan.analyzed;
+    if let Some(tree) = &tab.plan.tree {
+        if let Some(action) = plan_view(
+            ui,
+            tree,
+            &mut tab.plan.view,
+            PlanChrome {
+                sql: &sql,
+                stale,
+                running,
+            },
+        ) {
+            match action {
+                sqlr_ui::PlanAction::CopyRaw => ui.ctx().copy_text(tree.raw.clone()),
+                sqlr_ui::PlanAction::Recompute => recompute = true,
+            }
         }
+    } else if tab.plan.job.is_none() && tab.plan.error.is_none() && tab.plan.pending.is_none() {
+        theme::hint(
+            ui,
+            "The plan of the statement at the caret appears here. Press Explain.",
+        );
+    }
+
+    if confirm && let Some(conn) = &conn {
+        tab.confirm_plan(engine, conn);
+    }
+    if discard {
+        tab.plan.pending = None;
+    }
+    if stop {
+        tab.plan.cancel(engine);
+    }
+    if retry && let Some(conn) = &conn {
+        let writes = cx
+            .dialect
+            .is_none_or(|d| d.syntax().classify(&sql) != StatementClass::Read);
+        tab.start_explain(engine, conn, sql, analyzed, writes);
+    }
+    if recompute && let Some(conn) = &conn {
+        tab.recompute_plan(engine, conn, cx.dialect, analyzed);
     }
 }
 
@@ -777,20 +1173,25 @@ fn script_view(
     let shown = match pane {
         ScriptPane::Result(n) if n < results.len() => ScriptPane::Result(n),
         ScriptPane::Messages => ScriptPane::Messages,
+        ScriptPane::Plan => ScriptPane::Plan,
         _ => ScriptPane::Output,
     };
     let mut panes: Vec<ScriptPane> = (0..results.len()).map(ScriptPane::Result).collect();
     panes.push(ScriptPane::Output);
     panes.push(ScriptPane::Messages);
-    let labels: Vec<(String, bool)> = panes
+    if tab.plan.has_content() {
+        panes.push(ScriptPane::Plan);
+    }
+    let labels: Vec<(String, bool, bool)> = panes
         .iter()
         .map(|p| {
             let label = match p {
                 ScriptPane::Result(n) => format!("Result {}", n + 1),
                 ScriptPane::Output => "Output".to_string(),
                 ScriptPane::Messages => "Messages".to_string(),
+                ScriptPane::Plan => "Plan".to_string(),
             };
-            (label, *p == shown)
+            (label, *p == shown, true)
         })
         .collect();
     let picked = pane_strip(ui, &labels, |ui| {
@@ -798,11 +1199,15 @@ fn script_view(
             ui.spinner();
             ui.label(RichText::new(format!("statement {}", n + 1)).color(muted));
         }
+        explain_controls(ui, tab, cx);
     })
     .map(|i| panes[i]);
     if let Some(p) = picked
         && let Some(TabRun::Script { pane, .. }) = &mut tab.run
     {
+        if p == ScriptPane::Plan {
+            tab.pane = SinglePane::Plan;
+        }
         *pane = p;
     }
     ui.separator();
@@ -815,6 +1220,7 @@ fn script_view(
             let messages = script.read().messages.clone();
             messages_view(ui, ("messages", tab.key), &messages);
         }
+        ScriptPane::Plan => plan_pane(ui, tab, cx),
         _ => {
             // Drawing the log calls no engine method, so the guard may be held.
             let s = script.read();
@@ -1224,6 +1630,7 @@ impl SqlrApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlr_engine::DriverRegistry;
 
     #[test]
     fn line_col_uses_buffer_coordinates() {
@@ -1363,5 +1770,214 @@ mod tests {
         tab.close_run(&engine);
         assert_eq!(tab.marked, 0);
         assert!(tab.run.is_none());
+    }
+
+    #[test]
+    fn an_analyze_of_a_write_waits_for_the_confirmation() {
+        let engine = Engine::new(DriverRegistry::default(), Arc::new(|| {}));
+        let mut tab = QueryTab::new(
+            1,
+            "t".into(),
+            Some("c".into()),
+            "UPDATE t SET a = 1",
+            SqlSyntax::ansi(),
+            500,
+        );
+        tab.start_explain(&engine, "c", "UPDATE t SET a = 1".into(), true, true);
+        assert_eq!(tab.pane, SinglePane::Plan);
+        assert!(tab.plan.job.is_none());
+        assert_eq!(
+            tab.plan.pending,
+            Some(PlanRequest {
+                sql: "UPDATE t SET a = 1".into(),
+                analyze: true,
+            })
+        );
+        assert!(tab.plan.has_content());
+        // Cancelling the confirmation leaves no job behind.
+        tab.plan.pending = None;
+        assert!(!tab.plan.has_content());
+    }
+
+    #[test]
+    fn a_plan_is_stale_when_the_statement_at_the_caret_changes() {
+        let mut tab = QueryTab::new(1, "t".into(), None, "SELECT 1", SqlSyntax::ansi(), 500);
+        assert!(!tab.plan.stale(Some("SELECT 1")));
+        tab.plan.tree = Some(PlanTree::default());
+        tab.plan.sql = "SELECT 1".into();
+        assert!(!tab.plan.stale(Some("SELECT 1")));
+        assert!(tab.plan.stale(Some("SELECT 2")));
+        assert!(tab.plan.stale(None));
+    }
+
+    fn sqlite_app(dir: &std::path::Path) -> SqlrApp {
+        use crate::AppDeps;
+        use sqlr_core::{ConnectionConfig, ConnectionProfile, Secrets};
+        use sqlr_engine::SessionStatus;
+        use sqlr_store::{ConnectionRepo, MemorySecretStore, Settings};
+
+        let file = dir.join("plan.db");
+        rusqlite::Connection::open(&file)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE orders (id INTEGER PRIMARY KEY, total REAL);
+                 CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT);
+                 INSERT INTO orders VALUES (1, 10.0), (2, 20.0);
+                 INSERT INTO customers VALUES (1, 'Ada');",
+            )
+            .unwrap();
+        let mut drivers = DriverRegistry::default();
+        drivers.register(sqlr_driver_sqlite::SqliteDriver::new());
+        let engine = Engine::new(drivers, Arc::new(|| {}));
+        let repo = ConnectionRepo::open(dir, Box::new(MemorySecretStore::default())).unwrap();
+        let cfg = ConnectionConfig {
+            id: "db".into(),
+            name: "Plan DB".into(),
+            driver: "sqlite".into(),
+            group: None,
+            color: None,
+            values: [("path".into(), file.display().to_string())].into(),
+            profile: None,
+            save_secrets: false,
+            agent_access: Default::default(),
+        };
+        repo.save(&cfg, &Secrets::default()).unwrap();
+        engine.connect(cfg, Secrets::default(), ConnectionProfile::development());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !matches!(
+            engine.session_status("db"),
+            Some(SessionStatus::Connected(_))
+        ) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "SQLite did not connect"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        SqlrApp::new(
+            AppDeps {
+                engine,
+                repo,
+                settings: Settings {
+                    theme: sqlr_ui::theme::ThemePref::Dark,
+                    ..Settings::default()
+                },
+                config_dir: dir.into(),
+                data_dir: Some(dir.into()),
+                startup_notice: None,
+                storage_warning: None,
+                mcp_token_store: None,
+            },
+            &egui::Context::default(),
+        )
+    }
+
+    fn app_harness(app: SqlrApp) -> egui_kittest::Harness<'static, SqlrApp> {
+        let mut h = egui_kittest::Harness::builder()
+            .with_size((1400.0, 900.0))
+            .with_step_dt(0.01)
+            .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+        sqlr_ui::theme::install_fonts(&h.ctx, &[]);
+        h.run_steps(4);
+        h
+    }
+
+    fn step_until(
+        h: &mut egui_kittest::Harness<'static, SqlrApp>,
+        what: &str,
+        done: impl Fn(&egui_kittest::Harness<'static, SqlrApp>) -> bool,
+    ) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !done(h) {
+            assert!(std::time::Instant::now() < deadline, "timed out: {what}");
+            h.step();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn the_plan_pane_explains_before_a_run() {
+        use egui_kittest::kittest::Queryable;
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = sqlite_app(dir.path());
+        app.new_tab(
+            Some("plan".into()),
+            Some("db".into()),
+            "SELECT * FROM orders",
+        );
+        let mut h = app_harness(app);
+        // The strip exists before the first run, with Explain enabled.
+        h.get_by_label("Result 1");
+        h.get_by_label("Messages");
+        h.get_by_label("Explain").click();
+        h.run_steps(2);
+        step_until(&mut h, "the plan", |h| {
+            h.query_by_label("Select SCAN orders").is_some()
+        });
+        h.get_by_label("Plan");
+        h.get_by_label("Estimated");
+        h.get_by_label("Select SCAN orders");
+        // The inspector defaults to the root and names the table.
+        h.get_by_label("SCAN orders");
+    }
+
+    #[test]
+    fn a_changed_statement_recomputes_the_plan() {
+        use egui_kittest::kittest::Queryable;
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = sqlite_app(dir.path());
+        let key = app.new_tab(
+            Some("plan".into()),
+            Some("db".into()),
+            "SELECT * FROM orders",
+        );
+        let mut h = app_harness(app);
+        h.get_by_label("Explain").click();
+        step_until(&mut h, "the first plan", |h| {
+            h.query_by_label("Select SCAN orders").is_some()
+        });
+        // The statement at the caret changes: the chip offers a recompute.
+        h.state_mut()
+            .tab(key)
+            .unwrap()
+            .editor
+            .replace_all("SELECT * FROM customers");
+        h.run_steps(2);
+        h.get_by_label("Text changed");
+        h.get_by_label("Recompute").click();
+        h.run_steps(2);
+        step_until(&mut h, "the new plan", |h| {
+            h.query_by_label("Select SCAN customers").is_some()
+        });
+        h.get_by_label("Select SCAN customers");
+    }
+
+    #[test]
+    fn analyze_of_a_write_confirms_then_reports_the_server_error() {
+        use egui_kittest::kittest::Queryable;
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = sqlite_app(dir.path());
+        app.new_tab(
+            Some("plan".into()),
+            Some("db".into()),
+            "UPDATE orders SET total = 1",
+        );
+        let mut h = app_harness(app);
+        // The chevron menu asks for Analyze; SQLite has none, and the engine says so.
+        h.get_by_label("Explain options").click();
+        h.run_steps(2);
+        h.get_by_label("Explain Analyze").click();
+        h.run_steps(2);
+        h.get_by_label("Run Explain Analyze");
+        h.get_by_label("Run Explain Analyze").click();
+        h.run_steps(2);
+        step_until(&mut h, "the analyze error", |h| {
+            h.query_by_label_contains("SQLite has no EXPLAIN ANALYZE")
+                .is_some()
+        });
+        h.get_by_label("Retry");
     }
 }

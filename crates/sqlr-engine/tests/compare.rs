@@ -133,6 +133,14 @@ fn explain_job_returns_a_plan() {
         JobOutcome::Plan(plan) => assert!(!plan.root.children.is_empty(), "{plan:?}"),
         other => panic!("{other:?}"),
     }
+    // A tab session that has not run anything yet opens on demand, like a query.
+    let tab = engine.session("a", Some(7));
+    assert!(tab.slot != sqlr_engine::Slot::Meta);
+    let job = engine.explain(&tab, "SELECT * FROM t".into(), false);
+    match finished(&engine, job) {
+        JobOutcome::Plan(plan) => assert!(!plan.root.children.is_empty(), "{plan:?}"),
+        other => panic!("{other:?}"),
+    }
     // A DDL statement gets a message, not an error dump.
     let job = engine.explain(&key, "CREATE TABLE u (a int)".into(), false);
     let JobOutcome::Failed(e) = finished(&engine, job) else {

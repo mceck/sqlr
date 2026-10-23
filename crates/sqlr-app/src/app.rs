@@ -250,8 +250,7 @@ pub struct SqlrApp {
     pub(crate) tasks_ui: crate::tasks_ui::TasksUi,
     /// The schema compare dialog, when open.
     pub(crate) compare_dialog: Option<crate::compare_dialog::CompareDialog>,
-    /// The plan window and the ER diagram window, when open.
-    pub(crate) plan_dialog: Option<crate::schema_tools::PlanDialog>,
+    /// The ER diagram window, when open.
     pub(crate) er_dialog: Option<crate::schema_tools::ErDialog>,
     /// The test-data generator dialog, when open.
     pub(crate) datagen_dialog: Option<crate::datagen_dialog::DatagenDialog>,
@@ -375,7 +374,6 @@ impl SqlrApp {
             transfer_wizard: None,
             tasks_ui: Default::default(),
             compare_dialog: None,
-            plan_dialog: None,
             er_dialog: None,
             datagen_dialog: None,
             dump_dialog: None,
@@ -540,7 +538,6 @@ impl SqlrApp {
         self.transfer_wizard_ui(ui.ctx());
         self.poll_tasks();
         self.compare_ui(ui.ctx());
-        self.plan_ui(ui.ctx());
         self.er_ui(ui.ctx());
         self.datagen_ui(ui.ctx());
         self.tasks_windows(ui.ctx());
@@ -908,11 +905,22 @@ impl SqlrApp {
             })
             .map(|c| c.id.clone())
             .collect();
+        let explain: std::collections::HashSet<String> = self
+            .connections
+            .iter()
+            .filter(|c| {
+                drivers
+                    .get(&c.driver)
+                    .is_some_and(|d| d.manifest().capabilities.explain)
+            })
+            .map(|c| c.id.clone())
+            .collect();
         let mut viewer = Viewer {
             engine: &self.engine,
             dialects: &self.dialects,
             connections: &self.connections,
             editable: &editable,
+            explain: &explain,
             tints: &tints,
             profiles: &self.profiles,
             formats: &self.formats,

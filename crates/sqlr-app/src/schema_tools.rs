@@ -1,159 +1,74 @@
-//! Visual explain plans and ER diagrams in the app (spec §8.6): a plan window for the
-//! statement under the caret, and an ER diagram window for a schema or a selection of its
-//! tables. Both only read.
+//! Visual explain plans and ER diagrams in the app (spec §8.6): a plan pane on the tab's
+//! own session, and an ER diagram window for a schema or a selection of its tables. Both
+//! only read.
 
 use std::collections::BTreeMap;
 
-use egui::RichText;
-use sqlr_core::{ErColors, ErLayout, ErModel, PlanTree, StatementClass, er_layout, er_to_svg};
-use sqlr_engine::{Engine, JobId, JobOutcome, SessionKey};
-use sqlr_ui::theme::{self, Spacing};
-use sqlr_ui::{
-    ColumnsShown, ErAction, ErView, PlanAction, PlanViewState, ToastKind, er_canvas, er_measure,
-    plan_view,
-};
+use sqlr_core::{ErColors, ErLayout, ErModel, StatementClass, er_layout, er_to_svg};
+use sqlr_engine::{Engine, JobId, JobOutcome};
+use sqlr_ui::ToastKind;
+use sqlr_ui::theme;
+use sqlr_ui::{ColumnsShown, ErAction, ErView, er_canvas, er_measure};
 
-use crate::app::SqlrApp;
+use crate::app::{SqlrApp, tab_mut};
 use crate::transfer_dialogs::FileAsk;
 
-/// The plan window: waits for confirmation before it runs a statement that changes data,
-/// then shows the plan.
-pub(crate) struct PlanDialog {
-    conn: String,
-    sql: String,
-    analyze: bool,
-    /// The statement changes data and will run (inside a transaction that is rolled back).
-    needs_confirmation: bool,
-    job: Option<JobId>,
-    plan: Option<PlanTree>,
-    error: Option<String>,
-    view: PlanViewState,
-}
-
-impl PlanDialog {
-    fn new(conn: String, sql: String, analyze: bool, writes: bool) -> Self {
-        Self {
-            conn,
-            sql,
-            analyze,
-            needs_confirmation: analyze && writes,
-            job: None,
-            plan: None,
-            error: None,
-            view: PlanViewState::default(),
-        }
-    }
-
-    fn start(&mut self, engine: &Engine) {
-        self.needs_confirmation = false;
-        self.error = None;
-        self.job = Some(engine.explain(
-            &SessionKey::meta(&self.conn),
-            self.sql.clone(),
-            self.analyze,
-        ));
-    }
-
-    /// `false` once the window should close.
-    pub fn show(&mut self, ctx: &egui::Context, engine: &Engine) -> bool {
-        if self.job.is_none()
-            && self.plan.is_none()
-            && self.error.is_none()
-            && !self.needs_confirmation
-        {
-            self.start(engine);
-        }
-        if let Some(id) = self.job
-            && let Some(state) = engine.job(id)
-            && let Some(outcome) = state.outcome
-        {
-            engine.forget_job(id);
-            self.job = None;
-            match outcome {
-                JobOutcome::Plan(plan) => self.plan = Some(plan),
-                JobOutcome::Failed(e) => self.error = Some(e.message),
-                _ => {}
-            }
-        }
-        let mut open = true;
-        let mut run = false;
-        let title = if self.analyze {
-            "Explain Analyze"
-        } else {
-            "Explain"
-        };
-        theme::tool_dialog(
-            ctx,
-            &mut open,
-            title,
-            theme::icons::QUERY,
-            "Inspect the execution plan and the work done by each node",
-            800.0,
-            |ui| {
-                ui.label(
-                    RichText::new(self.sql.lines().next().unwrap_or("").to_string())
-                        .monospace()
-                        .color(theme::palette(ui.ctx()).text_muted),
-                );
-                ui.add_space(Spacing::S);
-                if self.needs_confirmation {
-                    ui.label(
-                        "Explain Analyze runs this statement. Its changes are rolled back, but \
-                         triggers and other side effects still happen.",
-                    );
-                    ui.horizontal(|ui| {
-                        if ui.button("Run Explain Analyze").clicked() {
-                            run = true;
-                        }
-                    });
-                } else if self.job.is_some() {
-                    ui.spinner();
-                } else if let Some(e) = &self.error {
-                    ui.colored_label(theme::palette(ui.ctx()).error, e);
-                } else if let Some(plan) = &self.plan
-                    && let Some(PlanAction::CopyRaw) = plan_view(ui, plan, &mut self.view)
-                {
-                    ui.ctx().copy_text(plan.raw.clone());
-                }
-            },
-        );
-        if run {
-            self.start(engine);
-        }
-        open
-    }
-}
-
 impl SqlrApp {
-    /// ⌥⌘E / ⌥⇧⌘E: the plan of the statement under the caret (or the selection).
+    /// ⌥⌘E / ⌥⇧⌘E: the plan of the statement under the caret (or the selection), in the
+    /// active tab's Plan pane.
     pub(crate) fn explain_active(&mut self, analyze: bool) {
         let Some(key) = self.active_key() else {
             return;
         };
-        let Some(tab) = self.tab(key) else {
+        let (unsupported, conn, target) = match self.tab(key) {
+            None => return,
+            Some(tab) => (
+                tab.redis.is_some()
+                    || tab.doc.is_some()
+                    || tab.object.is_some()
+                    || tab.admin.is_some()
+                    || tab.ddl.is_some(),
+                tab.conn.clone(),
+                tab.editor.run_target(),
+            ),
+        };
+        if unsupported {
+            self.notify_as(ToastKind::Info, "Open a SQL tab to explain a statement");
+            return;
+        }
+        let Some(conn) = conn else {
+            self.notify_as(ToastKind::Info, "Choose a connection for this tab first");
             return;
         };
-        let (Some(conn), Some(target)) = (tab.conn.clone(), tab.editor.run_target()) else {
+        if !self.explain_supported(&conn) {
             self.notify_as(
                 ToastKind::Info,
-                "Put the caret in a statement of a tab with a connection",
+                "This database does not provide query plans",
             );
             return;
+        }
+        let Some(target) = target else {
+            self.notify_as(ToastKind::Info, "Put the caret in a statement to explain");
+            return;
         };
-        let sql = target.sql.trim().to_string();
         let writes = self
             .dialects
             .get(&conn)
-            .is_some_and(|d| d.syntax().classify_script(&sql) != StatementClass::Read);
-        self.plan_dialog = Some(PlanDialog::new(conn, sql, analyze, writes));
+            .is_none_or(|d| d.syntax().classify(&target.sql) != StatementClass::Read);
+        if let Some(tab) = tab_mut(&mut self.dock, key) {
+            tab.start_explain(&self.engine, &conn, target.sql, analyze, writes);
+        }
     }
 
-    pub(crate) fn plan_ui(&mut self, ctx: &egui::Context) {
-        if let Some(dialog) = &mut self.plan_dialog
-            && !dialog.show(ctx, &self.engine)
-        {
-            self.plan_dialog = None;
-        }
+    /// Whether the connection's driver declares query plans.
+    fn explain_supported(&self, conn: &str) -> bool {
+        self.connections
+            .iter()
+            .find(|c| c.id == conn)
+            .is_some_and(|c| {
+                self.manifest(&c.driver)
+                    .is_some_and(|m| m.capabilities.explain)
+            })
     }
 }
 
@@ -393,7 +308,6 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    use sqlr_core::PlanNode;
     use sqlr_engine::DriverRegistry;
 
     fn engine() -> Engine {
@@ -410,43 +324,6 @@ mod tests {
         // No renderer consumes the font atlas upload here.
         out.textures_delta.clear();
         let _ = engine;
-    }
-
-    #[test]
-    fn a_plan_dialog_waits_then_shows_the_plan_or_the_error() {
-        let engine = engine();
-        let mut dialog = PlanDialog::new("c".into(), "SELECT 1".into(), true, true);
-        frame(&engine, |ctx| {
-            assert!(dialog.show(ctx, &engine));
-        });
-        // The confirmation is drawn until the user asks to run it.
-        assert!(dialog.needs_confirmation);
-        dialog.start(&engine);
-        for _ in 0..100 {
-            frame(&engine, |ctx| {
-                dialog.show(ctx, &engine);
-            });
-            if dialog.error.is_some() || dialog.plan.is_some() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-        assert!(dialog.error.is_some() || dialog.plan.is_some());
-
-        dialog.job = None;
-        dialog.error = Some("boom".into());
-        frame(&engine, |ctx| {
-            dialog.show(ctx, &engine);
-        });
-        dialog.error = None;
-        dialog.plan = Some(PlanTree {
-            root: PlanNode::default(),
-            ..PlanTree::default()
-        });
-        frame(&engine, |ctx| {
-            dialog.show(ctx, &engine);
-        });
-        assert!(!dialog.analyze || dialog.plan.is_some());
     }
 
     #[test]

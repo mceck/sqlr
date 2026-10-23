@@ -44,6 +44,8 @@ pub const READ_ONLY: &str = ph::LOCK_SIMPLE;
 pub const DATA_SOURCE: &str = ph::DATABASE;
 pub const APPEARANCE: &str = ph::PALETTE;
 pub const QUERY: &str = ph::CODE;
+/// The visual explain plan.
+pub const PLAN: &str = ph::TREE_STRUCTURE;
 pub const CONNECTION: &str = ph::PLUGS_CONNECTED;
 /// Agent access (the MCP server).
 pub const MCP: &str = ph::ROBOT;

@@ -80,8 +80,8 @@ pub use manifest::*;
 pub use mongo_shell::*;
 pub use node::*;
 pub use plan::{
-    ExplainParser, ExplainSpec, PlanNode, PlanTree, explain_check, parse_mysql_json,
-    parse_mysql_tree, parse_pg_json, parse_sqlite_rows,
+    ExplainParser, ExplainSpec, PlanInsights, PlanIssue, PlanIssueLevel, PlanNode, PlanRole,
+    PlanTree, explain_check, parse_mysql_json, parse_mysql_tree, parse_pg_json, parse_sqlite_rows,
 };
 pub use profile::*;
 pub use read::read_rows;

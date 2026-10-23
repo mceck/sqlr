@@ -413,6 +413,7 @@ impl SqlrApp {
                 self.engine.kv_release(conn, redis.db());
             }
             tab.close_run(&self.engine);
+            tab.close_plan(&self.engine);
             if let Some(doc) = &mut tab.doc {
                 doc.close(&self.engine);
             }

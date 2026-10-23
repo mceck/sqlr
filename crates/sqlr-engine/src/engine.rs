@@ -1587,7 +1587,11 @@ impl Shared {
 
     /// The I/O of the session `key` when it is live; a tab session that does not exist yet,
     /// or any session that failed, is (re)opened.
-    fn live_or_reopen(&self, inner: &mut Inner, key: &SessionKey) -> Option<Arc<SessionIo>> {
+    pub(crate) fn live_or_reopen(
+        &self,
+        inner: &mut Inner,
+        key: &SessionKey,
+    ) -> Option<Arc<SessionIo>> {
         let live = inner
             .sessions
             .get(key)
