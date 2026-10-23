@@ -210,6 +210,15 @@ async fn statements_report_rows_counts_and_errors() {
         ),
         1
     );
+    // A row value holding the word OUTPUT is not an OUTPUT clause: the count must survive.
+    assert_eq!(
+        affected(
+            rel.execute("UPDATE shop.t SET v = N'a OUTPUT b' WHERE id = 1")
+                .await
+                .unwrap()
+        ),
+        1
+    );
     // MERGE needs its terminating semicolon.
     let merged = rel
         .execute(

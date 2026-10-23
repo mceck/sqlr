@@ -149,8 +149,12 @@ fn returns_rows(sql: &str) -> bool {
     ) {
         return true;
     }
-    // `UPDATE … OUTPUT`, `INSERT … OUTPUT` and `DELETE … OUTPUT` return rows.
-    sql.to_ascii_uppercase().contains(" OUTPUT ")
+    // `UPDATE … OUTPUT`, `INSERT … OUTPUT` and `DELETE … OUTPUT` return rows. Only a
+    // keyword counts: the text " OUTPUT " inside a string or a comment does not.
+    tokens.iter().any(|t| {
+        matches!(t.kind, TokenKind::Keyword | TokenKind::Ident)
+            && sql[t.start..t.end].eq_ignore_ascii_case("OUTPUT")
+    })
 }
 
 /// A result set already read from the wire, paged from memory.
@@ -208,5 +212,9 @@ mod tests {
         assert!(returns_rows("INSERT INTO t OUTPUT inserted.id VALUES (1)"));
         assert!(!returns_rows("INSERT INTO t VALUES (1)"));
         assert!(!returns_rows("UPDATE t SET a = 1"));
+        // The word inside data is not an OUTPUT clause: querying would lose the count.
+        assert!(!returns_rows("UPDATE t SET note = 'a OUTPUT b'"));
+        assert!(!returns_rows("UPDATE t SET note = 'x' -- OUTPUT\n"));
+        assert!(returns_rows("UPDATE t SET a = 1 OUTPUT inserted.a"));
     }
 }
