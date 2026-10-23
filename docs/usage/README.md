@@ -10,6 +10,7 @@ Keyboard shortcuts are written for macOS (⌘ is Command). On Windows and Linux,
 |---|---|
 | Install sqlr and run your first query | [Getting started](getting-started.md) |
 | Connect to a database, through SSH or TLS | [Connections](connections.md) |
+| Move saved connections from DBeaver, DataGrip, TablePlus or pgAdmin | [Import and export connections](migrating-connections.md) |
 | Browse tables and change their structure | [The explorer and object editors](explorer-and-objects.md) |
 | Write and run SQL comfortably | [The SQL editor](sql-editor.md) |
 | Read, sort, filter and edit results | [Results and data editing](results-and-editing.md) |

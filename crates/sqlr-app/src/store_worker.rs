@@ -6,7 +6,37 @@
 use std::sync::mpsc;
 
 use sqlr_core::{ConnectionConfig, DriverManifest, Secrets};
+use sqlr_store::client_migration::{self, ClientFormat, DetectedSource, ImportBatch};
 use sqlr_store::{ConnectionRepo, MoveTarget};
+
+pub(crate) enum MigrationRequest {
+    Discover,
+    Read(std::path::PathBuf),
+    Clipboard(String),
+    Import(Vec<ConnectionConfig>),
+    Export {
+        path: std::path::PathBuf,
+        format: ClientFormat,
+        connections: Vec<ConnectionConfig>,
+    },
+}
+
+pub(crate) enum MigrationResult {
+    Sources {
+        sources: Vec<DetectedSource>,
+        batch: ImportBatch,
+    },
+    Loaded {
+        format: ClientFormat,
+        batch: ImportBatch,
+    },
+    Imported(usize),
+    Exported {
+        path: std::path::PathBuf,
+        warnings: Vec<String>,
+    },
+    Error(String),
+}
 
 /// The saved connections and folders, or why they could not be read.
 pub(crate) struct Listing {
@@ -25,6 +55,10 @@ impl Listing {
 
 /// A request to the store. No `Debug`: `Save` carries secrets.
 pub(crate) enum StoreOp {
+    ClientMigration {
+        id: String,
+        request: MigrationRequest,
+    },
     List,
     CreateFolder(String),
     RenameFolder {
@@ -70,6 +104,11 @@ pub(crate) enum StoreOp {
 
 /// What a [`StoreOp`] did. `Err` holds the store error's text.
 pub(crate) enum StoreReply {
+    ClientMigration {
+        id: String,
+        result: MigrationResult,
+        listing: Option<Listing>,
+    },
     Listed(Listing),
     FolderCreated {
         name: String,
@@ -180,6 +219,15 @@ impl StoreWorker {
 pub(crate) fn run(repo: &ConnectionRepo, op: StoreOp) -> StoreReply {
     let text = |r: Result<(), sqlr_store::StoreError>| r.map_err(|e| e.to_string());
     match op {
+        StoreOp::ClientMigration { id, request } => {
+            let importing = matches!(&request, MigrationRequest::Import(_));
+            let result = migrate(repo, request).unwrap_or_else(MigrationResult::Error);
+            StoreReply::ClientMigration {
+                id,
+                result,
+                listing: importing.then(|| Listing::read(repo)),
+            }
+        }
         StoreOp::List => StoreReply::Listed(Listing::read(repo)),
         StoreOp::CreateFolder(name) => {
             let (name, result) = match repo.create_folder(&name) {
@@ -286,6 +334,63 @@ pub(crate) fn run(repo: &ConnectionRepo, op: StoreOp) -> StoreReply {
             result: repo.secrets_for(&cfg, &manifest).map_err(|e| e.to_string()),
             id: cfg.id,
         },
+    }
+}
+
+fn migrate(repo: &ConnectionRepo, request: MigrationRequest) -> Result<MigrationResult, String> {
+    match request {
+        MigrationRequest::Discover => {
+            let home = std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .map(std::path::PathBuf::from)
+                .ok_or("Could not locate your home folder. Choose a connection file instead.")?;
+            let sources = client_migration::discover(&home);
+            let mut combined = ImportBatch::default();
+            for source in &sources {
+                match client_migration::read_source(&source.path) {
+                    Ok((_, mut batch)) => {
+                        combined.connections.append(&mut batch.connections);
+                        combined.warnings.append(&mut batch.warnings);
+                    }
+                    Err(e) => combined
+                        .warnings
+                        .push(format!("{}: {e}", source.path.display())),
+                }
+            }
+            Ok(MigrationResult::Sources {
+                sources,
+                batch: combined,
+            })
+        }
+        MigrationRequest::Read(path) => {
+            let (format, batch) = client_migration::read_source(&path)?;
+            Ok(MigrationResult::Loaded { format, batch })
+        }
+        MigrationRequest::Clipboard(text) => {
+            if text.len() > 16 * 1024 * 1024 {
+                return Err("Clipboard contents exceed the 16 MiB limit.".into());
+            }
+            let format = client_migration::detect(text.as_bytes())?;
+            let batch = client_migration::decode(format, text.as_bytes())?;
+            Ok(MigrationResult::Loaded { format, batch })
+        }
+        MigrationRequest::Import(mut connections) => {
+            for c in &mut connections {
+                c.id = uuid::Uuid::new_v4().to_string();
+            }
+            let count = repo
+                .import_connections(&connections)
+                .map_err(|e| e.to_string())?;
+            Ok(MigrationResult::Imported(count))
+        }
+        MigrationRequest::Export {
+            path,
+            format,
+            connections,
+        } => {
+            let warnings = client_migration::save_export(&path, format, &connections)?;
+            Ok(MigrationResult::Exported { path, warnings })
+        }
     }
 }
 

@@ -1,6 +1,7 @@
 //! Persistence for sqlr: connection configs (TOML), secrets (OS keychain) and settings.
 
 mod catalog;
+pub mod client_migration;
 mod connections;
 mod db;
 mod er_layouts;
