@@ -637,6 +637,12 @@ impl RestoreDialog {
             let valid = !self.state.path.trim().is_empty()
                 && !(self.options.schema_only && self.options.data_only)
                 && !self.state.running();
+            if ui
+                .add_enabled(valid, egui::Button::new("Save as task"))
+                .clicked()
+            {
+                self.save_requested = true;
+            }
             let button = theme::primary_button_state(ui.ctx(), valid, "Restore");
             if ui.add_enabled(valid, button).clicked() {
                 let path = PathBuf::from(self.state.path.trim());
@@ -833,6 +839,37 @@ mod tests {
         // No renderer consumes the font atlas upload here.
         out.textures_delta.clear();
         let _ = engine;
+    }
+
+    #[test]
+    fn a_restore_can_be_saved_as_a_task() {
+        use egui_kittest::kittest::Queryable;
+
+        let engine = engine();
+        let mut dialog = RestoreDialog::new("c", "conn", "app", "postgres").unwrap();
+        dialog.state.path = "/tmp/in.sql".into();
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size((900.0, 700.0))
+            .build_ui_state(
+                |ui, dialog: &mut RestoreDialog| {
+                    assert!(dialog.show(ui.ctx(), &engine, None));
+                },
+                dialog,
+            );
+        harness.run_steps(2);
+        harness.get_by_label("Save as task").click();
+        harness.run_steps(2);
+        assert!(matches!(
+            harness.state_mut().take_task(),
+            Some((
+                TaskSpec::Restore {
+                    ref conn,
+                    ref input,
+                    ..
+                },
+                None
+            )) if conn == "c" && input == &PathBuf::from("/tmp/in.sql")
+        ));
     }
 
     #[test]
