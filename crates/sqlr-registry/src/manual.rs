@@ -4,6 +4,7 @@
 use std::path::PathBuf;
 
 use crate::RegistryError;
+use crate::download::{MAX_ARTIFACT_BYTES, read_bounded_file};
 use crate::index::valid_id;
 use crate::install::{InstalledDriver, Registry, extract_archive, read_driver_toml};
 use crate::verify::sha256_hex;
@@ -26,8 +27,8 @@ impl Registry {
         &self,
         file: &std::path::Path,
     ) -> Result<ManualInspection, RegistryError> {
-        let bytes = tokio::fs::read(file).await?;
-        let meta = read_driver_toml(file)?;
+        let bytes = read_manual_archive(file).await?;
+        let meta = read_driver_toml(&bytes)?;
         if !valid_id(&meta.id) || semver::Version::parse(&meta.version).is_err() {
             return Err(RegistryError::UnsafeArchive(
                 "driver.toml names an invalid id or version".into(),
@@ -48,7 +49,7 @@ impl Registry {
         &self,
         inspection: &ManualInspection,
     ) -> Result<InstalledDriver, RegistryError> {
-        let bytes = tokio::fs::read(&inspection.file).await?;
+        let bytes = read_manual_archive(&inspection.file).await?;
         if sha256_hex(&bytes) != inspection.sha256 {
             return Err(RegistryError::Sha256Mismatch {
                 what: inspection.file.display().to_string(),
@@ -71,4 +72,16 @@ impl Registry {
         )
         .await
     }
+}
+
+async fn read_manual_archive(file: &std::path::Path) -> Result<Vec<u8>, RegistryError> {
+    read_bounded_file(file, MAX_ARTIFACT_BYTES)
+        .await
+        .map_err(|e| {
+            if e.kind() == std::io::ErrorKind::InvalidData {
+                RegistryError::UnsafeArchive(e.to_string())
+            } else {
+                e.into()
+            }
+        })
 }

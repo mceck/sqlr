@@ -9,3 +9,4 @@ target/
 
 # Throwaway TLS certificates for the fixed test services
 .test-services/
+.codacy/

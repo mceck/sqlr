@@ -376,14 +376,19 @@ const DDL_APIS: &[&str] = &[
     "_data_stream",
 ];
 
-/// Refuses `.`/`..` segments and percent-escapes in the path: the HTTP stack would
-/// resolve them into a different API than the one the request was classified by.
+/// Refuses paths the HTTP URL parser could resolve into a different API than the one
+/// classified here, including fragments (not sent) and backslashes (path separators).
 pub(crate) fn check_path(path: &str) -> Result<(), DriverError> {
     let (p, _) = split_path(path);
-    if p.contains('%') || p.split('/').any(|s| s == "." || s == "..") {
+    if path.contains('#')
+        || path.chars().any(|c| c.is_ascii_control())
+        || p.contains(['%', '\\'])
+        || p.split('/').any(|s| s == "." || s == "..")
+    {
         return Err(DriverError::new(
             ErrorKind::Syntax,
-            format!("`{p}`: `.`/`..` segments and percent-escapes are not supported in paths"),
+            "URL fragments, control characters, backslashes, `.`/`..` segments and \
+             percent-escapes are not supported in request paths",
         ));
     }
     Ok(())
@@ -680,6 +685,25 @@ mod tests {
         }
         assert!(check_path("/.hidden-index/_search?q=a.b").is_ok());
         assert!(check_path("/idx/_doc/1").is_ok());
+    }
+
+    #[test]
+    fn fragments_cannot_disguise_index_deletion_as_a_read() {
+        let path = "/victim#/_search";
+        let target = reqwest::Url::parse(&format!("http://localhost:9200{path}")).unwrap();
+        assert_eq!(target.path(), "/victim");
+        // The HTTP client drops the fragment: this would send DELETE /victim.
+        assert!(class(&format!("DELETE {path}")).modifies());
+        assert!(check_path(path).is_err());
+    }
+
+    #[test]
+    fn backslash_traversal_cannot_disguise_delete_by_query_as_a_read() {
+        let path = r"/idx/_search/..\_delete_by_query";
+        let target = reqwest::Url::parse(&format!("http://localhost:9200{path}")).unwrap();
+        assert_eq!(target.path(), "/idx/_delete_by_query");
+        assert!(class(&format!("POST {path}\n{{}}")).modifies());
+        assert!(check_path(path).is_err());
     }
 
     #[test]

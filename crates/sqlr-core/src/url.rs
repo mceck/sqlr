@@ -36,7 +36,7 @@ fn percent_decode(text: &str) -> Result<String, String> {
             let hex = text
                 .get(i + 1..i + 3)
                 .and_then(|h| u8::from_str_radix(h, 16).ok())
-                .ok_or_else(|| format!("Invalid percent-encoding in \"{text}\""))?;
+                .ok_or_else(|| "Invalid percent-encoding in the URL".to_string())?;
             out.push(hex);
             i += 3;
         } else {
@@ -44,12 +44,13 @@ fn percent_decode(text: &str) -> Result<String, String> {
             i += 1;
         }
     }
-    String::from_utf8(out).map_err(|_| format!("Invalid UTF-8 in \"{text}\""))
+    String::from_utf8(out).map_err(|_| "Invalid UTF-8 in the URL".to_string())
 }
 
 fn is_password_key(key: &str) -> bool {
-    let key = key.to_ascii_lowercase();
+    let key = normalized(key);
     key == "pass"
+        || key == "apikey"
         || ["password", "passwd", "pwd", "secret", "token"]
             .iter()
             .any(|word| key.contains(word))
@@ -483,6 +484,30 @@ mod tests {
             "postgresql://h/db?password=secret",
         ] {
             assert_eq!(parse_connection_url(url).unwrap_err(), message, "{url}");
+        }
+    }
+
+    #[test]
+    fn api_keys_in_urls_are_refused_and_redacted() {
+        for key in ["api_key", "api-key", "APIKEY", "%61pi%5Fkey"] {
+            let url = format!("https://localhost:9200/?{key}=secret-api-credential");
+            assert!(parse_connection_url(&url).is_err(), "accepted {key}");
+            assert_eq!(
+                redact_url(&url),
+                format!("https://localhost:9200/?{key}=***")
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_url_errors_do_not_echo_credentials() {
+        for url in [
+            "postgresql://host/db?custom=secret-credential%ZZ",
+            "postgresql://host/db?custom=secret-credential%FF",
+            "postgresql://secret-credential%ZZ@host/db",
+        ] {
+            let error = parse_connection_url(url).unwrap_err();
+            assert!(!error.contains("secret-credential"), "{error}");
         }
     }
 

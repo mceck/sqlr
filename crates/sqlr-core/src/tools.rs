@@ -377,7 +377,10 @@ fn pg_connection_args(conn: &ToolConnection, database: &str) -> Vec<String> {
         args.push(user.clone());
     }
     args.push("--dbname".into());
-    args.push(database.to_string());
+    // libpq expands names containing '=' or a URI scheme as connection strings. Wrap
+    // every name in a quoted dbname value so catalog names cannot redirect credentials.
+    let database = database.replace('\\', "\\\\").replace('\'', "\\'");
+    args.push(format!("dbname='{database}'"));
     args
 }
 
@@ -541,6 +544,7 @@ fn pg_restore_command(conn: &ToolConnection, opts: &RestoreOptions, input: &Path
             args.push(format!("--jobs={n}"));
         }
         args.extend(split_args(&opts.extra_args));
+        args.push("--".into());
         args.push(input.display().to_string());
         return ToolCommand {
             program: tool_program("pg_restore", &opts.executable),
@@ -601,10 +605,16 @@ fn mysql_defaults_file(conn: &ToolConnection, temp_dir: &Path) -> ToolFile {
     }
 }
 
-/// Quotes a value for a MySQL option file: double quotes, with backslashes and quotes
-/// escaped (the file's parser understands them).
+/// Quotes one value for MySQL's line-oriented option parser, including control
+/// characters so a connection value cannot introduce another option or group.
 fn mysql_option_value(value: &str) -> String {
-    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t")
+        .replace('\u{8}', "\\b");
     format!("\"{escaped}\"")
 }
 
@@ -698,6 +708,7 @@ fn mysql_dump_command(
         args.push(format!("--default-character-set={}", encoding.trim()));
     }
     args.extend(split_args(&opts.extra_args));
+    args.push("--".into());
     args.push(conn.database.clone());
     ToolCommand {
         program: tool_program("mysqldump", &opts.executable),
@@ -844,6 +855,156 @@ mod tests {
         }
     }
 
+    #[test]
+    fn security_postgres_database_names_cannot_override_connection_parameters() {
+        for (database, expected) in [
+            (
+                "host=attacker.invalid sslmode=disable",
+                "dbname='host=attacker.invalid sslmode=disable'",
+            ),
+            (
+                "postgresql://attacker.invalid/app",
+                "dbname='postgresql://attacker.invalid/app'",
+            ),
+            (
+                "app' host=attacker.invalid",
+                "dbname='app\\' host=attacker.invalid'",
+            ),
+            (
+                "app\\' host=attacker.invalid",
+                "dbname='app\\\\\\' host=attacker.invalid'",
+            ),
+            ("app\nsslmode=disable", "dbname='app\nsslmode=disable'"),
+        ] {
+            let conn = ToolConnection {
+                database: database.into(),
+                ..pg()
+            };
+            let commands = [
+                dump_command(
+                    "postgres",
+                    &conn,
+                    &DumpOptions::default(),
+                    Path::new("/tmp/out.sql"),
+                    Path::new("/tmp"),
+                )
+                .unwrap(),
+                restore_command(
+                    "postgres",
+                    &conn,
+                    &RestoreOptions::default(),
+                    Path::new("/tmp/in.sql"),
+                    Path::new("/tmp"),
+                )
+                .unwrap(),
+                restore_command(
+                    "postgres",
+                    &conn,
+                    &RestoreOptions::default(),
+                    Path::new("/tmp/in.dump"),
+                    Path::new("/tmp"),
+                )
+                .unwrap(),
+            ];
+            for command in commands {
+                let argument = command
+                    .args
+                    .windows(2)
+                    .find(|pair| pair[0] == "--dbname")
+                    .unwrap();
+                assert_eq!(
+                    argument[1],
+                    expected,
+                    "{} must keep the database name literal",
+                    command.program.display()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn security_postgres_restore_archive_cannot_be_an_option() {
+        let cmd = restore_command(
+            "postgres",
+            &pg(),
+            &RestoreOptions::default(),
+            Path::new("--file=unexpected.dump"),
+            Path::new("/tmp"),
+        )
+        .unwrap();
+        assert_eq!(
+            &cmd.args[cmd.args.len() - 2..],
+            ["--", "--file=unexpected.dump"]
+        );
+    }
+
+    #[test]
+    fn security_mysql_defaults_cannot_inject_options_through_line_breaks() {
+        let conn = ToolConnection {
+            host: "db.example\r\n[client]\nhost=attacker.invalid\n#".into(),
+            user: Some("alice\n[mysqldump]\nwhere=0\n#".into()),
+            password: Some("p\\\"\t\u{8}\r\n[mysql]\nexecute=SELECT 1\n#".into()),
+            ..mysql()
+        };
+        let commands = [
+            dump_command(
+                "mysql",
+                &conn,
+                &DumpOptions::default(),
+                Path::new("/tmp/out.sql"),
+                Path::new("/tmp"),
+            )
+            .unwrap(),
+            restore_command(
+                "mysql",
+                &conn,
+                &RestoreOptions::default(),
+                Path::new("/tmp/in.sql"),
+                Path::new("/tmp"),
+            )
+            .unwrap(),
+        ];
+        for command in commands {
+            assert_eq!(
+                command.files[0].content,
+                concat!(
+                    "[client]\n",
+                    "host=\"db.example\\r\\n[client]\\nhost=attacker.invalid\\n#\"\n",
+                    "port=3306\n",
+                    "user=\"alice\\n[mysqldump]\\nwhere=0\\n#\"\n",
+                    "password=\"p\\\\\\\"\\t\\b\\r\\n[mysql]\\nexecute=SELECT 1\\n#\"\n",
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn security_mysql_dump_database_cannot_be_an_option() {
+        for create in [false, true] {
+            let conn = ToolConnection {
+                database: "--all-databases".into(),
+                ..mysql()
+            };
+            let opts = DumpOptions {
+                create,
+                extra_args: "--hex-blob".into(),
+                ..Default::default()
+            };
+            let cmd = dump_command(
+                "mysql",
+                &conn,
+                &opts,
+                Path::new("/tmp/out.sql"),
+                Path::new("/tmp"),
+            )
+            .unwrap();
+            assert_eq!(
+                &cmd.args[cmd.args.len() - 3..],
+                ["--hex-blob", "--", "--all-databases"]
+            );
+        }
+    }
+
     fn mysql() -> ToolConnection {
         ToolConnection {
             host: "db.example".into(),
@@ -883,7 +1044,7 @@ mod tests {
             "--username",
             "alice",
             "--dbname",
-            "app",
+            "dbname='app'",
             "--format=plain",
             "--file",
             "/tmp/app.sql",
@@ -1032,7 +1193,11 @@ mod tests {
         .unwrap();
         assert!(cmd.args.iter().any(|a| a == "--create"));
         assert!(!cmd.args.iter().any(|a| a == "--single-transaction"));
-        assert!(cmd.args.windows(2).any(|w| w == ["--dbname", "postgres"]));
+        assert!(
+            cmd.args
+                .windows(2)
+                .any(|w| w == ["--dbname", "dbname='postgres'"])
+        );
     }
 
     #[test]

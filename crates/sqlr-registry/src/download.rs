@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::RegistryError;
 
@@ -82,18 +82,12 @@ impl Fetcher {
     /// A small text or binary resource (the index and its signature).
     pub async fn fetch_bytes(&self, url: &str) -> Result<Vec<u8>, RegistryError> {
         if let Some(path) = file_path(url) {
-            let bytes = tokio::fs::read(&path)
+            let bytes = read_bounded_file(&path, MAX_INDEX_BYTES as u64)
                 .await
                 .map_err(|e| RegistryError::Fetch {
                     url: url.to_string(),
                     reason: e.to_string(),
                 })?;
-            if bytes.len() > MAX_INDEX_BYTES {
-                return Err(RegistryError::Fetch {
-                    url: url.to_string(),
-                    reason: "the file is too large".into(),
-                });
-            }
             return Ok(bytes);
         }
         let mut response = self
@@ -106,13 +100,13 @@ impl Fetcher {
             .map_err(|e| self.error(url, e))?;
         let mut out = Vec::new();
         while let Some(chunk) = response.chunk().await.map_err(|e| self.error(url, e))? {
-            out.extend_from_slice(&chunk);
-            if out.len() > MAX_INDEX_BYTES {
+            if chunk.len() > MAX_INDEX_BYTES - out.len() {
                 return Err(RegistryError::Fetch {
                     url: url.to_string(),
                     reason: "the response is too large".into(),
                 });
             }
+            out.extend_from_slice(&chunk);
         }
         Ok(out)
     }
@@ -126,13 +120,37 @@ impl Fetcher {
         progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
     ) -> Result<(), RegistryError> {
         if let Some(path) = file_path(url) {
-            let len = tokio::fs::copy(&path, dest)
-                .await
-                .map_err(|e| RegistryError::Fetch {
+            let error = |e: std::io::Error| RegistryError::Fetch {
+                url: url.to_string(),
+                reason: e.to_string(),
+            };
+            let mut source = tokio::fs::File::open(&path).await.map_err(error)?;
+            let total = source.metadata().await.map_err(error)?.len();
+            if total > MAX_ARTIFACT_BYTES {
+                return Err(error(size_limit_error()));
+            }
+            let mut file = tokio::fs::File::create(dest).await.map_err(error)?;
+            let mut done = 0u64;
+            let mut buffer = [0u8; 64 * 1024];
+            loop {
+                let read = source.read(&mut buffer).await.map_err(error)?;
+                if read == 0 {
+                    break;
+                }
+                if read as u64 > MAX_ARTIFACT_BYTES - done {
+                    return Err(error(size_limit_error()));
+                }
+                file.write_all(&buffer[..read]).await.map_err(error)?;
+                done += read as u64;
+                progress(done, Some(total));
+            }
+            file.flush().await.map_err(error)?;
+            if done != total {
+                return Err(RegistryError::Fetch {
                     url: url.to_string(),
-                    reason: e.to_string(),
-                })?;
-            progress(len, Some(len));
+                    reason: "the local file changed size during the download".into(),
+                });
+            }
             return Ok(());
         }
         let mut response = self
@@ -172,6 +190,28 @@ impl Fetcher {
         }
         Ok(())
     }
+}
+
+fn size_limit_error() -> std::io::Error {
+    std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        "the file exceeds the size limit",
+    )
+}
+
+/// Checks the opened file, then also bounds the read in case it grows or its length is
+/// unavailable. The extra byte distinguishes a file at the limit from an oversized one.
+pub(crate) async fn read_bounded_file(path: &Path, limit: u64) -> std::io::Result<Vec<u8>> {
+    let file = tokio::fs::File::open(path).await?;
+    if file.metadata().await?.len() > limit {
+        return Err(size_limit_error());
+    }
+    let mut bytes = Vec::new();
+    file.take(limit + 1).read_to_end(&mut bytes).await?;
+    if bytes.len() as u64 > limit {
+        return Err(size_limit_error());
+    }
+    Ok(bytes)
 }
 
 impl Default for Fetcher {

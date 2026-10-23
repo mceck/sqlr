@@ -361,6 +361,51 @@ async fn secrets_redacted_in_protocol_log() {
     let secrets = Secrets([("password".to_string(), "hunter2-correct-horse".to_string())].into());
     let conn = driver.connect(&config(), &secrets).await.unwrap();
     conn.ping().await.unwrap();
+
+    let (sqlite, _) = SidecarDriver::probe(SidecarSpec::new(
+        "sqlite",
+        "1.0.0",
+        example("sqlite_sidecar"),
+    ))
+    .await
+    .unwrap();
+    let conn = sqlite
+        .connect(
+            &ConnectionConfig {
+                driver: "sqlite".into(),
+                values: [("path".into(), ":memory:".into())].into(),
+                ..config()
+            },
+            &Secrets::default(),
+        )
+        .await
+        .unwrap();
+    let rel = conn.relational().unwrap();
+    let Execution::Rows(mut literal) = rel.execute("SELECT 'sidecar-sql-password'").await.unwrap()
+    else {
+        panic!("rows expected");
+    };
+    let chunk = literal.next_chunk(1).await.unwrap().unwrap();
+    assert_eq!(chunk.cell(0, 0), Cell::Text("sidecar-sql-password"));
+    let Execution::Rows(mut bound) = rel
+        .execute_with(
+            "SELECT ?1, ?2, ?3",
+            &[
+                Value::Text("sidecar-bound-password".into()),
+                Value::Bytes(vec![222, 173, 190, 239]),
+                Value::Int(987654321),
+            ],
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("rows expected");
+    };
+    let chunk = bound.next_chunk(1).await.unwrap().unwrap();
+    assert_eq!(chunk.cell(0, 0), Cell::Text("sidecar-bound-password"));
+    assert_eq!(chunk.cell(0, 1), Cell::Bytes(&[222, 173, 190, 239]));
+    assert_eq!(chunk.cell(0, 2), Cell::Int(987654321));
+
     let log = String::from_utf8_lossy(&capture.0.lock()).to_string();
     assert!(
         log.contains("Connect"),
@@ -371,6 +416,21 @@ async fn secrets_redacted_in_protocol_log() {
         !log.contains("hunter2-correct-horse"),
         "its secret values are not:\n{log}"
     );
+    assert!(
+        log.contains("Execute"),
+        "execute requests are logged:\n{log}"
+    );
+    for secret in [
+        "sidecar-sql-password",
+        "sidecar-bound-password",
+        "222, 173, 190, 239",
+        "987654321",
+    ] {
+        assert!(
+            !log.contains(secret),
+            "query values must not be logged:\n{log}"
+        );
+    }
 }
 
 fn sqlite_target(name: &str, make: impl Fn() -> SidecarOrDirect + Send + Sync + 'static) -> Target {

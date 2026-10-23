@@ -1,5 +1,6 @@
 //! Fetching the index, installing, activating and removing drivers.
 
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
@@ -434,12 +435,41 @@ fn make_executable(_path: &Path) -> Result<(), RegistryError> {
 
 /// The most an unpacked driver may weigh.
 const MAX_UNPACKED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const MAX_DRIVER_TOML_BYTES: u64 = 64 * 1024;
+
+fn checked_archive_size(total: u64, size: u64) -> Result<u64, RegistryError> {
+    total
+        .checked_add(size)
+        .filter(|&size| size <= MAX_UNPACKED_BYTES)
+        .ok_or_else(|| {
+            RegistryError::UnsafeArchive("the archive exceeds the size limit (2 GiB)".into())
+        })
+}
+
+fn is_driver_toml(path: &Path) -> bool {
+    path.components()
+        .filter(|c| *c != Component::CurDir)
+        .collect::<PathBuf>()
+        == Path::new("driver.toml")
+}
+
+fn check_manifest_size(path: &Path, size: u64) -> Result<(), RegistryError> {
+    if is_driver_toml(path) && size > MAX_DRIVER_TOML_BYTES {
+        return Err(RegistryError::UnsafeArchive(
+            "driver.toml exceeds the size limit (64 KiB)".into(),
+        ));
+    }
+    Ok(())
+}
 
 /// Unpacks a `.tar.gz` driver archive into `dest`. Only regular files and directories under
 /// `dest` are written: absolute paths, `..`, links and device files refuse the archive.
 pub(crate) fn extract_archive(file: &Path, dest: &Path) -> Result<(), RegistryError> {
     let reader = std::io::BufReader::new(std::fs::File::open(file)?);
-    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(reader));
+    // Bound decoded bytes too: tar consumes extension headers and padding internally,
+    // before it yields entries whose declared sizes we can inspect.
+    let mut archive =
+        tar::Archive::new(flate2::read::GzDecoder::new(reader).take(MAX_UNPACKED_BYTES));
     archive.set_preserve_permissions(false);
     archive.set_unpack_xattrs(false);
     std::fs::create_dir_all(dest)?;
@@ -466,12 +496,8 @@ pub(crate) fn extract_archive(file: &Path, dest: &Path) -> Result<(), RegistryEr
                 path.display()
             )));
         }
-        total += entry.size();
-        if total > MAX_UNPACKED_BYTES {
-            return Err(unsafe_archive(
-                "the archive unpacks to more than 2 GiB".into(),
-            ));
-        }
+        total = checked_archive_size(total, entry.size())?;
+        check_manifest_size(&path, entry.size())?;
         entry
             .unpack_in(dest)
             .map_err(|e| unsafe_archive(e.to_string()))?;
@@ -480,29 +506,22 @@ pub(crate) fn extract_archive(file: &Path, dest: &Path) -> Result<(), RegistryEr
 }
 
 /// Reads `driver.toml` from an archive without unpacking anything else.
-pub(crate) fn read_driver_toml(file: &Path) -> Result<DriverToml, RegistryError> {
-    use std::io::Read;
-    let reader = std::io::BufReader::new(std::fs::File::open(file)?);
-    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(reader));
+pub(crate) fn read_driver_toml(bytes: &[u8]) -> Result<DriverToml, RegistryError> {
+    let mut archive =
+        tar::Archive::new(flate2::read::GzDecoder::new(bytes).take(MAX_UNPACKED_BYTES));
     let bad = |m: String| RegistryError::UnsafeArchive(m);
+    let mut total = 0;
     for entry in archive
         .entries()
         .map_err(|e| bad(format!("not a tar.gz archive: {e}")))?
     {
-        let entry = entry.map_err(|e| bad(e.to_string()))?;
+        let mut entry = entry.map_err(|e| bad(e.to_string()))?;
+        total = checked_archive_size(total, entry.size())?;
         let path = entry.path().map_err(|e| bad(e.to_string()))?.into_owned();
-        if entry.header().entry_type().is_file()
-            && safe_relative(&path.to_string_lossy()).is_some_and(|p| {
-                // `tar -c .` names entries `./driver.toml`.
-                p.components()
-                    .filter(|c| *c != Component::CurDir)
-                    .collect::<PathBuf>()
-                    == Path::new("driver.toml")
-            })
-        {
+        check_manifest_size(&path, entry.size())?;
+        if entry.header().entry_type().is_file() && is_driver_toml(&path) {
             let mut text = String::new();
             entry
-                .take(64 * 1024)
                 .read_to_string(&mut text)
                 .map_err(|e| bad(e.to_string()))?;
             return toml::from_str(&text).map_err(|e| bad(format!("driver.toml: {e}")));
