@@ -67,6 +67,29 @@ impl Dialect for OracleDialect {
         Some(merge_sql(self, table, &source, columns, key, update))
     }
 
+    /// `EXPLAIN PLAN` fills the session's plan table; `DBMS_XPLAN` prints it. Oracle's
+    /// estimates only: running the statement for actual figures is not offered.
+    fn explain_spec(
+        &self,
+        sql: &str,
+        analyze: bool,
+    ) -> Result<sqlr_core::ExplainSpec, sqlr_core::DriverError> {
+        if analyze {
+            return Err(sqlr_core::DriverError::new(
+                sqlr_core::ErrorKind::Unsupported,
+                "Oracle has no EXPLAIN ANALYZE here: use Explain for the estimated plan",
+            ));
+        }
+        let sql = sql.trim().trim_end_matches(';').trim_end();
+        Ok(sqlr_core::ExplainSpec {
+            before: vec![format!("EXPLAIN PLAN SET STATEMENT_ID = 'sqlr' FOR {sql}")],
+            sql: "SELECT PLAN_TABLE_OUTPUT FROM TABLE(DBMS_XPLAN.DISPLAY(NULL, 'sqlr', 'TYPICAL'))"
+                .into(),
+            after: vec!["DELETE FROM PLAN_TABLE WHERE STATEMENT_ID = 'sqlr'".into()],
+            parser: sqlr_core::ExplainParser::OracleText,
+        })
+    }
+
     fn bool_literal(&self, value: bool) -> &'static str {
         if value { "1" } else { "0" }
     }
@@ -120,6 +143,23 @@ mod tests {
                  VALUES (sqlr_s.\"ID\", sqlr_s.\"V\")"
             )
         );
+    }
+
+    #[test]
+    fn explain_fills_the_plan_table_and_displays_it() {
+        let spec = OracleDialect
+            .explain_spec("SELECT * FROM emp;", false)
+            .unwrap();
+        assert_eq!(
+            spec.before,
+            ["EXPLAIN PLAN SET STATEMENT_ID = 'sqlr' FOR SELECT * FROM emp"]
+        );
+        assert!(spec.sql.contains("DBMS_XPLAN.DISPLAY(NULL, 'sqlr'"));
+        assert_eq!(spec.parser, sqlr_core::ExplainParser::OracleText);
+        let err = OracleDialect
+            .explain_spec("SELECT 1 FROM dual", true)
+            .unwrap_err();
+        assert_eq!(err.kind, sqlr_core::ErrorKind::Unsupported);
     }
 
     #[test]

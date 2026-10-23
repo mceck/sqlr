@@ -124,6 +124,34 @@ impl Dialect for MsDialect {
         format!("N'{}'", text.replace('\'', "''"))
     }
 
+    /// `SET SHOWPLAN_ALL ON` makes the server return the estimated plan instead of running
+    /// the statement. The driver reads a rowset only for a query, so a data change has no
+    /// plan to read, and there is no analyze.
+    fn explain_spec(
+        &self,
+        sql: &str,
+        analyze: bool,
+    ) -> Result<sqlr_core::ExplainSpec, sqlr_core::DriverError> {
+        let unsupported = |m: &str| {
+            Err(sqlr_core::DriverError::new(
+                sqlr_core::ErrorKind::Unsupported,
+                m,
+            ))
+        };
+        if analyze {
+            return unsupported("SQL Server has no EXPLAIN ANALYZE here: use Explain");
+        }
+        if self.syntax().classify(sql) != sqlr_core::StatementClass::Read {
+            return unsupported("Explain on SQL Server is offered for queries only");
+        }
+        Ok(sqlr_core::ExplainSpec {
+            before: vec!["SET SHOWPLAN_ALL ON".into()],
+            sql: sql.trim().trim_end_matches(';').to_string(),
+            after: vec!["SET SHOWPLAN_ALL OFF".into()],
+            parser: sqlr_core::ExplainParser::MssqlShowplan,
+        })
+    }
+
     fn bool_literal(&self, value: bool) -> &'static str {
         if value { "1" } else { "0" }
     }
@@ -223,6 +251,18 @@ mod tests {
             "SELECT * FROM t",
         ] {
             assert!(!d.wrap_where(sql, "1=1").contains("OFFSET 0"), "{sql}");
+        }
+    }
+
+    #[test]
+    fn explain_uses_showplan_for_queries_only() {
+        let spec = MsDialect.explain_spec("SELECT * FROM t;", false).unwrap();
+        assert_eq!(spec.before, ["SET SHOWPLAN_ALL ON"]);
+        assert_eq!(spec.sql, "SELECT * FROM t");
+        assert_eq!(spec.after, ["SET SHOWPLAN_ALL OFF"]);
+        for (sql, analyze) in [("SELECT 1", true), ("DELETE FROM t", false)] {
+            let err = MsDialect.explain_spec(sql, analyze).unwrap_err();
+            assert_eq!(err.kind, sqlr_core::ErrorKind::Unsupported, "{sql}");
         }
     }
 

@@ -14,6 +14,10 @@ pub enum ExplainParser {
     MysqlTree,
     MysqlJson,
     SqliteRows,
+    /// The lines of `DBMS_XPLAN.DISPLAY`.
+    OracleText,
+    /// The rows of `SET SHOWPLAN_ALL ON`.
+    MssqlShowplan,
 }
 
 impl ExplainParser {
@@ -34,6 +38,10 @@ impl ExplainParser {
             ExplainParser::MysqlJson => {
                 parse_mysql_json(&rows.iter().map(text).collect::<Vec<_>>().join("\n"))
             }
+            ExplainParser::OracleText => {
+                parse_oracle_text(&rows.iter().map(text).collect::<Vec<_>>().join("\n"))
+            }
+            ExplainParser::MssqlShowplan => parse_mssql_showplan(rows),
             ExplainParser::SqliteRows => {
                 let int = |v: Option<&Value>| match v {
                     Some(Value::Int(i)) => *i,
@@ -437,6 +445,182 @@ pub fn parse_mysql_json(text: &str) -> Result<PlanTree, DriverError> {
     })
 }
 
+/// A count as `DBMS_XPLAN` prints it: `14`, `1203`, `12K`, `3M`.
+fn xplan_number(text: &str) -> Option<f64> {
+    let text = text.trim();
+    let (digits, scale) = match text.chars().last()? {
+        'K' => (&text[..text.len() - 1], 1e3),
+        'M' => (&text[..text.len() - 1], 1e6),
+        'G' => (&text[..text.len() - 1], 1e9),
+        'T' => (&text[..text.len() - 1], 1e12),
+        _ => (text, 1.0),
+    };
+    digits.trim().parse::<f64>().ok().map(|n| n * scale)
+}
+
+/// The plan table of Oracle's `DBMS_XPLAN.DISPLAY`: one row per operation, its depth the
+/// indentation of the `Operation` cell.
+pub fn parse_oracle_text(text: &str) -> Result<PlanTree, DriverError> {
+    let mut columns: Vec<String> = Vec::new();
+    let mut stack: Vec<(usize, PlanNode)> = Vec::new();
+    let mut roots: Vec<PlanNode> = Vec::new();
+    for line in text.lines() {
+        if !line.starts_with('|') {
+            continue;
+        }
+        let cells: Vec<&str> = line.trim_end().trim_matches('|').split('|').collect();
+        if columns.is_empty() {
+            if cells.iter().any(|c| c.trim() == "Operation") {
+                columns = cells.iter().map(|c| c.trim().to_string()).collect();
+            }
+            continue;
+        }
+        let cell = |name: &str| {
+            columns
+                .iter()
+                .position(|c| c == name)
+                .and_then(|i| cells.get(i))
+        };
+        let Some(operation) = cell("Operation") else {
+            continue;
+        };
+        let depth = operation.len() - operation.trim_start().len();
+        let operation = operation.trim().to_string();
+        let name = cell("Name")
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty());
+        let mut node = PlanNode {
+            label: match &name {
+                Some(name) => format!("{operation} {name}"),
+                None => operation.clone(),
+            },
+            kind: operation,
+            relation: name,
+            rows_estimate: cell("Rows").and_then(|c| xplan_number(c)),
+            ..PlanNode::default()
+        };
+        if let Some(cost) = cell("Cost (%CPU)")
+            .and_then(|c| c.split_whitespace().next())
+            .and_then(|c| xplan_number(c))
+        {
+            node.cost = Some((0.0, cost));
+        }
+        while stack.last().is_some_and(|(d, _)| *d >= depth) {
+            let (_, done) = stack.pop().unwrap();
+            match stack.last_mut() {
+                Some((_, parent)) => parent.children.push(done),
+                None => roots.push(done),
+            }
+        }
+        stack.push((depth, node));
+    }
+    while let Some((_, done)) = stack.pop() {
+        match stack.last_mut() {
+            Some((_, parent)) => parent.children.push(done),
+            None => roots.push(done),
+        }
+    }
+    let root = match roots.len() {
+        0 => return Err(bad("the plan is empty")),
+        1 => roots.remove(0),
+        _ => PlanNode {
+            label: "Plan".into(),
+            kind: "Plan".into(),
+            children: roots,
+            ..PlanNode::default()
+        },
+    };
+    Ok(PlanTree {
+        root,
+        planning_ms: None,
+        execution_ms: None,
+        raw: text.to_string(),
+        format: "text".into(),
+    })
+}
+
+/// SQL Server's `SET SHOWPLAN_ALL ON` rows (`StmtText`, `StmtId`, `NodeId`, `Parent`,
+/// `PhysicalOp`, `LogicalOp`, `Argument`, `DefinedValues`, `EstimateRows`, `EstimateIO`,
+/// `EstimateCPU`, `AvgRowSize`, `TotalSubtreeCost`, …): the tree is `NodeId` / `Parent`.
+pub fn parse_mssql_showplan(rows: &[Vec<Value>]) -> Result<PlanTree, DriverError> {
+    struct Row {
+        id: i64,
+        parent: i64,
+        node: PlanNode,
+    }
+    let number = |r: &Vec<Value>, i: usize| -> Option<f64> {
+        r.get(i)?.display().trim().parse::<f64>().ok()
+    };
+    let flat: Vec<Row> = rows
+        .iter()
+        .filter_map(|r| {
+            let id = number(r, 2)? as i64;
+            let text = r.first()?.display().into_owned();
+            let label = text.trim_start_matches([' ', '|', '-']).trim().to_string();
+            let argument = r
+                .get(6)
+                .map(|v| v.display().into_owned())
+                .unwrap_or_default();
+            let relation = argument.split("OBJECT:(").nth(1).and_then(|rest| {
+                let end = rest.find(')')?;
+                Some(rest[..end].to_string())
+            });
+            let physical = r
+                .get(4)
+                .map(|v| v.display().into_owned())
+                .unwrap_or_default();
+            Some(Row {
+                id,
+                parent: number(r, 3).unwrap_or(0.0) as i64,
+                node: PlanNode {
+                    kind: if physical.is_empty() || physical == "NULL" {
+                        label.split_whitespace().next().unwrap_or("").to_string()
+                    } else {
+                        physical
+                    },
+                    label,
+                    relation,
+                    cost: number(r, 12).map(|c| (0.0, c)),
+                    rows_estimate: number(r, 8),
+                    ..PlanNode::default()
+                },
+            })
+        })
+        .collect();
+    fn build(flat: &[Row], parent: i64) -> Vec<PlanNode> {
+        flat.iter()
+            .filter(|r| r.parent == parent)
+            .map(|r| PlanNode {
+                children: build(flat, r.id),
+                ..r.node.clone()
+            })
+            .collect()
+    }
+    // A node is its own parent's child only below the root: the root has parent 0.
+    let mut top = build(&flat, 0);
+    let root = match top.len() {
+        0 => return Err(bad("the plan is empty")),
+        1 => top.remove(0),
+        _ => PlanNode {
+            label: "Plan".into(),
+            kind: "Plan".into(),
+            children: top,
+            ..PlanNode::default()
+        },
+    };
+    Ok(PlanTree {
+        root,
+        planning_ms: None,
+        execution_ms: None,
+        raw: rows
+            .iter()
+            .filter_map(|r| r.first().map(|v| v.display().into_owned()))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        format: "text".into(),
+    })
+}
+
 /// SQLite `EXPLAIN QUERY PLAN` rows: `(id, parent, detail)`.
 pub fn parse_sqlite_rows(rows: &[(i64, i64, String)]) -> Result<PlanTree, DriverError> {
     fn build(rows: &[(i64, i64, String)], parent: i64) -> Vec<PlanNode> {
@@ -484,6 +668,71 @@ pub fn parse_sqlite_rows(rows: &[(i64, i64, String)]) -> Result<PlanTree, Driver
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn oracle_plan_table_becomes_a_tree() {
+        let text = "Plan hash value: 1\n\n\
+            ---------------------------------------------------------\n\
+            | Id  | Operation          | Name | Rows  | Bytes | Cost (%CPU)| Time     |\n\
+            ---------------------------------------------------------\n\
+            |   0 | SELECT STATEMENT   |      |    14 |   532 |     3   (0)| 00:00:01 |\n\
+            |*  1 |  HASH JOIN         |      |    14 |   532 |     3   (0)| 00:00:01 |\n\
+            |   2 |   TABLE ACCESS FULL| EMP  |   12K |   532 |     3   (0)| 00:00:01 |\n\
+            |   3 |   TABLE ACCESS FULL| DEPT |     4 |    88 |     3   (0)| 00:00:01 |\n\
+            ---------------------------------------------------------\n";
+        let plan = parse_oracle_text(text).unwrap();
+        assert_eq!(plan.root.kind, "SELECT STATEMENT");
+        let join = &plan.root.children[0];
+        assert_eq!(join.kind, "HASH JOIN");
+        assert_eq!(join.cost, Some((0.0, 3.0)));
+        assert_eq!(join.children.len(), 2);
+        assert_eq!(join.children[0].relation.as_deref(), Some("EMP"));
+        assert_eq!(join.children[0].rows_estimate, Some(12_000.0));
+        assert_eq!(join.children[1].relation.as_deref(), Some("DEPT"));
+    }
+
+    #[test]
+    fn mssql_showplan_rows_become_a_tree() {
+        let row = |text: &str, id: i64, parent: i64, op: Option<&str>, arg: &str, rows: f64| {
+            let mut r = vec![
+                Value::Text(text.into()),
+                Value::Int(1),
+                Value::Int(id),
+                Value::Int(parent),
+                op.map_or(Value::Null, |o| Value::Text(o.into())),
+                Value::Null,
+                Value::Text(arg.into()),
+                Value::Null,
+                Value::Float(rows),
+                Value::Float(0.0),
+                Value::Float(0.0),
+                Value::Int(10),
+                Value::Float(0.5),
+            ];
+            r.push(Value::Null);
+            r
+        };
+        let rows = vec![
+            row("SELECT * FROM t", 1, 0, None, "", 5.0),
+            row(
+                "  |--Table Scan(OBJECT:([db].[dbo].[t]))",
+                2,
+                1,
+                Some("Table Scan"),
+                "OBJECT:([db].[dbo].[t])",
+                5.0,
+            ),
+        ];
+        let plan = parse_mssql_showplan(&rows).unwrap();
+        assert_eq!(plan.root.label, "SELECT * FROM t");
+        assert_eq!(plan.root.children.len(), 1);
+        let scan = &plan.root.children[0];
+        assert_eq!(scan.kind, "Table Scan");
+        assert_eq!(scan.relation.as_deref(), Some("[db].[dbo].[t]"));
+        assert_eq!(scan.cost, Some((0.0, 0.5)));
+        assert_eq!(scan.rows_estimate, Some(5.0));
+        assert!(parse_mssql_showplan(&[]).is_err());
+    }
+
     use super::*;
 
     const PG: &str = r#"[{"Plan": {"Node Type": "Nested Loop", "Startup Cost": 0.0, "Total Cost": 30.0,
