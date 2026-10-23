@@ -181,17 +181,9 @@ impl RowStream for MemRows {
     }
 }
 
-/// A document value as a grid cell: scalars as themselves, the rest as relaxed JSON.
+/// A document value as a grid cell, with the same presentation as the document table.
 pub(crate) fn cell_value(v: &DocValue) -> Value {
-    match v {
-        DocValue::Null | DocValue::Undefined => Value::Null,
-        DocValue::Bool(b) => Value::Bool(*b),
-        DocValue::Int32(i) => Value::Int(i64::from(*i)),
-        DocValue::Int64(i) => Value::Int(*i),
-        DocValue::Double(d) => Value::Float(*d),
-        DocValue::String(s) => Value::Text(s.clone()),
-        other => Value::Text(other.to_relaxed_json()),
-    }
+    sqlr_core::doc_field_value(Some(v))
 }
 
 fn int_of(v: Option<&DocValue>) -> u64 {
@@ -608,5 +600,34 @@ impl DocumentConn for MongoConnection {
 
     fn set_read_only(&self, on: bool) {
         self.set_read_only_flag(on);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlr_core::doc_field_value;
+
+    #[test]
+    fn distinct_cells_read_like_the_document_table() {
+        // `distinct` hands back BSON values outside a document; they must render exactly
+        // as the same field renders in the document table.
+        let values = [
+            DocValue::ObjectId([0xab; 12]),
+            DocValue::DateTime(0),
+            DocValue::Decimal128("1.10".into()),
+            DocValue::Binary {
+                subtype: 0,
+                bytes: vec![1, 2],
+            },
+            DocValue::String("text".into()),
+        ];
+        for value in &values {
+            assert_eq!(cell_value(value), doc_field_value(Some(value)), "{value:?}");
+        }
+        assert_eq!(
+            cell_value(&DocValue::ObjectId([0xab; 12])),
+            Value::Text("abababababababababababab".into())
+        );
     }
 }
