@@ -607,10 +607,16 @@ impl Shared {
             }
             if !failed && let Err(e) = run_sql(&conn, "COMMIT").await {
                 self.on_error(key, io, &e);
+                control.push(("COMMIT".to_string(), e));
+                // A rejected COMMIT can leave the transaction open (for example,
+                // deferred foreign keys in SQLite). Undo it before cleanup or reuse.
+                if let Err(undo) = run_sql(&conn, "ROLLBACK").await {
+                    self.on_error(key, io, &undo);
+                    control.push(("ROLLBACK".to_string(), undo));
+                }
                 for outcome in &mut outcomes[i..end] {
                     *outcome = DdlStepOutcome::RolledBack;
                 }
-                control.push(("COMMIT".to_string(), e));
                 failed = true;
                 rolled_back = true;
             }

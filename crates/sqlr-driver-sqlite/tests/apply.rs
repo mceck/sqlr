@@ -226,3 +226,49 @@ async fn apply_changeset_end_to_end() {
         vec![vec![Value::Text("b".into())]]
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ddl_commit_failure_rolls_back_before_reusing_the_session() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = engine(config(&dir.path().join("t.db")), Secrets::default()).await;
+    for sql in [
+        "PRAGMA foreign_keys = ON",
+        "CREATE TABLE parent (id INTEGER PRIMARY KEY)",
+        "CREATE TABLE child (parent_id INTEGER REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED)",
+        "INSERT INTO parent VALUES (1)",
+        "INSERT INTO child VALUES (1)",
+    ] {
+        run(&engine, sql).await;
+    }
+    // DROP succeeds, but the deferred foreign key rejects COMMIT. The failed apply
+    // must undo the DROP and release the transaction before returning its report.
+    let job = engine.apply_ddl(
+        &tab(),
+        vec!["DROP TABLE parent".into()],
+        sqlr_engine::ApplyOptions {
+            transactional: true,
+            ..Default::default()
+        },
+    );
+    until("the DDL apply", || {
+        engine.job(job).is_some_and(|j| j.outcome.is_some())
+    })
+    .await;
+    let outcome = engine.job(job).unwrap().outcome.unwrap();
+    let JobOutcome::DdlApplied(report) = outcome else {
+        panic!("{outcome:?}");
+    };
+    assert!(!report.ok());
+    assert_eq!(report.control[0].0, "COMMIT");
+    assert!(report.rolled_back);
+    run(&engine, "BEGIN").await;
+    assert_eq!(
+        rows(&engine, "SELECT id FROM parent").await,
+        vec![vec![Value::Int(1)]]
+    );
+    assert_eq!(
+        rows(&engine, "SELECT parent_id FROM child").await,
+        vec![vec![Value::Int(1)]]
+    );
+    run(&engine, "ROLLBACK").await;
+}

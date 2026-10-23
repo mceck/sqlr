@@ -466,7 +466,7 @@ fn begin_and_commit_failures_are_their_own_steps() {
         report.summary()
     );
 
-    let (engine, _) = setup(
+    let (engine, fake) = setup(
         FakeScript {
             fail_matching: Some("COMMIT".into()),
             ..Default::default()
@@ -476,6 +476,10 @@ fn begin_and_commit_failures_are_their_own_steps() {
     let JobOutcome::DdlApplied(report) = apply(&engine, &["CREATE a", "CREATE b"], true) else {
         panic!("not applied")
     };
+    assert_eq!(
+        fake.executed(),
+        ["BEGIN", "CREATE a", "CREATE b", "COMMIT", "ROLLBACK"]
+    );
     assert!(matches!(
         report.statements.iter().map(|(_, o)| o).collect::<Vec<_>>()[..],
         [DdlStepOutcome::RolledBack, DdlStepOutcome::RolledBack]
