@@ -108,13 +108,21 @@ impl Shared {
         let dialect = rel.dialect();
         let mut default_column = changeset.key_columns.first().cloned();
         if default_column.is_none()
-            && changeset.changes.iter().any(|c| {
-                matches!(c, sqlr_core::Change::Insert { values } if values.is_empty())
-            })
+            && changeset
+                .changes
+                .iter()
+                .any(|c| matches!(c, sqlr_core::Change::Insert { values } if values.is_empty()))
         {
             match rel.describe(&changeset.table).await {
                 Ok(info) => {
-                    default_column = info.columns.into_iter().find(|c| !c.generated).map(|c| c.name);
+                    // DEFAULT is legal for identity/generated columns too. An
+                    // identity-only table still needs a named column on Oracle.
+                    default_column = info
+                        .columns
+                        .iter()
+                        .find(|c| !c.generated)
+                        .or_else(|| info.columns.first())
+                        .map(|c| c.name.clone());
                 }
                 Err(e) if e.kind == ErrorKind::Unsupported => {}
                 Err(e) => {
@@ -147,14 +155,15 @@ impl Shared {
             self.undo(key, io, &conn, mode, &e).await;
             return Err(e);
         }
-        let statements = match changeset.statements_with_default_column(dialect, default_column.as_deref()) {
-            Ok(statements) => statements,
-            Err(e) => {
-                let e = DriverError::new(ErrorKind::Other, e);
-                self.undo(key, io, &conn, mode, &e).await;
-                return Err(e);
-            }
-        };
+        let statements =
+            match changeset.statements_with_default_column(dialect, default_column.as_deref()) {
+                Ok(statements) => statements,
+                Err(e) => {
+                    let e = DriverError::new(ErrorKind::Other, e);
+                    self.undo(key, io, &conn, mode, &e).await;
+                    return Err(e);
+                }
+            };
         for stmt in &statements {
             if job.is_cancelled() {
                 job.set_cancel(None);
