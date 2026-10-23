@@ -13,7 +13,7 @@ a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 .topbar .in{max-width:1180px;margin:0 auto;padding:0 24px;height:56px;display:flex;align-items:center;gap:18px}
 .brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;color:var(--text)}
 .brand img{width:26px;height:26px;border-radius:6px}.brand:hover{text-decoration:none}
-.topbar .back{margin-left:auto;font-size:14px;color:var(--muted)}
+.topbar .back{margin-left:auto}.topbar .back,.topbar .gh{font-size:14px;color:var(--muted)}.topbar a:hover{color:var(--text)}
 .layout{max-width:1180px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:230px minmax(0,1fr);gap:48px}
 aside{position:sticky;top:56px;align-self:start;height:calc(100vh - 56px);overflow:auto;padding:28px 0;font-size:14.5px}
 aside h4{margin:18px 0 6px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
@@ -44,9 +44,10 @@ img{max-width:100%}
 <div class="topbar"><div class="in">
 <a class="brand" href="../index.html"><img src="../media/icon.png" alt="">sqlr</a>
 <a class="back" href="../index.html#docs">All documentation</a>
+<a class="gh" href="https://github.com/mceck/sqlr">GitHub</a>
 </div></div>
 <div class="layout">
-<aside><h4>Using sqlr</h4><a class="" href="../usage/README.html">Start here</a><a class="" href="../usage/getting-started.html">Getting started</a><a class="" href="../usage/connections.html">Connections</a><a class="" href="../usage/explorer-and-objects.html">Explorer and object editors</a><a class="" href="../usage/sql-editor.html">The SQL editor</a><a class="" href="../usage/results-and-editing.html">Results and data editing</a><a class="" href="../usage/profiles-and-transactions.html">Profiles and transactions</a><a class="" href="../usage/moving-data.html">Import, export, transfer</a><a class="" href="../usage/schema-tools.html">Schema tools</a><a class="" href="../usage/administration.html">Administration</a><a class="" href="../usage/nosql.html">Document and key-value</a><a class="on" href="../usage/drivers.html">Drivers</a><a class="" href="../usage/settings-and-shortcuts.html">Settings and shortcuts</a><h4>Reference</h4><a class="" href="../tech/mongo-shell-subset.html">Mongo shell subset</a><a class="" href="../tech/writing-a-driver.html">Writing a driver</a><a class="" href="../tech/driver-protocol.html">Driver protocol</a><a class="" href="../tech/performance-budgets.html">Performance budgets</a><a class="" href="../drivers/hana.html">SAP HANA notes</a><a class="" href="../drivers/jdbc.html">JDBC bridge notes</a></aside>
+<aside><h4>Using sqlr</h4><a class="" href="../usage/README.html">Start here</a><a class="" href="../usage/getting-started.html">Getting started</a><a class="" href="../usage/connections.html">Connections</a><a class="" href="../usage/explorer-and-objects.html">Explorer and object editors</a><a class="" href="../usage/sql-editor.html">The SQL editor</a><a class="" href="../usage/results-and-editing.html">Results and data editing</a><a class="" href="../usage/profiles-and-transactions.html">Profiles and transactions</a><a class="" href="../usage/moving-data.html">Import, export, transfer</a><a class="" href="../usage/schema-tools.html">Schema tools</a><a class="" href="../usage/administration.html">Administration</a><a class="" href="../usage/nosql.html">Document and key-value</a><a class="on" href="../usage/drivers.html">Drivers</a><a class="" href="../usage/settings-and-shortcuts.html">Settings and shortcuts</a><h4>Project</h4><a href="https://github.com/mceck/sqlr">Source on GitHub</a></aside>
 <main>
 <h1 id="drivers">Drivers</h1>
 <p>A driver is what lets sqlr talk to a particular database. PostgreSQL, MySQL and MariaDB, SQL Server, Oracle, SQLite, MongoDB, Elasticsearch and Redis come with the app, ready to use. Every other database comes from a <strong>driver file</strong> that you install yourself.</p>
@@ -61,14 +62,14 @@ img{max-width:100%}
 <h2 id="how-drivers-run">How drivers run</h2>
 <p>A driver installed from a file runs as its own process. sqlr starts it when the first connection needs it and stops it after it has been idle for a while (the idle time is set in Settings, under Drivers). If a driver crashes, only the connections that use it fail. You see an error and a <strong>Restart driver</strong> action, and the rest of sqlr carries on.</p>
 <h2 id="sap-hana">SAP HANA</h2>
-<p>Package the driver with <code>scripts/package-driver.sh hana hana.tar.gz</code>, then install the archive. The connection form asks for host, port, tenant database, user, password and default schema, and offers TLS with a custom CA. Behind Docker, NAT or an SSH tunnel, <strong>Pin the redirect to this host</strong> makes sqlr connect straight to the tenant's SQL port instead of following the address HANA advertises. Details are in <a href="../drivers/hana.html">the HANA notes</a>.</p>
+<p>Package the driver with <code>scripts/package-driver.sh hana hana.tar.gz</code>, then install the archive. The connection form asks for host, port, tenant database, user, password and default schema, and offers TLS with a custom CA. Behind Docker, NAT or an SSH tunnel, <strong>Pin the redirect to this host</strong> makes sqlr connect straight to the tenant's SQL port instead of following the address HANA advertises. Details are in <a href="https://github.com/mceck/sqlr/blob/main/docs/drivers/hana.md">the HANA notes</a>.</p>
 <h2 id="jdbc-databases">JDBC databases</h2>
 <p>Any database that has a JDBC driver can be reached through the JDBC bridge. It needs Java 17 or newer on your machine, found through <code>JAVA_HOME</code>, the system Java on macOS or <code>java</code> on your <code>PATH</code>.</p>
 <p>Presets exist for Db2, ClickHouse, Snowflake, DuckDB and H2, and a generic one takes any JDBC URL, driver class and jar. The JDBC jar for your database is packaged with the driver or picked in the connection form:</p>
 <pre><code>scripts/package-driver.sh jdbc-h2 jdbc-h2.tar.gz --jar ~/Downloads/h2-2.3.232.jar</code></pre>
-<p>Statements through the bridge run in auto-commit mode. More in <a href="../drivers/jdbc.html">the JDBC notes</a>.</p>
+<p>Statements through the bridge run in auto-commit mode. More in <a href="https://github.com/mceck/sqlr/blob/main/docs/drivers/jdbc.md">the JDBC notes</a>.</p>
 <h2 id="writing-your-own">Writing your own</h2>
-<p>If your database is not on the list, you can write a driver in Rust with <code>sqlr-driver-sdk</code>, or in any language that can speak the sidecar protocol. Start with <a href="../tech/writing-a-driver.html">Writing a driver</a>.</p>
+<p>If your database is not on the list, you can write a driver in Rust with <code>sqlr-driver-sdk</code>, or in any language that can speak the sidecar protocol. Start with <a href="https://github.com/mceck/sqlr/blob/main/docs/tech/writing-a-driver.md">Writing a driver</a>.</p>
 </main>
 </div>
 </body>

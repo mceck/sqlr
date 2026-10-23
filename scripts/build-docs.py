@@ -3,7 +3,7 @@
 
 Usage: python3 scripts/build-docs.py
 
-Every .md file listed in PAGES gets a sibling .html file. Links between the pages are
+Every .md file listed in USAGE gets a sibling .html file. Links between the pages are
 rewritten from .md to .html. Only the standard library is used; the converter covers the
 Markdown the docs use: headings, paragraphs, nested lists, tables, fenced code, block
 quotes, rules, links, images, code spans, bold and italics.
@@ -13,6 +13,7 @@ import html
 import re
 from pathlib import Path
 
+GITHUB = "https://github.com/mceck/sqlr"
 DOCS = Path(__file__).resolve().parent.parent / "docs"
 
 # (path relative to docs/, title in the side navigation, group)
@@ -31,15 +32,7 @@ USAGE = [
     ("usage/drivers.md", "Drivers"),
     ("usage/settings-and-shortcuts.md", "Settings and shortcuts"),
 ]
-REFERENCE = [
-    ("tech/mongo-shell-subset.md", "Mongo shell subset"),
-    ("tech/writing-a-driver.md", "Writing a driver"),
-    ("tech/driver-protocol.md", "Driver protocol"),
-    ("tech/performance-budgets.md", "Performance budgets"),
-    ("drivers/hana.md", "SAP HANA notes"),
-    ("drivers/jdbc.md", "JDBC bridge notes"),
-]
-PAGES = {path for path, _ in USAGE + REFERENCE}
+PAGES = {path for path, _ in USAGE}
 
 CSS = """
 :root{--bg:#0b0e14;--bg-soft:#10151f;--panel:#141b27;--line:#243049;--text:#e8edf5;--muted:#9aa7bd;--dim:#6b7a93;--accent:#4fd1a5;--accent-soft:rgba(79,209,165,.14);--blue:#6ea8fe;--mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,monospace;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
@@ -50,7 +43,7 @@ a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 .topbar .in{max-width:1180px;margin:0 auto;padding:0 24px;height:56px;display:flex;align-items:center;gap:18px}
 .brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;color:var(--text)}
 .brand img{width:26px;height:26px;border-radius:6px}.brand:hover{text-decoration:none}
-.topbar .back{margin-left:auto;font-size:14px;color:var(--muted)}
+.topbar .back{margin-left:auto}.topbar .back,.topbar .gh{font-size:14px;color:var(--muted)}.topbar a:hover{color:var(--text)}
 .layout{max-width:1180px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:230px minmax(0,1fr);gap:48px}
 aside{position:sticky;top:56px;align-self:start;height:calc(100vh - 56px);overflow:auto;padding:28px 0;font-size:14.5px}
 aside h4{margin:18px 0 6px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
@@ -89,6 +82,7 @@ PAGE = """<!DOCTYPE html>
 <div class="topbar"><div class="in">
 <a class="brand" href="{root}index.html"><img src="{root}media/icon.png" alt="">sqlr</a>
 <a class="back" href="{root}index.html#docs">All documentation</a>
+<a class="gh" href="{github}">GitHub</a>
 </div></div>
 <div class="layout">
 <aside>{nav}</aside>
@@ -244,7 +238,7 @@ def nav(current, root):
         )
         return f"<h4>{name}</h4>{links}"
 
-    return group("Using sqlr", USAGE) + group("Reference", REFERENCE)
+    return group("Using sqlr", USAGE) + f'<h4>Project</h4><a href="{GITHUB}">Source on GitHub</a>'
 
 
 def main():
@@ -252,7 +246,7 @@ def main():
         src = DOCS / path
         body, title = render(src.read_text(), src)
         root = "../" * path.count("/")
-        page = PAGE.format(title=html.escape(title), css=CSS, root=root, nav=nav(path, root), body=body)
+        page = PAGE.format(title=html.escape(title), css=CSS, root=root, github=GITHUB, nav=nav(path, root), body=body)
         src.with_suffix(".html").write_text(page)
         print(f"docs/{path[:-3]}.html")
 

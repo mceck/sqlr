@@ -13,7 +13,7 @@ a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 .topbar .in{max-width:1180px;margin:0 auto;padding:0 24px;height:56px;display:flex;align-items:center;gap:18px}
 .brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;color:var(--text)}
 .brand img{width:26px;height:26px;border-radius:6px}.brand:hover{text-decoration:none}
-.topbar .back{margin-left:auto;font-size:14px;color:var(--muted)}
+.topbar .back{margin-left:auto}.topbar .back,.topbar .gh{font-size:14px;color:var(--muted)}.topbar a:hover{color:var(--text)}
 .layout{max-width:1180px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:230px minmax(0,1fr);gap:48px}
 aside{position:sticky;top:56px;align-self:start;height:calc(100vh - 56px);overflow:auto;padding:28px 0;font-size:14.5px}
 aside h4{margin:18px 0 6px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
@@ -44,9 +44,10 @@ img{max-width:100%}
 <div class="topbar"><div class="in">
 <a class="brand" href="../index.html"><img src="../media/icon.png" alt="">sqlr</a>
 <a class="back" href="../index.html#docs">All documentation</a>
+<a class="gh" href="https://github.com/mceck/sqlr">GitHub</a>
 </div></div>
 <div class="layout">
-<aside><h4>Using sqlr</h4><a class="" href="../usage/README.html">Start here</a><a class="on" href="../usage/getting-started.html">Getting started</a><a class="" href="../usage/connections.html">Connections</a><a class="" href="../usage/explorer-and-objects.html">Explorer and object editors</a><a class="" href="../usage/sql-editor.html">The SQL editor</a><a class="" href="../usage/results-and-editing.html">Results and data editing</a><a class="" href="../usage/profiles-and-transactions.html">Profiles and transactions</a><a class="" href="../usage/moving-data.html">Import, export, transfer</a><a class="" href="../usage/schema-tools.html">Schema tools</a><a class="" href="../usage/administration.html">Administration</a><a class="" href="../usage/nosql.html">Document and key-value</a><a class="" href="../usage/drivers.html">Drivers</a><a class="" href="../usage/settings-and-shortcuts.html">Settings and shortcuts</a><h4>Reference</h4><a class="" href="../tech/mongo-shell-subset.html">Mongo shell subset</a><a class="" href="../tech/writing-a-driver.html">Writing a driver</a><a class="" href="../tech/driver-protocol.html">Driver protocol</a><a class="" href="../tech/performance-budgets.html">Performance budgets</a><a class="" href="../drivers/hana.html">SAP HANA notes</a><a class="" href="../drivers/jdbc.html">JDBC bridge notes</a></aside>
+<aside><h4>Using sqlr</h4><a class="" href="../usage/README.html">Start here</a><a class="on" href="../usage/getting-started.html">Getting started</a><a class="" href="../usage/connections.html">Connections</a><a class="" href="../usage/explorer-and-objects.html">Explorer and object editors</a><a class="" href="../usage/sql-editor.html">The SQL editor</a><a class="" href="../usage/results-and-editing.html">Results and data editing</a><a class="" href="../usage/profiles-and-transactions.html">Profiles and transactions</a><a class="" href="../usage/moving-data.html">Import, export, transfer</a><a class="" href="../usage/schema-tools.html">Schema tools</a><a class="" href="../usage/administration.html">Administration</a><a class="" href="../usage/nosql.html">Document and key-value</a><a class="" href="../usage/drivers.html">Drivers</a><a class="" href="../usage/settings-and-shortcuts.html">Settings and shortcuts</a><h4>Project</h4><a href="https://github.com/mceck/sqlr">Source on GitHub</a></aside>
 <main>
 <h1 id="getting-started">Getting started</h1>
 <h2 id="install">Install</h2>

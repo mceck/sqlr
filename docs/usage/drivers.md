@@ -31,7 +31,7 @@ A driver installed from a file runs as its own process. sqlr starts it when the 
 
 ## SAP HANA
 
-Package the driver with `scripts/package-driver.sh hana hana.tar.gz`, then install the archive. The connection form asks for host, port, tenant database, user, password and default schema, and offers TLS with a custom CA. Behind Docker, NAT or an SSH tunnel, **Pin the redirect to this host** makes sqlr connect straight to the tenant's SQL port instead of following the address HANA advertises. Details are in [the HANA notes](../drivers/hana.md).
+Package the driver with `scripts/package-driver.sh hana hana.tar.gz`, then install the archive. The connection form asks for host, port, tenant database, user, password and default schema, and offers TLS with a custom CA. Behind Docker, NAT or an SSH tunnel, **Pin the redirect to this host** makes sqlr connect straight to the tenant's SQL port instead of following the address HANA advertises. Details are in [the HANA notes](https://github.com/mceck/sqlr/blob/main/docs/drivers/hana.md).
 
 ## JDBC databases
 
@@ -43,8 +43,8 @@ Presets exist for Db2, ClickHouse, Snowflake, DuckDB and H2, and a generic one t
 scripts/package-driver.sh jdbc-h2 jdbc-h2.tar.gz --jar ~/Downloads/h2-2.3.232.jar
 ```
 
-Statements through the bridge run in auto-commit mode. More in [the JDBC notes](../drivers/jdbc.md).
+Statements through the bridge run in auto-commit mode. More in [the JDBC notes](https://github.com/mceck/sqlr/blob/main/docs/drivers/jdbc.md).
 
 ## Writing your own
 
-If your database is not on the list, you can write a driver in Rust with `sqlr-driver-sdk`, or in any language that can speak the sidecar protocol. Start with [Writing a driver](../tech/writing-a-driver.md).
+If your database is not on the list, you can write a driver in Rust with `sqlr-driver-sdk`, or in any language that can speak the sidecar protocol. Start with [Writing a driver](https://github.com/mceck/sqlr/blob/main/docs/tech/writing-a-driver.md).

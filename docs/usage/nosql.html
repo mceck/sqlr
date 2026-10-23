@@ -13,7 +13,7 @@ a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
 .topbar .in{max-width:1180px;margin:0 auto;padding:0 24px;height:56px;display:flex;align-items:center;gap:18px}
 .brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;color:var(--text)}
 .brand img{width:26px;height:26px;border-radius:6px}.brand:hover{text-decoration:none}
-.topbar .back{margin-left:auto;font-size:14px;color:var(--muted)}
+.topbar .back{margin-left:auto}.topbar .back,.topbar .gh{font-size:14px;color:var(--muted)}.topbar a:hover{color:var(--text)}
 .layout{max-width:1180px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:230px minmax(0,1fr);gap:48px}
 aside{position:sticky;top:56px;align-self:start;height:calc(100vh - 56px);overflow:auto;padding:28px 0;font-size:14.5px}
 aside h4{margin:18px 0 6px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
@@ -44,9 +44,10 @@ img{max-width:100%}
 <div class="topbar"><div class="in">
 <a class="brand" href="../index.html"><img src="../media/icon.png" alt="">sqlr</a>
 <a class="back" href="../index.html#docs">All documentation</a>
+<a class="gh" href="https://github.com/mceck/sqlr">GitHub</a>
 </div></div>
 <div class="layout">
-<aside><h4>Using sqlr</h4><a class="" href="../usage/README.html">Start here</a><a class="" href="../usage/getting-started.html">Getting started</a><a class="" href="../usage/connections.html">Connections</a><a class="" href="../usage/explorer-and-objects.html">Explorer and object editors</a><a class="" href="../usage/sql-editor.html">The SQL editor</a><a class="" href="../usage/results-and-editing.html">Results and data editing</a><a class="" href="../usage/profiles-and-transactions.html">Profiles and transactions</a><a class="" href="../usage/moving-data.html">Import, export, transfer</a><a class="" href="../usage/schema-tools.html">Schema tools</a><a class="" href="../usage/administration.html">Administration</a><a class="on" href="../usage/nosql.html">Document and key-value</a><a class="" href="../usage/drivers.html">Drivers</a><a class="" href="../usage/settings-and-shortcuts.html">Settings and shortcuts</a><h4>Reference</h4><a class="" href="../tech/mongo-shell-subset.html">Mongo shell subset</a><a class="" href="../tech/writing-a-driver.html">Writing a driver</a><a class="" href="../tech/driver-protocol.html">Driver protocol</a><a class="" href="../tech/performance-budgets.html">Performance budgets</a><a class="" href="../drivers/hana.html">SAP HANA notes</a><a class="" href="../drivers/jdbc.html">JDBC bridge notes</a></aside>
+<aside><h4>Using sqlr</h4><a class="" href="../usage/README.html">Start here</a><a class="" href="../usage/getting-started.html">Getting started</a><a class="" href="../usage/connections.html">Connections</a><a class="" href="../usage/explorer-and-objects.html">Explorer and object editors</a><a class="" href="../usage/sql-editor.html">The SQL editor</a><a class="" href="../usage/results-and-editing.html">Results and data editing</a><a class="" href="../usage/profiles-and-transactions.html">Profiles and transactions</a><a class="" href="../usage/moving-data.html">Import, export, transfer</a><a class="" href="../usage/schema-tools.html">Schema tools</a><a class="" href="../usage/administration.html">Administration</a><a class="on" href="../usage/nosql.html">Document and key-value</a><a class="" href="../usage/drivers.html">Drivers</a><a class="" href="../usage/settings-and-shortcuts.html">Settings and shortcuts</a><h4>Project</h4><a href="https://github.com/mceck/sqlr">Source on GitHub</a></aside>
 <main>
 <h1 id="document-and-key-value-databases">Document and key-value databases</h1>
 <p>MongoDB, Elasticsearch and Redis open as first-class tabs with views made for their data. The editing safety you know from SQL (preview, confirmations, read-only profiles) applies here too.</p>
@@ -63,7 +64,7 @@ db.orders.aggregate([
 db.orders.updateOne({ _id: ObjectId(&quot;65f1c0de0000000000000001&quot;) }, { $set: { status: &quot;closed&quot; } })</code></pre>
 <p>sqlr reads this syntax itself. The supported methods are <code>find</code>, <code>findOne</code>, <code>aggregate</code>, <code>countDocuments</code>, <code>estimatedDocumentCount</code>, <code>distinct</code>, <code>insertOne</code>, <code>insertMany</code>, <code>updateOne</code>, <code>updateMany</code>, <code>replaceOne</code>, <code>findOneAndUpdate</code>, <code>deleteOne</code>, <code>deleteMany</code>, <code>createIndex</code>, <code>dropIndex</code>, <code>getIndexes</code> and <code>drop</code>, plus <code>show dbs</code>, <code>show collections</code>, <code>use &lt;db&gt;</code> and <code>db.getCollectionNames()</code>.</p>
 <p>Values can be written the relaxed way: unquoted keys, single quotes, trailing commas and comments are all fine. Helpers such as <code>ObjectId(&quot;...&quot;)</code>, <code>ISODate(&quot;...&quot;)</code>, <code>NumberLong(...)</code>, <code>NumberDecimal(&quot;...&quot;)</code>, <code>UUID(&quot;...&quot;)</code> and <code>/regex/i</code> are understood.</p>
-<p>For anything outside this list, <code>db.runCommand({ ... })</code> sends any server command as a document. The complete list, with every literal, is in the <a href="../tech/mongo-shell-subset.html">Mongo shell reference</a>.</p>
+<p>For anything outside this list, <code>db.runCommand({ ... })</code> sends any server command as a document. The complete list, with every literal, is in the <a href="https://github.com/mceck/sqlr/blob/main/docs/tech/mongo-shell-subset.md">Mongo shell reference</a>.</p>
 <p>You can write several statements, separated by <code>;</code> or new lines. ⇧⌘↵ runs them one after the other, each with its own result.</p>
 <h3 id="looking-at-documents">Looking at documents</h3>
 <p>Results can be shown three ways, and you can switch at any time:</p>

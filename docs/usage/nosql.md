@@ -23,7 +23,7 @@ sqlr reads this syntax itself. The supported methods are `find`, `findOne`, `agg
 
 Values can be written the relaxed way: unquoted keys, single quotes, trailing commas and comments are all fine. Helpers such as `ObjectId("...")`, `ISODate("...")`, `NumberLong(...)`, `NumberDecimal("...")`, `UUID("...")` and `/regex/i` are understood.
 
-For anything outside this list, `db.runCommand({ ... })` sends any server command as a document. The complete list, with every literal, is in the [Mongo shell reference](../tech/mongo-shell-subset.md).
+For anything outside this list, `db.runCommand({ ... })` sends any server command as a document. The complete list, with every literal, is in the [Mongo shell reference](https://github.com/mceck/sqlr/blob/main/docs/tech/mongo-shell-subset.md).
 
 You can write several statements, separated by `;` or new lines. ⇧⌘↵ runs them one after the other, each with its own result.
 
