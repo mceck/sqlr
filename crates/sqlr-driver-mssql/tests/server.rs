@@ -177,6 +177,44 @@ async fn schema_corners_and_object_loading() {
 }
 
 #[tokio::test]
+async fn cte_writes_report_their_affected_rows() {
+    sqlr_testkit::skip_container_tests!();
+    let (_lock, conn) = server().await;
+    let rel = conn.relational().unwrap();
+    run(&conn, "CREATE SCHEMA shop").await;
+    run(&conn, "CREATE TABLE shop.t (id int PRIMARY KEY, v int)").await;
+    run(&conn, "INSERT INTO shop.t VALUES (1, 10), (2, 20)").await;
+    for (sql, expected) in [
+        (
+            "WITH chosen AS (SELECT * FROM shop.t WHERE id = 1) UPDATE chosen SET v = 11",
+            1,
+        ),
+        (
+            "WITH chosen AS (SELECT * FROM shop.t WHERE id = 2) DELETE FROM chosen",
+            1,
+        ),
+        (
+            "WITH source AS (SELECT 3 AS id, 30 AS v) INSERT INTO shop.t SELECT * FROM source",
+            1,
+        ),
+    ] {
+        match rel.execute(sql).await.unwrap() {
+            Execution::Affected(actual) => assert_eq!(actual, expected, "{sql}"),
+            Execution::Rows(_) => panic!("expected affected rows: {sql}"),
+        }
+    }
+    let Execution::Rows(mut rows) = rel.execute(
+        "WITH chosen AS (SELECT * FROM shop.t WHERE id = 1) UPDATE chosen SET v = 12 OUTPUT inserted.v"
+    ).await.unwrap() else {
+        panic!("OUTPUT must preserve its rowset");
+    };
+    assert_eq!(
+        rows.next_chunk(10).await.unwrap().unwrap().cell(0, 0),
+        sqlr_core::Cell::Int(12)
+    );
+}
+
+#[tokio::test]
 async fn statements_report_rows_counts_and_errors() {
     sqlr_testkit::skip_container_tests!();
     let (_c, conn) = server().await;

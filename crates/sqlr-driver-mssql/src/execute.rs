@@ -145,8 +145,13 @@ fn returns_rows(sql: &str) -> bool {
         .unwrap_or_default();
     if matches!(
         first.as_str(),
-        "SELECT" | "WITH" | "EXEC" | "EXECUTE" | "DECLARE" | "PRINT" | "DBCC" | "VALUES"
+        "SELECT" | "EXEC" | "EXECUTE" | "DECLARE" | "PRINT" | "DBCC" | "VALUES"
     ) {
+        return true;
+    }
+    // A CTE can feed an UPDATE, INSERT, DELETE or MERGE, not only a SELECT. Sending
+    // those through `query` loses the DONE row counts when no OUTPUT rowset follows.
+    if first == "WITH" && tsql_syntax().classify(sql) == sqlr_core::StatementClass::Read {
         return true;
     }
     // `UPDATE … OUTPUT`, `INSERT … OUTPUT` and `DELETE … OUTPUT` return rows. Only a
