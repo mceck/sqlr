@@ -496,7 +496,7 @@ pub fn parse_oracle_text(text: &str) -> Result<PlanTree, DriverError> {
             },
             kind: operation,
             relation: name,
-            rows_estimate: cell("Rows").and_then(xplan_number),
+            rows_estimate: cell("Rows").and_then(|c| xplan_number(c)),
             ..PlanNode::default()
         };
         if let Some(cost) = cell("Cost (%CPU)")
