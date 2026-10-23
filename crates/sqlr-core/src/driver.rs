@@ -280,6 +280,11 @@ pub trait Dialect: Send + Sync {
     fn begin_is_plsql(&self) -> bool {
         false
     }
+    /// Database-specific statement syntax the shared classifier does not recognize.
+    /// `None` keeps the shared classification.
+    fn statement_class(&self, _sql: &str) -> Option<crate::StatementClass> {
+        None
+    }
     /// `text` as a string literal.
     fn string_literal(&self, text: &str) -> String {
         format!("'{}'", text.replace('\'', "''"))

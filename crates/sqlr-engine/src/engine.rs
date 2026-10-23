@@ -2250,6 +2250,9 @@ impl Shared {
             // what its body does.
             stmt.class = syntax.classify_script(sql);
         }
+        if let Some(class) = dialect.statement_class(sql) {
+            stmt.class = class;
+        }
         let script_class = syntax.classify_script(sql);
         let rules = TxRules {
             ddl_commits: dialect.ddl_commits_transaction(),

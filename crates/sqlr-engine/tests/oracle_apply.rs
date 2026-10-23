@@ -31,8 +31,7 @@ fn run(engine: &Engine, key: &SessionKey, sql: &str) -> Vec<Vec<Value>> {
         .collect()
 }
 
-fn default_insert(definition: &str, keys: &[&str], projection: &str, expected: Vec<Vec<Value>>) {
-    let _lock = sqlr_testkit::TestLock::acquire("oracle");
+fn engine() -> Engine {
     let (host, port) = support::endpoint("ORACLE");
     let cfg = sqlr_core::ConnectionConfig {
         values: [
@@ -60,6 +59,12 @@ fn default_insert(definition: &str, keys: &[&str], projection: &str, expected: V
         "{:?}",
         engine.session_status("o")
     );
+    engine
+}
+
+fn default_insert(definition: &str, keys: &[&str], projection: &str, expected: Vec<Vec<Value>>) {
+    let _lock = sqlr_testkit::TestLock::acquire("oracle");
+    let engine = engine();
     let key = SessionKey::meta("o");
     let name = sqlr_testkit::unique_name("DEFAULT_ROW").to_uppercase();
     run(
@@ -118,5 +123,43 @@ fn default_insert_into_an_identity_only_table_needs_no_row_key() {
         &[],
         "id",
         vec![vec![Value::Int(1)]],
+    );
+}
+
+#[test]
+fn typed_set_transaction_can_be_committed_with_the_toolbar() {
+    sqlr_testkit::skip_container_tests!();
+    let _lock = sqlr_testkit::TestLock::acquire("oracle");
+    let engine = engine();
+    let key = SessionKey::meta("o");
+    let name = sqlr_testkit::unique_name("TYPED_TX").to_uppercase();
+    run(
+        &engine,
+        &key,
+        &format!("CREATE TABLE \"{name}\" (id NUMBER)"),
+    );
+    run(
+        &engine,
+        &key,
+        "-- explicit transaction\nSET /* comment */ TRANSACTION READ WRITE",
+    );
+    run(&engine, &key, &format!("INSERT INTO \"{name}\" VALUES (1)"));
+    let phase = engine.transaction(&key).unwrap().phase;
+    engine.commit(&key);
+    // A subsequent statement waits for the toolbar command's turn to finish.
+    run(&engine, &key, "SELECT 1 FROM dual");
+    let observer = engine.session("o", Some(2));
+    let visible = run(
+        &engine,
+        &observer,
+        &format!("SELECT count(*) FROM \"{name}\""),
+    );
+    run(&engine, &key, "ROLLBACK");
+    run(&engine, &key, &format!("DROP TABLE \"{name}\" PURGE"));
+    assert_eq!(phase, sqlr_engine::TxPhase::Open);
+    assert_eq!(
+        visible,
+        vec![vec![Value::Int(1)]],
+        "toolbar COMMIT must persist the row"
     );
 }

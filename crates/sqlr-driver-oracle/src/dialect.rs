@@ -57,6 +57,15 @@ impl Dialect for OracleDialect {
         true
     }
 
+    fn statement_class(&self, sql: &str) -> Option<sqlr_core::StatementClass> {
+        let words = crate::connect::leading_words(sql);
+        (words.first().is_some_and(|w| w == "SET")
+            && words.get(1).is_some_and(|w| w == "TRANSACTION"))
+        .then_some(sqlr_core::StatementClass::Transaction(
+            sqlr_core::TxVerb::Begin,
+        ))
+    }
+
     fn ddl_commits_transaction(&self) -> bool {
         true
     }

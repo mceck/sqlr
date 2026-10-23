@@ -53,7 +53,7 @@ enum TxEffect {
 }
 
 /// The first three significant words of `sql`, upper-cased (comments skipped).
-fn leading_words(sql: &str) -> Vec<String> {
+pub(crate) fn leading_words(sql: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     oracle_syntax().lex(sql, LexState::Normal, &mut tokens);
     tokens
