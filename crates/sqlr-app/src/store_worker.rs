@@ -51,6 +51,11 @@ pub(crate) enum StoreOp {
         cfg: ConnectionConfig,
         manifest: DriverManifest,
     },
+    /// Changes only the exposure of a saved connection, without reconnecting it.
+    SetAgentAccess {
+        id: String,
+        access: sqlr_core::AgentAccess,
+    },
     /// Saves a copy of `cfg` (with its stored secrets when it saves them) right after it.
     Duplicate {
         cfg: ConnectionConfig,
@@ -250,6 +255,24 @@ pub(crate) fn run(repo: &ConnectionRepo, op: StoreOp) -> StoreReply {
             StoreReply::Deleted {
                 id: cfg.id,
                 name: cfg.name,
+                result,
+                listing: Listing::read(repo),
+            }
+        }
+        StoreOp::SetAgentAccess { id, access } => {
+            let result = repo
+                .list()
+                .and_then(|list| {
+                    let mut cfg = list.into_iter().find(|cfg| cfg.id == id).ok_or_else(|| {
+                        sqlr_store::StoreError::Invalid("unknown connection".into())
+                    })?;
+                    cfg.agent_access = access;
+                    repo.save(&cfg, &Secrets::default())
+                })
+                .map_err(|e| e.to_string());
+            StoreReply::Saved {
+                id,
+                editing: false,
                 result,
                 listing: Listing::read(repo),
             }
