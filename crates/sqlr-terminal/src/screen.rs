@@ -75,6 +75,8 @@ pub enum CursorShape {
     Bar,
 }
 
+pub use vt100::{MouseProtocolEncoding, MouseProtocolMode};
+
 /// One painted screen, with the scrollback position already applied.
 #[derive(Clone, Debug, Default)]
 pub struct ScreenSnapshot {
@@ -88,6 +90,9 @@ pub struct ScreenSnapshot {
     pub alternate: bool,
     pub bracketed_paste: bool,
     pub application_cursor: bool,
+    /// How the application asked for mouse reports; `None` means the terminal keeps the mouse.
+    pub mouse_mode: MouseProtocolMode,
+    pub mouse_encoding: MouseProtocolEncoding,
     pub scrollback_len: usize,
     pub scrollback_offset: usize,
 }
@@ -235,6 +240,8 @@ fn read_screen(screen: &vt100::Screen) -> ScreenSnapshot {
         alternate: screen.alternate_screen(),
         bracketed_paste: screen.bracketed_paste(),
         application_cursor: screen.application_cursor(),
+        mouse_mode: screen.mouse_protocol_mode(),
+        mouse_encoding: screen.mouse_protocol_encoding(),
         scrollback_len: screen.scrollback_len(),
         scrollback_offset: screen.scrollback(),
     }
@@ -323,6 +330,21 @@ mod tests {
         em.feed(b"\x1b[?2004h\x1b[?1h");
         let s = em.snapshot(0);
         assert!(s.bracketed_paste && s.application_cursor);
+    }
+
+    #[test]
+    fn mouse_reporting_modes_follow_the_application() {
+        let em = emulator();
+        assert_eq!(em.snapshot(0).mouse_mode, MouseProtocolMode::None);
+        // What opencode sets: any-motion tracking with SGR coordinates.
+        em.feed(b"\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h");
+        let s = em.snapshot(0);
+        assert_eq!(s.mouse_mode, MouseProtocolMode::AnyMotion);
+        assert_eq!(s.mouse_encoding, MouseProtocolEncoding::Sgr);
+        em.feed(b"\x1b[?1003l\x1b[?1006l");
+        let s = em.snapshot(0);
+        assert_eq!(s.mouse_mode, MouseProtocolMode::None);
+        assert_eq!(s.mouse_encoding, MouseProtocolEncoding::Default);
     }
 
     #[test]

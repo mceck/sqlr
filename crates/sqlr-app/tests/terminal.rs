@@ -9,6 +9,10 @@ use sqlr_store::{ConnectionRepo, MemorySecretStore, Settings};
 use sqlr_testkit::FakeDriver;
 
 fn app(dir: &std::path::Path) -> SqlrApp {
+    app_with_shell(dir, "printf 'terminal-ready\\n'; sleep 30")
+}
+
+fn app_with_shell(dir: &std::path::Path, shell: &str) -> SqlrApp {
     let mut drivers = DriverRegistry::default();
     drivers.register(FakeDriver::new(Default::default()));
     let engine = Engine::new(drivers, Arc::new(|| {}));
@@ -28,7 +32,7 @@ fn app(dir: &std::path::Path) -> SqlrApp {
     };
     repo.save(&cfg, &Secrets::default()).unwrap();
     let settings = Settings {
-        terminal_shell: "printf 'terminal-ready\\n'; sleep 30".into(),
+        terminal_shell: shell.into(),
         ..Settings::default()
     };
     let deps = AppDeps {
@@ -140,5 +144,86 @@ fn terminal_keys_do_not_move_the_ui_focus() {
             harness.state().terminal_focused_for_tests(),
             "{key:?} moved the focus away from the terminal"
         );
+    }
+}
+
+#[test]
+fn the_wheel_reaches_an_application_that_enables_mouse_reports() {
+    let dir = tempfile::tempdir().unwrap();
+    // Read enough reports to also collect the wheel ones: egui smooths the wheel over a
+    // few frames, so the first report after enabling the mode is usually a motion.
+    let shell =
+        "printf '\\033[?1003h\\033[?1006h'; stty raw -echo; head -c 64 | od -An -tx1; stty sane";
+    let app = app_with_shell(dir.path(), shell);
+    let mut harness = Harness::builder()
+        .with_size((1100.0, 760.0))
+        .with_step_dt(0.01)
+        .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    harness.run_steps(3);
+    harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Backtick);
+    harness.run_steps(2);
+    assert!(harness.state().terminal_visible_for_tests());
+
+    let rect = harness.state().terminal_rect_for_tests();
+    assert!(rect.width() > 0.0 && rect.height() > 0.0);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        harness.event(egui::Event::PointerMoved(rect.center()));
+        harness.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, 40.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.step();
+        let text = harness.state().terminal_text_for_tests();
+        // ESC [ < 64 ; : a wheel-up report.
+        let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        if compact.contains("1b5b3c3634") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the application received no wheel report: {text:?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn mouse_motion_reaches_an_application_that_enables_mouse_reports() {
+    let dir = tempfile::tempdir().unwrap();
+    // What opencode sets: any-motion tracking with SGR coordinates. The shell then prints
+    // the first bytes of the first report it receives, as hex.
+    let shell =
+        "printf '\\033[?1003h\\033[?1006h'; stty raw -echo; head -c 8 | od -An -tx1; stty sane";
+    let app = app_with_shell(dir.path(), shell);
+    let mut harness = Harness::builder()
+        .with_size((1100.0, 760.0))
+        .with_step_dt(0.01)
+        .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    harness.run_steps(3);
+    harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Backtick);
+    harness.run_steps(2);
+    assert!(harness.state().terminal_visible_for_tests());
+
+    let rect = harness.state().terminal_rect_for_tests();
+    assert!(rect.width() > 0.0 && rect.height() > 0.0);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        harness.event(egui::Event::PointerMoved(rect.center()));
+        harness.step();
+        let text = harness.state().terminal_text_for_tests();
+        // ESC [ < 35 ; : a motion report with no button held. od's spacing differs
+        // between platforms, so compare without whitespace.
+        let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        if compact.contains("1b5b3c33353b") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the application received no mouse report: {text:?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
     }
 }

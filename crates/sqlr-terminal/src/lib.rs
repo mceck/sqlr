@@ -10,6 +10,9 @@ pub mod session;
 pub mod shell;
 pub mod widget;
 
-pub use screen::{CellView, CursorShape, Emulator, ScreenSnapshot, TermColor};
+pub use screen::{
+    CellView, CursorShape, Emulator, MouseProtocolEncoding, MouseProtocolMode, ScreenSnapshot,
+    TermColor,
+};
 pub use session::{BackendFactory, BackendParts, SessionConfig, TerminalSession, TerminalStatus};
 pub use widget::{Selection, TerminalAction, TerminalPanel, TerminalTheme};

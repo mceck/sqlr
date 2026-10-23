@@ -3,10 +3,13 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use egui::{Align2, Color32, CornerRadius, FontFamily, FontId, Rect, Sense, Stroke, pos2, vec2};
+use egui::{
+    Align2, Color32, CornerRadius, FontFamily, FontId, PointerButton, Rect, Sense, Stroke, pos2,
+    vec2,
+};
 
-use crate::input::encode_events;
-use crate::screen::{CellView, ScreenSnapshot, TermColor};
+use crate::input::{MouseEvent, encode_events, encode_mouse};
+use crate::screen::{CellView, MouseProtocolMode, ScreenSnapshot, TermColor};
 use crate::session::{SessionConfig, TerminalSession, TerminalStatus};
 
 /// The colours and font the application gives the terminal.
@@ -99,6 +102,9 @@ pub struct TerminalPanel {
     scroll: usize,
     /// Fractional rows not applied yet, so a slow trackpad still scrolls the history.
     scroll_pending: f32,
+    /// The button held down, for the motion reports a mouse-tracking application expects.
+    mouse_down: Option<PointerButton>,
+    last_mouse_cell: Option<(u16, u16)>,
     started_once: bool,
     bell_until: Option<Instant>,
     last_rect: Rect,
@@ -117,6 +123,8 @@ impl Default for TerminalPanel {
             dragging: false,
             scroll: 0,
             scroll_pending: 0.0,
+            mouse_down: None,
+            last_mouse_cell: None,
             started_once: false,
             bell_until: None,
             last_rect: Rect::NOTHING,
@@ -175,6 +183,12 @@ impl TerminalPanel {
         &self.config
     }
 
+    /// The canvas rect of the last frame, for tests that need to point at the grid.
+    #[doc(hidden)]
+    pub fn canvas_rect(&self) -> Rect {
+        self.last_rect
+    }
+
     pub fn clear(&mut self) {
         if let Some(session) = &self.session {
             session.clear();
@@ -198,6 +212,8 @@ impl TerminalPanel {
         self.started_once = true;
         self.scroll = 0;
         self.scroll_pending = 0.0;
+        self.mouse_down = None;
+        self.last_mouse_cell = None;
         self.selection = None;
         self.session = Some(TerminalSession::spawn(&self.config, repaint));
     }
@@ -363,20 +379,59 @@ impl TerminalPanel {
                 );
             });
         }
-        // Wheel scrollback.
+        // The wheel belongs to the application when it enabled mouse reports; a full-screen
+        // application without them gets arrow keys; otherwise it moves the scrollback.
+        let mut snapshot = session.snapshot(self.scroll);
         let scroll_delta = ui.input(|i| i.smooth_scroll_delta.y);
         if response.hovered() && scroll_delta != 0.0 {
             // Consume the scroll so the scroll areas under the panel do not move too.
             ui.input_mut(|i| i.smooth_scroll_delta.y = 0.0);
-            self.scroll = scroll_offset(
-                self.scroll,
-                &mut self.scroll_pending,
-                scroll_delta,
-                row_height,
-                session.scrollback_len(),
-            );
+            let rows = wheel_rows(&mut self.scroll_pending, scroll_delta, row_height);
+            let shift = ui.input(|i| i.modifiers.shift);
+            if rows != 0 {
+                if snapshot.mouse_mode != MouseProtocolMode::None && !shift {
+                    if let Some(pos) = response.hover_pos() {
+                        let (row, col) = cell_at(
+                            rect,
+                            char_width,
+                            row_height,
+                            snapshot.cols,
+                            snapshot.rows,
+                            pos,
+                        );
+                        let modifiers = ui.input(|i| i.modifiers);
+                        let mut bytes = Vec::new();
+                        for _ in 0..rows.unsigned_abs() {
+                            if let Some(report) = encode_mouse(
+                                MouseEvent::Wheel { up: rows > 0 },
+                                col + 1,
+                                row + 1,
+                                modifiers,
+                                snapshot.mouse_encoding,
+                            ) {
+                                bytes.extend(report);
+                            }
+                        }
+                        session.write(&bytes);
+                    }
+                } else if snapshot.alternate && !shift {
+                    let key: &[u8] = match (rows > 0, snapshot.application_cursor) {
+                        (true, true) => b"\x1bOA",
+                        (true, false) => b"\x1b[A",
+                        (false, true) => b"\x1bOB",
+                        (false, false) => b"\x1b[B",
+                    };
+                    let mut bytes = Vec::new();
+                    for _ in 0..rows.unsigned_abs() {
+                        bytes.extend_from_slice(key);
+                    }
+                    session.write(&bytes);
+                } else {
+                    self.scroll = offset_by(self.scroll, rows, snapshot.scrollback_len);
+                    snapshot = session.snapshot(self.scroll);
+                }
+            }
         }
-        let snapshot = session.snapshot(self.scroll);
         self.paint(ui, rect, &snapshot, theme, char_width, row_height);
         if session.emulator_bell() {
             self.bell_until = Some(Instant::now() + Duration::from_millis(120));
@@ -523,60 +578,68 @@ impl TerminalPanel {
     ) {
         let char_width = self.last_rect.width() / f32::from(snapshot.cols.max(1));
         let row_height = self.last_rect.height() / f32::from(snapshot.rows.max(1));
-        let cell_at = |pos: egui::Pos2| {
-            let col = ((pos.x - self.last_rect.left()) / char_width)
-                .floor()
-                .clamp(0.0, f32::from(snapshot.cols.saturating_sub(1)))
-                as u16;
-            let row = ((pos.y - self.last_rect.top()) / row_height)
-                .floor()
-                .clamp(0.0, f32::from(snapshot.rows.saturating_sub(1)))
-                as u16;
-            (row, col)
+        let cell = |pos: egui::Pos2| {
+            cell_at(
+                self.last_rect,
+                char_width,
+                row_height,
+                snapshot.cols,
+                snapshot.rows,
+                pos,
+            )
         };
-        if response.drag_started()
-            && let Some(pos) = response.interact_pointer_pos()
-        {
-            let cell = cell_at(pos);
-            self.selection = Some(Selection {
-                anchor: cell,
-                cursor: cell,
-            });
-            self.dragging = true;
-        }
-        if self.dragging
-            && let Some(pos) = response.interact_pointer_pos()
-            && let Some(selection) = &mut self.selection
-        {
-            selection.cursor = cell_at(pos);
-        }
-        if response.drag_stopped() {
+        // Shift is the terminal's escape hatch: it selects text even while the application
+        // asked for mouse reports.
+        let report_mouse =
+            snapshot.mouse_mode != MouseProtocolMode::None && !ui.input(|i| i.modifiers.shift);
+        if report_mouse {
             self.dragging = false;
-        }
-        if response.double_clicked()
-            && let Some(pos) = response.interact_pointer_pos()
-        {
-            let (row, col) = cell_at(pos);
-            let mut start = col;
-            while start > 0
-                && snapshot
-                    .cell(row, start - 1)
-                    .is_some_and(|c| !c.text.trim().is_empty())
+            self.report_mouse(ui, snapshot, char_width, row_height);
+        } else {
+            if response.drag_started()
+                && let Some(pos) = response.interact_pointer_pos()
             {
-                start -= 1;
+                let cell = cell(pos);
+                self.selection = Some(Selection {
+                    anchor: cell,
+                    cursor: cell,
+                });
+                self.dragging = true;
             }
-            let mut end = col;
-            while end + 1 < snapshot.cols
-                && snapshot
-                    .cell(row, end + 1)
-                    .is_some_and(|c| !c.text.trim().is_empty())
+            if self.dragging
+                && let Some(pos) = response.interact_pointer_pos()
+                && let Some(selection) = &mut self.selection
             {
-                end += 1;
+                selection.cursor = cell(pos);
             }
-            self.selection = Some(Selection {
-                anchor: (row, start),
-                cursor: (row, end + 1),
-            });
+            if response.drag_stopped() {
+                self.dragging = false;
+            }
+            if response.double_clicked()
+                && let Some(pos) = response.interact_pointer_pos()
+            {
+                let (row, col) = cell(pos);
+                let mut start = col;
+                while start > 0
+                    && snapshot
+                        .cell(row, start - 1)
+                        .is_some_and(|c| !c.text.trim().is_empty())
+                {
+                    start -= 1;
+                }
+                let mut end = col;
+                while end + 1 < snapshot.cols
+                    && snapshot
+                        .cell(row, end + 1)
+                        .is_some_and(|c| !c.text.trim().is_empty())
+                {
+                    end += 1;
+                }
+                self.selection = Some(Selection {
+                    anchor: (row, start),
+                    cursor: (row, end + 1),
+                });
+            }
         }
 
         let mac = ui.ctx().os() == egui::os::OperatingSystem::Mac;
@@ -612,6 +675,133 @@ impl TerminalPanel {
             ctx.copy_text(text);
         }
     }
+
+    /// Forwards clicks, drags and motion to an application that enabled mouse tracking.
+    fn report_mouse(
+        &mut self,
+        ui: &egui::Ui,
+        snapshot: &ScreenSnapshot,
+        char_width: f32,
+        row_height: f32,
+    ) {
+        let rect = self.last_rect;
+        let mut bytes = Vec::new();
+        ui.input(|i| {
+            for event in &i.events {
+                match event {
+                    egui::Event::PointerButton {
+                        pos,
+                        button,
+                        pressed,
+                        modifiers,
+                    } => {
+                        if *pressed {
+                            if !rect.contains(*pos) {
+                                continue;
+                            }
+                        } else if self.mouse_down != Some(*button) {
+                            continue;
+                        }
+                        let (row, col) = cell_at(
+                            rect,
+                            char_width,
+                            row_height,
+                            snapshot.cols,
+                            snapshot.rows,
+                            *pos,
+                        );
+                        let action = if *pressed {
+                            MouseEvent::Press(*button)
+                        } else {
+                            MouseEvent::Release(*button)
+                        };
+                        let Some(report) = encode_mouse(
+                            action,
+                            col + 1,
+                            row + 1,
+                            *modifiers,
+                            snapshot.mouse_encoding,
+                        ) else {
+                            continue;
+                        };
+                        if *pressed {
+                            self.mouse_down = Some(*button);
+                        } else {
+                            self.mouse_down = None;
+                            if snapshot.mouse_mode == MouseProtocolMode::Press {
+                                continue;
+                            }
+                        }
+                        self.last_mouse_cell = Some((row, col));
+                        bytes.extend(report);
+                    }
+                    egui::Event::PointerMoved(pos) => {
+                        let report = match snapshot.mouse_mode {
+                            MouseProtocolMode::AnyMotion => Some(self.mouse_down),
+                            MouseProtocolMode::ButtonMotion if self.mouse_down.is_some() => {
+                                Some(self.mouse_down)
+                            }
+                            _ => None,
+                        };
+                        let Some(button) = report else {
+                            continue;
+                        };
+                        // A drag that leaves the grid keeps reporting at its edge; a bare
+                        // pointer outside the panel reports nothing.
+                        if !rect.contains(*pos) && self.mouse_down.is_none() {
+                            continue;
+                        }
+                        let (row, col) = cell_at(
+                            rect,
+                            char_width,
+                            row_height,
+                            snapshot.cols,
+                            snapshot.rows,
+                            *pos,
+                        );
+                        // Applications react per cell, not per pixel.
+                        if self.last_mouse_cell == Some((row, col)) {
+                            continue;
+                        }
+                        self.last_mouse_cell = Some((row, col));
+                        if let Some(report) = encode_mouse(
+                            MouseEvent::Move(button),
+                            col + 1,
+                            row + 1,
+                            i.modifiers,
+                            snapshot.mouse_encoding,
+                        ) {
+                            bytes.extend(report);
+                        }
+                    }
+                    egui::Event::PointerGone => {
+                        let Some(button) = self.mouse_down.take() else {
+                            continue;
+                        };
+                        self.last_mouse_cell = None;
+                        if snapshot.mouse_mode == MouseProtocolMode::Press {
+                            continue;
+                        }
+                        if let Some(report) = encode_mouse(
+                            MouseEvent::Release(button),
+                            1,
+                            1,
+                            i.modifiers,
+                            snapshot.mouse_encoding,
+                        ) {
+                            bytes.extend(report);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        });
+        if !bytes.is_empty()
+            && let Some(session) = &self.session
+        {
+            session.write(&bytes);
+        }
+    }
 }
 
 fn font_from(theme: &TerminalTheme) -> FontId {
@@ -619,19 +809,36 @@ fn font_from(theme: &TerminalTheme) -> FontId {
 }
 
 /// Moves the scrollback offset by a wheel delta in points. A positive delta moves the content
-/// down, i.e. towards older lines, so the offset grows. Fractions stay pending, so a slow
-/// trackpad scrolls one row after a few frames instead of rounding every frame away.
-fn scroll_offset(
-    current: usize,
-    pending: &mut f32,
-    delta: f32,
-    row_height: f32,
-    max: usize,
-) -> usize {
+/// down, i.e. towards older lines, so the offset grows.
+fn offset_by(current: usize, rows: i32, max: usize) -> usize {
+    (current as i64 + i64::from(rows)).clamp(0, max as i64) as usize
+}
+
+/// Whole rows from a wheel delta in points. Fractions stay pending, so a slow trackpad
+/// scrolls one row after a few frames instead of rounding every frame away.
+fn wheel_rows(pending: &mut f32, delta: f32, row_height: f32) -> i32 {
     *pending += delta / row_height.max(1.0);
     let rows = pending.trunc();
     *pending -= rows;
-    (current as f32 + rows).clamp(0.0, max as f32) as usize
+    rows as i32
+}
+
+/// The 0-based cell under a point, clamped to the grid.
+fn cell_at(
+    rect: Rect,
+    char_width: f32,
+    row_height: f32,
+    cols: u16,
+    rows: u16,
+    pos: egui::Pos2,
+) -> (u16, u16) {
+    let col = ((pos.x - rect.left()) / char_width)
+        .floor()
+        .clamp(0.0, f32::from(cols.saturating_sub(1))) as u16;
+    let row = ((pos.y - rect.top()) / row_height)
+        .floor()
+        .clamp(0.0, f32::from(rows.saturating_sub(1))) as u16;
+    (row, col)
 }
 
 impl TerminalSession {
@@ -707,22 +914,34 @@ mod tests {
     fn scrolling_up_moves_into_the_scrollback() {
         // A positive delta moves the content down: older lines, a larger offset.
         let mut pending = 0.0;
-        assert_eq!(scroll_offset(0, &mut pending, 36.0, 18.0, 50), 2);
-        assert_eq!(scroll_offset(2, &mut pending, -18.0, 18.0, 50), 1);
+        let rows = wheel_rows(&mut pending, 36.0, 18.0);
+        assert_eq!(rows, 2);
+        assert_eq!(offset_by(0, rows, 50), 2);
+        assert_eq!(offset_by(2, wheel_rows(&mut pending, -18.0, 18.0), 50), 1);
     }
 
     #[test]
     fn slow_trackpad_deltas_accumulate() {
         let mut pending = 0.0;
-        assert_eq!(scroll_offset(0, &mut pending, 6.0, 18.0, 50), 0);
-        assert_eq!(scroll_offset(0, &mut pending, 6.0, 18.0, 50), 0);
-        assert_eq!(scroll_offset(0, &mut pending, 6.0, 18.0, 50), 1);
+        assert_eq!(wheel_rows(&mut pending, 6.0, 18.0), 0);
+        assert_eq!(wheel_rows(&mut pending, 6.0, 18.0), 0);
+        assert_eq!(wheel_rows(&mut pending, 6.0, 18.0), 1);
     }
 
     #[test]
     fn scrollback_offset_stays_within_the_history() {
-        let mut pending = 0.0;
-        assert_eq!(scroll_offset(45, &mut pending, 180.0, 18.0, 50), 50);
-        assert_eq!(scroll_offset(0, &mut pending, -90.0, 18.0, 50), 0);
+        assert_eq!(offset_by(45, 10, 50), 50);
+        assert_eq!(offset_by(0, -5, 50), 0);
+    }
+
+    #[test]
+    fn the_cell_under_a_point_is_clamped_to_the_grid() {
+        let rect = Rect::from_min_size(pos2(10.0, 20.0), vec2(80.0, 36.0));
+        assert_eq!(cell_at(rect, 8.0, 18.0, 10, 2, pos2(10.0, 20.0)), (0, 0));
+        assert_eq!(cell_at(rect, 8.0, 18.0, 10, 2, pos2(25.0, 40.0)), (1, 1));
+        assert_eq!(
+            cell_at(rect, 8.0, 18.0, 10, 2, pos2(1_000.0, 1_000.0)),
+            (1, 9)
+        );
     }
 }

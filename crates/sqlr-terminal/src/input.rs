@@ -1,6 +1,8 @@
-//! Keystrokes and pastes as bytes for the PTY.
+//! Keystrokes, pastes and mouse reports as bytes for the PTY.
 
-use egui::{Key, Modifiers};
+use egui::{Key, Modifiers, PointerButton};
+
+use crate::screen::MouseProtocolEncoding;
 
 /// The bytes one key press sends, or `None` when the key is a shortcut the application
 /// consumes (copy, paste, the terminal toggle).
@@ -267,6 +269,82 @@ pub fn encode_paste(text: &str, bracketed: bool) -> Vec<u8> {
     }
 }
 
+/// A mouse action for an application that enabled mouse tracking.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MouseEvent {
+    Press(PointerButton),
+    Release(PointerButton),
+    /// The pointer moved; the button held down, if any.
+    Move(Option<PointerButton>),
+    Wheel {
+        up: bool,
+    },
+}
+
+/// Encodes a mouse report at a 1-based cell for the protocol the application chose.
+pub(crate) fn encode_mouse(
+    event: MouseEvent,
+    col: u16,
+    row: u16,
+    modifiers: Modifiers,
+    encoding: MouseProtocolEncoding,
+) -> Option<Vec<u8>> {
+    // X10 button numbers; wheel buttons are 64 (up) and 65 (down). Motion adds 32.
+    let (mut code, release) = match event {
+        MouseEvent::Press(button) => (button_code(button)?, false),
+        MouseEvent::Release(button) => (button_code(button)?, true),
+        MouseEvent::Move(button) => (button.and_then(button_code).unwrap_or(3) + 32, false),
+        MouseEvent::Wheel { up } => (if up { 64 } else { 65 }, false),
+    };
+    let mods =
+        u8::from(modifiers.shift) * 4 + u8::from(modifiers.alt) * 8 + u8::from(modifiers.ctrl) * 16;
+    // SGR keeps the button in a release and marks it with 'm'; the older encodings
+    // report button 3.
+    if release && encoding != MouseProtocolEncoding::Sgr {
+        code = 3;
+    }
+    code += mods;
+    match encoding {
+        MouseProtocolEncoding::Sgr => Some(
+            format!(
+                "\x1b[<{code};{col};{row}{}",
+                if release { 'm' } else { 'M' }
+            )
+            .into_bytes(),
+        ),
+        MouseProtocolEncoding::Utf8 => {
+            let mut out = b"\x1b[M".to_vec();
+            for value in [u32::from(code), u32::from(col), u32::from(row)] {
+                let c = char::from_u32(value + 32).unwrap_or('\u{fffd}');
+                let mut buffer = [0; 4];
+                out.extend_from_slice(c.encode_utf8(&mut buffer).as_bytes());
+            }
+            Some(out)
+        }
+        MouseProtocolEncoding::Default => {
+            let mut out = b"\x1b[M".to_vec();
+            out.push(code.saturating_add(32));
+            out.push(legacy_coordinate(col));
+            out.push(legacy_coordinate(row));
+            Some(out)
+        }
+    }
+}
+
+fn button_code(button: PointerButton) -> Option<u8> {
+    match button {
+        PointerButton::Primary => Some(0),
+        PointerButton::Middle => Some(1),
+        PointerButton::Secondary => Some(2),
+        PointerButton::Extra1 | PointerButton::Extra2 => None,
+    }
+}
+
+/// The X10 encoding adds 32 to each coordinate and cannot go past one byte.
+fn legacy_coordinate(value: u16) -> u8 {
+    u8::try_from(value.saturating_add(32)).unwrap_or(u8::MAX)
+}
+
 /// Whether this chord is the platform's copy shortcut.
 pub fn is_copy(modifiers: Modifiers, mac: bool) -> bool {
     if modifiers.alt {
@@ -407,6 +485,81 @@ mod tests {
         assert!(copy.bytes.is_empty());
         let paste = encode_events(&[egui::Event::Paste("a\nb".into())], false, true, true);
         assert_eq!(paste.bytes, b"\x1b[200~a\rb\x1b[201~".to_vec());
+    }
+
+    #[test]
+    fn sgr_mouse_reports_use_one_based_cells() {
+        let sgr = |event, col, row, mods| {
+            encode_mouse(event, col, row, mods, MouseProtocolEncoding::Sgr).unwrap()
+        };
+        assert_eq!(
+            sgr(MouseEvent::Press(PointerButton::Primary), 5, 2, m()),
+            b"\x1b[<0;5;2M".to_vec()
+        );
+        assert_eq!(
+            sgr(MouseEvent::Release(PointerButton::Primary), 5, 2, m()),
+            b"\x1b[<0;5;2m".to_vec()
+        );
+        assert_eq!(
+            sgr(
+                MouseEvent::Press(PointerButton::Secondary),
+                5,
+                2,
+                Modifiers::CTRL
+            ),
+            b"\x1b[<18;5;2M".to_vec()
+        );
+        assert_eq!(
+            sgr(MouseEvent::Wheel { up: true }, 5, 2, m()),
+            b"\x1b[<64;5;2M".to_vec()
+        );
+        assert_eq!(
+            sgr(MouseEvent::Wheel { up: false }, 5, 2, m()),
+            b"\x1b[<65;5;2M".to_vec()
+        );
+        assert_eq!(
+            sgr(MouseEvent::Move(Some(PointerButton::Primary)), 5, 2, m()),
+            b"\x1b[<32;5;2M".to_vec()
+        );
+        assert_eq!(
+            sgr(MouseEvent::Move(None), 5, 2, m()),
+            b"\x1b[<35;5;2M".to_vec()
+        );
+    }
+
+    #[test]
+    fn legacy_mouse_reports_add_thirty_two() {
+        let press = encode_mouse(
+            MouseEvent::Wheel { up: true },
+            5,
+            2,
+            Modifiers::NONE,
+            MouseProtocolEncoding::Default,
+        )
+        .unwrap();
+        assert_eq!(press, b"\x1b[M`%\"".to_vec());
+        let release = encode_mouse(
+            MouseEvent::Release(PointerButton::Primary),
+            5,
+            2,
+            Modifiers::NONE,
+            MouseProtocolEncoding::Default,
+        )
+        .unwrap();
+        assert_eq!(release, b"\x1b[M#%\"".to_vec());
+    }
+
+    #[test]
+    fn utf8_mouse_reports_encode_each_value() {
+        let bytes = encode_mouse(
+            MouseEvent::Press(PointerButton::Middle),
+            200,
+            2,
+            Modifiers::NONE,
+            MouseProtocolEncoding::Utf8,
+        )
+        .unwrap();
+        assert_eq!(bytes, "\x1b[M!\u{e8}\"".as_bytes().to_vec());
     }
 
     #[test]

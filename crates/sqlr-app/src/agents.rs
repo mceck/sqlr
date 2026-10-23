@@ -919,6 +919,11 @@ impl SqlrApp {
     }
 
     #[doc(hidden)]
+    pub fn terminal_rect_for_tests(&self) -> egui::Rect {
+        self.terminal.canvas_rect()
+    }
+
+    #[doc(hidden)]
     pub fn terminal_text_for_tests(&self) -> String {
         let Some(session) = self.terminal.session() else {
             return String::new();
