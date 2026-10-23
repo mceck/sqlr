@@ -65,6 +65,10 @@ pub(crate) async fn value(v: HdbValue<'static>) -> Result<Value, DriverError> {
         HdbValue::DOUBLE(x) => Value::Float(x),
         HdbValue::BOOLEAN(x) => Value::Bool(x),
         HdbValue::STRING(x) => Value::Text(x),
+        // The server fell back to raw bytes because the text is not valid CESU-8. Losing
+        // the offending bytes is better than failing the whole result.
+        HdbValue::DBSTRING(x) => Value::Text(String::from_utf8_lossy(&x).into_owned()),
+        HdbValue::STR(x) => Value::Text(x.to_string()),
         HdbValue::BINARY(x) => Value::Bytes(x),
         HdbValue::ASYNC_BLOB(b) => Value::Bytes(b.into_bytes().await.map_err(lob)?),
         HdbValue::ASYNC_CLOB(c) => Value::Text(c.into_string().await.map_err(lob)?),
@@ -145,6 +149,13 @@ mod tests {
         assert_eq!(
             value(HdbValue::STRING("日本語 è 🚀".into())).await.unwrap(),
             Value::Text("日本語 è 🚀".into())
+        );
+        // Invalid CESU-8 comes back as DBSTRING; it must not fail the query.
+        assert_eq!(
+            value(HdbValue::DBSTRING(vec![b'a', 0xff, b'b']))
+                .await
+                .unwrap(),
+            Value::Text("a\u{fffd}b".into())
         );
     }
 
