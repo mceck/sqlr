@@ -6840,6 +6840,7 @@ dependencies = [
  "async-trait",
  "oracle-rs",
  "rustls",
+ "serde_json",
  "sqlr-core",
  "sqlr-testkit",
  "tokio",

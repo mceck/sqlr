@@ -211,3 +211,51 @@ async fn upsert_is_a_merge_on_the_server() {
     }
     assert_eq!(rows.unwrap(), "rows");
 }
+
+/// The dictionary answers in pages of 100 rows: a schema with more must come back whole.
+#[tokio::test]
+async fn a_schema_with_more_than_a_page_of_columns_loads_whole() {
+    sqlr_testkit::skip_container_tests!();
+    let conn = support::connect().await;
+    let rel = conn.relational().unwrap();
+    let name = unique_name("SQLR_WIDE").to_uppercase();
+    let columns: Vec<String> = (1..=250).map(|i| format!("c{i} NUMBER")).collect();
+    rel.execute(&format!("CREATE TABLE {name} ({})", columns.join(", ")))
+        .await
+        .unwrap();
+    let snapshot = rel
+        .introspect()
+        .unwrap()
+        .load_schema(None, "SQLR_TEST")
+        .await;
+    let catalog = rel.catalog("SQLR_TEST").await;
+    let tree = conn
+        .browse(&sqlr_core::NodePath(vec![
+            "SQLR_TEST".into(),
+            "tables".into(),
+            name.clone(),
+            "columns".into(),
+        ]))
+        .await;
+    {
+        let cleanup = support::connect().await;
+        let _ = cleanup
+            .relational()
+            .unwrap()
+            .execute(&format!("DROP TABLE {name} PURGE"))
+            .await;
+    }
+    let found = snapshot.unwrap().objects.into_iter().find_map(|o| match o {
+        ObjectDef::Table(t) if t.table.name == name => Some(t.columns.len()),
+        _ => None,
+    });
+    assert_eq!(found, Some(250));
+    let in_catalog = catalog
+        .unwrap()
+        .relations
+        .iter()
+        .find(|r| r.name == name)
+        .map(|r| r.columns.len());
+    assert_eq!(in_catalog, Some(250));
+    assert_eq!(tree.unwrap().len(), 250);
+}

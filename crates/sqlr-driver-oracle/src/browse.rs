@@ -268,20 +268,33 @@ pub(crate) async fn column_defs(
         &[schema, relation],
     )
     .await?;
-    // `data_default` is a LONG; oracle-rs returns no rows when a LONG is selected with
-    // binds, so read it separately with a quoted predicate.
-    let quote = |value: &str| value.replace('\'', "''");
-    let defaults = query(
+    // `data_default` is a LONG, and oracle-rs returns no rows at all when one is selected.
+    // `data_default_vc` is its text twin; servers without it fall back to the LONG with
+    // quoted predicates, which at least keeps the column list working.
+    let defaults = match query(
         conn,
-        &format!(
-            "SELECT column_name, data_default FROM all_tab_cols \
-             WHERE owner = '{}' AND table_name = '{}' AND hidden_column = 'NO'",
-            quote(schema),
-            quote(relation)
-        ),
-        &[],
+        "SELECT column_name, data_default_vc FROM all_tab_cols \
+         WHERE owner = :1 AND table_name = :2 AND hidden_column = 'NO'",
+        &[schema, relation],
     )
-    .await?;
+    .await
+    {
+        Ok(defaults) => defaults,
+        Err(_) => {
+            let quote = |value: &str| value.replace('\'', "''");
+            query(
+                conn,
+                &format!(
+                    "SELECT column_name, data_default FROM all_tab_cols \
+                     WHERE owner = '{}' AND table_name = '{}' AND hidden_column = 'NO'",
+                    quote(schema),
+                    quote(relation)
+                ),
+                &[],
+            )
+            .await?
+        }
+    };
     let defaults: std::collections::BTreeMap<String, Option<String>> = defaults
         .rows
         .iter()

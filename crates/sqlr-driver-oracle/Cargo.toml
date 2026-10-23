@@ -16,3 +16,4 @@ tracing.workspace = true
 [dev-dependencies]
 sqlr-testkit = { path = "../sqlr-testkit" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+serde_json.workspace = true

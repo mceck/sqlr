@@ -59,4 +59,71 @@ mod tests {
             ErrorKind::Unsupported
         );
     }
+
+    fn kind(error: Error) -> ErrorKind {
+        map_error(error).kind
+    }
+
+    #[test]
+    fn every_error_family_maps_to_a_kind() {
+        use std::time::Duration;
+        assert_eq!(kind(Error::InvalidCredentials), ErrorKind::Auth);
+        assert_eq!(
+            kind(Error::AuthenticationFailed("x".into())),
+            ErrorKind::Auth
+        );
+        assert_eq!(kind(Error::ConnectionClosed), ErrorKind::Connection);
+        assert_eq!(kind(Error::ConnectionNotReady), ErrorKind::Connection);
+        assert_eq!(
+            kind(Error::ConnectionClosedByServer("x".into())),
+            ErrorKind::Connection
+        );
+        assert_eq!(
+            kind(Error::ConnectionRedirect("h".into())),
+            ErrorKind::Connection
+        );
+        assert_eq!(
+            kind(Error::ConnectionRefused {
+                error_code: None,
+                message: None
+            }),
+            ErrorKind::Connection
+        );
+        assert_eq!(
+            kind(Error::InvalidSid {
+                sid: None,
+                message: None
+            }),
+            ErrorKind::Connection
+        );
+        assert_eq!(
+            kind(Error::ConnectionTimeout(Duration::from_secs(1))),
+            ErrorKind::Timeout
+        );
+        assert_eq!(
+            kind(Error::Io(std::io::Error::other("boom"))),
+            ErrorKind::Connection
+        );
+        assert_eq!(
+            kind(Error::NativeNetworkEncryptionRequired),
+            ErrorKind::Unsupported
+        );
+        assert_eq!(kind(Error::CursorClosed), ErrorKind::Other);
+    }
+
+    #[test]
+    fn server_codes_map_to_kinds() {
+        let server = |code| {
+            kind(Error::ServerError {
+                code,
+                message: "m".into(),
+            })
+        };
+        assert_eq!(server(28000), ErrorKind::Auth);
+        assert_eq!(server(54), ErrorKind::Timeout);
+        assert_eq!(server(1031), ErrorKind::Permission);
+        assert_eq!(server(923), ErrorKind::Syntax);
+        assert_eq!(server(12541), ErrorKind::Connection);
+        assert_eq!(server(60), ErrorKind::Other);
+    }
 }

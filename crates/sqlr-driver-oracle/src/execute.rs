@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use oracle_rs::{ColumnInfo, Connection, Value as OracleValue};
+use oracle_rs::{ColumnInfo, Connection, LobData, LobValue, Value as OracleValue};
 use sqlr_core::{
     Cell, ChunkBuilder, ColumnMeta, DriverError, ErrorKind, Execution, ResultChunk, RowStream,
     Value, trim_statement_in,
@@ -12,12 +12,57 @@ use crate::map_error;
 use crate::syntax::oracle_syntax;
 use crate::types;
 
+/// PL/SQL blocks and stored-program definitions end in `END;`: that semicolon belongs to
+/// the program, so only plain SQL loses its terminator.
+fn statement_text(sql: &str) -> std::borrow::Cow<'_, str> {
+    if is_plsql(sql) {
+        std::borrow::Cow::Borrowed(sql.trim())
+    } else {
+        trim_statement_in(&oracle_syntax(), sql)
+    }
+}
+
+fn is_plsql(sql: &str) -> bool {
+    let mut rest = sql.trim_start();
+    loop {
+        if let Some(after) = rest.strip_prefix("--") {
+            rest = after.split_once('\n').map_or("", |(_, r)| r).trim_start();
+        } else if let Some(after) = rest.strip_prefix("/*") {
+            rest = after.split_once("*/").map_or("", |(_, r)| r).trim_start();
+        } else {
+            break;
+        }
+    }
+    let mut words = rest
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|w| !w.is_empty())
+        .map(str::to_ascii_uppercase);
+    match words.next().as_deref() {
+        Some("BEGIN" | "DECLARE") => true,
+        Some("CREATE") => {
+            let mut next = words.next();
+            if next.as_deref() == Some("OR") {
+                words.next();
+                next = words.next();
+            }
+            if matches!(next.as_deref(), Some("EDITIONABLE" | "NONEDITIONABLE")) {
+                next = words.next();
+            }
+            matches!(
+                next.as_deref(),
+                Some("FUNCTION" | "PROCEDURE" | "PACKAGE" | "TRIGGER" | "TYPE")
+            )
+        }
+        _ => false,
+    }
+}
+
 pub(crate) async fn execute(
     conn: Arc<Connection>,
     sql: &str,
     params: &[Value],
 ) -> Result<Execution, DriverError> {
-    let sql = trim_statement_in(&oracle_syntax(), sql);
+    let sql = statement_text(sql);
     let binds: Vec<OracleValue> = params.iter().map(types::encode).collect();
     let result = conn
         .execute(sql.as_ref(), &binds)
@@ -89,18 +134,24 @@ impl RowStream for OracleRows {
         let end = (self.at + max_rows).min(self.rows.len());
         let mut builder = ChunkBuilder::new(self.metas.clone());
         for row in &self.rows[self.at..end] {
-            let values: Vec<Value> = row
-                .values()
-                .iter()
-                .enumerate()
-                .map(|(index, value)| {
-                    let ty = self
-                        .columns
-                        .get(index)
-                        .map_or(oracle_rs::OracleType::Varchar, |c| c.oracle_type);
-                    types::decode(value, ty)
-                })
-                .collect();
+            let mut values: Vec<Value> = Vec::with_capacity(row.values().len());
+            for (index, value) in row.values().iter().enumerate() {
+                let ty = self
+                    .columns
+                    .get(index)
+                    .map_or(oracle_rs::OracleType::Varchar, |c| c.oracle_type);
+                values.push(match value {
+                    // Larger LOBs arrive as locators that need a round trip to read.
+                    OracleValue::Lob(LobValue::Locator(locator)) => {
+                        match self.conn.read_lob(locator).await {
+                            Ok(LobData::String(text)) => Value::Text(text),
+                            Ok(LobData::Bytes(bytes)) => Value::Bytes(bytes.to_vec()),
+                            Err(_) => types::decode(value, ty),
+                        }
+                    }
+                    _ => types::decode(value, ty),
+                });
+            }
             let cells: Vec<Cell<'_>> = values.iter().map(Value::as_cell).collect();
             builder.push_row(&cells).map_err(|e| {
                 DriverError::new(ErrorKind::Other, format!("cannot build result chunk: {e}"))
@@ -119,5 +170,32 @@ impl RowStream for OracleRows {
         self.has_more = false;
         self.done = true;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plsql_keeps_its_semicolon_and_sql_loses_it() {
+        for sql in [
+            "BEGIN NULL; END;",
+            "  declare x number; begin null; end;",
+            "-- note\nCREATE OR REPLACE FUNCTION f RETURN NUMBER IS BEGIN RETURN 1; END;",
+            "/* c */ create or replace editionable procedure p is begin null; end;",
+            "CREATE TRIGGER t BEFORE INSERT ON x BEGIN NULL; END;",
+            "CREATE PACKAGE BODY p AS END;",
+        ] {
+            assert!(statement_text(sql).ends_with(';'), "{sql}");
+        }
+        for sql in [
+            "SELECT 1 FROM dual;",
+            "CREATE TABLE t (a NUMBER);",
+            "CREATE OR REPLACE VIEW v AS SELECT 1 a FROM dual;",
+            "",
+        ] {
+            assert!(!statement_text(sql).ends_with(';'), "{sql}");
+        }
     }
 }

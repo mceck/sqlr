@@ -29,14 +29,16 @@ pub(crate) fn column_meta(column: &ColumnInfo) -> ColumnMeta {
             ColumnKind::Int,
             DisplayHint::Number,
         ),
+        // oracle-rs hands these over as lossily decoded text, so a cell is a float only
+        // when that text parses; the column must accept the text otherwise.
         OracleType::BinaryFloat => (
             "BINARY_FLOAT".to_string(),
-            ColumnKind::Float,
+            ColumnKind::Mixed,
             DisplayHint::Number,
         ),
         OracleType::BinaryDouble => (
             "BINARY_DOUBLE".to_string(),
-            ColumnKind::Float,
+            ColumnKind::Mixed,
             DisplayHint::Number,
         ),
         OracleType::Date => ("DATE".to_string(), ColumnKind::Text, DisplayHint::Temporal),
@@ -117,6 +119,17 @@ pub(crate) fn decode(value: &OracleValue, ty: OracleType) -> Value {
         }
         (OracleValue::Float(v), OracleType::BinaryFloat | OracleType::BinaryDouble) => {
             Value::Float(*v)
+        }
+        // Some NUMBERs arrive as text; an integral one is still an integer.
+        (OracleValue::String(v), OracleType::Number) => match v.trim().parse::<i64>() {
+            Ok(i) => Value::Int(i),
+            Err(_) => Value::Text(v.clone()),
+        },
+        (OracleValue::String(v), OracleType::BinaryFloat | OracleType::BinaryDouble) => {
+            match v.trim().parse::<f64>() {
+                Ok(f) => Value::Float(f),
+                Err(_) => Value::Text(v.clone()),
+            }
         }
         (OracleValue::Date(v), _) => Value::Text(format!(
             "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
@@ -204,5 +217,173 @@ mod tests {
             decode(&OracleValue::Integer(42), OracleType::BinaryInteger),
             Value::Int(42)
         );
+    }
+
+    fn col(ty: OracleType) -> ColumnInfo {
+        let mut c = ColumnInfo::new("C", ty);
+        c.data_size = 30;
+        c.precision = 12;
+        c.scale = 3;
+        c
+    }
+
+    #[test]
+    fn every_column_type_has_a_meta() {
+        let expect = [
+            (OracleType::Varchar, "VARCHAR2(30)", ColumnKind::Text),
+            (OracleType::Char, "CHAR(30)", ColumnKind::Text),
+            (OracleType::Long, "CLOB", ColumnKind::Text),
+            (OracleType::Clob, "CLOB", ColumnKind::Text),
+            (OracleType::Number, "NUMBER(12,3)", ColumnKind::Mixed),
+            (OracleType::BinaryInteger, "BINARY_INTEGER", ColumnKind::Int),
+            (OracleType::BinaryFloat, "BINARY_FLOAT", ColumnKind::Mixed),
+            (OracleType::BinaryDouble, "BINARY_DOUBLE", ColumnKind::Mixed),
+            (OracleType::Date, "DATE", ColumnKind::Text),
+            (OracleType::Timestamp, "TIMESTAMP", ColumnKind::Text),
+            (
+                OracleType::TimestampTz,
+                "TIMESTAMP WITH TIME ZONE",
+                ColumnKind::Text,
+            ),
+            (
+                OracleType::TimestampLtz,
+                "TIMESTAMP WITH LOCAL TIME ZONE",
+                ColumnKind::Text,
+            ),
+            (OracleType::Raw, "RAW(30)", ColumnKind::Bytes),
+            (OracleType::LongRaw, "BLOB", ColumnKind::Bytes),
+            (OracleType::Blob, "BLOB", ColumnKind::Bytes),
+            (OracleType::Bfile, "BLOB", ColumnKind::Bytes),
+            (OracleType::Boolean, "BOOLEAN", ColumnKind::Bool),
+            (OracleType::Json, "JSON", ColumnKind::Text),
+            (OracleType::Rowid, "ROWID", ColumnKind::Text),
+            (OracleType::Urowid, "UROWID", ColumnKind::Text),
+            (
+                OracleType::IntervalYm,
+                "INTERVAL YEAR TO MONTH",
+                ColumnKind::Text,
+            ),
+            (
+                OracleType::IntervalDs,
+                "INTERVAL DAY TO SECOND",
+                ColumnKind::Text,
+            ),
+            (OracleType::Cursor, "OBJECT", ColumnKind::Text),
+            (OracleType::Object, "OBJECT", ColumnKind::Text),
+            (OracleType::Vector, "OBJECT", ColumnKind::Text),
+        ];
+        for (ty, name, kind) in expect {
+            let meta = column_meta(&col(ty));
+            assert_eq!(meta.type_name, name, "{ty:?}");
+            assert_eq!(meta.kind, kind, "{ty:?}");
+            assert_eq!(meta.name, "C");
+        }
+    }
+
+    #[test]
+    fn object_columns_keep_their_declared_type_name() {
+        let mut c = col(OracleType::Object);
+        c.type_name = Some("MY_TYPE".into());
+        assert_eq!(column_meta(&c).type_name, "MY_TYPE");
+    }
+
+    #[test]
+    fn numbers_decode_by_shape() {
+        use oracle_rs::types::OracleNumber;
+        let n = |s: &str| OracleValue::Number(OracleNumber::new(s));
+        assert_eq!(decode(&n("42"), OracleType::Number), Value::Int(42));
+        assert_eq!(
+            decode(&n("1.50"), OracleType::Number),
+            Value::Text("1.50".into())
+        );
+        assert_eq!(
+            decode(&OracleValue::Float(2.5), OracleType::Number),
+            Value::Text("2.5".into())
+        );
+        assert_eq!(
+            decode(&OracleValue::Integer(3), OracleType::BinaryDouble),
+            Value::Float(3.0)
+        );
+        assert_eq!(
+            decode(&OracleValue::Float(0.5), OracleType::BinaryFloat),
+            Value::Float(0.5)
+        );
+        assert_eq!(
+            decode(&OracleValue::String("2.5".into()), OracleType::BinaryFloat),
+            Value::Float(2.5)
+        );
+        assert_eq!(
+            decode(
+                &OracleValue::String("\u{fffd}\0".into()),
+                OracleType::BinaryDouble
+            ),
+            Value::Text("\u{fffd}\0".into())
+        );
+        assert_eq!(
+            decode(&OracleValue::String("12".into()), OracleType::Number),
+            Value::Int(12)
+        );
+        assert_eq!(
+            decode(&OracleValue::String("1.5".into()), OracleType::Number),
+            Value::Text("1.5".into())
+        );
+        assert_eq!(
+            decode(&OracleValue::Float(0.5), OracleType::Varchar),
+            Value::Float(0.5)
+        );
+        assert_eq!(
+            decode(&OracleValue::Integer(7), OracleType::Varchar),
+            Value::Int(7)
+        );
+    }
+
+    #[test]
+    fn timestamps_render_with_and_without_zone() {
+        use oracle_rs::types::OracleTimestamp;
+        let plain = OracleTimestamp::new(2024, 1, 2, 3, 4, 5, 678);
+        assert_eq!(
+            decode(&OracleValue::Timestamp(plain), OracleType::Timestamp),
+            Value::Text("2024-01-02 03:04:05.000678".into())
+        );
+        let east = OracleTimestamp::with_timezone(2024, 1, 2, 3, 4, 5, 0, 5, 30);
+        assert_eq!(
+            decode(&OracleValue::Timestamp(east), OracleType::TimestampTz),
+            Value::Text("2024-01-02 03:04:05.000000 +05:30".into())
+        );
+        let west = OracleTimestamp::with_timezone(2024, 1, 2, 3, 4, 5, 0, -8, 0);
+        assert_eq!(
+            decode(&OracleValue::Timestamp(west), OracleType::TimestampTz),
+            Value::Text("2024-01-02 03:04:05.000000 -08:00".into())
+        );
+    }
+
+    #[test]
+    fn simple_values_decode() {
+        let d = |v: OracleValue| decode(&v, OracleType::Varchar);
+        assert_eq!(d(OracleValue::Null), Value::Null);
+        assert_eq!(d(OracleValue::Bytes(vec![1, 2])), Value::Bytes(vec![1, 2]));
+        assert_eq!(d(OracleValue::String("x".into())), Value::Text("x".into()));
+        assert_eq!(d(OracleValue::Boolean(true)), Value::Bool(true));
+        assert_eq!(
+            d(OracleValue::Json(serde_json::json!({"a": 1}))),
+            Value::Text("{\"a\":1}".into())
+        );
+        assert!(matches!(
+            d(OracleValue::RowId(oracle_rs::types::RowId::new(1, 2, 3, 4))),
+            Value::Text(_)
+        ));
+    }
+
+    #[test]
+    fn parameters_encode_one_to_one() {
+        assert!(matches!(encode(&Value::Null), OracleValue::Null));
+        assert!(matches!(
+            encode(&Value::Bool(true)),
+            OracleValue::Boolean(true)
+        ));
+        assert!(matches!(encode(&Value::Int(5)), OracleValue::Integer(5)));
+        assert!(matches!(encode(&Value::Float(1.5)), OracleValue::Float(f) if f == 1.5));
+        assert!(matches!(encode(&Value::Text("a".into())), OracleValue::String(s) if s == "a"));
+        assert!(matches!(encode(&Value::Bytes(vec![9])), OracleValue::Bytes(b) if b == [9]));
     }
 }
