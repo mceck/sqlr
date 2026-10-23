@@ -136,6 +136,9 @@ pub fn generate_sql(
             };
             format!("SELECT {cols}\nFROM {name};")
         }
+        SqlTemplate::Insert if rel.writable.is_empty() => {
+            format!("{};", d.insert_defaults_sql(&name))
+        }
         SqlTemplate::Insert => {
             let values: Vec<String> = rel.writable.iter().map(|c| value(c)).collect();
             format!(
@@ -278,6 +281,20 @@ mod tests {
         assert_eq!(
             generate_sql(SqlTemplate::Update, &def, &Ansi).unwrap(),
             "UPDATE \"public\".\"users\"\nSET \"id\" = \"id\"\nWHERE \"id\" = /* id */ NULL;"
+        );
+    }
+
+    #[test]
+    fn insert_template_with_no_writable_column_inserts_defaults() {
+        // A table whose only column is an identity or generated one has no column an
+        // INSERT may name: `INSERT INTO t () VALUES ()` is not valid everywhere.
+        let mut t = users();
+        t.columns.truncate(1);
+        t.columns[0].identity = Some(Identity::Always);
+        t.constraints.clear();
+        assert_eq!(
+            generate_sql(SqlTemplate::Insert, &ObjectDef::Table(t), &Ansi).unwrap(),
+            "INSERT INTO \"public\".\"users\" DEFAULT VALUES;"
         );
     }
 
