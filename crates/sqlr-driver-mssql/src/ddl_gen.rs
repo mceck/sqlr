@@ -115,7 +115,12 @@ impl MsDialect {
             .columns
             .iter()
             .map(|c| {
-                let mut part = self.q(&c.expr);
+                // A key part wrapped in parentheses is an expression, not a column name.
+                let mut part = if c.is_expression() {
+                    c.expr.clone()
+                } else {
+                    self.q(&c.expr)
+                };
                 if c.desc {
                     part.push_str(" DESC");
                 }
@@ -388,7 +393,7 @@ impl DdlGen for MsDialect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sqlr_core::Identity;
+    use sqlr_core::{Identity, IndexColumn};
 
     fn table(name: &str) -> TableRef {
         TableRef {
@@ -494,6 +499,33 @@ mod tests {
             }])
             .unwrap();
         assert_eq!(ddl, ["EXEC sp_rename N'[s]]x].[it''s]', N'x'"]);
+    }
+
+    #[test]
+    fn an_index_expression_is_written_as_is() {
+        let index = IndexDef {
+            name: "ix".into(),
+            columns: vec![
+                IndexColumn::column("a"),
+                IndexColumn {
+                    expr: "(lower([b]))".into(),
+                    desc: true,
+                    prefix: None,
+                },
+            ],
+            ..Default::default()
+        };
+        let ddl = MsDialect
+            .ddl(&[SchemaChange::AddIndex {
+                table: table("t"),
+                index,
+                concurrently: false,
+            }])
+            .unwrap();
+        assert_eq!(
+            ddl,
+            ["CREATE INDEX [ix] ON [s]]x].[t] ([a], (lower([b])) DESC)"]
+        );
     }
 
     #[test]
