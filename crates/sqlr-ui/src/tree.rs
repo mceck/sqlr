@@ -51,6 +51,8 @@ pub struct TreeConn<'a> {
     pub tint: Option<[u8; 3]>,
     /// A session of the connection has an open transaction (a `●` mark).
     pub open_transaction: bool,
+    /// Whether agents may reach the connection, and how.
+    pub agent_access: sqlr_core::AgentAccess,
 }
 
 pub enum Children<'a> {
@@ -371,6 +373,11 @@ pub enum TreeAction {
     /// Copy a saved connection and its stored secrets under a new name.
     Duplicate(String),
     Delete(String),
+    /// Change a connection's agent exposure (human-only).
+    SetAgentAccess {
+        conn: String,
+        access: sqlr_core::AgentAccess,
+    },
     Expand {
         conn: String,
         path: NodePath,
@@ -1390,7 +1397,12 @@ fn conn_row(
         let trailing = badge_width
             + ui.spacing().item_spacing.x
             + if live { ROW_BUTTONS_WIDTH } else { 0.0 }
-            + if conn.open_transaction { 16.0 } else { 0.0 };
+            + if conn.open_transaction { 16.0 } else { 0.0 }
+            + if conn.agent_access.is_exposed() {
+                18.0
+            } else {
+                0.0
+            };
         let budget = (ui.available_width() - trailing).max(60.0);
         let name = ui.horizontal(|ui| {
             ui.set_max_width(budget);
@@ -1426,6 +1438,19 @@ fn conn_row(
             state.selected_folder = None;
         }
         toggle |= response.double_clicked();
+        if conn.agent_access.is_exposed() {
+            let tip = match conn.agent_access {
+                sqlr_core::AgentAccess::Read => "Agents: read",
+                sqlr_core::AgentAccess::Write => "Agents: read and write",
+                sqlr_core::AgentAccess::None => "",
+            };
+            ui.label(
+                RichText::new(icons::VIEW)
+                    .font(theme::fonts::icons(ui.ctx(), 12.0))
+                    .color(palette.text_muted),
+            )
+            .on_hover_text(tip);
+        }
         let badge = ui.label(badge_text);
         if let ConnBadge::Failed(message) = &conn.badge {
             badge.on_hover_text(message);
@@ -1566,6 +1591,24 @@ fn conn_row(
                     }
                 });
             }
+            ui.menu_button("Agent access", |ui| {
+                for (access, label) in [
+                    (sqlr_core::AgentAccess::None, "None"),
+                    (sqlr_core::AgentAccess::Read, "Read"),
+                    (sqlr_core::AgentAccess::Write, "Write"),
+                ] {
+                    if ui
+                        .selectable_label(conn.agent_access == access, label)
+                        .clicked()
+                    {
+                        actions.push(TreeAction::SetAgentAccess {
+                            conn: conn.id.to_string(),
+                            access,
+                        });
+                        ui.close();
+                    }
+                }
+            });
             if icons::menu_item(ui, icons::EDIT, "Edit").clicked() {
                 actions.push(TreeAction::Edit(conn.id.to_string()));
                 ui.close();

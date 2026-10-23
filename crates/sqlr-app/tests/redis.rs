@@ -84,6 +84,7 @@ fn app(
             values: Default::default(),
             profile: profile.map(String::from),
             save_secrets: true,
+            agent_access: Default::default(),
         },
         &Secrets::default(),
     )
@@ -96,6 +97,7 @@ fn app(
         data_dir: None,
         startup_notice: None,
         storage_warning: None,
+        mcp_token_store: None,
     };
     let app = SqlrApp::new(deps, &egui::Context::default());
     let mut h = Harness::builder()

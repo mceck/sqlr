@@ -408,6 +408,7 @@ mod tests {
                 values: Default::default(),
                 profile: Some(profile.into()),
                 save_secrets: true,
+                agent_access: Default::default(),
             };
             repo.save(&cfg, &Secrets::default()).unwrap();
         }
@@ -419,6 +420,7 @@ mod tests {
             data_dir: None,
             startup_notice: None,
             storage_warning: None,
+            mcp_token_store: None,
         };
         let app = SqlrApp::new(deps, &egui::Context::default());
         assert_eq!(

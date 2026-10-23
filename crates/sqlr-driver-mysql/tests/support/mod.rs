@@ -73,6 +73,7 @@ pub fn config(host: &str, port: u16) -> ConnectionConfig {
         .collect(),
         profile: None,
         save_secrets: true,
+        agent_access: Default::default(),
     }
 }
 

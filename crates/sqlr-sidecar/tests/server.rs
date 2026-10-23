@@ -71,6 +71,7 @@ impl Rig {
             values: [("path".to_string(), path.display().to_string())].into(),
             profile: None,
             save_secrets: true,
+            agent_access: Default::default(),
         };
         self.ok(Request::Connect {
             conn,

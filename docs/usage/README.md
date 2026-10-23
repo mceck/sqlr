@@ -20,6 +20,7 @@ Keyboard shortcuts are written for macOS (⌘ is Command). On Windows and Linux,
 | Work with MongoDB, Elasticsearch or Redis | [Document and key-value databases](nosql.md) |
 | Add support for another database | [Drivers](drivers.md) |
 | Change the theme, formats or shortcuts | [Settings and shortcuts](settings-and-shortcuts.md) |
+| Use an agent with sqlr, or the integrated terminal | [Agents and the terminal](agents.md) |
 
 ## The window at a glance
 

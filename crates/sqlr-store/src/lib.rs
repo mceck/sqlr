@@ -7,6 +7,7 @@ mod er_layouts;
 mod history;
 mod keymap;
 mod layered;
+mod mcp_token;
 mod profiles;
 mod recent;
 mod secrets;
@@ -21,10 +22,14 @@ pub use connections::{ConnectionRepo, MoveTarget};
 pub use db::{Db, HISTORY_KEEP, MAX_HISTORY_SQL_BYTES};
 pub use keymap::StoredKeymap;
 pub use layered::{LayeredSettings, LoadNotice};
+pub use mcp_token::{
+    KeyringMcpTokenStore, MCP_TOKEN_ACCOUNT, MCP_TOKEN_SERVICE, McpTokenStore, MemoryMcpTokenStore,
+};
 pub use profiles::ProfileRepo;
 pub use secrets::{KeyringStore, MemorySecretStore, SecretStore};
 pub use settings::{
-    CONNECT_TIMEOUTS_S, MONO_FONT_SIZES, PAGE_SIZES, SIDECAR_IDLE_MINUTES, Settings, UI_SCALES,
+    CONNECT_TIMEOUTS_S, DEFAULT_MCP_PORT, MCP_PORTS, MONO_FONT_SIZES, PAGE_SIZES,
+    SIDECAR_IDLE_MINUTES, Settings, TERMINAL_SCROLLBACK, UI_SCALES,
 };
 pub use tasks::{MAX_RUN_LOG_BYTES, RUNS_KEPT};
 

@@ -90,6 +90,7 @@ fn deps_with_db(
         values: [("host".to_string(), "fake-host".to_string())].into(),
         profile: None,
         save_secrets: true,
+        agent_access: Default::default(),
     };
     repo.save(&cfg, &Secrets::default()).unwrap();
     let deps = AppDeps {
@@ -100,6 +101,7 @@ fn deps_with_db(
         data_dir: None,
         startup_notice: None,
         storage_warning: None,
+        mcp_token_store: None,
     };
     (deps, driver)
 }

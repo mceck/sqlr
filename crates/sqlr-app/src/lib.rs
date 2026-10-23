@@ -1,6 +1,7 @@
 //! The sqlr application shell: layout A, wiring the engine, store and widgets together.
 
 mod actions;
+mod agents;
 pub use actions::dispatch_actions;
 mod admin;
 mod app;

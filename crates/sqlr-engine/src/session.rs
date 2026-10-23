@@ -90,12 +90,14 @@ impl SessionIo {
 /// A connection to another database on the same server.
 pub(crate) type DatabaseConn = Arc<dyn Connection>;
 
-/// Which session of a connection: the explorer's (also catalog loads and jobs), or an
-/// editor tab's.
+/// Which session of a connection: the explorer's (also catalog loads and jobs), an
+/// editor tab's, or an MCP agent session's.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Slot {
     Meta,
     Tab(u64),
+    /// An agent session, keyed by MCP session id (and kept per connection).
+    Agent(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -110,6 +112,14 @@ impl SessionKey {
         Self {
             conn: conn.to_string(),
             slot: Slot::Meta,
+        }
+    }
+
+    /// The session an MCP agent runs on: one per MCP session and connection.
+    pub fn agent(conn: &str, agent: &str) -> Self {
+        Self {
+            conn: conn.to_string(),
+            slot: Slot::Agent(agent.to_string()),
         }
     }
 }

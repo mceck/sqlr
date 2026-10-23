@@ -16,8 +16,8 @@ use egui::{
     Sense, Stroke, WidgetInfo, WidgetType, vec2,
 };
 use sqlr_core::{
-    ConnectionConfig, ConnectionProfile, DriverManifest, FieldType, KnownDatabase, KnownStatus,
-    NodePath, Secrets,
+    AgentAccess, ConnectionConfig, ConnectionProfile, DriverManifest, FieldType, KnownDatabase,
+    KnownStatus, NodePath, Secrets,
 };
 use sqlr_engine::{Engine, SessionStatus};
 use sqlr_ui::text_edit_secret;
@@ -658,6 +658,7 @@ impl ConnDialog {
                             connection_identity(ui, &mut self.form);
                             self.driver_row(ui, &manifests);
                             self.profile_row(ui, profiles);
+                            Self::agent_access_row(ui, &mut self.form.agent_access);
                             ui.add_space(Spacing::M);
                             ui.horizontal(|ui| {
                                 let label_width = 96.0;
@@ -821,6 +822,53 @@ impl ConnDialog {
         });
     }
 
+    /// The agent exposure control: human-only, and never applied by the agent write path.
+    fn agent_access_row(ui: &mut egui::Ui, access: &mut AgentAccess) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = Spacing::M;
+            ui.allocate_ui_with_layout(
+                vec2(96.0, ui.spacing().interact_size.y),
+                Layout::left_to_right(Align::Center),
+                |ui| {
+                    ui.set_min_width(96.0);
+                    ui.label("Agent access");
+                },
+            );
+            for (value, label, tip) in [
+                (
+                    AgentAccess::None,
+                    "None",
+                    "Agents cannot see this connection",
+                ),
+                (
+                    AgentAccess::Read,
+                    "Read",
+                    "Agents may browse and run reads only",
+                ),
+                (
+                    AgentAccess::Write,
+                    "Write",
+                    "Agents may write; the profile's confirmations still apply",
+                ),
+            ] {
+                if ui
+                    .selectable_label(*access == value, label)
+                    .on_hover_text(tip)
+                    .clicked()
+                {
+                    *access = value;
+                }
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.add_space(96.0 + ui.spacing().item_spacing.x);
+            theme::hint(
+                ui,
+                "Agents act with your rights. None is the default; Write still follows the profile's read-only and confirmation rules.",
+            );
+        });
+    }
+
     /// Keeps name, group, color, profile and "Save password"; the fields start from the new
     /// driver's defaults.
     fn switch_driver(&mut self, manifest: &DriverManifest) {
@@ -830,6 +878,7 @@ impl ConnDialog {
         form.color = self.form.color;
         form.profile = self.form.profile.take();
         form.save_secrets = self.form.save_secrets;
+        form.agent_access = self.form.agent_access;
         self.form = form;
         self.driver = manifest.id.clone();
         self.pick = None;
@@ -926,6 +975,13 @@ impl SqlrApp {
         self.secret_prompt_ui(ctx);
         if let Some(window) = &mut self.prefs {
             let scopes = Scopes::new(&self.profiles, &self.connections);
+            window.mcp = crate::agents::McpPrefs {
+                status: self.mcp.status.clone(),
+                url: self.mcp.url(),
+                sessions: self.mcp.sessions(),
+                error: self.mcp.last_error.clone(),
+                token_present: self.mcp.token().is_some(),
+            };
             let keep = window.show(
                 ctx,
                 &mut self.layered,
@@ -936,6 +992,9 @@ impl SqlrApp {
             let open_drivers = std::mem::take(&mut window.open_drivers);
             let open_databases = std::mem::take(&mut window.open_databases);
             let open_folder = std::mem::take(&mut window.open_settings_folder);
+            let copy_mcp = std::mem::take(&mut window.copy_mcp_config);
+            let rotate = std::mem::take(&mut window.rotate_token);
+            let open_terminal = std::mem::take(&mut window.open_terminal);
             if open_drivers {
                 self.drivers_ui.open_requested = true;
             }
@@ -944,6 +1003,19 @@ impl SqlrApp {
             }
             if open_folder {
                 self.open_folder(&self.config_dir.clone());
+            }
+            if copy_mcp && let Some(config) = self.mcp.client_config() {
+                ctx.copy_text(config);
+                self.notify("MCP client configuration copied (it contains the token)");
+            }
+            if rotate {
+                match self.mcp.rotate() {
+                    Ok(()) => self.notify("MCP token rotated; active agents were disconnected"),
+                    Err(error) => self.notify(format!("Could not rotate the token: {error}")),
+                }
+            }
+            if open_terminal {
+                self.terminal.open();
             }
             // Edits (and a Cancel) show at once: everything follows the live settings.
             self.settings = sqlr_store::Settings::resolve(&self.layered, None);
@@ -1281,6 +1353,7 @@ mod tests {
             values: [("host".to_string(), "h".to_string())].into(),
             profile: None,
             save_secrets: true,
+            agent_access: Default::default(),
         };
         repo.save(&cfg, &Secrets::default()).unwrap();
 
@@ -1321,6 +1394,7 @@ mod tests {
             values: Default::default(),
             profile: None,
             save_secrets: true,
+            agent_access: Default::default(),
         };
         repo.save(&cfg, &Secrets::default()).unwrap();
 

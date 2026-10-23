@@ -63,6 +63,8 @@ Start with [docs/tech/writing-a-driver.md](docs/tech/writing-a-driver.md) and [d
 | `sqlr-driver-sdk` | write a driver as a sidecar: re-exports the API, `run` |
 | `sqlr-store` | connections TOML, OS keychain secrets, settings |
 | `sqlr-ui` | egui widgets (grid, tree, forms) |
+| `sqlr-mcp` | loopback MCP server, tools and agent policy |
+| `sqlr-terminal` | PTY session, vt100 parser and terminal widget |
 | `sqlr-app` | binary: wires everything |
 | `sqlr-testkit` | `FakeDriver` for tests (dev-dependency) |
 

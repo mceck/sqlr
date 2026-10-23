@@ -33,6 +33,7 @@ pub async fn connect() -> Arc<dyn Connection> {
         .collect(),
         profile: None,
         save_secrets: true,
+        agent_access: Default::default(),
     };
     let secrets = Secrets([("password".to_string(), "sqlr_test".to_string())].into());
     OracleDriver::new()

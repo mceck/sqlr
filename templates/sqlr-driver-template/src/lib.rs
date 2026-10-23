@@ -200,6 +200,7 @@ mod tests {
                 values: Default::default(),
                 profile: None,
                 save_secrets: true,
+                agent_access: Default::default(),
             }, &Secrets::default())
             .await
             .unwrap();

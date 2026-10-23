@@ -32,6 +32,7 @@ pub fn config(id: &str, driver: &str) -> ConnectionConfig {
         values: Default::default(),
         profile: None,
         save_secrets: true,
+        agent_access: Default::default(),
     }
 }
 

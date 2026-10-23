@@ -33,6 +33,7 @@ pub struct NativeMenu {
     keymap_seen: std::cell::RefCell<Option<sqlr_core::Keymap>>,
     value_panel: CheckMenuItem,
     history: CheckMenuItem,
+    terminal: CheckMenuItem,
     soft_wrap: CheckMenuItem,
     /// Commands sent by the AppKit callback, drained by the app once per frame.
     pending: Arc<Mutex<Vec<AppCommand>>>,
@@ -46,6 +47,7 @@ impl NativeMenu {
         ctx: &Context,
         value_panel: bool,
         history: bool,
+        terminal: bool,
         soft_wrap: bool,
     ) -> muda::Result<Self> {
         // The application menu. Winit's default menu is replaced, so About, Services,
@@ -119,11 +121,17 @@ impl NativeMenu {
         // View.
         let value_panel_item = CheckMenuItem::new("Value panel", true, value_panel, None);
         let history_item = CheckMenuItem::new("History", true, history, None);
+        let terminal_item = CheckMenuItem::new("Terminal", true, terminal, None);
         let soft_wrap_item = CheckMenuItem::new("Soft wrap", true, soft_wrap, None);
         let view = Submenu::with_items(
             "View",
             true,
-            &[&value_panel_item, &history_item, &soft_wrap_item],
+            &[
+                &value_panel_item,
+                &history_item,
+                &terminal_item,
+                &soft_wrap_item,
+            ],
         )?;
 
         // Query.
@@ -180,6 +188,7 @@ impl NativeMenu {
             (help_about.id().clone(), AppCommand::About),
             (value_panel_item.id().clone(), AppCommand::ToggleValuePanel),
             (history_item.id().clone(), AppCommand::ToggleHistory),
+            (terminal_item.id().clone(), AppCommand::ToggleTerminal),
             (soft_wrap_item.id().clone(), AppCommand::ToggleSoftWrap),
         ];
 
@@ -232,6 +241,7 @@ impl NativeMenu {
             keymap_seen: Default::default(),
             value_panel: value_panel_item,
             history: history_item,
+            terminal: terminal_item,
             soft_wrap: soft_wrap_item,
             pending,
         })
@@ -282,9 +292,12 @@ impl NativeMenu {
     }
 
     /// Mirrors the app's panel state in the View menu's check marks.
-    pub fn sync(&self, value_panel: bool, history: bool, soft_wrap: bool) {
+    pub fn sync(&self, value_panel: bool, history: bool, terminal: bool, soft_wrap: bool) {
         if self.value_panel.is_checked() != value_panel {
             self.value_panel.set_checked(value_panel);
+        }
+        if self.terminal.is_checked() != terminal {
+            self.terminal.set_checked(terminal);
         }
         if self.soft_wrap.is_checked() != soft_wrap {
             self.soft_wrap.set_checked(soft_wrap);

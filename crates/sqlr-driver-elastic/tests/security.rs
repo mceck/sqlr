@@ -59,6 +59,7 @@ async fn ambiguous_console_paths_never_reach_the_server() {
         .into(),
         profile: None,
         save_secrets: false,
+        agent_access: Default::default(),
     };
     let connection = ElasticDriver::new()
         .connect(&config, &Secrets::default())

@@ -31,6 +31,7 @@ pub async fn server() -> (TestLock, Arc<dyn Connection>) {
         .collect(),
         profile: None,
         save_secrets: true,
+        agent_access: Default::default(),
     };
     let secrets = Secrets([("password".to_string(), PASSWORD.to_string())].into());
     let deadline = Instant::now() + Duration::from_secs(180);

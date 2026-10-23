@@ -25,6 +25,7 @@ fn engine_creates_alters_and_drops_a_table() {
         .collect(),
         profile: None,
         save_secrets: true,
+        agent_access: Default::default(),
     };
     engine_objects::create_alter_drop(
         SqliteDriver::new(),

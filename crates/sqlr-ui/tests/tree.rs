@@ -91,6 +91,7 @@ impl SchemaSource for StubSource {
                 badge: self.local_badge.clone(),
                 tint: None,
                 open_transaction: false,
+                agent_access: Default::default(),
             },
             TreeConn {
                 id: "prod",
@@ -102,6 +103,7 @@ impl SchemaSource for StubSource {
                 badge: ConnBadge::Connected,
                 tint: Some([40, 200, 40]),
                 open_transaction: true,
+                agent_access: Default::default(),
             },
         ]
     }
@@ -1202,6 +1204,7 @@ impl SchemaSource for ManySource {
                 badge: ConnBadge::Connected,
                 tint: None,
                 open_transaction: false,
+                agent_access: Default::default(),
             })
             .collect()
     }

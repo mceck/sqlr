@@ -17,6 +17,8 @@ sqlr is a lightweight, universal database client in native Rust + egui. No webvi
 | `sqlr-driver-tests` | conformance suite for drivers (dev-dependency only) | `sqlr-core` |
 | `sqlr-store` | connections TOML, OS keychain secrets, settings | `sqlr-core` |
 | `sqlr-ui` | egui widgets (grid, tree, forms) | `sqlr-core` |
+| `sqlr-mcp` | loopback MCP server, tool registry, policy, `AgentHost` | `sqlr-core`, `sqlr-engine`, `sqlr-store` |
+| `sqlr-terminal` | PTY session, vt100 parser, egui terminal panel | egui, portable-pty, vt100 |
 | `sqlr-app` | binary: wires everything | everything |
 | `sqlr-testkit` | `FakeDriver` for tests (dev-dependency only) | `sqlr-core` |
 

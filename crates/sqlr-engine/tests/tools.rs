@@ -41,6 +41,7 @@ fn connected_sqlite(dir: &std::path::Path) -> (Engine, PathBuf) {
         values: [("path".to_string(), db.display().to_string())].into(),
         profile: None,
         save_secrets: true,
+        agent_access: Default::default(),
     };
     engine.connect(cfg, Secrets::default(), ConnectionProfile::development());
     assert!(

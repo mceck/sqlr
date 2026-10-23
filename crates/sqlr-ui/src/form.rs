@@ -59,6 +59,8 @@ pub struct FormState {
     pub profile: Option<String>,
     /// Secrets go to the keychain; when off they are asked for on connect.
     pub save_secrets: bool,
+    /// Agent exposure. Human-only; the connection dialog is the only place that sets it.
+    pub agent_access: sqlr_core::AgentAccess,
     /// The URL box; a URL holding a password is replaced by its redacted form.
     pub url: String,
     pub url_error: Option<String>,
@@ -126,6 +128,7 @@ impl FormState {
             show_secrets: false,
             profile: None,
             save_secrets: true,
+            agent_access: sqlr_core::AgentAccess::None,
             url: String::new(),
             url_error: None,
             tab: String::new(),
@@ -166,6 +169,7 @@ impl FormState {
         state.color = cfg.color;
         state.profile = cfg.profile.clone();
         state.save_secrets = cfg.save_secrets;
+        state.agent_access = cfg.agent_access;
         state.secrets.clear();
         for field in &manifest.fields {
             if field.secret {
@@ -274,6 +278,7 @@ impl FormState {
             values,
             profile: self.profile.clone(),
             save_secrets: self.save_secrets,
+            agent_access: self.agent_access,
         };
         (config, Secrets(secrets))
     }

@@ -285,6 +285,72 @@ impl EditorState {
         &self.model
     }
 
+    /// The text's revision; it bumps on every change.
+    pub fn revision(&self) -> u64 {
+        self.model.revision()
+    }
+
+    pub fn char_len(&self) -> usize {
+        self.model.buffer().len_chars()
+    }
+
+    /// The primary caret as a character offset.
+    pub fn caret_char(&self) -> usize {
+        self.model.buffer().char_index(self.model.primary().head)
+    }
+
+    /// The primary selection as `(start, end)` character offsets, end exclusive, when it is
+    /// not empty.
+    pub fn selection_chars(&self) -> Option<(usize, usize)> {
+        let caret = self.model.primary();
+        if caret.is_empty() {
+            return None;
+        }
+        let a = self.model.buffer().char_index(caret.anchor);
+        let b = self.model.buffer().char_index(caret.head);
+        Some((a.min(b), a.max(b)))
+    }
+
+    /// Moves the primary caret to a character offset and scrolls to it.
+    pub fn set_caret_char(&mut self, offset: usize) {
+        let offset = offset.min(self.char_len());
+        self.model
+            .set_carets(vec![Caret::at(self.model.buffer().pos_of_char(offset))]);
+        self.scroll_to_caret = true;
+    }
+
+    /// Replaces the whole buffer as one undo group.
+    pub fn replace_all(&mut self, text: &str) -> Vec<Change> {
+        let len = self.char_len();
+        let changes = self.model.replace_range(0..len, text, self.now);
+        self.after_external_edit(&changes);
+        changes
+    }
+
+    /// Applies non-overlapping range edits as one undo group. Out-of-range or overlapping
+    /// edits are clamped by the model.
+    pub fn replace_ranges(&mut self, edits: Vec<(std::ops::Range<usize>, String)>) -> Vec<Change> {
+        let changes = self.model.replace_ranges(edits, self.now);
+        self.after_external_edit(&changes);
+        changes
+    }
+
+    /// Applies the model-side effects of an edit made outside the widget (agent edits).
+    pub fn after_external_edit(&mut self, changes: &[Change]) {
+        self.after_changes(changes);
+        self.scroll_to_caret = true;
+        self.popup.close();
+    }
+
+    /// Highlights the first changed range for the next frame.
+    pub fn highlight_agent_edit(&mut self, at: usize) {
+        self.markers = vec![Marker {
+            at,
+            message: "Agent edit".into(),
+        }];
+        self.scroll_to_caret = true;
+    }
+
     /// The syntax the editor lexes and completes with.
     pub fn syntax(&self) -> &Arc<SqlSyntax> {
         self.syntax.syntax()

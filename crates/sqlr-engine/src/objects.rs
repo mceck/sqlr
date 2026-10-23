@@ -504,11 +504,13 @@ impl Shared {
             open.sort_by_key(|slot| match slot {
                 crate::session::Slot::Meta => 0,
                 crate::session::Slot::Tab(t) => t + 1,
+                crate::session::Slot::Agent(_) => 1,
             });
             if let Some(slot) = open.first() {
                 let place = match slot {
                     crate::session::Slot::Meta => "the explorer session".to_string(),
                     crate::session::Slot::Tab(t) => format!("tab {t}"),
+                    crate::session::Slot::Agent(_) => "an agent session".to_string(),
                 };
                 return Err(DriverError::new(
                     ErrorKind::Other,

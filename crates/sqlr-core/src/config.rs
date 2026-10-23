@@ -23,6 +23,49 @@ pub struct ConnectionConfig {
     /// and kept in memory only.
     #[serde(default = "yes")]
     pub save_secrets: bool,
+    /// Whether agents may reach this connection. Human-only; agent writes never change it.
+    #[serde(default)]
+    pub agent_access: AgentAccess,
+}
+
+/// What an agent may do with a connection. Exposure is explicit consent: `None` by
+/// default, and only the person can change it.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentAccess {
+    /// Not reachable by agents.
+    #[default]
+    None,
+    /// Agents may browse and run statements the classifier considers reads.
+    Read,
+    /// Agents may browse and run statements, still under the connection profile.
+    Write,
+}
+
+impl AgentAccess {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Read => "read",
+            Self::Write => "write",
+        }
+    }
+
+    /// Whether the connection appears in agent-facing lists.
+    pub fn is_exposed(self) -> bool {
+        self != Self::None
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "none" => Some(Self::None),
+            "read" => Some(Self::Read),
+            "write" => Some(Self::Write),
+            _ => None,
+        }
+    }
 }
 
 fn yes() -> bool {
@@ -111,6 +154,7 @@ mod tests {
             values: Default::default(),
             profile: None,
             save_secrets: true,
+            agent_access: Default::default(),
         };
         assert_eq!(cfg.value(&manifest, "port"), Some("5432"));
         cfg.values.insert("port".into(), "6543".into());
@@ -124,6 +168,19 @@ mod tests {
             serde_json::from_str(r#"{"id":"1","name":"n","driver":"x"}"#).unwrap();
         assert_eq!(cfg.profile, None);
         assert!(cfg.save_secrets);
+        assert_eq!(cfg.agent_access, AgentAccess::None);
+    }
+
+    #[test]
+    fn agent_access_round_trips() {
+        for access in [AgentAccess::None, AgentAccess::Read, AgentAccess::Write] {
+            let text = serde_json::to_string(&access).unwrap();
+            assert_eq!(serde_json::from_str::<AgentAccess>(&text).unwrap(), access);
+            assert_eq!(AgentAccess::parse(access.as_str()), Some(access));
+        }
+        assert_eq!(AgentAccess::parse("all"), None);
+        assert!(!AgentAccess::None.is_exposed());
+        assert!(AgentAccess::Read.is_exposed());
     }
 
     #[test]

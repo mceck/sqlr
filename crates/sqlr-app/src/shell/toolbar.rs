@@ -107,6 +107,10 @@ impl SqlrApp {
         ui.menu_button("View", |ui| {
             ui.checkbox(&mut self.show_value_panel, "Value panel");
             ui.checkbox(&mut self.show_history, "History");
+            let mut terminal = self.terminal.is_open();
+            if ui.checkbox(&mut terminal, "Terminal").changed() {
+                self.terminal.toggle();
+            }
             let mut soft_wrap = self.settings.soft_wrap;
             if ui.checkbox(&mut soft_wrap, "Soft wrap").changed() {
                 self.toggle_soft_wrap(ui.ctx());
@@ -409,6 +413,21 @@ impl SqlrApp {
                 .clicked()
                 {
                     self.show_history = !self.show_history;
+                }
+                let terminal_open = self.terminal.is_open();
+                if ui.available_width() > 210.0
+                    && icons::toolbar_button(
+                        ui,
+                        true,
+                        icons::QUERY,
+                        None,
+                        terminal_open,
+                        "Toggle terminal",
+                    )
+                    .on_hover_text("Terminal (Ctrl+Backtick)")
+                    .clicked()
+                {
+                    self.terminal.toggle();
                 }
                 icons::toolbar_divider(ui);
                 if icons::toolbar_button(ui, true, icons::SEARCH, None, false, "Command palette")

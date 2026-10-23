@@ -95,6 +95,7 @@ fn config(server: &Server, extra: &[(&str, &str)]) -> ConnectionConfig {
         values,
         profile: None,
         save_secrets: true,
+        agent_access: Default::default(),
     }
 }
 

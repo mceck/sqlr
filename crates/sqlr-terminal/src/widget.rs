@@ -1,0 +1,691 @@
+//! The egui terminal panel: a header with lifecycle actions and a custom grid canvas.
+
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use egui::{
+    Align2, Color32, CornerRadius, FontFamily, FontId, Key, Rect, Sense, Stroke, pos2, vec2,
+};
+
+use crate::input::{encode_key, encode_paste, is_copy, is_paste};
+use crate::screen::{CellView, ScreenSnapshot, TermColor};
+use crate::session::{SessionConfig, TerminalSession, TerminalStatus};
+
+/// The colours and font the application gives the terminal.
+#[derive(Clone, Debug)]
+pub struct TerminalTheme {
+    pub background: Color32,
+    pub foreground: Color32,
+    pub cursor: Color32,
+    pub selection: Color32,
+    pub ansi: [Color32; 16],
+    pub font_size: f32,
+}
+
+impl TerminalTheme {
+    pub fn font(&self) -> FontId {
+        FontId::new(self.font_size, FontFamily::Monospace)
+    }
+
+    pub fn color(&self, color: TermColor) -> Color32 {
+        match color {
+            TermColor::Default => self.foreground,
+            TermColor::Idx(i) => self.indexed(i),
+            TermColor::Rgb(r, g, b) => Color32::from_rgb(r, g, b),
+        }
+    }
+
+    fn indexed(&self, index: u8) -> Color32 {
+        match index {
+            0..=15 => self.ansi[usize::from(index)],
+            16..=231 => {
+                let i = index - 16;
+                let scale = |v: u8| {
+                    if v == 0 { 0 } else { 55 + u16::from(v) * 40 }
+                };
+                Color32::from_rgb(
+                    scale(i / 36) as u8,
+                    scale((i % 36) / 6) as u8,
+                    scale(i % 6) as u8,
+                )
+            }
+            _ => {
+                let level = 8 + (index - 232) * 10;
+                Color32::from_gray(level)
+            }
+        }
+    }
+
+    /// The cell's foreground and background after reverse video.
+    pub fn cell_colors(&self, cell: &CellView) -> (Color32, Color32) {
+        let mut fg = self.color(cell.fg);
+        let mut bg = if cell.bg == TermColor::Default {
+            self.background
+        } else {
+            self.color(cell.bg)
+        };
+        if cell.inverse {
+            std::mem::swap(&mut fg, &mut bg);
+        }
+        if cell.dim {
+            fg = fg.gamma_multiply(0.65);
+        }
+        (fg, bg)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Selection {
+    pub anchor: (u16, u16),
+    pub cursor: (u16, u16),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TerminalAction {
+    Restart,
+    Clear,
+    Kill,
+    CopyMcpConfig,
+    OpenSettings,
+}
+
+/// The bottom terminal panel. Its session starts lazily on the first open and keeps running
+/// while the panel is hidden.
+pub struct TerminalPanel {
+    session: Option<TerminalSession>,
+    config: SessionConfig,
+    open: bool,
+    focused: bool,
+    selection: Option<Selection>,
+    dragging: bool,
+    scroll: usize,
+    started_once: bool,
+    bell_until: Option<Instant>,
+    last_rect: Rect,
+    last_cells: (u16, u16),
+    focus_next: bool,
+}
+
+impl Default for TerminalPanel {
+    fn default() -> Self {
+        Self {
+            session: None,
+            config: SessionConfig::default(),
+            open: false,
+            focused: false,
+            selection: None,
+            dragging: false,
+            scroll: 0,
+            started_once: false,
+            bell_until: None,
+            last_rect: Rect::NOTHING,
+            last_cells: (0, 0),
+            focus_next: false,
+        }
+    }
+}
+
+impl TerminalPanel {
+    pub fn is_open(&self) -> bool {
+        self.open
+    }
+
+    pub fn focused(&self) -> bool {
+        self.focused
+    }
+
+    /// Whether a shell was started at least once.
+    pub fn started(&self) -> bool {
+        self.started_once
+    }
+
+    pub fn session(&self) -> Option<&TerminalSession> {
+        self.session.as_ref()
+    }
+
+    pub fn status(&self) -> Option<TerminalStatus> {
+        self.session.as_ref().map(TerminalSession::status)
+    }
+
+    pub fn open(&mut self) {
+        self.open = true;
+        self.focus_next = true;
+    }
+
+    pub fn close(&mut self) {
+        self.open = false;
+        self.focused = false;
+    }
+
+    pub fn toggle(&mut self) {
+        self.open = !self.open;
+        self.focus_next = self.open;
+        if !self.open {
+            self.focused = false;
+        }
+    }
+
+    /// Updates the settings used by the next Restart; a running session is not killed.
+    pub fn set_config(&mut self, config: SessionConfig) {
+        self.config = config;
+    }
+
+    pub fn config(&self) -> &SessionConfig {
+        &self.config
+    }
+
+    pub fn clear(&mut self) {
+        if let Some(session) = &self.session {
+            session.clear();
+        }
+    }
+
+    pub fn kill(&mut self) {
+        if let Some(session) = &self.session {
+            session.kill();
+        }
+    }
+
+    pub fn restart(&mut self, repaint: Arc<dyn Fn() + Send + Sync>) {
+        if let Some(session) = self.session.take() {
+            session.kill();
+        }
+        self.start(repaint);
+    }
+
+    fn start(&mut self, repaint: Arc<dyn Fn() + Send + Sync>) {
+        self.started_once = true;
+        self.scroll = 0;
+        self.selection = None;
+        self.session = Some(TerminalSession::spawn(&self.config, repaint));
+    }
+
+    /// Draws the panel. `copy_config_enabled` controls the header action when MCP is off.
+    pub fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        theme: &TerminalTheme,
+        copy_config_enabled: bool,
+        repaint: Arc<dyn Fn() + Send + Sync>,
+    ) -> Vec<TerminalAction> {
+        let mut actions = Vec::new();
+        if !self.started_once {
+            self.start(repaint);
+        }
+        self.header(ui, copy_config_enabled, &mut actions);
+        ui.add_space(4.0);
+        self.canvas(ui, theme);
+        actions
+    }
+
+    fn header(
+        &mut self,
+        ui: &mut egui::Ui,
+        copy_config_enabled: bool,
+        actions: &mut Vec<TerminalAction>,
+    ) {
+        let status = self.status();
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            ui.label(egui::RichText::new(">_").monospace().strong());
+            ui.label(egui::RichText::new("Terminal").strong());
+            let (dot, label) = match &status {
+                Some(TerminalStatus::Starting) => (Color32::YELLOW, "starting"),
+                Some(TerminalStatus::Running { .. }) => {
+                    (Color32::from_rgb(0x4c, 0xaf, 0x50), "running")
+                }
+                Some(TerminalStatus::Exited { code }) => {
+                    (Color32::GRAY, if *code == 0 { "exited" } else { "failed" })
+                }
+                Some(TerminalStatus::Failed { .. }) => {
+                    (Color32::from_rgb(0xe0, 0x4f, 0x4f), "failed")
+                }
+                None => (Color32::GRAY, "not started"),
+            };
+            ui.painter()
+                .circle_filled(ui.cursor().left_center() + vec2(3.0, 0.0), 3.0, dot);
+            ui.add_space(8.0);
+            ui.label(egui::RichText::new(label).small().weak());
+            let summary = crate::shell::summary(&crate::shell::resolve_current(
+                &self.config.shell,
+                &self.config.cwd,
+            ));
+            ui.label(egui::RichText::new(summary).small().weak());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .add_enabled(copy_config_enabled, egui::Button::new("Copy MCP config"))
+                    .on_hover_text("Copy the client configuration; it contains the token")
+                    .clicked()
+                {
+                    actions.push(TerminalAction::CopyMcpConfig);
+                }
+                if ui.button("Clear").clicked() {
+                    actions.push(TerminalAction::Clear);
+                }
+                if ui.button("Restart").clicked() {
+                    actions.push(TerminalAction::Restart);
+                }
+                if ui
+                    .add(egui::Button::new("Kill").frame(false))
+                    .on_hover_text("Terminate the shell and its processes")
+                    .clicked()
+                {
+                    actions.push(TerminalAction::Kill);
+                }
+            });
+        });
+        if let Some(TerminalStatus::Exited { code }) = &status {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(format!("The shell exited with code {code}."))
+                        .small()
+                        .weak(),
+                );
+                if ui.small_button("Restart").clicked() {
+                    actions.push(TerminalAction::Restart);
+                }
+            });
+        }
+        if let Some(TerminalStatus::Failed { message }) = &status {
+            ui.horizontal_wrapped(|ui| {
+                ui.label(
+                    egui::RichText::new(format!("Could not start the shell: {message}"))
+                        .small()
+                        .color(Color32::from_rgb(0xe0, 0x4f, 0x4f)),
+                );
+                if ui.small_button("Retry").clicked() {
+                    actions.push(TerminalAction::Restart);
+                }
+                if ui.small_button("Terminal settings").clicked() {
+                    actions.push(TerminalAction::OpenSettings);
+                }
+            });
+        }
+    }
+
+    fn canvas(&mut self, ui: &mut egui::Ui, theme: &TerminalTheme) {
+        if self.session.is_none() {
+            ui.centered_and_justified(|ui| {
+                ui.label("The terminal did not start.");
+            });
+            return;
+        }
+        let font = theme.font();
+        let (char_width, row_height) = ui.ctx().fonts_mut(|fonts| {
+            (
+                fonts.glyph_width(&font, 'M').max(1.0),
+                fonts.row_height(&font).max(1.0),
+            )
+        });
+        let available = ui.available_size();
+        let desired = vec2(
+            available.x.max(char_width),
+            available.y.max(row_height).max(120.0),
+        );
+        let (rect, response) = ui.allocate_exact_size(desired, Sense::click_and_drag());
+        self.last_rect = rect;
+        let cols = (rect.width() / char_width).floor().max(1.0) as u16;
+        let rows = (rect.height() / row_height).floor().max(1.0) as u16;
+        if (cols, rows) != self.last_cells {
+            self.last_cells = (cols, rows);
+            if let Some(session) = &mut self.session {
+                session.resize(rows, cols);
+            }
+        }
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
+        if self.focus_next {
+            self.focus_next = false;
+            ui.memory_mut(|m| m.request_focus(response.id));
+        }
+        if response.clicked() || response.drag_started() {
+            self.focused = true;
+            ui.memory_mut(|m| m.request_focus(response.id));
+        }
+        if ui.memory(|m| m.has_focus(response.id)) {
+            self.focused = true;
+        } else if response.clicked_elsewhere() {
+            self.focused = false;
+        }
+        // Wheel scrollback.
+        let scroll_delta = ui.input(|i| i.smooth_scroll_delta.y);
+        if response.hovered() && scroll_delta != 0.0 {
+            let snapshot = session.snapshot(self.scroll);
+            let max = snapshot.scrollback_len;
+            let step = (scroll_delta / row_height).round() as i64;
+            self.scroll = (self.scroll as i64 - step).clamp(0, max as i64) as usize;
+        }
+        let snapshot = session.snapshot(self.scroll);
+        self.paint(ui, rect, &snapshot, theme, char_width, row_height);
+        if session.emulator_bell() {
+            self.bell_until = Some(Instant::now() + Duration::from_millis(120));
+        }
+        if self.bell_until.is_some_and(|until| Instant::now() < until) {
+            ui.painter().rect_stroke(
+                rect,
+                CornerRadius::ZERO,
+                Stroke::new(2.0, theme.foreground),
+                egui::StrokeKind::Inside,
+            );
+        }
+        self.interactions(ui, &response, &snapshot, theme);
+    }
+
+    fn paint(
+        &self,
+        ui: &egui::Ui,
+        rect: Rect,
+        snapshot: &ScreenSnapshot,
+        theme: &TerminalTheme,
+        char_width: f32,
+        row_height: f32,
+    ) {
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, CornerRadius::ZERO, theme.background);
+        let selection = self.selection.map(|s| {
+            let (a, b) = if (s.anchor.0, s.anchor.1) <= (s.cursor.0, s.cursor.1) {
+                (s.anchor, s.cursor)
+            } else {
+                (s.cursor, s.anchor)
+            };
+            (a, b)
+        });
+        for row in 0..snapshot.rows {
+            for col in 0..snapshot.cols {
+                let Some(cell) = snapshot.cell(row, col) else {
+                    continue;
+                };
+                if cell.text.is_empty() {
+                    continue;
+                }
+                if col > 0
+                    && snapshot
+                        .cell(row, col - 1)
+                        .is_some_and(|previous| previous.wide)
+                {
+                    continue;
+                }
+                let (mut fg, mut bg) = theme.cell_colors(cell);
+                if selection
+                    .is_some_and(|(a, b)| (row, col) >= (a.0, a.1) && (row, col) <= (b.0, b.1))
+                {
+                    bg = theme.selection;
+                }
+                let origin = pos2(
+                    rect.left() + f32::from(col) * char_width,
+                    rect.top() + f32::from(row) * row_height,
+                );
+                let width = if cell.wide {
+                    char_width * 2.0
+                } else {
+                    char_width
+                };
+                if bg != theme.background {
+                    painter.rect_filled(
+                        Rect::from_min_size(origin, vec2(width, row_height)),
+                        CornerRadius::ZERO,
+                        bg,
+                    );
+                }
+                let text = if cell.text == " " {
+                    " "
+                } else {
+                    cell.text.as_str()
+                };
+                if cell.bold {
+                    fg = fg.gamma_multiply(1.1);
+                }
+                painter.text(
+                    origin + vec2(0.0, row_height * 0.5),
+                    Align2::LEFT_CENTER,
+                    text,
+                    font_from(theme),
+                    fg,
+                );
+                if cell.underline {
+                    painter.line_segment(
+                        [
+                            origin + vec2(0.0, row_height - 1.0),
+                            origin + vec2(width, row_height - 1.0),
+                        ],
+                        Stroke::new(1.0, fg),
+                    );
+                }
+                if cell.italic {
+                    painter.text(
+                        origin + vec2(1.0, row_height * 0.5),
+                        Align2::LEFT_CENTER,
+                        text,
+                        font_from(theme),
+                        fg,
+                    );
+                }
+            }
+        }
+        if snapshot.cursor_visible {
+            let (row, col) = snapshot.cursor;
+            let origin = pos2(
+                rect.left() + f32::from(col) * char_width,
+                rect.top() + f32::from(row) * row_height,
+            );
+            let cursor = Rect::from_min_size(origin, vec2(char_width, row_height));
+            match snapshot.cursor_shape {
+                crate::screen::CursorShape::Block => {
+                    painter.rect_filled(
+                        cursor,
+                        CornerRadius::ZERO,
+                        theme.cursor.gamma_multiply(0.55),
+                    );
+                }
+                crate::screen::CursorShape::Underline => {
+                    painter.line_segment(
+                        [cursor.left_bottom(), cursor.right_bottom()],
+                        Stroke::new(2.0, theme.cursor),
+                    );
+                }
+                crate::screen::CursorShape::Bar => {
+                    painter.line_segment(
+                        [cursor.left_top(), cursor.left_bottom()],
+                        Stroke::new(2.0, theme.cursor),
+                    );
+                }
+            }
+        }
+    }
+
+    fn interactions(
+        &mut self,
+        ui: &mut egui::Ui,
+        response: &egui::Response,
+        snapshot: &ScreenSnapshot,
+        theme: &TerminalTheme,
+    ) {
+        let char_width = self.last_rect.width() / f32::from(snapshot.cols.max(1));
+        let row_height = self.last_rect.height() / f32::from(snapshot.rows.max(1));
+        let cell_at = |pos: egui::Pos2| {
+            let col = ((pos.x - self.last_rect.left()) / char_width)
+                .floor()
+                .clamp(0.0, f32::from(snapshot.cols.saturating_sub(1)))
+                as u16;
+            let row = ((pos.y - self.last_rect.top()) / row_height)
+                .floor()
+                .clamp(0.0, f32::from(snapshot.rows.saturating_sub(1)))
+                as u16;
+            (row, col)
+        };
+        if response.drag_started()
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            let cell = cell_at(pos);
+            self.selection = Some(Selection {
+                anchor: cell,
+                cursor: cell,
+            });
+            self.dragging = true;
+        }
+        if self.dragging
+            && let Some(pos) = response.interact_pointer_pos()
+            && let Some(selection) = &mut self.selection
+        {
+            selection.cursor = cell_at(pos);
+        }
+        if response.drag_stopped() {
+            self.dragging = false;
+        }
+        if response.double_clicked()
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            let (row, col) = cell_at(pos);
+            let mut start = col;
+            while start > 0
+                && snapshot
+                    .cell(row, start - 1)
+                    .is_some_and(|c| !c.text.trim().is_empty())
+            {
+                start -= 1;
+            }
+            let mut end = col;
+            while end + 1 < snapshot.cols
+                && snapshot
+                    .cell(row, end + 1)
+                    .is_some_and(|c| !c.text.trim().is_empty())
+            {
+                end += 1;
+            }
+            self.selection = Some(Selection {
+                anchor: (row, start),
+                cursor: (row, end + 1),
+            });
+        }
+
+        let mac = ui.ctx().os() == egui::os::OperatingSystem::Mac;
+        if self.focused {
+            let mut input = Vec::new();
+            let mut copy = false;
+            ui.input(|i| {
+                for event in &i.events {
+                    match event {
+                        egui::Event::Key {
+                            key,
+                            modifiers,
+                            pressed: true,
+                            ..
+                        } => {
+                            if *key == Key::Copy || (is_copy(*modifiers, mac) && *key == Key::C) {
+                                copy = true;
+                            } else if *key == Key::Paste
+                                || (is_paste(*modifiers, mac) && *key == Key::V)
+                            {
+                                // egui turns the platform paste into Event::Paste below.
+                            } else if let Some(bytes) =
+                                encode_key(*key, *modifiers, snapshot.application_cursor, mac)
+                            {
+                                input.extend(bytes);
+                            }
+                        }
+                        egui::Event::Text(text) => input.extend_from_slice(text.as_bytes()),
+                        egui::Event::Paste(text) => {
+                            input.extend(encode_paste(text, snapshot.bracketed_paste));
+                        }
+                        _ => {}
+                    }
+                }
+            });
+            if copy {
+                self.copy(ui.ctx(), snapshot);
+            }
+            if !input.is_empty() {
+                if let Some(session) = &self.session {
+                    session.write(&input);
+                }
+                self.scroll = 0;
+            }
+        }
+        let _ = theme;
+    }
+
+    fn copy(&self, ctx: &egui::Context, snapshot: &ScreenSnapshot) {
+        let Some(selection) = self.selection else {
+            return;
+        };
+        let text = snapshot.text_between(selection.anchor, selection.cursor);
+        if !text.is_empty() {
+            ctx.copy_text(text);
+        }
+    }
+}
+
+fn font_from(theme: &TerminalTheme) -> FontId {
+    theme.font()
+}
+
+impl TerminalSession {
+    pub(crate) fn emulator_bell(&self) -> bool {
+        self.take_bell()
+    }
+}
+
+impl std::fmt::Debug for TerminalPanel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TerminalPanel")
+            .field("open", &self.open)
+            .field("focused", &self.focused)
+            .field("started", &self.started_once)
+            .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn theme() -> TerminalTheme {
+        TerminalTheme {
+            background: Color32::BLACK,
+            foreground: Color32::WHITE,
+            cursor: Color32::WHITE,
+            selection: Color32::BLUE,
+            ansi: [Color32::BLACK; 16],
+            font_size: 13.0,
+        }
+    }
+
+    #[test]
+    fn colour_mapping_covers_ansi_256_and_truecolour() {
+        let theme = theme();
+        assert_eq!(theme.color(TermColor::Default), Color32::WHITE);
+        assert_eq!(theme.color(TermColor::Idx(1)), Color32::BLACK);
+        assert_eq!(theme.color(TermColor::Idx(16)), Color32::from_rgb(0, 0, 0));
+        assert_eq!(
+            theme.color(TermColor::Idx(231)),
+            Color32::from_rgb(255, 255, 255)
+        );
+        assert_eq!(theme.color(TermColor::Idx(232)), Color32::from_gray(8));
+        assert_eq!(
+            theme.color(TermColor::Rgb(1, 2, 3)),
+            Color32::from_rgb(1, 2, 3)
+        );
+    }
+
+    #[test]
+    fn reverse_swaps_the_cell_colours() {
+        let theme = theme();
+        let cell = CellView {
+            fg: TermColor::Idx(1),
+            bg: TermColor::Idx(2),
+            inverse: true,
+            ..CellView::default()
+        };
+        let (fg, bg) = theme.cell_colors(&cell);
+        assert_eq!(fg, theme.ansi[2]);
+        assert_eq!(bg, theme.ansi[1]);
+    }
+
+    #[test]
+    fn panel_starts_closed() {
+        let panel = TerminalPanel::default();
+        assert!(!panel.is_open());
+        assert!(!panel.started());
+    }
+}

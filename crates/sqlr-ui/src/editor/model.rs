@@ -318,6 +318,35 @@ impl EditorModel {
         applied.changes
     }
 
+    /// Applies several non-overlapping replacements as one undo group. The primary caret
+    /// lands after the last replacement in document order.
+    pub fn replace_ranges(&mut self, ranges: Vec<(Range<usize>, String)>, now: f64) -> Vec<Change> {
+        if ranges.is_empty() {
+            return Vec::new();
+        }
+        let before = self.carets.clone();
+        let inserted: Vec<usize> = ranges
+            .iter()
+            .map(|(_, text)| text.chars().count())
+            .collect();
+        let reps: Vec<(Range<usize>, &str)> = ranges
+            .iter()
+            .map(|(range, text)| (range.clone(), text.as_str()))
+            .collect();
+        let applied = self.replace_many(reps);
+        let end = applied
+            .new_starts
+            .iter()
+            .zip(inserted)
+            .map(|(start, len)| start + len)
+            .max()
+            .unwrap_or(0);
+        self.carets = vec![Caret::at(self.buffer.pos_of_char(end))];
+        self.goals.clear();
+        self.record(GroupKind::Other, before, applied.edits, now, None);
+        applied.changes
+    }
+
     /// Inserts `text` at every caret (replacing selections) as one undo group, without pairing.
     pub fn insert_at_carets(&mut self, text: &str, now: f64) -> Vec<Change> {
         self.run(GroupKind::Other, now, None, |b, c| {

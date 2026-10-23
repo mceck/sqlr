@@ -63,6 +63,7 @@ fn connect_echo(engine: &Engine) {
             values: Default::default(),
             profile: None,
             save_secrets: true,
+            agent_access: Default::default(),
         },
         Secrets::default(),
         ConnectionProfile::development(),

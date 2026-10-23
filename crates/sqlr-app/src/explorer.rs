@@ -87,6 +87,32 @@ impl SqlrApp {
     }
 
     /// Connects a failed connection again and shows its tree.
+    /// Changes one connection's agent exposure through the same store path as the dialog.
+    pub(crate) fn set_agent_access(&mut self, id: &str, access: sqlr_core::AgentAccess) {
+        let Some(cfg) = self.connection(id).cloned() else {
+            return;
+        };
+        if cfg.agent_access == access {
+            return;
+        }
+        if let Some(local) = self.connections.iter_mut().find(|local| local.id == id) {
+            local.agent_access = access;
+        }
+        self.store
+            .send(crate::store_worker::StoreOp::SetAgentAccess {
+                id: id.to_string(),
+                access,
+            });
+        if access == sqlr_core::AgentAccess::None {
+            self.engine.close_agent_sessions_for_connection(id);
+        }
+        self.notify(format!(
+            "Agent access for {}: {}",
+            self.connection(id).map_or(id, |c| c.name.as_str()),
+            access.as_str()
+        ));
+    }
+
     pub(crate) fn retry_connection(&mut self, conn: &str) {
         self.tree.set_expanded(conn, &NodePath::root(), true);
         if self.reconnect(conn) {
