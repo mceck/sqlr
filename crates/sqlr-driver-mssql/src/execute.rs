@@ -73,7 +73,12 @@ pub(crate) async fn execute(
         .iter()
         .filter_map(QueryItem::as_row)
         .filter(|row| row.result_index() == 0)
-        .map(|row| row.cells().map(|(_, data)| types::decode(data)).collect())
+        .map(|row| {
+            row.cells()
+                .zip(columns.iter())
+                .map(|((_, data), meta)| types::fit(types::decode(data), meta.kind))
+                .collect()
+        })
         .collect();
     Ok(Execution::Rows(Box::new(MsRows {
         columns,

@@ -29,7 +29,8 @@ pub(crate) async fn catalog(
     for row in rows.iter() {
         let name = row.get::<&str, _>(0).unwrap_or_default();
         if relations.last().is_none_or(|r| r.name != name) {
-            let kind = row.get::<&str, _>(1).unwrap_or_default();
+            // `sys.objects.type` is `char(2)`: a view comes back as `V `.
+            let kind = row.get::<&str, _>(1).unwrap_or_default().trim();
             relations.push(CatalogRelation {
                 name: name.to_string(),
                 kind: if kind == "V" {

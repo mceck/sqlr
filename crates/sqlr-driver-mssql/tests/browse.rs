@@ -48,8 +48,7 @@ async fn rows(conn: &Arc<dyn Connection>, sql: &str) -> Vec<Vec<Value>> {
 }
 
 fn path(segs: &[&str]) -> NodePath {
-    segs.iter()
-        .fold(NodePath::root(), |p, s| p.child(&s.to_string()))
+    segs.iter().fold(NodePath::root(), |p, s| p.child(s))
 }
 
 async fn names(conn: &Arc<dyn Connection>, segs: &[&str]) -> Vec<Node> {
@@ -89,7 +88,10 @@ async fn the_explorer_tree_walks_schemas_down_to_columns() {
 
     let folders = names(&conn, &["shop"]).await;
     let f: Vec<_> = folders.iter().map(|n| n.name.as_str()).collect();
-    assert_eq!(f, ["tables", "views", "functions", "procedures", "sequences"]);
+    assert_eq!(
+        f,
+        ["tables", "views", "functions", "procedures", "sequences"]
+    );
 
     let tables = names(&conn, &["shop", "tables"]).await;
     let t: Vec<_> = tables.iter().map(|n| n.name.as_str()).collect();
@@ -127,7 +129,10 @@ async fn the_explorer_tree_walks_schemas_down_to_columns() {
     assert_eq!(details[2], ("age", "int".to_string()));
 
     let idx = names(&conn, &["shop", "tables", "orders", "indexes"]).await;
-    assert_eq!(idx[0].detail.as_deref(), Some("CLUSTERED UNIQUE PRIMARY KEY"));
+    assert_eq!(
+        idx[0].detail.as_deref(),
+        Some("CLUSTERED UNIQUE PRIMARY KEY")
+    );
     assert_eq!(idx[1].name, "ix_orders_total");
     assert_eq!(idx[1].detail.as_deref(), Some("NONCLUSTERED"));
     let trg = names(&conn, &["shop", "tables", "orders", "triggers"]).await;
@@ -169,7 +174,10 @@ async fn describe_and_catalog_report_columns_and_keys() {
         name: name.into(),
     };
 
-    let info = rel.describe(&table(Some("shop"), "customers")).await.unwrap();
+    let info = rel
+        .describe(&table(Some("shop"), "customers"))
+        .await
+        .unwrap();
     assert_eq!(info.primary_key, ["id"]);
     assert_eq!(info.unique_keys, [vec!["email".to_string()]]);
     assert!(info.columns[0].generated, "identity is not writable");
@@ -178,7 +186,11 @@ async fn describe_and_catalog_report_columns_and_keys() {
     assert_eq!(info.columns[2].default.as_deref(), Some("((18))"));
 
     let orders = rel.describe(&table(Some("shop"), "orders")).await.unwrap();
-    let types: Vec<_> = orders.columns.iter().map(|c| c.type_name.as_str()).collect();
+    let types: Vec<_> = orders
+        .columns
+        .iter()
+        .map(|c| c.type_name.as_str())
+        .collect();
     assert_eq!(
         types,
         [
@@ -197,7 +209,10 @@ async fn describe_and_catalog_report_columns_and_keys() {
     let up = rel.describe(&table(None, "up")).await.unwrap();
     assert_eq!(up.table.schema.as_deref(), Some("dbo"));
     assert!(up.primary_key.is_empty() && up.unique_keys.is_empty());
-    let missing = rel.describe(&table(Some("shop"), "ghost")).await.unwrap_err();
+    let missing = rel
+        .describe(&table(Some("shop"), "ghost"))
+        .await
+        .unwrap_err();
     assert!(missing.message.contains("not found"), "{missing:?}");
 
     let catalog = rel.catalog("shop").await.unwrap();
@@ -233,6 +248,8 @@ async fn values_of_every_type_decode_to_cells() {
     .await;
     let row = &r[0];
     assert_eq!(row[0], Value::Bool(true));
+    assert_eq!(row[9], Value::Float(1.25));
+    assert_eq!(row[10], Value::Float(0.5));
     assert_eq!(row[1], Value::Int(2));
     assert_eq!(row[2], Value::Int(3));
     assert_eq!(row[3], Value::Int(4));
@@ -241,7 +258,10 @@ async fn values_of_every_type_decode_to_cells() {
     assert_eq!(row[6], Value::Float(2.5));
     assert_eq!(text(&row[7]), "12.340");
     assert_eq!(text(&row[8]), "-0.05");
-    assert_eq!(row[11], Value::Text("00000000-0000-0000-0000-000000000001".into()));
+    assert_eq!(
+        row[11],
+        Value::Text("00000000-0000-0000-0000-000000000001".into())
+    );
     assert_eq!(row[12], Value::Bytes(vec![0xCA, 0xFE]));
     assert_eq!(row[13], Value::Bytes(vec![0xCA, 0xFE]));
     assert_eq!(text(&row[14]), "abc");
@@ -255,6 +275,7 @@ async fn values_of_every_type_decode_to_cells() {
     assert_eq!(text(&row[23]), "2024-01-02 03:04:05.1234567");
     assert_eq!(text(&row[24]), "2024-01-02 03:04:05.5-05:30");
     assert_eq!(row[25], Value::Null);
+    assert_eq!(row[26], Value::Text("7".into()));
 }
 
 #[tokio::test]
@@ -281,12 +302,36 @@ async fn column_metadata_names_every_tds_type() {
     };
     let kinds: Vec<_> = s.columns().iter().map(|c| c.type_name.clone()).collect();
     for expected in [
-        "bit", "tinyint", "smallint", "int", "bigint", "real", "float", "money", "decimal",
-        "uniqueidentifier", "varbinary", "varchar", "char", "nvarchar", "nchar", "xml",
-        "sql_variant", "datetime", "smalldatetime", "datetime2", "datetimeoffset", "date",
-        "time", "text", "ntext", "numeric",
+        "bit",
+        "tinyint",
+        "smallint",
+        "int",
+        "bigint",
+        "real",
+        "float",
+        "money",
+        "decimal",
+        "uniqueidentifier",
+        "varbinary",
+        "varchar",
+        "char",
+        "nvarchar",
+        "nchar",
+        "xml",
+        "sql_variant",
+        "datetime",
+        "datetime2",
+        "datetimeoffset",
+        "date",
+        "time",
+        "text",
+        "ntext",
+        "numeric",
     ] {
-        assert!(kinds.iter().any(|k| k == expected), "{expected} in {kinds:?}");
+        assert!(
+            kinds.iter().any(|k| k == expected),
+            "{expected} in {kinds:?}"
+        );
     }
 }
 

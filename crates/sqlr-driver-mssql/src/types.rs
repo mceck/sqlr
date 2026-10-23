@@ -20,7 +20,9 @@ pub(crate) fn column_meta(column: &Column) -> ColumnMeta {
         ColumnType::Float8 | ColumnType::Floatn => {
             ("float", ColumnKind::Float, DisplayHint::Number)
         }
-        ColumnType::Money | ColumnType::Money4 => ("money", ColumnKind::Text, DisplayHint::Decimal),
+        // TDS delivers money as a float.
+        ColumnType::Money => ("money", ColumnKind::Float, DisplayHint::Number),
+        ColumnType::Money4 => ("smallmoney", ColumnKind::Float, DisplayHint::Number),
         ColumnType::Decimaln => ("decimal", ColumnKind::Text, DisplayHint::Decimal),
         ColumnType::Numericn => ("numeric", ColumnKind::Text, DisplayHint::Decimal),
         ColumnType::Guid => ("uniqueidentifier", ColumnKind::Text, DisplayHint::Uuid),
@@ -70,6 +72,21 @@ pub(crate) fn decode(data: &ColumnData<'_>) -> Value {
         ColumnData::DateTime2(Some(v)) => Value::Text(datetime2_text(*v)),
         ColumnData::DateTimeOffset(Some(v)) => Value::Text(datetimeoffset_text(*v)),
         _ => Value::Null,
+    }
+}
+
+/// A value in the column kind its metadata promised: a `sql_variant` column is text, but
+/// carries whatever type each row holds.
+pub(crate) fn fit(value: Value, kind: ColumnKind) -> Value {
+    if kind != ColumnKind::Text {
+        return value;
+    }
+    match value {
+        Value::Int(v) => Value::Text(v.to_string()),
+        Value::Float(v) => Value::Text(v.to_string()),
+        Value::Bool(v) => Value::Text(v.to_string()),
+        Value::Bytes(v) => Value::Text(sqlr_core::hex_bytes(&v)),
+        other => other,
     }
 }
 
@@ -131,7 +148,8 @@ fn datetime_text(datetime: DateTime) -> String {
     let (y, m, d) = date_from_1900(i64::from(datetime.days()));
     let fragments = u64::from(datetime.seconds_fragments());
     let seconds = fragments / 300;
-    let millis = (fragments % 300) * 1000 / 300;
+    // Ticks are 1/300 s; SQL Server shows them rounded to the millisecond.
+    let millis = ((fragments % 300) * 1000 + 150) / 300;
     format!(
         "{y:04}-{m:02}-{d:02} {}",
         clock_text(seconds, millis as u32, 3)
@@ -140,7 +158,8 @@ fn datetime_text(datetime: DateTime) -> String {
 
 fn smalldatetime_text(datetime: SmallDateTime) -> String {
     let (y, m, d) = date_from_1900(i64::from(datetime.days()));
-    let seconds = u64::from(datetime.seconds_fragments()) / 300;
+    // Despite its name, the field counts minutes since midnight here.
+    let seconds = u64::from(datetime.seconds_fragments()) * 60;
     format!("{y:04}-{m:02}-{d:02} {}", clock_text(seconds, 0, 0))
 }
 
@@ -173,11 +192,23 @@ fn datetime2_text(datetime: DateTime2) -> String {
 }
 
 fn datetimeoffset_text(datetime: DateTimeOffset) -> String {
-    let (y, m, d) = date_parts(datetime.datetime2().date().days());
-    let time = time_text(datetime.datetime2().time());
-    let offset = datetime.offset();
+    let offset = i64::from(datetime.offset());
+    let inner = datetime.datetime2();
+    // The stored value is UTC; the text shows the local clock of the offset.
+    let scale = inner.time().scale().min(9) as u32;
+    let per_second = 10i64.pow(scale);
+    let per_day = 86_400 * per_second;
+    let local = inner.time().increments() as i64 + offset * 60 * per_second;
+    let days = i64::from(inner.date().days()) + local.div_euclid(per_day);
+    let local = local.rem_euclid(per_day) as u64;
+    let (y, m, d) = date_parts(days as u32);
+    let time = clock_text(
+        local / per_second as u64,
+        (local % per_second as u64) as u32,
+        scale,
+    );
     let sign = if offset < 0 { '-' } else { '+' };
-    let offset = i32::from(offset).abs();
+    let offset = offset.abs();
     format!(
         "{y:04}-{m:02}-{d:02} {time}{sign}{:02}:{:02}",
         offset / 60,
