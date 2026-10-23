@@ -303,7 +303,7 @@ const SQLR: Table = &[
     (A::PreviousTab, &["Ctrl+Shift+Tab"]),
     (A::ApplyObject, &["Cmd+S"]),
     (A::OpenObject, &["Cmd+P"]),
-    (A::Commands, &["Cmd+K"]),
+    (A::Commands, &["Cmd+Shift+P"]),
     (A::Settings, &["Cmd+Comma"]),
     (A::ShowOperations, &["Cmd+Shift+O"]),
     (A::FormatSql, &["Cmd+Alt+L"]),
@@ -495,10 +495,10 @@ mod tests {
     fn keymap_conflicts_and_platform_mapping() {
         let mut keymap = Keymap::preset("sqlr").unwrap();
         // Two global actions on one chord conflict.
-        keymap.bind(ActionId::Commit, Chord::parse("Cmd+K").unwrap());
+        keymap.bind(ActionId::Commit, Chord::parse("Cmd+Shift+P").unwrap());
         let found = keymap.conflicts(true);
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].0, Chord::parse("Cmd+K").unwrap());
+        assert_eq!(found[0].0, Chord::parse("Cmd+Shift+P").unwrap());
         assert_eq!(found[0].1, [ActionId::Commands, ActionId::Commit]);
 
         // An editor action and a global one on one chord conflict too: the global one wins

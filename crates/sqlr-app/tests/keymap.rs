@@ -35,7 +35,7 @@ fn remap_run_statement_works() {
 #[test]
 fn keymap_editor_detects_conflict() {
     let mut map = Keymap::preset("sqlr").unwrap();
-    map.bind(ActionId::Commit, Chord::parse("Cmd+K").unwrap());
+    map.bind(ActionId::Commit, Chord::parse("Cmd+Shift+P").unwrap());
     let mut state = sqlr_ui::keymap_editor::KeymapEditor::default();
     let mut preset = "sqlr".to_string();
     let mut h = egui_kittest::Harness::new_ui(|ui| {
