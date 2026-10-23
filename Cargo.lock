@@ -6754,7 +6754,9 @@ dependencies = [
  "serde_json",
  "sqlr-core",
  "sqlr-testkit",
+ "tempfile",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
