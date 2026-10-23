@@ -49,6 +49,10 @@ impl Dialect for OracleDialect {
         true
     }
 
+    fn bool_literal(&self, value: bool) -> &'static str {
+        if value { "1" } else { "0" }
+    }
+
     /// `HEXTORAW('…')` is a RAW literal whatever the session's NLS settings are.
     fn bytes_literal(&self, bytes: &[u8]) -> String {
         format!("HEXTORAW('{}')", &hex_bytes(bytes)[2..])
@@ -82,6 +86,13 @@ mod tests {
             OracleDialect.select_all(&n, None).as_deref(),
             Some("SELECT * FROM \"SCOTT\".\"EMP\"")
         );
+    }
+
+    #[test]
+    fn booleans_are_numbers() {
+        // Oracle before 23ai has no TRUE/FALSE literals.
+        assert_eq!(OracleDialect.bool_literal(true), "1");
+        assert_eq!(OracleDialect.bool_literal(false), "0");
     }
 
     #[test]

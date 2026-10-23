@@ -67,6 +67,24 @@ impl Dialect for MsDialect {
         wrap_subquery(&self.syntax(), sql, &keys)
     }
 
+    /// `N'…'` keeps characters outside the database's code page.
+    fn string_literal(&self, text: &str) -> String {
+        format!("N'{}'", text.replace('\'', "''"))
+    }
+
+    fn bool_literal(&self, value: bool) -> &'static str {
+        if value { "1" } else { "0" }
+    }
+
+    /// `sp_MSforeachtable` reaches every table; `WITH CHECK` makes the re-enabled
+    /// constraints trusted again.
+    fn constraints_toggle_sql(&self) -> Option<(Vec<String>, Vec<String>)> {
+        Some((
+            vec!["EXEC sp_MSforeachtable 'ALTER TABLE ? NOCHECK CONSTRAINT ALL'".into()],
+            vec!["EXEC sp_MSforeachtable 'ALTER TABLE ? WITH CHECK CHECK CONSTRAINT ALL'".into()],
+        ))
+    }
+
     fn bytes_literal(&self, bytes: &[u8]) -> String {
         format!("0x{}", &sqlr_core::hex_bytes(bytes)[2..])
     }
@@ -102,6 +120,27 @@ mod tests {
         assert_eq!(
             MsDialect.select_all(&node(&["dbo"], NodeKind::Schema), None),
             None
+        );
+    }
+
+    #[test]
+    fn text_literals_are_unicode_and_booleans_are_bits() {
+        assert_eq!(MsDialect.string_literal("it's"), "N'it''s'");
+        assert_eq!(MsDialect.string_literal("città"), "N'città'");
+        assert_eq!(MsDialect.bool_literal(true), "1");
+        assert_eq!(MsDialect.bool_literal(false), "0");
+    }
+
+    #[test]
+    fn constraints_are_toggled_on_every_table() {
+        let (off, on) = MsDialect.constraints_toggle_sql().unwrap();
+        assert_eq!(
+            off,
+            ["EXEC sp_MSforeachtable 'ALTER TABLE ? NOCHECK CONSTRAINT ALL'"]
+        );
+        assert_eq!(
+            on,
+            ["EXEC sp_MSforeachtable 'ALTER TABLE ? WITH CHECK CHECK CONSTRAINT ALL'"]
         );
     }
 

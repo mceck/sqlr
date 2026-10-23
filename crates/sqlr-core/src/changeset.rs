@@ -52,7 +52,7 @@ pub struct DmlStatement {
 pub fn sql_literal(dialect: &dyn Dialect, value: &Value) -> String {
     match value {
         Value::Null => "NULL".into(),
-        Value::Bool(b) => if *b { "TRUE" } else { "FALSE" }.into(),
+        Value::Bool(b) => dialect.bool_literal(*b).into(),
         Value::Int(i) => i.to_string(),
         Value::Float(f) if f.is_finite() => f.to_string(),
         Value::Float(f) => dialect.string_literal(if f.is_nan() {

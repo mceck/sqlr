@@ -272,6 +272,10 @@ pub trait Dialect: Send + Sync {
     fn string_literal(&self, text: &str) -> String {
         format!("'{}'", text.replace('\'', "''"))
     }
+    /// `value` as a boolean literal (servers without `TRUE`/`FALSE` write a bit).
+    fn bool_literal(&self, value: bool) -> &'static str {
+        if value { "TRUE" } else { "FALSE" }
+    }
     /// `bytes` as a binary literal.
     fn bytes_literal(&self, bytes: &[u8]) -> String {
         let hex = crate::chunk::hex_bytes(bytes);

@@ -448,7 +448,16 @@ impl<'d> Encoder<'d> {
     fn sql_literal(&self, cell: Cell<'_>, out: &mut String) {
         match cell {
             Cell::Null => out.push_str("NULL"),
-            Cell::Bool(b) => out.push_str(if b { "TRUE" } else { "FALSE" }),
+            Cell::Bool(b) => out.push_str(match self.dialect {
+                Some(d) => d.bool_literal(b),
+                None => {
+                    if b {
+                        "TRUE"
+                    } else {
+                        "FALSE"
+                    }
+                }
+            }),
             Cell::Int(v) => out.push_str(&v.to_string()),
             Cell::Float(f) if f.is_finite() => out.push_str(&f.to_string()),
             Cell::Float(f) => {
@@ -928,6 +937,27 @@ mod tests {
         fn bytes_literal(&self, bytes: &[u8]) -> String {
             format!("{}::bytea", bytes.len())
         }
+        fn bool_literal(&self, value: bool) -> &'static str {
+            if value { "1" } else { "0" }
+        }
+    }
+
+    #[test]
+    fn sql_insert_writes_booleans_the_way_the_dialect_does() {
+        let cols = [ColumnMeta::new(
+            "ok",
+            "bool",
+            ColumnKind::Bool,
+            DisplayHint::Plain,
+        )];
+        let mut encoder = Encoder::new(
+            TextFormat::SqlInsert { table: "t".into() },
+            &cols,
+            Some(&ELiterals),
+        );
+        let mut out = String::new();
+        encoder.row(&[Cell::Bool(true)], &mut out);
+        assert_eq!(out, "INSERT INTO [t] ([ok]) VALUES (1);\n");
     }
 
     #[test]
