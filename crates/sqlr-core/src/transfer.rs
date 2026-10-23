@@ -266,6 +266,8 @@ fn classify_type(dialect: &str, type_name: &str) -> TypeClass {
         return TypeClass::Array;
     }
     let params = type_params(&lower);
+    // MySQL's unsigned integers reach past their signed twin's range; `zerofill` implies it.
+    let unsigned = lower.contains(" unsigned") || lower.contains(" zerofill");
     // The name without parameters or a trailing `unsigned`/`zerofill`.
     let base = lower
         .split('(')
@@ -284,8 +286,13 @@ fn classify_type(dialect: &str, type_name: &str) -> TypeClass {
         .unwrap_or("");
     let with_tz = lower.contains("with time zone") || tail.contains("with time zone");
     match base {
+        "smallint" if unsigned => TypeClass::Int4,
         "smallint" | "int2" | "smallserial" | "serial2" => TypeClass::Int2,
+        "int" | "integer" | "int4" | "serial" | "serial4" if unsigned => TypeClass::Int8,
         "int" | "integer" | "int4" | "serial" | "serial4" | "mediumint" => TypeClass::Int4,
+        "bigint" | "int8" | "bigserial" | "serial8" if unsigned => {
+            TypeClass::Numeric(Some((20, 0)))
+        }
         "bigint" | "int8" | "bigserial" | "serial8" => TypeClass::Int8,
         "tinyint" if params.first() == Some(&1) => TypeClass::Bool,
         "tinyint" => TypeClass::Int2,
@@ -317,7 +324,6 @@ fn classify_type(dialect: &str, type_name: &str) -> TypeClass {
         "uuid" => TypeClass::Uuid,
         "json" | "jsonb" => TypeClass::Json,
         "enum" | "set" => TypeClass::Enum,
-        "integer unsigned" => TypeClass::Int8,
         _ => TypeClass::Unknown,
     }
 }
@@ -471,6 +477,23 @@ mod tests {
     }
 
     #[test]
+    fn unsigned_mysql_integers_map_to_a_wide_enough_type() {
+        // The signed twin is too narrow: `INT UNSIGNED` reaches 4_294_967_295 and
+        // `BIGINT UNSIGNED` 18_446_744_073_709_551_615.
+        assert_eq!(map("mysql", "tinyint unsigned", "postgres"), "smallint");
+        assert_eq!(map("mysql", "smallint unsigned", "postgres"), "integer");
+        assert_eq!(map("mysql", "mediumint unsigned", "postgres"), "integer");
+        assert_eq!(map("mysql", "int unsigned", "postgres"), "bigint");
+        assert_eq!(map("mysql", "integer unsigned", "postgres"), "bigint");
+        assert_eq!(map("mysql", "bigint unsigned", "postgres"), "numeric(20,0)");
+        assert_eq!(map("mysql", "int unsigned", "sqlite"), "integer");
+        let (ty, warning) = map_type("mysql", "bigint unsigned", "sqlite");
+        assert_eq!(ty, "text");
+        assert!(warning.unwrap().contains("exact"));
+        assert_eq!(map("mysql", "int unsigned", "mysql"), "int unsigned");
+    }
+
+    #[test]
     fn map_type_table() {
         // PostgreSQL to MySQL.
         assert_eq!(map("postgres", "integer", "mysql"), "int");
@@ -492,7 +515,12 @@ mod tests {
         assert_eq!(map("postgres", "jsonb", "mysql"), "json");
         assert_eq!(map("postgres", "integer[]", "mysql"), "json");
         // MySQL to SQLite.
-        assert_eq!(map("mysql", "bigint unsigned", "sqlite"), "integer");
+        let (ty, warning) = map_type("mysql", "bigint unsigned", "sqlite");
+        assert_eq!(
+            ty, "text",
+            "an unsigned 64-bit value does not fit SQLite's INTEGER"
+        );
+        assert!(warning.unwrap().contains("exact"));
         assert_eq!(map("mysql", "decimal(10,2)", "sqlite"), "numeric");
         // SQLite keeps numbers as 64-bit floats: wide or unspecified decimals stay text.
         let (ty, warning) = map_type("mysql", "decimal(30,10)", "sqlite");
