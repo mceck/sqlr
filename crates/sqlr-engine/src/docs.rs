@@ -202,11 +202,14 @@ fn first_line(text: &str) -> String {
     }
 }
 
-/// Statements that may carry a password (`createUser`, `_security/user`) are left out of
-/// the history.
-fn may_hold_secret(text: &str) -> bool {
+/// Statements that may carry a password (`createUser`, `_security/user`, SQL password DDL)
+/// are left out of the history.
+pub(crate) fn may_hold_secret(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
-    lower.contains("pwd") || lower.contains("password") || lower.contains("api_key")
+    lower.contains("pwd")
+        || lower.contains("password")
+        || lower.contains("api_key")
+        || lower.contains("identified by")
 }
 
 fn written_doc(

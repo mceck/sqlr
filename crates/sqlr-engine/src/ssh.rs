@@ -97,20 +97,29 @@ enum KeyCheck {
     Known,
     New,
     Changed,
+    /// No entry, and the connection does not allow learning one during authentication.
+    Unknown,
 }
 
 impl KnownHosts {
-    fn check(&self, host: &str, port: u16, key: &PublicKey) -> Result<KeyCheck, String> {
+    fn check(
+        &self,
+        host: &str,
+        port: u16,
+        key: &PublicKey,
+        trust_new: bool,
+    ) -> Result<KeyCheck, String> {
         match &self.path {
             None => {
                 let mut memory = self.memory.lock();
                 match memory.get(&(host.to_string(), port)) {
                     Some(known) if known == key => Ok(KeyCheck::Known),
                     Some(_) => Ok(KeyCheck::Changed),
-                    None => {
+                    None if trust_new => {
                         memory.insert((host.to_string(), port), key.clone());
                         Ok(KeyCheck::New)
                     }
+                    None => Ok(KeyCheck::Unknown),
                 }
             }
             Some(path) => {
@@ -128,6 +137,9 @@ impl KnownHosts {
                 if known {
                     return Ok(KeyCheck::Known);
                 }
+                if !trust_new {
+                    return Ok(KeyCheck::Unknown);
+                }
                 russh::keys::known_hosts::learn_known_hosts_path(host, port, key, path)
                     .map_err(|e| e.to_string())?;
                 Ok(KeyCheck::New)
@@ -141,6 +153,8 @@ struct Client {
     host: String,
     port: u16,
     known: KnownHosts,
+    /// Learn an unknown host key instead of refusing it (an explicit per-connection opt-in).
+    trust_new: bool,
     /// What the host key check found, for the error or the report.
     seen: Arc<Mutex<Option<Result<HostKeyInfo, String>>>>,
 }
@@ -164,10 +178,19 @@ impl client::Handler for Client {
             fingerprint: key.fingerprint(HashAlg::Sha256).to_string(),
             new,
         };
-        let (seen, ok) = match self.known.check(&self.host, self.port, key) {
+        let (seen, ok) = match self.known.check(&self.host, self.port, key, self.trust_new) {
             Ok(KeyCheck::Known) => (Ok(info(false)), true),
             Ok(KeyCheck::New) => (Ok(info(true)), true),
             Ok(KeyCheck::Changed) => (Err(format!("Host key changed for {}", self.host)), false),
+            Ok(KeyCheck::Unknown) => (
+                Err(format!(
+                    "Host key for {} is not known ({}). Verify it and add it to known_hosts, \
+                     or enable \"Trust new host keys\" for this connection",
+                    self.host,
+                    key.fingerprint(HashAlg::Sha256)
+                )),
+                false,
+            ),
             Err(e) => (
                 Err(format!(
                     "Could not check the host key of {}: {e}",
@@ -250,6 +273,13 @@ pub(crate) fn with_ssh_fields(mut manifest: DriverManifest) -> DriverManifest {
             None,
             true,
         ),
+        field(
+            "ssh_trust_new_host_keys",
+            "Trust new host keys",
+            FieldType::Bool,
+            Some("false"),
+            false,
+        ),
         field("ssh_jump_host", "Jump host", FieldType::Text, None, false),
         field(
             "ssh_jump_port",
@@ -319,6 +349,7 @@ impl Shared {
                     .and_then(|p| p.parse().ok())
                     .or(manifest.default_port)
                     .ok_or_else(|| config_error("The connection has no port to tunnel to"))?;
+                let trust_new = cfg.value(manifest, "ssh_trust_new_host_keys") == Some("true");
                 let tunnel = Arc::new(
                     open_tunnel(
                         cfg,
@@ -326,6 +357,7 @@ impl Shared {
                         target_host,
                         target_port,
                         self.ssh.known_hosts(),
+                        trust_new,
                     )
                     .await?,
                 );
@@ -352,6 +384,7 @@ async fn open_tunnel(
     target_host: String,
     target_port: u16,
     known: KnownHosts,
+    trust_new: bool,
 ) -> Result<Tunnel, DriverError> {
     let ssh = Hop {
         host: value(cfg, "ssh_host")
@@ -389,12 +422,12 @@ async fn open_tunnel(
 
     let (jump_handle, handle, host_key) = match jump {
         None => {
-            let (mut handle, key) = connect_hop(&config, &ssh, &known, None).await?;
+            let (mut handle, key) = connect_hop(&config, &ssh, &known, None, trust_new).await?;
             authenticate(&mut handle, &ssh, &auth).await?;
             (None, handle, key)
         }
         Some(jump) => {
-            let (mut jump_handle, _) = connect_hop(&config, &jump, &known, None).await?;
+            let (mut jump_handle, _) = connect_hop(&config, &jump, &known, None, trust_new).await?;
             authenticate(&mut jump_handle, &jump, &auth).await?;
             let channel = jump_handle
                 .channel_open_direct_tcpip(ssh.host.clone(), u32::from(ssh.port), "127.0.0.1", 0)
@@ -408,8 +441,14 @@ async fn open_tunnel(
                         ),
                     )
                 })?;
-            let (mut handle, key) =
-                connect_hop(&config, &ssh, &known, Some(channel.into_stream())).await?;
+            let (mut handle, key) = connect_hop(
+                &config,
+                &ssh,
+                &known,
+                Some(channel.into_stream()),
+                trust_new,
+            )
+            .await?;
             authenticate(&mut handle, &ssh, &auth).await?;
             (Some(jump_handle), handle, key)
         }
@@ -514,12 +553,14 @@ async fn connect_hop(
     hop: &Hop,
     known: &KnownHosts,
     stream: Option<russh::ChannelStream<client::Msg>>,
+    trust_new: bool,
 ) -> Result<(Handle<Client>, HostKeyInfo), DriverError> {
     let seen = Arc::new(Mutex::new(None));
     let client = Client {
         host: hop.host.clone(),
         port: hop.port,
         known: known.clone(),
+        trust_new,
         seen: seen.clone(),
     };
     let connected = match stream {

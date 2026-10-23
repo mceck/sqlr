@@ -85,6 +85,11 @@ pub(crate) fn history_entry(
     started_at_ms: i64,
     r: &QueryResult,
 ) -> Option<HistoryEntry> {
+    // A query that names or sets a secret must not land in the plaintext history file, even
+    // though the connection's own credentials live in the OS keychain.
+    if crate::docs::may_hold_secret(&r.sql) {
+        return None;
+    }
     let outcome = match &r.status {
         QueryStatus::Running => return None,
         QueryStatus::Ready { .. } => match r.affected {
@@ -336,6 +341,10 @@ impl Shared {
     /// Inserts the snippet, or replaces the one with the same id, in memory at once;
     /// the write to `sqlr.db` follows in the background.
     pub(crate) fn save_snippet(self: &Arc<Self>, s: Snippet) {
+        if crate::docs::may_hold_secret(&s.sql) {
+            self.notice("A snippet that may contain a password was not saved".into());
+            return;
+        }
         {
             let mut st = self.library.state.lock();
             let list = Arc::make_mut(&mut st.snippets);
@@ -440,5 +449,28 @@ mod tests {
         );
         assert_eq!(e.sql.len(), MAX_HISTORY_SQL_BYTES - 1);
         assert!(r.sql.starts_with(&e.sql));
+    }
+
+    #[test]
+    fn password_bearing_sql_is_not_recorded() {
+        for sql in [
+            "CREATE USER app IDENTIFIED BY 'S3cret'",
+            "ALTER ROLE app WITH PASSWORD 'S3cret'",
+            "CREATE LOGIN app WITH PASSWORD = 'S3cret'",
+            "SELECT api_key FROM settings",
+        ] {
+            let r = QueryResult {
+                sql: sql.into(),
+                database: None,
+                status: QueryStatus::Ready { more: false },
+                rows: RowBuffer::default(),
+                affected: Some(0),
+                elapsed: Duration::from_millis(1),
+                page_size: 100,
+                cut_short: false,
+                messages: Vec::new(),
+            };
+            assert!(history_entry("c".into(), 1, &r).is_none(), "recorded {sql}");
+        }
     }
 }

@@ -112,6 +112,140 @@ impl SqlSyntax {
         self.classify_tokens(&toks)
     }
 
+    /// Classifies `sql` as a whole script rather than by its first statement.
+    ///
+    /// The UI usually splits a script before running it, but some paths (transfer sources,
+    /// export re-runs) receive a raw string, and some dialects allow several statements in
+    /// one batch without a `;` separator (T-SQL). This method classifies every
+    /// semicolon-separated statement and then looks for a top-level write keyword that
+    /// would start another statement. It is deliberately conservative: when in doubt it
+    /// returns a modifying class, so read-only mode and confirmations do not miss a
+    /// statement hidden after a harmless first one.
+    pub fn classify_script(&self, sql: &str) -> StatementClass {
+        let ranges = self.split(sql, LexState::Normal);
+        let mut first_word = None;
+        for range in &ranges {
+            let text = &sql[range.clone()];
+            let class = self.classify(text);
+            if first_word.is_none() {
+                first_word = self.first_word(text);
+            }
+            if class.modifies() {
+                return class;
+            }
+        }
+        // `EXPLAIN DELETE …` only plans the statement (without ANALYZE); its embedded
+        // DELETE must not turn a plan into a write. `EXPLAIN ANALYZE` is already a write
+        // above when its wrapped statement modifies.
+        if first_word.is_some_and(|word| word.eq_ignore_ascii_case("EXPLAIN")) {
+            return StatementClass::Read;
+        }
+        self.batch_write(sql).unwrap_or(StatementClass::Read)
+    }
+
+    /// The first word token in `text`, skipping comments.
+    fn first_word<'a>(&self, text: &'a str) -> Option<&'a str> {
+        let mut tokens = Vec::new();
+        self.lex(text, LexState::Normal, &mut tokens);
+        tokens
+            .iter()
+            .find(|t| {
+                matches!(
+                    t.kind,
+                    TokenKind::Keyword | TokenKind::Ident | TokenKind::Function
+                )
+            })
+            .map(|t| &text[t.start..t.end])
+    }
+
+    /// A write keyword at parenthesis depth zero in a batch that has no semicolon before
+    /// it. T-SQL allows `SELECT 1\nDELETE FROM t` and PL/SQL blocks such as
+    /// `BEGIN DELETE FROM t; END;`; both must count as writes even though their first
+    /// word is harmless. Returns the class to report, or `None` for a read-only batch.
+    fn batch_write(&self, sql: &str) -> Option<StatementClass> {
+        use StatementClass::*;
+        let mut tokens = Vec::new();
+        self.lex(sql, LexState::Normal, &mut tokens);
+        let mut depth = 0u32;
+        let mut seen_word = false;
+        let mut last_words: Vec<String> = Vec::new();
+        for (i, t) in tokens.iter().enumerate() {
+            let text = &sql[t.start..t.end];
+            if t.kind == TokenKind::Comment {
+                continue;
+            }
+            if t.kind == TokenKind::Semicolon {
+                // A new statement starts here; `FOR UPDATE` in the previous SELECT must
+                // not suppress an UPDATE in this one, and a later `WITH` is a new
+                // statement whose own classification already checked it.
+                last_words.clear();
+                seen_word = false;
+                continue;
+            }
+            let open = t.kind == TokenKind::Punct && text == "(";
+            let close = t.kind == TokenKind::Punct && text == ")";
+            if close {
+                depth = depth.saturating_sub(1);
+            }
+            if depth == 0
+                && matches!(
+                    t.kind,
+                    TokenKind::Keyword | TokenKind::Ident | TokenKind::Function
+                )
+            {
+                let upper = text.to_ascii_uppercase();
+                // `WITH` needs a statement boundary; when it follows another word it
+                // starts a second statement whose CTE may modify data. `WITH (NOLOCK)` is
+                // a T-SQL table hint, not a CTE: its next token is `(`.
+                let next_is_paren = tokens[i + 1..]
+                    .iter()
+                    .find(|t| t.kind != TokenKind::Comment)
+                    .is_some_and(|t| t.kind == TokenKind::Punct && &sql[t.start..t.end] == "(");
+                if seen_word && upper == "WITH" && !next_is_paren {
+                    return Some(Destructive(
+                        "WITH starts another statement in a batch".into(),
+                    ));
+                }
+                // `FOR UPDATE` / `FOR NO KEY UPDATE` locks rows but does not change data.
+                if upper == "UPDATE"
+                    && last_words
+                        .iter()
+                        .rposition(|w| w == "FOR")
+                        .is_some_and(|at| {
+                            last_words[at + 1..]
+                                .iter()
+                                .all(|w| matches!(w.as_str(), "NO" | "KEY" | "OF"))
+                        })
+                {
+                    // no write; fall through to remember this word
+                } else {
+                    match upper.as_str() {
+                        "DROP" | "TRUNCATE" | "DELETE" | "KILL" | "SHUTDOWN" | "REVOKE"
+                        | "DENY" | "WRITETEXT" | "UPDATETEXT" | "INSERT" | "UPDATE" | "MERGE"
+                        | "REPLACE" | "UPSERT" | "CALL" | "EXEC" | "EXECUTE" | "LOAD" | "SET"
+                        | "USE" | "PRAGMA" | "VACUUM" | "REINDEX" | "ANALYZE" | "CHECKPOINT"
+                        | "RECONFIGURE" | "BACKUP" | "RESTORE" | "DBCC" | "BULK" | "ATTACH"
+                        | "DETACH" | "CREATE" | "ALTER" | "COMMENT" | "GRANT" | "RENAME" => {
+                            // A batch hides the statement from the per-statement
+                            // confirmation; make it destructive so every profile asks.
+                            return Some(Destructive(format!("{upper} in a batch of statements")));
+                        }
+                        _ => {}
+                    }
+                }
+                seen_word = true;
+                last_words.push(upper);
+                if last_words.len() > 4 {
+                    last_words.remove(0);
+                }
+            }
+            if open {
+                depth += 1;
+            }
+        }
+        None
+    }
+
     /// Whether the first statement of `sql` changes the schema or privileges (CREATE, ALTER,
     /// DROP, TRUNCATE, COMMENT, GRANT, REVOKE, RENAME): the statements MySQL commits an open
     /// transaction before. Decided on its first word, like [`SqlSyntax::classify`].
@@ -521,6 +655,41 @@ mod tests {
         assert!(!Transaction(TxVerb::Commit).modifies());
         for c in [Write, Ddl, destructive("x"), Other] {
             assert!(c.modifies(), "{c:?}");
+        }
+    }
+
+    #[test]
+    fn a_script_is_a_write_when_any_statement_is() {
+        use StatementClass::*;
+        let syntax = SqlSyntax::ansi();
+        for sql in [
+            "SELECT 1; DELETE FROM t",
+            "SELECT 1\nDELETE FROM t",
+            "BEGIN DELETE FROM t END",
+            "SELECT 1\nINSERT INTO t VALUES (1)",
+            "SELECT 1\nEXEC dangerous_procedure",
+            "BEGIN UPDATE t SET a = 1; END;",
+            "WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x",
+        ] {
+            let class = syntax.classify_script(sql);
+            assert!(class.modifies(), "{sql} was {class:?}");
+        }
+        for sql in [
+            "SELECT 1",
+            "SELECT 1; SELECT 2",
+            "SELECT * FROM t FOR UPDATE",
+            "SELECT * FROM t FOR NO KEY UPDATE",
+            "EXPLAIN DELETE FROM t",
+            "SELECT 'DELETE FROM t' FROM t",
+            "SELECT \"delete\" FROM t",
+            "SELECT 1 -- DELETE FROM t",
+            "SELECT 1 /* DELETE FROM t */",
+            "SELECT * FROM t WITH (NOLOCK)",
+            "SELECT 1; WITH x AS (SELECT 1) SELECT * FROM x",
+            "SELECT 1\nBEGIN SELECT 2 END",
+            "COPY t TO STDOUT",
+        ] {
+            assert_eq!(syntax.classify_script(sql), Read, "{sql}");
         }
     }
 }

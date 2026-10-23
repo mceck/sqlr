@@ -1079,7 +1079,7 @@ impl SqlrApp {
         let reads = self
             .dialects
             .get(&conn)
-            .is_some_and(|d| d.syntax().classify(&sql) == sqlr_core::StatementClass::Read);
+            .is_some_and(|d| d.syntax().classify_script(&sql) == sqlr_core::StatementClass::Read);
         let rerun = reads.then(|| Rerun {
             key: SessionKey::meta(&conn),
             database,

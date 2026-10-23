@@ -29,8 +29,35 @@ fn secret(path: &str) -> Result<minisign::SecretKey, String> {
 }
 
 fn sign(key: &minisign::SecretKey, data: &[u8]) -> Result<String, String> {
-    minisign::sign(None, key, Cursor::new(data), Some("sqlr driver registry"), None)
-        .map(|s| s.into_string())
+    minisign::sign(
+        None,
+        key,
+        Cursor::new(data),
+        Some("sqlr driver registry"),
+        None,
+    )
+    .map(|s| s.into_string())
+    .map_err(|e| e.to_string())
+}
+
+/// Writes a private key with owner-only permissions where the platform has them.
+fn write_private(path: &Path, contents: &str) -> Result<(), String> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| e.to_string())?;
+    }
+    file.write_all(contents.as_bytes())
         .map_err(|e| e.to_string())
 }
 
@@ -44,10 +71,14 @@ fn run(args: &[String]) -> Result<(), String> {
                 .map_err(|e| e.to_string())
                 .and_then(|pair| {
                     let pk = pair.pk.to_box().map_err(|e| e.to_string())?.into_string();
-                    std::fs::write(
+                    write_private(
                         &secret_path,
-                        pair.sk.to_box(Some("sqlr driver registry")).map_err(|e| e.to_string())?.into_string(),
-                    ).map_err(|e| e.to_string())?;
+                        &pair
+                            .sk
+                            .to_box(Some("sqlr driver registry"))
+                            .map_err(|e| e.to_string())?
+                            .into_string(),
+                    )?;
                     std::fs::write(&public_path, pk).map_err(|e| e.to_string())
                 })?;
             println!("wrote {} and {}", secret_path.display(), public_path.display());

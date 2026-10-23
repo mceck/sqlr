@@ -45,7 +45,10 @@ pub(crate) fn confirmation(
     syntax: &SqlSyntax,
     statements: &[&str],
 ) -> Option<(String, Vec<String>)> {
-    let classes: Vec<StatementClass> = statements.iter().map(|s| syntax.classify(s)).collect();
+    let classes: Vec<StatementClass> = statements
+        .iter()
+        .map(|s| syntax.classify_script(s))
+        .collect();
     confirmation_for(profile, conn_name, &classes, statements)
 }
 
@@ -257,6 +260,26 @@ mod tests {
             ..dev
         };
         assert!(confirmation(&quiet, "db", &syntax, &["truncate t"]).is_none());
+    }
+
+    #[test]
+    fn a_batch_is_confirmed_as_a_whole() {
+        let syntax = SqlSyntax::ansi();
+        let dev = ConnectionProfile::development();
+        let (prompt, listed) = confirmation(
+            &dev,
+            "db",
+            &syntax,
+            &[
+                "select 1\ndelete from t",
+                "select 2\nbegin delete from t end",
+            ],
+        )
+        .unwrap();
+        assert!(prompt.contains("batch"), "{prompt}");
+        assert_eq!(listed.len(), 2);
+        // A single, harmless statement is still not confirmed.
+        assert!(confirmation(&dev, "db", &syntax, &["select 1"]).is_none());
     }
 
     #[test]

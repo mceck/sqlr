@@ -70,6 +70,15 @@ impl Db {
             std::fs::create_dir_all(parent)?;
         }
         let conn = Connection::open(path).map_err(db_err)?;
+        // History can contain SQL typed before the redaction rules existed. Keep the file
+        // private even when the user's umask is permissive.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut permissions = std::fs::metadata(path)?.permissions();
+            permissions.set_mode(0o600);
+            std::fs::set_permissions(path, permissions)?;
+        }
         Self::init(conn, keep)
     }
 
@@ -90,6 +99,9 @@ impl Db {
         // In-memory databases report "memory" here; that is fine.
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(db_err)?;
+        // Deleted history rows are overwritten rather than left in free pages.
+        conn.pragma_update(None, "secure_delete", "ON")
+            .map_err(db_err)?;
         migrate(&mut conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
@@ -101,15 +113,25 @@ impl Db {
     /// [`HISTORY_KEEP`]). It can take a while on a large history, so it is not part of
     /// opening: the engine runs it as its first background job.
     pub fn trim_history(&self) -> Result<(), StoreError> {
-        self.conn
-            .lock()
-            .execute(
-                "DELETE FROM history WHERE id NOT IN \
-                 (SELECT id FROM history ORDER BY started_at DESC, id DESC LIMIT ?1)",
-                [i64::try_from(self.keep).unwrap_or(i64::MAX)],
-            )
-            .map(drop)
-            .map_err(db_err)
+        let conn = self.conn.lock();
+        // Old builds recorded password-bearing SQL verbatim. Remove those rows and old
+        // snippets on startup; new writes are filtered before they reach the store.
+        const SECRET_SQL: &str = "lower(sql) LIKE '%password%' \
+             OR lower(sql) LIKE '%passwd%' \
+             OR lower(sql) LIKE '%pwd%' \
+             OR lower(sql) LIKE '%api_key%' \
+             OR lower(sql) LIKE '%identified by%'";
+        conn.execute(&format!("DELETE FROM history WHERE {SECRET_SQL}"), [])
+            .map_err(db_err)?;
+        conn.execute(&format!("DELETE FROM snippets WHERE {SECRET_SQL}"), [])
+            .map_err(db_err)?;
+        conn.execute(
+            "DELETE FROM history WHERE id NOT IN \
+             (SELECT id FROM history ORDER BY started_at DESC, id DESC LIMIT ?1)",
+            [i64::try_from(self.keep).unwrap_or(i64::MAX)],
+        )
+        .map(drop)
+        .map_err(db_err)
     }
 }
 

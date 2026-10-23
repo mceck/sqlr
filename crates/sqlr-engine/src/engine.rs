@@ -2138,7 +2138,9 @@ impl Shared {
             return;
         };
         let dialect = rel.dialect();
-        let stmt = Stmt::of(&dialect.syntax(), sql);
+        let syntax = dialect.syntax();
+        let stmt = Stmt::of(&syntax, sql);
+        let script_class = syntax.classify_script(sql);
         let rules = TxRules {
             ddl_commits: dialect.ddl_commits_transaction(),
             error_aborts: dialect.error_aborts_transaction(),
@@ -2165,7 +2167,7 @@ impl Shared {
                 None => (false, false, None),
             }
         };
-        if read_only && stmt.class.modifies() {
+        if read_only && script_class.modifies() {
             let e = DriverError::new(ErrorKind::Permission, READ_ONLY);
             self.finish(q, QueryStatus::Failed(e));
             return;

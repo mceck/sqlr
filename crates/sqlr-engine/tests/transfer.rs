@@ -606,6 +606,32 @@ fn copy_job_spans_several_batches() {
 }
 
 #[test]
+fn export_rerun_refuses_a_multi_statement_source() {
+    let (engine, fake) = fake_engine(FakeScript {
+        rows: 3,
+        ..Default::default()
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("out.csv");
+    let before = fake.executed().len();
+    let job = engine.export(
+        ExportSource::Rerun {
+            key: SessionKey::meta("c"),
+            database: None,
+            sql: "SELECT 1; DELETE FROM t".into(),
+        },
+        TextFormat::Csv(CsvOptions::default()),
+        path.clone(),
+    );
+    let JobOutcome::Failed(e) = finished(&engine, job) else {
+        panic!("a multi-statement source is never run again by an export");
+    };
+    assert!(e.message.contains("only reads"), "{}", e.message);
+    assert_eq!(fake.executed().len(), before, "nothing ran");
+    assert!(!path.exists());
+}
+
+#[test]
 fn export_rerun_refuses_a_statement_that_writes() {
     let (engine, fake) = fake_engine(FakeScript {
         rows: 3,

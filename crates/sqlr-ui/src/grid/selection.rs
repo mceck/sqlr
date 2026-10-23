@@ -98,7 +98,7 @@ pub(crate) fn encode(
     dialect: Option<&dyn Dialect>,
     rows: impl Iterator<Item = Vec<Value>>,
 ) -> String {
-    let mut encoder = Encoder::new(format, columns, dialect);
+    let mut encoder = Encoder::new(format, columns, dialect).with_spreadsheet_safe();
     let mut out = String::new();
     encoder.header(&mut out);
     for row in rows {

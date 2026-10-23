@@ -524,7 +524,7 @@ impl Shared {
         let rel = connection.relational().ok_or_else(|| {
             DriverError::new(ErrorKind::Unsupported, "this connection does not run SQL")
         })?;
-        if rel.dialect().syntax().classify(sql) != StatementClass::Read {
+        if rel.dialect().syntax().classify_script(sql) != StatementClass::Read {
             return Err(DriverError::new(
                 ErrorKind::Permission,
                 "Only a statement that only reads can be a transfer source",
@@ -658,7 +658,7 @@ impl Shared {
                 mut reader,
                 ..
             } => {
-                let mut encoder = Encoder::new(format, &columns, None);
+                let mut encoder = Encoder::new(format, &columns, None).with_spreadsheet_safe();
                 if let Some(formats) = self.export_formats.lock().clone() {
                     encoder = encoder.with_formats(formats, &columns);
                 }

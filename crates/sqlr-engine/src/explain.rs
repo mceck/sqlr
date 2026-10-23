@@ -79,7 +79,7 @@ impl Shared {
                 let mut inner = self.inner.lock();
                 inner.session(key, io).is_some_and(|s| s.tx.is_open())
             };
-            if open && rel.dialect().syntax().classify(sql) != StatementClass::Read {
+            if open && rel.dialect().syntax().classify_script(sql) != StatementClass::Read {
                 return Err(DriverError::new(
                     ErrorKind::Other,
                     "A transaction is open on this session: commit or roll back first, or use \

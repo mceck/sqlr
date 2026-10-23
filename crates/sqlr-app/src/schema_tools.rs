@@ -144,7 +144,7 @@ impl SqlrApp {
         let writes = self
             .dialects
             .get(&conn)
-            .is_some_and(|d| d.syntax().classify(&sql) != StatementClass::Read);
+            .is_some_and(|d| d.syntax().classify_script(&sql) != StatementClass::Read);
         self.plan_dialog = Some(PlanDialog::new(conn, sql, analyze, writes));
     }
 

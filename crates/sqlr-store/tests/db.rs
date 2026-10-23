@@ -136,6 +136,43 @@ fn history_trimmed_on_request_not_on_open() {
     assert_eq!(sqls, ["q7", "q6", "q5", "q4", "q3"]);
 }
 
+#[cfg(unix)]
+#[test]
+fn the_database_file_is_private() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sqlr.db");
+    let _db = Db::open_with_keep(&path, 5).unwrap();
+    assert_eq!(
+        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+}
+
+#[test]
+fn old_password_rows_are_scrubbed_on_trim() {
+    let db = Db::open_in_memory().unwrap();
+    db.add_history(&entry(
+        "a",
+        "CREATE USER app IDENTIFIED BY 'S3cret'",
+        1,
+        HistoryOutcome::Affected(1),
+    ))
+    .unwrap();
+    db.add_history(&entry("a", "select 1", 2, HistoryOutcome::Rows(1)))
+        .unwrap();
+    let mut secret = snippet("s", "secret", "");
+    secret.sql = "ALTER ROLE app WITH PASSWORD 'S3cret'".into();
+    db.save_snippet(&secret).unwrap();
+    db.save_snippet(&snippet("ok", "ok", "")).unwrap();
+    db.trim_history().unwrap();
+    let got = db.search_history(&HistoryQuery::default()).unwrap();
+    assert_eq!(got.len(), 1);
+    assert_eq!(got[0].sql, "select 1");
+    let snippets = db.list_snippets().unwrap();
+    assert!(snippets.iter().all(|s| s.id == "ok"), "{snippets:?}");
+}
+
 #[test]
 fn snippets_upsert_and_delete() {
     let db = Db::open_in_memory().unwrap();

@@ -195,6 +195,7 @@ fn tunneled(echo: u16, ssh_port: u16, values: &[(&str, &str)]) -> ConnectionConf
         ("ssh_port", ssh_port.to_string()),
         ("ssh_user", USER.to_string()),
         ("ssh_auth", "password".to_string()),
+        ("ssh_trust_new_host_keys", "true".to_string()),
     ];
     for (k, v) in base {
         cfg.values.insert(k.into(), v);
@@ -240,6 +241,7 @@ fn manifests_gain_ssh_fields() {
             "ssh_password",
             "ssh_key_path",
             "ssh_key_passphrase",
+            "ssh_trust_new_host_keys",
             "ssh_jump_host",
             "ssh_jump_port",
             "ssh_jump_user"
@@ -257,6 +259,41 @@ fn manifests_gain_ssh_fields() {
     drivers.register(FakeDriver::new(FakeScript::default()));
     let plain = Engine::new(drivers, no_repaint());
     assert!(plain.manifests()[0].fields.iter().all(|f| f.group != "SSH"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn unknown_host_key_is_refused_by_default() {
+    let dir = tempfile::tempdir().unwrap();
+    let known = dir.path().join("known_hosts");
+    let echo = echo_server().await;
+    let server = ssh_server(0, key(9).public_key().clone()).await;
+    let (engine, fake) = engine(&known);
+    let mut cfg = tunneled(echo, server.port, &[]);
+    cfg.values.remove("ssh_trust_new_host_keys");
+    engine.connect(cfg, password(PASSWORD), dev());
+    let status = tokio::task::block_in_place(|| outcome(&engine));
+    let SessionStatus::Failed(e) = status else {
+        panic!("connected without a trusted host key: {status:?}")
+    };
+    assert_eq!(e.kind, ErrorKind::Connection, "{e:?}");
+    assert!(e.message.contains("not known"), "{e:?}");
+    assert!(
+        e.message.contains("SHA256:"),
+        "the fingerprint is shown: {e:?}"
+    );
+    assert_eq!(fake.open_connections(), 0, "the driver was never called");
+    assert!(
+        std::fs::read_to_string(&known)
+            .map(|text| !text.contains("ssh-ed25519"))
+            .unwrap_or(true),
+        "the unknown key was not learned"
+    );
+    tokio::task::block_in_place(|| {
+        assert!(wait_until(TIMEOUT, || server
+            .sessions
+            .load(Ordering::SeqCst)
+            == 0));
+    });
 }
 
 #[tokio::test(flavor = "multi_thread")]

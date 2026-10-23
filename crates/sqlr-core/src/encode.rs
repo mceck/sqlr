@@ -205,6 +205,8 @@ pub struct Encoder<'d> {
     /// Display formats applied to the text formats (CSV, TSV, Markdown); SQL and JSON keep
     /// the raw values, where the types matter.
     formats: Option<(DataFormats, Vec<ColumnMeta>)>,
+    /// Prefix text cells that a spreadsheet would interpret as a formula.
+    spreadsheet_safe: bool,
 }
 
 fn quote_ansi(ident: &str) -> String {
@@ -274,7 +276,16 @@ impl<'d> Encoder<'d> {
             dialect,
             rows: 0,
             formats: None,
+            spreadsheet_safe: false,
         }
+    }
+
+    /// Neutralizes text that a spreadsheet would treat as a formula. Used for exports and
+    /// clipboard copies, where the file may be opened in Excel or LibreOffice; the generic
+    /// encoder stays round-trip exact for import/export tests.
+    pub fn with_spreadsheet_safe(mut self) -> Self {
+        self.spreadsheet_safe = true;
+        self
     }
 
     /// Writes cells the way the grid shows them (CSV, TSV and Markdown only; NULL stays
@@ -297,7 +308,7 @@ impl<'d> Encoder<'d> {
                     if i > 0 {
                         out.push(o.delimiter);
                     }
-                    csv_field(&o, Some(name), out);
+                    csv_field_safe(&o, Some(name), out, self.spreadsheet_safe);
                 }
                 out.push_str(if o.crlf { "\r\n" } else { "\n" });
             }
@@ -353,7 +364,7 @@ impl<'d> Encoder<'d> {
                 }
                 match cell {
                     Cell::Null => csv_field(&o, None, out),
-                    Cell::Text(t) => csv_field(&o, Some(t), out),
+                    Cell::Text(t) => csv_field_safe(&o, Some(t), out, self.spreadsheet_safe),
                     other => csv_field(&o, Some(&plain_text(*other)), out),
                 }
             }
@@ -484,6 +495,28 @@ fn plain_text(cell: Cell<'_>) -> String {
     match cell {
         Cell::Float(f) if f.is_nan() => "NaN".into(),
         other => other.to_string(),
+    }
+}
+
+/// Writes one text field, optionally neutralizing a leading character that a spreadsheet
+/// would evaluate as a formula. Quoting alone does not stop `=`, `+`, `-` or `@` formulas;
+/// a leading apostrophe makes the cell text in Excel and LibreOffice.
+fn csv_field_safe(o: &CsvOptions, text: Option<&str>, out: &mut String, safe: bool) {
+    let Some(text) = text else {
+        csv_field(o, None, out);
+        return;
+    };
+    if safe
+        && !text.starts_with('\'')
+        && text
+            .chars()
+            .next()
+            .is_some_and(|c| matches!(c, '=' | '+' | '-' | '@' | '\t' | '\r' | '\n'))
+    {
+        let neutralized = format!("'{text}");
+        csv_field(o, Some(&neutralized), out);
+    } else {
+        csv_field(o, Some(text), out);
     }
 }
 
@@ -735,6 +768,38 @@ mod tests {
         assert_eq!(
             encode(TextFormat::Tsv, cols, &rows[..1]),
             "id\tv\n1\tplain\n"
+        );
+    }
+
+    #[test]
+    fn spreadsheet_safe_csv_neutralizes_formula_starts() {
+        let cols = [
+            ColumnMeta::new("=head", "text", ColumnKind::Text, DisplayHint::Plain),
+            ColumnMeta::new("n", "int", ColumnKind::Int, DisplayHint::Number),
+        ];
+        let rows = vec![
+            vec![Value::Text("=1+1".into()), Value::Int(-5)],
+            vec![Value::Text("+cmd".into()), Value::Int(2)],
+            vec![Value::Text("-text".into()), Value::Int(3)],
+            vec![Value::Text("@cell".into()), Value::Int(4)],
+            vec![Value::Text("'safe".into()), Value::Int(5)],
+        ];
+        let mut encoder = Encoder::new(TextFormat::Csv(CsvOptions::default()), &cols, None)
+            .with_spreadsheet_safe();
+        let mut out = String::new();
+        encoder.header(&mut out);
+        for row in &rows {
+            let cells: Vec<Cell<'_>> = row.iter().map(Value::as_cell).collect();
+            encoder.row(&cells, &mut out);
+        }
+        assert_eq!(
+            out,
+            "'=head,n\n'=1+1,-5\n'+cmd,2\n'-text,3\n'@cell,4\n'safe,5\n"
+        );
+        // The generic encoder stays round-trip exact.
+        assert_eq!(
+            encode(TextFormat::Csv(CsvOptions::default()), &cols, &rows[..1]),
+            "=head,n\n=1+1,-5\n"
         );
     }
 

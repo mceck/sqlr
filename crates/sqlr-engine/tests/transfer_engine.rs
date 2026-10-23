@@ -249,6 +249,33 @@ fn an_edited_ddl_replaces_the_generated_one() {
 }
 
 #[test]
+fn a_query_source_with_a_second_statement_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = two_dbs(dir.path());
+    run(&engine, "b", "CREATE TABLE dst (id INTEGER PRIMARY KEY)");
+    let job = engine.transfer(spec(
+        Endpoint::Query {
+            conn: "a".into(),
+            database: None,
+            sql: "SELECT id FROM src; DELETE FROM src".into(),
+        },
+        Endpoint::Table {
+            conn: "b".into(),
+            table: table("dst"),
+        },
+    ));
+    let JobOutcome::Failed(e) = finished(&engine, job) else {
+        panic!("a multi-statement source must be refused");
+    };
+    assert!(e.message.contains("only reads"), "{}", e.message);
+    // The source was not touched.
+    assert_eq!(
+        rows(&engine, "a", "SELECT count(*) FROM src"),
+        vec![vec![Value::Int(3)]]
+    );
+}
+
+#[test]
 fn a_query_is_a_source_and_truncate_then_load_replaces_rows() {
     let dir = tempfile::tempdir().unwrap();
     let engine = two_dbs(dir.path());

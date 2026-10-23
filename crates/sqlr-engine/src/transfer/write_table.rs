@@ -116,9 +116,20 @@ impl RejectedFile {
 }
 
 fn csv_field(text: &str) -> String {
+    // This file is opened in a spreadsheet too: keep a value from becoming a formula.
+    let text = if !text.starts_with('\'')
+        && text
+            .chars()
+            .next()
+            .is_some_and(|c| matches!(c, '=' | '+' | '-' | '@' | '\t' | '\r' | '\n'))
+    {
+        format!("'{text}")
+    } else {
+        text.to_string()
+    };
     if text.contains([',', '"', '\n', '\r']) {
         format!("\"{}\"", text.replace('"', "\"\""))
     } else {
-        text.to_string()
+        text
     }
 }

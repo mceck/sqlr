@@ -399,7 +399,7 @@ impl Shared {
             Ok(out) => out,
             Err(e) => return JobOutcome::Failed(e),
         };
-        let mut encoder = Encoder::new(format, &columns, dialect);
+        let mut encoder = Encoder::new(format, &columns, dialect).with_spreadsheet_safe();
         if let Some(formats) = self.export_formats.lock().clone() {
             encoder = encoder.with_formats(formats, &columns);
         }
@@ -474,7 +474,7 @@ impl Shared {
             ));
         };
         // Review: an export must never run a statement that changes data a second time.
-        if rel.dialect().syntax().classify(sql) != StatementClass::Read {
+        if rel.dialect().syntax().classify_script(sql) != StatementClass::Read {
             return JobOutcome::Failed(DriverError::new(
                 ErrorKind::Permission,
                 "Only a statement that only reads can be re-run for an export; export the \
@@ -519,7 +519,7 @@ impl Shared {
             Ok(out) => out,
             Err(e) => return JobOutcome::Failed(e),
         };
-        let mut encoder = Encoder::new(format, &columns, Some(dialect));
+        let mut encoder = Encoder::new(format, &columns, Some(dialect)).with_spreadsheet_safe();
         if let Some(formats) = self.export_formats.lock().clone() {
             encoder = encoder.with_formats(formats, &columns);
         }
@@ -812,7 +812,7 @@ impl Shared {
                 let all = r.rows.columns();
                 cols.iter().filter_map(|&c| all.get(c).cloned()).collect()
             };
-            let mut encoder = Encoder::new(format, &columns, dialect);
+            let mut encoder = Encoder::new(format, &columns, dialect).with_spreadsheet_safe();
             let mut out = String::new();
             encoder.header(&mut out);
             for batch in rows.chunks(LOADED_BATCH) {
