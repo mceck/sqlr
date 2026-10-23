@@ -214,13 +214,6 @@ async fn triggers(
         .collect())
 }
 
-const COLUMNS_SQL: &str = "\
-SELECT c.column_name, c.data_type, c.char_length, c.data_length, c.data_precision, c.data_scale, \
-       c.nullable, c.data_default, c.identity_column, c.virtual_column \
-FROM all_tab_columns c \
-WHERE c.owner = :1 AND c.table_name = :2 \
-ORDER BY c.column_id";
-
 /// A declared type with the length or precision the column carries.
 pub(crate) fn type_name(
     data_type: &str,
@@ -257,16 +250,51 @@ pub(crate) async fn column_defs(
     schema: &str,
     relation: &str,
 ) -> Result<Vec<sqlr_core::TableColumn>, DriverError> {
-    let result = query(conn, COLUMNS_SQL, &[schema, relation]).await?;
+    let result = query(
+        conn,
+        "SELECT c.column_name, c.data_type, c.char_length, c.data_length, c.data_precision, \
+                c.data_scale, c.nullable, c.identity_column, c.virtual_column \
+         FROM all_tab_cols c \
+         WHERE c.owner = :1 AND c.table_name = :2 AND c.hidden_column = 'NO' \
+         ORDER BY c.column_id",
+        &[schema, relation],
+    )
+    .await?;
+    // `data_default` is a LONG; oracle-rs returns no rows when a LONG is selected with
+    // binds, so read it separately with a quoted predicate.
+    let quote = |value: &str| value.replace('\'', "''");
+    let defaults = query(
+        conn,
+        &format!(
+            "SELECT column_name, data_default FROM all_tab_cols \
+             WHERE owner = '{}' AND table_name = '{}' AND hidden_column = 'NO'",
+            quote(schema),
+            quote(relation)
+        ),
+        &[],
+    )
+    .await?;
+    let defaults: std::collections::BTreeMap<String, Option<String>> = defaults
+        .rows
+        .iter()
+        .map(|row| {
+            (
+                text(row, 0).unwrap_or_default(),
+                text(row, 1).map(|s| s.trim().to_string()),
+            )
+        })
+        .collect();
     Ok(result
         .rows
         .iter()
         .map(|row| {
             let data_type = text(row, 1).unwrap_or_else(|| "UNKNOWN".to_string());
             let generated =
-                text(row, 8).as_deref() == Some("YES") || text(row, 9).as_deref() == Some("YES");
+                text(row, 7).as_deref() == Some("YES") || text(row, 8).as_deref() == Some("YES");
+            let name = text(row, 0).unwrap_or_default();
             sqlr_core::TableColumn {
-                name: text(row, 0).unwrap_or_default(),
+                default: defaults.get(&name).cloned().flatten(),
+                name,
                 type_name: type_name(
                     &data_type,
                     row.get_i64(2),
@@ -275,7 +303,6 @@ pub(crate) async fn column_defs(
                     row.get_i64(5),
                 ),
                 nullable: text(row, 6).as_deref() == Some("Y"),
-                default: text(row, 7).map(|s| s.trim().to_string()),
                 generated,
             }
         })

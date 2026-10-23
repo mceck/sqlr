@@ -8,9 +8,6 @@ use sqlr_core::{
 };
 use sqlr_driver_postgres::PostgresDriver;
 use support::{config, pg, pg_isolated, secrets};
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
-use testcontainers_modules::testcontainers::{ContainerAsync, ImageExt};
 
 fn path(segs: &[&str]) -> NodePath {
     NodePath(segs.iter().map(|s| s.to_string()).collect())
@@ -653,41 +650,7 @@ async fn tls_required_but_unavailable() {
     assert!(err.message.contains("sometimes"), "{err:?}");
 }
 
-/// A PostgreSQL container serving TLS with a certificate for `localhost` signed by a
-/// throwaway CA. Returns the CA certificate's PEM.
-async fn pg_with_tls() -> (ContainerAsync<Postgres>, ConnectionConfig, Secrets, String) {
-    let ca_key = rcgen::KeyPair::generate().unwrap();
-    let mut ca_params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
-    ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
-    ca_params
-        .distinguished_name
-        .push(rcgen::DnType::CommonName, "sqlr test CA");
-    let ca = rcgen::CertifiedIssuer::self_signed(ca_params, ca_key).unwrap();
-    let server_key = rcgen::KeyPair::generate().unwrap();
-    let server = rcgen::CertificateParams::new(vec!["localhost".to_string()])
-        .unwrap()
-        .signed_by(&server_key, &ca)
-        .unwrap();
-    // Init scripts run as the postgres user, so the key ends up owned by it with 0600.
-    let init = "cp /certs/server.crt /certs/server.key \"$PGDATA\"/\n\
-                chmod 600 \"$PGDATA\"/server.key\n\
-                echo 'ssl = on' >> \"$PGDATA\"/postgresql.conf\n";
-    let container = Postgres::default()
-        .with_tag("17-alpine")
-        .with_copy_to("/certs/server.crt", server.pem().into_bytes())
-        .with_copy_to("/certs/server.key", server_key.serialize_pem().into_bytes())
-        .with_copy_to(
-            "/docker-entrypoint-initdb.d/tls.sh",
-            init.as_bytes().to_vec(),
-        )
-        .start()
-        .await
-        .expect("start postgres container");
-    let port = container.get_host_port_ipv4(5432).await.unwrap();
-    let (cfg, sec) = (config("localhost", port), secrets("postgres"));
-    support::wait_ready(&cfg, &sec).await;
-    (container, cfg, sec, ca.pem())
-}
+use support::pg_with_tls;
 
 #[tokio::test]
 async fn tls_modes_against_a_tls_server() {

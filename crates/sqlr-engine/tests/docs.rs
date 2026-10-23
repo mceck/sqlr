@@ -1,6 +1,6 @@
 //! Document results and edits: paging, fetch all and memory budgets,
 //! edits by `_id` (and `_index`), read-only refusals. The first tests use the fake document
-//! driver; the last ones run MongoDB and Elasticsearch containers.
+//! driver; the last ones run against the fixed MongoDB and Elasticsearch services.
 
 mod support;
 
@@ -414,32 +414,19 @@ fn index_admin_runs_the_statement_as_a_job() {
 
 mod mongo {
     use super::*;
-    use testcontainers_modules::mongo::Mongo;
-    use testcontainers_modules::testcontainers::runners::AsyncRunner;
-    use testcontainers_modules::testcontainers::{ContainerAsync, ImageExt};
+    use sqlr_testkit::TestLock;
 
-    /// The container stops inside its runtime (testcontainers needs one to drop it).
     pub struct Server {
         pub engine: Engine,
-        container: Option<ContainerAsync<Mongo>>,
-        rt: tokio::runtime::Runtime,
-    }
-
-    impl Drop for Server {
-        fn drop(&mut self) {
-            let _guard = self.rt.enter();
-            self.container.take();
-        }
+        _lock: TestLock,
+        _rt: tokio::runtime::Runtime,
     }
 
     pub fn start() -> Server {
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let (c, host, port) = rt.block_on(async {
-            let c = Mongo::default().with_tag("7").start().await.expect("mongo");
-            let host = c.get_host().await.unwrap().to_string();
-            let port = c.get_host_port_ipv4(27017).await.unwrap();
-            (c, host, port)
-        });
+        let (host, port) = support::endpoint("MONGO");
+        let lock = TestLock::acquire("mongo");
+        rt.block_on(support::reset_mongo(&host, port));
         let mut drivers = DriverRegistry::default();
         drivers.register(sqlr_driver_mongo::MongoDriver::new());
         let engine = Engine::new(drivers, no_repaint());
@@ -473,8 +460,8 @@ mod mongo {
         ));
         Server {
             engine,
-            container: Some(c),
-            rt,
+            _lock: lock,
+            _rt: rt,
         }
     }
 
@@ -675,28 +662,11 @@ fn delete_docs_confirms_count() {
 #[test]
 fn es_doc_edit_by_id_and_index() {
     sqlr_testkit::skip_container_tests!();
-    use testcontainers_modules::testcontainers::core::{IntoContainerPort, WaitFor};
-    use testcontainers_modules::testcontainers::runners::AsyncRunner;
-    use testcontainers_modules::testcontainers::{GenericImage, ImageExt};
-
     let rt = tokio::runtime::Runtime::new().unwrap();
     let _guard = rt.enter();
-    let (_c, host, port) = rt.block_on(async {
-        let c = GenericImage::new("docker.elastic.co/elasticsearch/elasticsearch", "8.15.5")
-            .with_exposed_port(9200.tcp())
-            .with_wait_for(WaitFor::Nothing)
-            .with_env_var("discovery.type", "single-node")
-            .with_env_var("ES_JAVA_OPTS", "-Xms512m -Xmx512m")
-            .with_env_var("xpack.security.enabled", "false")
-            .with_env_var("xpack.ml.enabled", "false")
-            .with_env_var("ingest.geoip.downloader.enabled", "false")
-            .start()
-            .await
-            .expect("elasticsearch");
-        let host = c.get_host().await.unwrap().to_string();
-        let port = c.get_host_port_ipv4(9200).await.unwrap();
-        (c, host, port)
-    });
+    let (host, port) = support::endpoint("ELASTIC");
+    let _lock = sqlr_testkit::TestLock::acquire("elasticsearch");
+    rt.block_on(support::reset_elastic(&host, port));
     let mut drivers = DriverRegistry::default();
     drivers.register(sqlr_driver_elastic::ElasticDriver::new());
     let engine = Engine::new(drivers, no_repaint());

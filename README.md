@@ -89,14 +89,20 @@ The script builds the release binary and wraps it in `dist/sqlr.app` with `docs/
 ## Tests
 
 ```sh
-cargo test --workspace
+make test        # fixed service containers + nextest
+make test-fast   # no Docker
 ```
 
-PostgreSQL, MySQL, MariaDB, MongoDB, Elasticsearch and Redis integration tests use testcontainers. SQL Server and Oracle are not yet in the live test matrix. On Docker Desktop for macOS:
+`make test` starts every Docker-backed server from `docker-compose.test.yml`: PostgreSQL, MySQL, MariaDB, MongoDB, Redis, Elasticsearch, SQL Server and Oracle. Nothing starts a container per test; Postgres/MySQL tests get a fresh database on the fixed server, and the few tests that touch server-global state serialize through a cross-process lock. The first run also starts Oracle and three Elasticsearch nodes; later runs reuse them. `make test-services-reset` recreates the volumes.
+
+To run the suite directly, start the services once and then use nextest:
 
 ```sh
-DOCKER_HOST=unix://$HOME/.docker/run/docker.sock cargo test --workspace
+scripts/test-services.sh up
+cargo nextest run --workspace --profile containers
 ```
+
+On Docker Desktop for macOS set `DOCKER_HOST=unix://$HOME/.docker/run/docker.sock`. TLS certificates for the test services are generated into `.test-services/certs` (ignored by git).
 
 Editor performance budgets: `cargo run --release -p sqlr-ui --example editor_measure`.
 

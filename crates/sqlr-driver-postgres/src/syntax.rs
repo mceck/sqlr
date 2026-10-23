@@ -5,7 +5,7 @@ use std::sync::{Arc, LazyLock};
 use sqlr_core::{DOUBLE_QUOTE_IDENTS, SqlSyntax};
 
 // Generated from `SELECT upper(word), catcode FROM pg_get_keywords() ORDER BY 1`: the union of
-// PostgreSQL 17.11 (the pinned testcontainers `postgres:17-alpine` image) and 11.22, so words
+// PostgreSQL 17.11 (the pinned `postgres:17-alpine` test image) and 11.22, so words
 // dropped since 11 stay known. The `pg_*_are_known` tests check both lists against the pinned
 // server.
 /// Every keyword, sorted.

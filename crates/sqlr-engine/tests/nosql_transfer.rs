@@ -1,5 +1,5 @@
 //! NoSQL transfer endpoints: collections and indices as sources and
-//! targets, Redis keys as a source. Each test runs the containers it needs.
+//! targets, Redis keys as a source. The fixed services come from the test compose file.
 
 mod support;
 
@@ -13,9 +13,10 @@ use sqlr_engine::{
     DriverRegistry, Engine, ImportOptions, JobId, JobOutcome, QueryId, QueryStatus, SessionKey,
     SessionStatus,
 };
-use support::{TIMEOUT, config, dev, no_repaint, wait_until};
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
-use testcontainers_modules::testcontainers::{ContainerAsync, ImageExt};
+use sqlr_testkit::TestLock;
+use support::{
+    TIMEOUT, config, dev, endpoint, no_repaint, reset_elastic, reset_mongo, reset_redis, wait_until,
+};
 
 fn engine() -> Engine {
     let mut drivers = DriverRegistry::default();
@@ -108,23 +109,16 @@ fn sql_rows(engine: &Engine, conn: &str, sql: &str) -> Vec<Vec<Value>> {
 }
 
 struct Mongo {
-    _c: ContainerAsync<testcontainers_modules::mongo::Mongo>,
+    _lock: TestLock,
     cfg: ConnectionConfig,
 }
 
 fn mongo(rt: &tokio::runtime::Runtime) -> Mongo {
-    let (c, host, port) = rt.block_on(async {
-        let c = testcontainers_modules::mongo::Mongo::default()
-            .with_tag("7")
-            .start()
-            .await
-            .expect("mongo");
-        let host = c.get_host().await.unwrap().to_string();
-        let port = c.get_host_port_ipv4(27017).await.unwrap();
-        (c, host, port)
-    });
+    let (host, port) = endpoint("MONGO");
+    let lock = TestLock::acquire("mongo");
+    rt.block_on(reset_mongo(&host, port));
     Mongo {
-        _c: c,
+        _lock: lock,
         cfg: ConnectionConfig {
             values: values(&[
                 ("host", host),
@@ -147,19 +141,9 @@ fn people() -> DocTarget {
 fn mongo_to_pg_flattened() {
     sqlr_testkit::skip_container_tests!();
     let rt = tokio::runtime::Runtime::new().unwrap();
-    // Containers stop inside the runtime (testcontainers needs one to drop them).
     let _guard = rt.enter();
     let m = mongo(&rt);
-    let (_pg, host, port) = rt.block_on(async {
-        let c = testcontainers_modules::postgres::Postgres::default()
-            .with_tag("17-alpine")
-            .start()
-            .await
-            .expect("postgres");
-        let host = c.get_host().await.unwrap().to_string();
-        let port = c.get_host_port_ipv4(5432).await.unwrap();
-        (c, host, port)
-    });
+    let (host, port) = endpoint("POSTGRES");
     let engine = engine();
     connect(
         &engine,
@@ -178,6 +162,7 @@ fn mongo_to_pg_flattened() {
     };
     let secrets = Secrets([("password".to_string(), "postgres".to_string())].into());
     connect(&engine, pg, secrets, Duration::from_secs(60));
+    sql_rows(&engine, "p", "DROP TABLE IF EXISTS public.people");
     sql_rows(
         &engine,
         "p",
@@ -249,7 +234,6 @@ fn mongo_to_pg_flattened() {
 fn csv_to_mongo_documents() {
     sqlr_testkit::skip_container_tests!();
     let rt = tokio::runtime::Runtime::new().unwrap();
-    // Containers stop inside the runtime (testcontainers needs one to drop them).
     let _guard = rt.enter();
     let m = mongo(&rt);
     let engine = engine();
@@ -322,28 +306,11 @@ fn csv_to_mongo_documents() {
 #[test]
 fn es_to_jsonl() {
     sqlr_testkit::skip_container_tests!();
-    use testcontainers_modules::testcontainers::GenericImage;
-    use testcontainers_modules::testcontainers::core::{IntoContainerPort, WaitFor};
-
     let rt = tokio::runtime::Runtime::new().unwrap();
-    // Containers stop inside the runtime (testcontainers needs one to drop them).
     let _guard = rt.enter();
-    let (_c, host, port) = rt.block_on(async {
-        let c = GenericImage::new("docker.elastic.co/elasticsearch/elasticsearch", "8.15.5")
-            .with_exposed_port(9200.tcp())
-            .with_wait_for(WaitFor::Nothing)
-            .with_env_var("discovery.type", "single-node")
-            .with_env_var("ES_JAVA_OPTS", "-Xms512m -Xmx512m")
-            .with_env_var("xpack.security.enabled", "false")
-            .with_env_var("xpack.ml.enabled", "false")
-            .with_env_var("ingest.geoip.downloader.enabled", "false")
-            .start()
-            .await
-            .expect("elasticsearch");
-        let host = c.get_host().await.unwrap().to_string();
-        let port = c.get_host_port_ipv4(9200).await.unwrap();
-        (c, host, port)
-    });
+    let (host, port) = endpoint("ELASTIC");
+    let _lock = TestLock::acquire("elasticsearch");
+    rt.block_on(reset_elastic(&host, port));
     let engine = engine();
     let cfg = ConnectionConfig {
         values: values(&[("host", host), ("port", port.to_string())]),
@@ -425,18 +392,10 @@ fn es_to_jsonl() {
 fn redis_keys_to_csv() {
     sqlr_testkit::skip_container_tests!();
     let rt = tokio::runtime::Runtime::new().unwrap();
-    // Containers stop inside the runtime (testcontainers needs one to drop them).
     let _guard = rt.enter();
-    let (_c, host, port) = rt.block_on(async {
-        let c = testcontainers_modules::redis::Redis::default()
-            .with_tag("7")
-            .start()
-            .await
-            .expect("redis");
-        let host = c.get_host().await.unwrap().to_string();
-        let port = c.get_host_port_ipv4(6379).await.unwrap();
-        (c, host, port)
-    });
+    let (host, port) = endpoint("REDIS");
+    let _lock = TestLock::acquire("redis");
+    rt.block_on(reset_redis(&host, port));
     let engine = engine();
     let cfg = ConnectionConfig {
         values: values(&[

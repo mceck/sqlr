@@ -1976,14 +1976,16 @@ impl Shared {
                 inner.reports.insert(key.conn.clone(), report);
             }
         }
+        if connected && key.slot == Slot::Meta {
+            self.touch_recent(&key.conn);
+            // Register the refresh before releasing the session's waiting loads. Otherwise a
+            // schema loaded between the two can already be `Ready` when this runs, and the
+            // refresh fetches it a second time.
+            self.refresh_catalog(&key.conn, &io);
+        }
         io.finish_connect();
         self.operations.finish(operation, op_state);
         self.repaint();
-        if connected && key.slot == Slot::Meta {
-            self.touch_recent(&key.conn);
-            // A catalog restored from `sqlr.db` is refreshed in the background (§7.8).
-            self.refresh_catalog(&key.conn, &io);
-        }
     }
 
     /// The session's connection once its connect attempt finished, if it is `Connected`.

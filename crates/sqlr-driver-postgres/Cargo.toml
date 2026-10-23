@@ -21,6 +21,5 @@ sqlr-driver-tests = { path = "../sqlr-driver-tests" }
 sqlr-engine = { path = "../sqlr-engine" }
 sqlr-testkit = { path = "../sqlr-testkit" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
-testcontainers-modules = { workspace = true, features = ["postgres"] }
 rcgen.workspace = true
 tempfile.workspace = true

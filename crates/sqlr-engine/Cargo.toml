@@ -35,7 +35,10 @@ sqlr-driver-mysql = { path = "../sqlr-driver-mysql" }
 sqlr-driver-postgres = { path = "../sqlr-driver-postgres" }
 sqlr-driver-redis = { path = "../sqlr-driver-redis" }
 sqlr-driver-sqlite = { path = "../sqlr-driver-sqlite" }
-testcontainers-modules = { workspace = true, features = ["elastic_search", "mongo", "mysql", "postgres", "redis"] }
 sqlr-testkit = { path = "../sqlr-testkit" }
+rustls.workspace = true
+redis.workspace = true
+reqwest.workspace = true
+mongodb.workspace = true
 rusqlite.workspace = true
 tokio = { workspace = true, features = ["macros"] }

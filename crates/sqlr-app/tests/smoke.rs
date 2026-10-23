@@ -594,17 +594,19 @@ fn appearance_switch_applies() {
     h.get_by_label_contains("Settings…").click();
     h.run_steps(2);
     h.get_by_label("Theme");
-    h.get_by_label("Light").click();
+    h.get_by_label("Light").click_accesskit();
     h.run_steps(2);
-    h.get_by_label("Apply").click();
-    h.run_steps(3);
-    assert!(!h.ctx.global_style().visuals.dark_mode);
+    h.get_by_label("Apply").click_accesskit();
+    step_until(&mut h, "the light theme", |h| {
+        !h.ctx.global_style().visuals.dark_mode
+    });
     let saved = Settings::load(dir.path()).unwrap();
     assert_eq!(saved.theme, ThemePref::Light);
     // Apply keeps the dialog open; Save closes it.
-    h.get_by_label("Save").click();
-    h.run_steps(2);
-    assert!(h.query_by_label("Apply").is_none());
+    h.get_by_label("Save").click_accesskit();
+    step_until(&mut h, "the settings dialog closes", |h| {
+        h.query_by_label("Apply").is_none()
+    });
     assert!(!h.ctx.global_style().visuals.dark_mode);
 }
 
@@ -892,7 +894,7 @@ fn status_bar_add_row_adds_a_pending_row() {
     expand_to_orders(&mut h);
     double_click(&mut h, "orders");
     wait_for_label(&mut h, "No pending changes");
-    h.get_by_label("Add row").click();
+    h.get_by_label("Add row").click_accesskit();
     wait_for_label(&mut h, "1 pending change");
 }
 
@@ -1123,9 +1125,10 @@ fn import_saves_its_rejected_rows() {
     h.run_steps(2);
     h.get_by_label("Run import").click();
     wait_for_label(&mut h, "Read 2 rows, wrote 1, rejected 1");
+    h.run_steps(2);
     let saved = dir.path().join("rejected.csv");
     h.state_mut().set_file_dialog_answer(Some(saved.clone()));
-    h.get_by_label("Save rejected rows…").click();
+    h.get_by_label("Save rejected rows…").click_accesskit();
     wait_for_label(
         &mut h,
         &format!("Saved the rejected rows to {}", saved.display()),
@@ -2095,10 +2098,11 @@ fn history_clear_asks_first() {
     h.run_steps(2);
     open_history(&mut h);
     wait_for_label(&mut h, "select 42");
-    h.get_by_label("Clear history").click();
+    h.get_by_label("Clear history").click_accesskit();
     h.run_steps(2);
     h.get_by_label_contains("Clear the query history");
-    h.get_by_label("Delete").click();
+    h.run_steps(2);
+    h.get_by_label("Delete").click_accesskit();
     step_until(&mut h, "the history clears", |h| {
         h.query_by_label("select 42").is_none()
     });
@@ -2112,7 +2116,7 @@ fn settings_ui_scale_applies() {
     h.run_steps(2);
     h.get_by_label("150%").click();
     h.run_steps(2);
-    h.get_by_label("Save").click();
+    h.get_by_label("Save").click_accesskit();
     step_until(&mut h, "the UI scale applies", |h| {
         h.ctx.zoom_factor() == 1.5
     });

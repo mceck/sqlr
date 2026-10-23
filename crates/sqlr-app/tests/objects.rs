@@ -193,6 +193,15 @@ fn wait_for_label(h: &mut Harness<'static, SqlrApp>, label: &str) {
     step_until(h, label, |h| h.query_by_label(label).is_some());
 }
 
+/// Clicks `label` in a modal: a modal is laid out on its first frame, and a click in that
+/// frame lands on its backdrop.
+fn click_in_modal(h: &mut Harness<'static, SqlrApp>, label: &str) {
+    wait_for_label(h, label);
+    h.run_steps(2);
+    h.get_by_label(label).click_accesskit();
+    h.run_steps(2);
+}
+
 fn expand_to_orders(h: &mut Harness<'static, SqlrApp>) {
     h.get_by_label("Expand fake-conn").click();
     wait_for_label(h, "Expand s");
@@ -523,7 +532,7 @@ fn refresh_with_pending_edits_asks() {
     h.get_by_label("1 pending change");
     click_at(&mut h, refresh);
     wait_for_label(&mut h, "Discard the pending changes of orders?");
-    h.get_by_label("Discard").click();
+    click_in_modal(&mut h, "Discard");
     step_until(&mut h, "the reload", |h| {
         h.query_by_label("No pending changes").is_some()
     });
@@ -540,7 +549,7 @@ fn closing_an_editor_with_pending_edits_asks() {
     h.run_steps(2);
     wait_for_label(&mut h, "Discard the pending changes of orders?");
     assert_eq!(h.state().tab_titles(), ["Query 1", "orders"]);
-    h.get_by_label("Discard").click();
+    click_in_modal(&mut h, "Discard");
     step_until(&mut h, "the tab to close", |h| {
         h.state().tab_titles() == ["Query 1"]
     });
@@ -761,7 +770,7 @@ fn closing_an_editor_after_a_row_apply_asks_to_end_the_transaction() {
     h.run_steps(2);
     h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::W);
     wait_for_label(&mut h, "Discard the pending changes of orders?");
-    h.get_by_label("Discard").click();
+    click_in_modal(&mut h, "Discard");
     wait_for_label(&mut h, "Open transactions on fake-conn (orders).");
     assert_eq!(h.state().tab_titles(), ["Query 1", "orders"]);
     assert!(!driver.executed().iter().any(|s| s == "ROLLBACK"));
@@ -910,9 +919,8 @@ fn an_applied_definition_asks_before_dropping_row_edits() {
     });
     // The Data page is stale, but its row edit is not dropped without asking.
     wait_for_label(&mut h, "Discard the pending changes of orders?");
-    h.get_by_label("Discard").click();
-    h.run_steps(3);
-    h.get_by_label("Data").click();
+    click_in_modal(&mut h, "Discard");
+    h.get_by_label("Data").click_accesskit();
     step_until(&mut h, "the page without its edit", |h| {
         h.query_by_label("10").is_some() && h.query_by_label("1 pending change").is_none()
     });

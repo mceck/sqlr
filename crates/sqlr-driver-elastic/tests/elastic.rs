@@ -1,5 +1,5 @@
-//! Elasticsearch driver against 8.x and 7.17 containers. The tests take turns (one
-//! Elasticsearch JVM at a time) to keep memory in check.
+//! Elasticsearch driver against the fixed 8.x and 7.17 services. Each test resets the
+//! indices it uses and takes the cross-process lock for that node.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -10,46 +10,69 @@ use sqlr_core::{
     DriverError, ErrorKind, NodeKind, NodePath, Secrets, StatementClass,
 };
 use sqlr_driver_elastic::ElasticDriver;
-use testcontainers_modules::testcontainers::core::{IntoContainerPort, WaitFor};
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
-use testcontainers_modules::testcontainers::{ContainerAsync, GenericImage, ImageExt};
+use sqlr_testkit::{TestLock, service};
 
 static ONE_AT_A_TIME: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
-const IMAGE: &str = "docker.elastic.co/elasticsearch/elasticsearch";
-
 struct Server {
-    _container: ContainerAsync<GenericImage>,
+    _lock: TestLock,
     host: String,
     port: u16,
 }
 
-async fn start(tag: &str, env: &[(&str, &str)]) -> Server {
-    let mut image = GenericImage::new(IMAGE, tag)
-        .with_exposed_port(9200.tcp())
-        .with_wait_for(WaitFor::Nothing)
-        .with_env_var("discovery.type", "single-node")
-        .with_env_var("ES_JAVA_OPTS", "-Xms512m -Xmx512m")
-        .with_env_var("xpack.ml.enabled", "false")
-        .with_env_var("ingest.geoip.downloader.enabled", "false");
-    for (k, v) in env {
-        image = image.with_env_var(*k, *v);
-    }
-    let c = image.start().await.expect("start elasticsearch");
-    let host = c.get_host().await.expect("host").to_string();
-    let port = c.get_host_port_ipv4(9200).await.expect("port");
+/// Elasticsearch 8 without security. `extra` is accepted for the PIT test; the fixed
+/// service already enables one-second keep-alives.
+async fn start8(_extra: &[(&str, &str)]) -> Server {
+    let (host, port) = service("ELASTIC");
+    let lock = TestLock::acquire("elasticsearch");
+    reset(&host, port, None).await;
     Server {
-        _container: c,
+        _lock: lock,
         host,
         port,
     }
 }
 
-/// Elasticsearch 8 without security (security is covered by `es_versions_and_auth`).
-async fn start8(extra: &[(&str, &str)]) -> Server {
-    let mut env = vec![("xpack.security.enabled", "false")];
-    env.extend_from_slice(extra);
-    start("8.15.5", &env).await
+async fn start_auth() -> Server {
+    let (host, port) = service("ELASTIC_AUTH");
+    let lock = TestLock::acquire("elasticsearch-auth");
+    reset(&host, port, Some(("elastic", "s3cret-pw"))).await;
+    Server {
+        _lock: lock,
+        host,
+        port,
+    }
+}
+
+async fn start7() -> Server {
+    let (host, port) = service("ELASTIC7");
+    let lock = TestLock::acquire("elasticsearch7");
+    reset(&host, port, None).await;
+    Server {
+        _lock: lock,
+        host,
+        port,
+    }
+}
+
+/// Deletes indices, data streams and templates between tests. The compose file sets
+/// `action.destructive_requires_name=false` so the wildcard deletes work.
+async fn reset(host: &str, port: u16, auth: Option<(&str, &str)>) {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let client = reqwest::Client::new();
+    let base = format!("http://{host}:{port}");
+    for path in ["_data_stream/*", "_index_template/*", "_all"] {
+        let mut request = client.delete(format!("{base}/{path}"));
+        if let Some((user, password)) = auth {
+            request = request.basic_auth(user, Some(password));
+        }
+        let response = request.send().await.expect("reset elasticsearch");
+        assert!(
+            response.status().is_success() || response.status() == reqwest::StatusCode::NOT_FOUND,
+            "reset {path}: {}",
+            response.status()
+        );
+    }
 }
 
 fn config(server: &Server, extra: &[(&str, &str)]) -> ConnectionConfig {
@@ -543,15 +566,7 @@ async fn es_versions_and_auth() {
     let _turn = ONE_AT_A_TIME.lock().await;
     {
         // 8.x with security on (HTTP without TLS): basic auth, API keys, wrong passwords.
-        let server = start(
-            "8.15.5",
-            &[
-                ("xpack.security.enabled", "true"),
-                ("xpack.security.http.ssl.enabled", "false"),
-                ("ELASTIC_PASSWORD", "s3cret-pw"),
-            ],
-        )
-        .await;
+        let server = start_auth().await;
         let user = [("user", "elastic")];
         let conn = connect_when_up(&server, &user, &secrets(&[("password", "s3cret-pw")])).await;
         assert!(conn.ping().await.unwrap().version.starts_with("8."));
@@ -587,7 +602,7 @@ async fn es_versions_and_auth() {
     }
     {
         // 7.17 without security: anonymous access, SQL and PIT work, ES|QL is refused.
-        let server = start("7.17.25", &[("xpack.security.enabled", "false")]).await;
+        let server = start7().await;
         let conn = connect(&server, &[]).await;
         assert!(conn.ping().await.unwrap().version.starts_with("7.17"));
         seed(&conn, "old", 1200).await;

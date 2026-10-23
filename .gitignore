@@ -6,3 +6,6 @@ target/
 *.jar
 !/docs/**/*.jar
 /dist/
+
+# Throwaway TLS certificates for the fixed test services
+.test-services/

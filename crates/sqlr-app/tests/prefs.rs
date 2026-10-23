@@ -3,6 +3,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
@@ -121,11 +122,17 @@ fn prefs_override_per_connection_shows_dot() {
         "true"
     );
 
-    // Save writes the overrides next to the global file.
+    // Save writes the overrides next to the global file, on a background thread.
     h.get_by_label(STOP_ON_ERROR).click();
     h.run_steps(2);
     h.get_by_label("Save").click();
     h.run_steps(3);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while h.query_by_label("Apply").is_some() {
+        assert!(Instant::now() < deadline, "timed out saving preferences");
+        h.run_steps(1);
+        std::thread::sleep(Duration::from_millis(5));
+    }
     let overrides = std::fs::read_to_string(dir.path().join("overrides.toml")).unwrap();
     assert!(overrides.contains("[connection.c1]"), "{overrides}");
 }

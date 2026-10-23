@@ -11,12 +11,10 @@ use sqlr_core::{
     RoleDef, Secrets, TableRef,
 };
 use sqlr_driver_postgres::PostgresDriver;
-use support::{pg_isolated, secrets};
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::ContainerAsync;
+use support::{PgServer, pg_isolated, secrets};
 
 struct Env {
-    _c: ContainerAsync<Postgres>,
+    _c: PgServer,
     cfg: ConnectionConfig,
     sec: Secrets,
     raw: tokio_postgres::Client,

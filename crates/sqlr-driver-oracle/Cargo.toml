@@ -14,4 +14,5 @@ tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 tracing.workspace = true
 
 [dev-dependencies]
-tempfile.workspace = true
+sqlr-testkit = { path = "../sqlr-testkit" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

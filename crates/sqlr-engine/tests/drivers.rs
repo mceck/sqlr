@@ -9,7 +9,6 @@ use sqlr_core::{ConnectionConfig, ConnectionProfile, Secrets};
 use sqlr_engine::{DriverJobState, DriverRegistry, Engine, QueryStatus, SessionStatus};
 use sqlr_registry::Registry;
 
-#[allow(dead_code)]
 mod support;
 use support::{TIMEOUT, no_repaint, wait_until};
 

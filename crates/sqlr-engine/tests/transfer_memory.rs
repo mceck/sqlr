@@ -2,7 +2,6 @@
 //! test binary, so the process's peak RSS is not shared with other tests.
 #![cfg(unix)]
 
-#[allow(dead_code)]
 mod support;
 
 use std::io::{BufRead, BufWriter, Read, Write};

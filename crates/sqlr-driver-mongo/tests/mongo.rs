@@ -1,4 +1,4 @@
-//! MongoDB driver against a `mongo:7` container.
+//! MongoDB driver against the fixed `mongo:7` service.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -8,9 +8,7 @@ use sqlr_core::{
     DriverError, ErrorKind, Node, NodeKind, NodePath, Secrets, StatementClass,
 };
 use sqlr_driver_mongo::MongoDriver;
-use testcontainers_modules::mongo::Mongo;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
-use testcontainers_modules::testcontainers::{ContainerAsync, ImageExt};
+use sqlr_testkit::{TestLock, service};
 
 fn config(host: &str, port: u16, extra: &[(&str, &str)]) -> ConnectionConfig {
     let mut values: std::collections::BTreeMap<String, String> = [
@@ -37,27 +35,49 @@ fn config(host: &str, port: u16, extra: &[(&str, &str)]) -> ConnectionConfig {
 }
 
 struct Server {
-    _container: ContainerAsync<Mongo>,
+    _lock: TestLock,
     host: String,
     port: u16,
 }
 
 async fn start() -> Server {
-    start_with(&[]).await
+    server("MONGO", None, "mongo").await
 }
 
-async fn start_with(env: &[(&str, &str)]) -> Server {
-    let mut image = Mongo::default().with_tag("7");
-    for (k, v) in env {
-        image = image.with_env_var(*k, *v);
-    }
-    let c = image.start().await.expect("start mongo container");
-    let host = c.get_host().await.expect("host").to_string();
-    let port = c.get_host_port_ipv4(27017).await.expect("port");
+async fn start_auth() -> Server {
+    server("MONGO_AUTH", Some(("root", "s3cret")), "mongo-auth").await
+}
+
+async fn server(env: &str, credentials: Option<(&str, &str)>, lock: &str) -> Server {
+    let (host, port) = service(env);
+    let guard = TestLock::acquire(lock);
+    reset(&host, port, credentials).await;
     Server {
-        _container: c,
+        _lock: guard,
         host,
         port,
+    }
+}
+
+/// Drops the databases a previous test left, so every test starts from an empty server.
+async fn reset(host: &str, port: u16, credentials: Option<(&str, &str)>) {
+    let uri = match credentials {
+        Some((user, password)) => {
+            format!("mongodb://{user}:{password}@{host}:{port}/?authSource=admin")
+        }
+        None => format!("mongodb://{host}:{port}/"),
+    };
+    let client = mongodb::Client::with_uri_str(uri)
+        .await
+        .expect("connect to the fixed mongo");
+    for database in client.list_database_names().await.expect("list databases") {
+        if !matches!(database.as_str(), "admin" | "local" | "config") {
+            client
+                .database(&database)
+                .drop()
+                .await
+                .unwrap_or_else(|e| panic!("drop {database}: {e:?}"));
+        }
     }
 }
 
@@ -665,11 +685,7 @@ async fn cancel_a_long_aggregate_kills_it() {
 #[tokio::test]
 async fn auth_failure_message() {
     sqlr_testkit::skip_container_tests!();
-    let server = start_with(&[
-        ("MONGO_INITDB_ROOT_USERNAME", "root"),
-        ("MONGO_INITDB_ROOT_PASSWORD", "s3cret"),
-    ])
-    .await;
+    let server = start_auth().await;
     let user = [("user", "root")];
     let good = Secrets([("password".to_string(), "s3cret".to_string())].into());
     // Wait for the restarted server.

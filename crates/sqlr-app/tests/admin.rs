@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use egui::accesskit::Role;
+use egui::accesskit::{Role, Toggled};
 use egui_kittest::Harness;
 use egui_kittest::kittest::{By, NodeT, Queryable};
 use sqlr_app::{AppDeps, SqlrApp};
@@ -256,6 +256,17 @@ fn step_until(
 
 fn wait_for_label(h: &mut Harness<'static, SqlrApp>, label: &str) {
     step_until(h, label, |h| h.query_by_label(label).is_some());
+}
+
+/// Selects a session by id through AccessKit: a pointer click would use coordinates from
+/// before the "Done" message shifted the table down.
+fn select_session(h: &mut Harness<'static, SqlrApp>, id: &str) {
+    wait_for_label(h, id);
+    h.get_by_label(id).click_accesskit();
+    step_until(h, &format!("session {id} to be selected"), |h| {
+        h.query_by_label(id)
+            .is_some_and(|n| n.accesskit_node().toggled() == Some(Toggled::True))
+    });
 }
 
 fn connect(h: &mut Harness<'static, SqlrApp>) {
@@ -539,19 +550,21 @@ fn terminate_confirms_twice_for_own_session() {
     h.get_by_label("7 waits for 1");
 
     // Another session: one confirmation.
-    h.get_by_label("7").click();
-    h.run_steps(2);
-    h.get_by_label("Terminate").click();
+    select_session(&mut h, "7");
+    h.get_by_label("Terminate").click_accesskit();
     wait_for_label(&mut h, "Terminate session 7?");
     click_in_modal(&mut h, "Terminate the session");
     step_until(&mut h, "the terminate", |_| {
         driver.admin_calls().contains(&"terminate 7".to_string())
     });
+    // Let the "Done" message appear before selecting another row: it shifts the table,
+    // so a click at the old row position would miss.
+    wait_for_label(&mut h, "Done");
+    h.run_steps(2);
 
     // The app's own session: asked twice, and "Close" stops it.
-    h.get_by_label("1").click();
-    h.run_steps(2);
-    h.get_by_label("Terminate").click();
+    select_session(&mut h, "1");
+    h.get_by_label("Terminate").click_accesskit();
     wait_for_label(&mut h, "Terminate session 1?");
     click_in_modal(&mut h, "Terminate the session");
     wait_for_label(&mut h, "Session 1 is this connection. Terminate it anyway?");
@@ -559,7 +572,7 @@ fn terminate_confirms_twice_for_own_session() {
     h.run_steps(20);
     assert!(!driver.admin_calls().contains(&"terminate 1".to_string()));
 
-    h.get_by_label("Terminate").click();
+    h.get_by_label("Terminate").click_accesskit();
     click_in_modal(&mut h, "Terminate the session");
     click_in_modal(&mut h, "Terminate it anyway");
     step_until(&mut h, "the own terminate", |_| {
@@ -567,9 +580,8 @@ fn terminate_confirms_twice_for_own_session() {
     });
 
     // Cancel asks once for another session.
-    h.get_by_label("7").click();
-    h.run_steps(2);
-    h.get_by_label("Cancel query").click();
+    select_session(&mut h, "7");
+    h.get_by_label("Cancel query").click_accesskit();
     wait_for_label(&mut h, "Cancel the running query of session 7?");
     click_in_modal(&mut h, "Cancel the query");
     step_until(&mut h, "the cancel", |_| {

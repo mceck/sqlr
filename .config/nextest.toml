@@ -8,18 +8,31 @@ slow-timeout = { period = "30s", terminate-after = 4 }
 status-level = "slow"
 final-status-level = "slow"
 
-# Docker-backed suites share four slots, so testcontainers does not start dozens of
-# databases at once. UI and core tests still use every core.
-[test-groups.containers]
-max-threads = 4
+# The egui smoke tests drive a real event loop and are timing-sensitive when many run at
+# once; two at a time is stable and still much faster than serializing them.
+[test-groups.app]
+max-threads = 2
 
 [[profile.default.overrides]]
-filter = 'package(sqlr-driver-postgres) or package(sqlr-driver-mysql) or package(sqlr-driver-redis) or package(sqlr-driver-mongo) or package(sqlr-driver-elastic) or package(sqlr-engine)'
-test-group = "containers"
+filter = 'package(sqlr-app) and binary(smoke)'
+test-group = "app"
 
-# Longer timeout for the Docker-backed suite, plus one retry for the occasional
-# testcontainers port-mapping race. `cargo nextest run --profile containers`.
+# Each sidecar test builds the SDK examples through `cargo`; run them one at a time so
+# they do not wait on cargo's package lock while a probe's handshake times out.
+[test-groups.sidecar]
+max-threads = 1
+
+[[profile.default.overrides]]
+filter = 'package(sqlr-sidecar)'
+test-group = "sidecar"
+
+# Longer timeout for the Docker-backed suite. All servers are fixed services, so the
+# tests can use every core like the rest of the workspace.
 [profile.containers]
 inherits = "default"
-retries = 1
 slow-timeout = { period = "120s", terminate-after = 4 }
+
+# Keep one retry as a safety net for a missed click in the event loop.
+[[profile.containers.overrides]]
+filter = 'package(sqlr-app) and binary(smoke)'
+retries = 1

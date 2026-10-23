@@ -23,20 +23,26 @@ sqlr is a lightweight, universal database client in native Rust + egui. No webvi
 ## Commands
 
 ```sh
-cargo test --workspace                                   # Postgres tests need Docker (see below)
-cargo nextest run --workspace --profile containers       # runs test binaries concurrently
+make test                                                # fixed Docker services + nextest
+make test-fast                                           # no Docker
+cargo nextest run --workspace --profile containers       # needs the services below
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt
 cargo run --release -p sqlr-app
 ```
 
-`make test` starts the shared Postgres/MySQL/MariaDB services from
-`docker-compose.test.yml` and runs the nextest `containers` profile; every test gets its
-own database. `make test-services-reset` recreates them. Without `SQLR_TEST_*` variables,
-tests fall back to testcontainers. `make test-fast` sets
+`make test` starts every fixed service in `docker-compose.test.yml` (Postgres, MySQL,
+MariaDB, MongoDB, Redis, Elasticsearch, SQL Server, Oracle) and runs the nextest
+`containers` profile. No test starts its own container: per-test databases isolate the
+parallel tests, and the server-global tests take a cross-process `sqlr_testkit::TestLock`.
+The support modules read `SQLR_TEST_*` variables (or `sqlr_testkit::service` defaults).
+`make test-services-reset` recreates the volumes. `make test-fast` sets
 `SQLR_SKIP_CONTAINER_TESTS=1` and needs no Docker.
 
-The Postgres integration tests use testcontainers with Docker Desktop. Set `DOCKER_HOST=unix://$HOME/.docker/run/docker.sock`. The docker CLI is `~/.docker/bin/docker`, which is not on `PATH`.
+To run `cargo test` or `cargo nextest` directly, start the services first with
+`scripts/test-services.sh up` (or `make test-services`). On Docker Desktop for macOS set
+`DOCKER_HOST=unix://$HOME/.docker/run/docker.sock`. The docker CLI is
+`~/.docker/bin/docker`, which is not on `PATH`.
 
 ## Hard rules
 

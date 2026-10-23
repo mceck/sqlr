@@ -477,7 +477,7 @@ All widgets take data in and return action values. None of them calls the engine
 ## 11. Testing
 
 1. **Unit tests** in `core` and `engine`: chunk encode/decode, statement splitting per dialect, DML generation, the changeset, Mongo shell-syntax parsing and the destructive-statement classifier.
-2. **Driver conformance suite** (§6.3), run with testcontainers against PostgreSQL, MySQL, MariaDB, MongoDB, Redis and Elasticsearch in CI. HANA runs only where a test instance is available.
+2. **Driver conformance suite** (§6.3), run against the fixed PostgreSQL, MySQL, MariaDB, MongoDB, Redis, Elasticsearch, SQL Server and Oracle test services in CI. HANA runs only where a test instance is available.
 3. **Widget tests** with `egui_kittest`: simulated interaction plus snapshot tests for `QueryEditor`, `ResultGrid`, `SchemaTree` and `KeyBrowser`.
 4. **Fuzzing** of the sidecar protocol decoder and the chunk decoder with `cargo-fuzz`.
 5. **Performance budgets in CI:** cold start time, idle RAM, binary size, and grid frame time on a 1M-row fixture. The build fails if any target in §1.3 regresses.

@@ -19,7 +19,10 @@ pub(crate) async fn execute(
 ) -> Result<Execution, DriverError> {
     let sql = trim_statement_in(&oracle_syntax(), sql);
     let binds: Vec<OracleValue> = params.iter().map(types::encode).collect();
-    let result = conn.query(sql.as_ref(), &binds).await.map_err(map_error)?;
+    let result = conn
+        .execute(sql.as_ref(), &binds)
+        .await
+        .map_err(map_error)?;
     if result.columns.is_empty() {
         return Ok(Execution::Affected(result.rows_affected));
     }

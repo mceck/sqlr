@@ -9,14 +9,10 @@ use sqlr_core::{
     ConnectionConfig, Endpoint, Secrets, TableRef, TransferOptions, TransferSpec, Value,
 };
 use sqlr_engine::{DriverRegistry, Engine, JobId, JobOutcome, QueryId, QueryStatus, SessionStatus};
+use support::endpoint;
 use support::{TIMEOUT, config, dev, no_repaint, wait_until};
-use testcontainers_modules::mysql::Mysql;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
-use testcontainers_modules::testcontainers::{ContainerAsync, ImageExt};
 
 struct Servers {
-    _pg: ContainerAsync<testcontainers_modules::postgres::Postgres>,
-    _my: ContainerAsync<Mysql>,
     pg: ConnectionConfig,
     my: ConnectionConfig,
 }
@@ -29,23 +25,12 @@ fn values(pairs: &[(&str, String)]) -> std::collections::BTreeMap<String, String
 }
 
 async fn start() -> Servers {
-    let pg = testcontainers_modules::postgres::Postgres::default()
-        .with_tag("17-alpine")
-        .start()
-        .await
-        .expect("postgres");
-    let my = Mysql::default()
-        .with_tag("8.4")
-        .start()
-        .await
-        .expect("mysql");
+    let (pg_host, pg_port) = endpoint("POSTGRES");
+    let (my_host, my_port) = endpoint("MYSQL");
     let pg_cfg = ConnectionConfig {
         values: values(&[
-            ("host", pg.get_host().await.unwrap().to_string()),
-            (
-                "port",
-                pg.get_host_port_ipv4(5432).await.unwrap().to_string(),
-            ),
+            ("host", pg_host),
+            ("port", pg_port.to_string()),
             ("database", "postgres".into()),
             ("user", "postgres".into()),
         ]),
@@ -53,19 +38,14 @@ async fn start() -> Servers {
     };
     let my_cfg = ConnectionConfig {
         values: values(&[
-            ("host", my.get_host().await.unwrap().to_string()),
-            (
-                "port",
-                my.get_host_port_ipv4(3306).await.unwrap().to_string(),
-            ),
+            ("host", my_host),
+            ("port", my_port.to_string()),
             ("database", "test".into()),
             ("user", "root".into()),
         ]),
         ..config("my", "mysql")
     };
     Servers {
-        _pg: pg,
-        _my: my,
         pg: pg_cfg,
         my: my_cfg,
     }
@@ -166,6 +146,14 @@ fn cross_dialect_matrix() {
         Secrets([("password".to_string(), "postgres".to_string())].into()),
     );
     connect(&engine, servers.my.clone(), Secrets::default());
+    for table in ["m", "m_back", "k", "narrow"] {
+        run(
+            &engine,
+            "pg",
+            &format!("DROP TABLE IF EXISTS public.{table} CASCADE"),
+        );
+        run(&engine, "my", &format!("DROP TABLE IF EXISTS {table}"));
+    }
     let lite = ConnectionConfig {
         values: [(
             "path".to_string(),

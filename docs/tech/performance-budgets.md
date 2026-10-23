@@ -36,8 +36,9 @@ that the operating system's disk cache was purged.
 
 The editor checker validates every exported `pass` verdict and rejects a report
 with missing phases or no budget checks. `SQLR_SKIP_CONTAINER_TESTS=1` skips the
-Docker integration test entry points on macOS CI; Linux runs their real, dynamically
-allocated testcontainers. It does not skip the local SQLite or fake-driver tests.
+Docker integration test entry points on macOS CI; Linux runs them against the fixed
+services from `docker-compose.test.yml`. It does not skip the local SQLite or fake-driver
+tests.
 
 ## Local measurements
 

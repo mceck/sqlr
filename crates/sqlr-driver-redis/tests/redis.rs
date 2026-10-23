@@ -1,4 +1,4 @@
-//! Redis driver against `redis:7` containers (and a scripted fake server for clusters).
+//! Redis driver against the fixed `redis:7` services (and a scripted fake server for clusters).
 
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -9,9 +9,7 @@ use sqlr_core::{
     KvCursor, KvEdit, KvNodePath, KvPage, NodeKind, NodePath, RespValue, Secrets, StatementClass,
 };
 use sqlr_driver_redis::RedisDriver;
-use testcontainers_modules::redis::Redis;
-use testcontainers_modules::testcontainers::runners::AsyncRunner;
-use testcontainers_modules::testcontainers::{ContainerAsync, ImageExt};
+use sqlr_testkit::{TestLock, service};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -40,34 +38,70 @@ fn config(host: &str, port: u16, extra: &[(&str, &str)]) -> ConnectionConfig {
 }
 
 struct Server {
-    _container: ContainerAsync<Redis>,
+    _lock: Option<TestLock>,
     host: String,
     port: u16,
 }
 
 async fn start() -> Server {
-    let c = Redis::default()
-        .with_tag("7")
-        .start()
-        .await
-        .expect("start redis");
-    let host = c.get_host().await.expect("host").to_string();
-    let port = c.get_host_port_ipv4(6379).await.expect("port");
+    let (host, port) = service("REDIS");
+    let guard = TestLock::acquire("redis");
+    reset(&host, port).await;
     Server {
-        _container: c,
+        _lock: Some(guard),
         host,
         port,
     }
 }
 
+async fn start_tls() -> Server {
+    let (host, port) = service("REDIS_TLS");
+    Server {
+        _lock: None,
+        host,
+        port,
+    }
+}
+
+/// Every test starts from an empty server; the lock keeps nextest's processes apart.
+async fn reset(host: &str, port: u16) {
+    let client = redis::Client::open(format!("redis://{host}:{port}/")).unwrap();
+    for attempt in 0..3 {
+        let mut con = match client.get_multiplexed_async_connection().await {
+            Ok(con) => con,
+            Err(_) if attempt < 2 => {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                continue;
+            }
+            Err(e) => panic!("reset redis: {e}"),
+        };
+        if redis::cmd("FLUSHALL")
+            .arg("ASYNC")
+            .query_async::<redis::Value>(&mut con)
+            .await
+            .is_ok()
+        {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    panic!("reset redis: timed out");
+}
+
 async fn connect(server: &Server, extra: &[(&str, &str)]) -> Arc<dyn Connection> {
-    RedisDriver::new()
-        .connect(
-            &config(&server.host, server.port, extra),
-            &Secrets::default(),
-        )
-        .await
-        .expect("connect")
+    let driver = RedisDriver::new();
+    let cfg = config(&server.host, server.port, extra);
+    for attempt in 0..3 {
+        match driver.connect(&cfg, &Secrets::default()).await {
+            Ok(conn) => return conn,
+            Err(_) if attempt < 2 => {
+                // `CLIENT KILL` tests can leave the port proxy reconnecting for a moment.
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+            Err(e) => panic!("connect: {e:?}"),
+        }
+    }
+    unreachable!()
 }
 
 fn kv(conn: &Arc<dyn Connection>) -> &dyn KeyValueConn {
@@ -76,11 +110,15 @@ fn kv(conn: &Arc<dyn Connection>) -> &dyn KeyValueConn {
 
 /// A plain `redis` client for seeding and inspecting the server.
 async fn raw(server: &Server) -> redis::aio::MultiplexedConnection {
-    redis::Client::open(format!("redis://{}:{}/", server.host, server.port))
-        .unwrap()
-        .get_multiplexed_async_connection()
-        .await
-        .unwrap()
+    let client = redis::Client::open(format!("redis://{}:{}/", server.host, server.port)).unwrap();
+    for attempt in 0..3 {
+        match client.get_multiplexed_async_connection().await {
+            Ok(con) => return con,
+            Err(_) if attempt < 2 => tokio::time::sleep(Duration::from_millis(250)).await,
+            Err(e) => panic!("raw redis: {e}"),
+        }
+    }
+    unreachable!()
 }
 
 async fn run(con: &mut redis::aio::MultiplexedConnection, args: &[&str]) -> redis::Value {
@@ -760,52 +798,9 @@ async fn read_only_refuses_writes() {
 #[tokio::test(flavor = "multi_thread")]
 async fn tls_and_acl_auth() {
     sqlr_testkit::skip_container_tests!();
-    let ca_key = rcgen::KeyPair::generate().unwrap();
-    let mut ca_params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
-    ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
-    ca_params
-        .distinguished_name
-        .push(rcgen::DnType::CommonName, "sqlr test CA");
-    let ca = rcgen::CertifiedIssuer::self_signed(ca_params, ca_key).unwrap();
-    let server_key = rcgen::KeyPair::generate().unwrap();
-    let server_cert = rcgen::CertificateParams::new(vec!["localhost".to_string()])
-        .unwrap()
-        .signed_by(&server_key, &ca)
-        .unwrap();
-    let c = Redis::default()
-        .with_tag("7")
-        .with_copy_to("/tls/server.crt", server_cert.pem().into_bytes())
-        .with_copy_to("/tls/server.key", server_key.serialize_pem().into_bytes())
-        .with_copy_to("/tls/ca.crt", ca.pem().into_bytes())
-        .with_cmd([
-            "redis-server",
-            "--port",
-            "0",
-            "--tls-port",
-            "6379",
-            "--tls-cert-file",
-            "/tls/server.crt",
-            "--tls-key-file",
-            "/tls/server.key",
-            "--tls-ca-cert-file",
-            "/tls/ca.crt",
-            "--tls-auth-clients",
-            "no",
-            "--user",
-            "alice",
-            "on",
-            ">s3cret",
-            "~*",
-            "&*",
-            "+@all",
-        ])
-        .start()
-        .await
-        .expect("start a TLS redis");
-    let port = c.get_host_port_ipv4(6379).await.unwrap();
-    let dir = tempfile_dir();
-    let ca_path = dir.join("ca.crt");
-    std::fs::write(&ca_path, ca.pem()).unwrap();
+    let server = start_tls().await;
+    let port = server.port;
+    let ca_path = sqlr_testkit::ca_path();
     let ca_path = ca_path.to_str().unwrap().to_string();
     let driver = RedisDriver::new();
     let secrets = |pw: &str| Secrets([("password".to_string(), pw.to_string())].into());
@@ -869,12 +864,6 @@ async fn tls_and_acl_auth() {
         matches!(e.kind, ErrorKind::Connection | ErrorKind::Timeout),
         "{e:?}"
     );
-}
-
-fn tempfile_dir() -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("sqlr-redis-tls-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    dir
 }
 
 #[tokio::test(flavor = "multi_thread")]
