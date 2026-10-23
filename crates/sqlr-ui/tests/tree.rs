@@ -1115,6 +1115,41 @@ fn table_context_menu_entries() {
 }
 
 #[test]
+fn table_menu_opens_the_editor_first() {
+    let mut h = harness(StubSource {
+        ddl: true,
+        ..with_objects()
+    });
+    open_prod(&mut h);
+    h.run_steps(100);
+    h.get_by_label("orders").click_secondary();
+    h.run_steps(2);
+    let open = h.get_by_label("Open editor").rect().top();
+    for entry in [
+        "Select 100 rows",
+        "Open data",
+        "Open DDL",
+        "Export data…",
+        "Import data…",
+        "Generate data…",
+        "Transfer data…",
+        "New ⏵",
+        "Generate SQL ⏵",
+        "Rename",
+        "Truncate…",
+        "Drop…",
+        "Refresh",
+        "Copy name",
+        "Copy qualified name",
+    ] {
+        assert!(
+            open < h.get_by_label(entry).rect().top(),
+            "{entry} is above Open editor"
+        );
+    }
+}
+
+#[test]
 fn connection_context_menu_entries() {
     let mut h = harness(StubSource::new());
     open_folder(&mut h, "prod");

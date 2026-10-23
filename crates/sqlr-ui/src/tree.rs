@@ -1681,6 +1681,15 @@ fn node_row(
             }
         }
         theme::context_menu(&response, |ui| {
+            // "Open editor" leads the object entries, before the data actions.
+            let menu = source.node_menu(conn, node);
+            if menu.open && icons::menu_item(ui, icons::EDIT, "Open editor").clicked() {
+                actions.push(TreeAction::OpenObject {
+                    conn: conn.to_string(),
+                    node: node.clone(),
+                });
+                ui.close();
+            }
             // Key-value stores (the driver's manifest says so, spec §5.3) export keys (a
             // database, a prefix group or a key) but take no imports.
             let redis = source.key_value(conn);
@@ -1808,7 +1817,7 @@ fn node_row(
                 });
                 ui.close();
             }
-            object_menu(ui, conn, node, state, source, actions);
+            object_menu(ui, conn, node, state, &menu, actions);
             if icons::menu_item(ui, icons::REFRESH, "Refresh").clicked() {
                 actions.push(TreeAction::Refresh {
                     conn: conn.to_string(),
@@ -1887,17 +1896,22 @@ fn rename_field(
     true
 }
 
-/// The object entries of a node's context menu, as the source allows them.
+/// The object entries of a node's context menu, as `menu` allows them.
 fn object_menu(
     ui: &mut egui::Ui,
     conn: &str,
     node: &Node,
     state: &mut TreeState,
-    source: &dyn SchemaSource,
+    menu: &NodeMenu,
     actions: &mut Vec<TreeAction>,
 ) {
-    let menu = source.node_menu(conn, node);
-    if menu == NodeMenu::default() {
+    // "Open editor" is drawn above, ahead of the data actions.
+    if menu.new.is_empty()
+        && menu.generate.is_empty()
+        && !menu.rename
+        && !menu.truncate
+        && !menu.drop
+    {
         return;
     }
     ui.separator();
@@ -1906,16 +1920,6 @@ fn object_menu(
         ui.close();
     };
     let (c, n) = (conn.to_string(), node.clone());
-    if menu.open && icons::menu_item(ui, icons::EDIT, "Open editor").clicked() {
-        action(
-            TreeAction::OpenObject {
-                conn: c.clone(),
-                node: n.clone(),
-            },
-            actions,
-            ui,
-        );
-    }
     if !menu.new.is_empty() {
         icons::menu_button(ui, icons::ADD, "New", |ui| {
             for kind in &menu.new {
