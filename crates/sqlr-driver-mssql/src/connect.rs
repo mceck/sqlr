@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use sqlr_core::{
     CancelHandle, Connection, ConnectionConfig, Dialect, Driver, DriverError, DriverManifest,
-    ErrorKind, Execution, Node, NodePath, RelationalConn, Secrets, ServerInfo, TableInfo, TableRef,
-    Value,
+    ErrorKind, Execution, Introspect, Node, NodePath, ObjectDef, ObjectRef, RelationalConn,
+    Secrets, ServerInfo, TableInfo, TableRef, Value,
 };
 use tiberius::{AuthMethod, Config, EncryptionLevel};
 use tokio::net::TcpStream;
@@ -14,7 +14,7 @@ use tokio_util::compat::TokioAsyncWriteCompatExt;
 
 use crate::browse::MsClient;
 use crate::dialect::MsDialect;
-use crate::{browse, catalog, describe, execute, manifest, map_error};
+use crate::{browse, catalog, describe, execute, introspect, manifest, map_error};
 
 pub struct SqlServerDriver {
     manifest: DriverManifest,
@@ -206,9 +206,50 @@ impl RelationalConn for MsConnection {
         &self.dialect
     }
 
+    async fn explain(&self, sql: &str, analyze: bool) -> Result<sqlr_core::PlanTree, DriverError> {
+        let statement = sqlr_core::explain_check(&self.dialect.syntax(), sql)?;
+        let spec = self.dialect.explain_spec(&statement, analyze)?;
+        let mut client = self.client.lock().await;
+        let rows = execute::explain_rows(&mut client, &spec).await?;
+        spec.parser.parse(&rows)
+    }
+
+    fn introspect(&self) -> Option<&dyn Introspect> {
+        Some(self)
+    }
+
     async fn catalog(&self, schema: &str) -> Result<sqlr_core::SchemaCatalog, DriverError> {
         let mut client = self.client.lock().await;
         catalog::catalog(&mut client, schema).await
+    }
+}
+
+#[async_trait::async_trait]
+impl Introspect for MsConnection {
+    async fn load_object(&self, object: &ObjectRef) -> Result<ObjectDef, DriverError> {
+        let mut client = self.client.lock().await;
+        introspect::load_object(&mut client, &self.database, object).await
+    }
+
+    async fn list_roles(&self) -> Result<Vec<String>, DriverError> {
+        let mut client = self.client.lock().await;
+        introspect::roles(&mut client).await
+    }
+
+    /// The connection's own database only: SQL Server has no cross-database connection here.
+    async fn load_schema(
+        &self,
+        database: Option<&str>,
+        schema: &str,
+    ) -> Result<sqlr_core::SchemaSnapshot, DriverError> {
+        if database.is_some_and(|d| d != self.database) {
+            return Err(DriverError::new(
+                ErrorKind::Unsupported,
+                "multiple databases are not supported",
+            ));
+        }
+        let mut client = self.client.lock().await;
+        introspect::load_schema(&mut client, schema).await
     }
 }
 

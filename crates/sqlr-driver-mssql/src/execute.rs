@@ -21,6 +21,26 @@ pub(crate) async fn execute(
 ) -> Result<Execution, DriverError> {
     let syntax = tsql_syntax();
     let sql = trim_statement_in(&syntax, sql);
+    // T-SQL insists that a `MERGE` ends in `;`, which trimming just took off.
+    let sql = if first_word(&sql).eq_ignore_ascii_case("MERGE") {
+        std::borrow::Cow::Owned(format!("{sql};"))
+    } else {
+        sql
+    };
+    // `CREATE VIEW`, `CREATE SCHEMA` and the like must be the first statement of a batch, and
+    // a `SET SHOWPLAN_…` only holds for the session when it is one: a statement run with
+    // `execute` travels inside `sp_executesql`. These go as a plain batch (they have no row
+    // count to report anyway).
+    if params.is_empty() && (syntax.is_ddl(&sql) || first_word(&sql).eq_ignore_ascii_case("SET")) {
+        client
+            .simple_query(sql.as_ref())
+            .await
+            .map_err(map_error)?
+            .into_results()
+            .await
+            .map_err(map_error)?;
+        return Ok(Execution::Affected(0));
+    }
     if !returns_rows(&sql) {
         let encoded: Vec<ColumnData<'static>> = params.iter().map(types::encode).collect();
         let refs: Vec<&dyn ToSql> = encoded.iter().map(|v| v as &dyn ToSql).collect();
@@ -61,6 +81,52 @@ pub(crate) async fn execute(
         at: 0,
         done: false,
     })))
+}
+
+/// The rows `spec.sql` returns between `spec.before` and `spec.after`, all as plain
+/// batches: a showplan comes back as a rowset only for a batch of its own. `after` runs
+/// whatever happened.
+pub(crate) async fn explain_rows(
+    client: &mut MsClient,
+    spec: &sqlr_core::ExplainSpec,
+) -> Result<Vec<Vec<Value>>, DriverError> {
+    async fn batch(client: &mut MsClient, sql: &str) -> Result<Vec<tiberius::Row>, DriverError> {
+        client
+            .simple_query(sql)
+            .await
+            .map_err(map_error)?
+            .into_first_result()
+            .await
+            .map_err(map_error)
+    }
+    let mut result = Ok(Vec::new());
+    for sql in &spec.before {
+        if let Err(e) = batch(client, sql).await {
+            result = Err(e);
+            break;
+        }
+    }
+    if result.is_ok() {
+        result = batch(client, &spec.sql).await;
+    }
+    for sql in &spec.after {
+        let _ = batch(client, sql).await;
+    }
+    Ok(result?
+        .iter()
+        .map(|row| row.cells().map(|(_, data)| types::decode(data)).collect())
+        .collect())
+}
+
+/// The first word of `sql`, comments skipped.
+fn first_word(sql: &str) -> String {
+    let mut tokens = Vec::new();
+    tsql_syntax().lex(sql, LexState::Normal, &mut tokens);
+    tokens
+        .iter()
+        .find(|t| t.kind != TokenKind::Comment)
+        .map(|t| sql[t.start..t.end].to_string())
+        .unwrap_or_default()
 }
 
 /// Whether a statement produces a rowset rather than only a row count.
