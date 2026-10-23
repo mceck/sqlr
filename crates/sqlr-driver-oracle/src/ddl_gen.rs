@@ -73,11 +73,14 @@ impl OracleDialect {
                     return Err(unsupported("Oracle foreign keys have no ON UPDATE action"));
                 }
                 let mut fk = format!(
-                    "FOREIGN KEY ({}) REFERENCES {} ({})",
+                    "FOREIGN KEY ({}) REFERENCES {}",
                     self.quoted_list(columns),
-                    self.qualified(target),
-                    self.quoted_list(target_columns)
+                    self.qualified(target)
                 );
+                // An empty target column list means the target's primary key.
+                if !target_columns.is_empty() {
+                    fk.push_str(&format!(" ({})", self.quoted_list(target_columns)));
+                }
                 match on_delete {
                     FkAction::NoAction | FkAction::Restrict => {}
                     FkAction::Cascade | FkAction::SetNull => {
@@ -172,10 +175,16 @@ impl OracleDialect {
         if v.query.trim().is_empty() {
             return Err(unsupported("a view needs a query"));
         }
+        let columns = if v.columns.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", self.quoted_list(&v.columns))
+        };
         Ok(format!(
-            "CREATE {}VIEW {} AS {}",
+            "CREATE {}VIEW {}{} AS {}",
             if replace { "OR REPLACE " } else { "" },
             self.qualified(&v.view),
+            columns,
             v.query
         ))
     }
@@ -430,6 +439,52 @@ mod tests {
         assert_eq!(
             ddl,
             ["ALTER TABLE \"S\"\"x\".\"t\" MODIFY (\"a\" NOT NULL)"]
+        );
+    }
+
+    #[test]
+    fn a_foreign_key_without_target_columns_references_the_primary_key() {
+        let mut def = TableDef::new(table("child"));
+        def.columns = vec![ColumnDef {
+            name: "parent_id".into(),
+            type_name: "NUMBER".into(),
+            nullable: true,
+            ..Default::default()
+        }];
+        def.constraints = vec![ConstraintDef::ForeignKey {
+            name: Some("fk".into()),
+            columns: vec!["parent_id".into()],
+            target: table("parent"),
+            target_columns: Vec::new(),
+            on_update: FkAction::NoAction,
+            on_delete: FkAction::NoAction,
+            deferrable: false,
+            initially_deferred: false,
+        }];
+        let sql = OracleDialect.create_ddl(&ObjectDef::Table(def)).unwrap();
+        assert!(
+            sql.contains(
+                "CONSTRAINT \"fk\" FOREIGN KEY (\"parent_id\") REFERENCES \"S\"\"x\".\"parent\"\n"
+            ),
+            "{sql}"
+        );
+        assert!(!sql.contains("()"), "{sql}");
+    }
+
+    #[test]
+    fn a_view_keeps_its_explicit_column_names() {
+        let view = ViewDef {
+            view: table("v"),
+            query: "SELECT 1 a, 2 b FROM dual".into(),
+            materialized: false,
+            columns: vec!["a".into(), "b".into()],
+            comment: None,
+            options: Vec::new(),
+            indexes: Vec::new(),
+        };
+        assert_eq!(
+            OracleDialect.create_ddl(&ObjectDef::View(view)).unwrap(),
+            "CREATE VIEW \"S\"\"x\".\"v\" (\"a\", \"b\") AS SELECT 1 a, 2 b FROM dual;"
         );
     }
 

@@ -80,11 +80,14 @@ impl MsDialect {
                 ..
             } => {
                 let mut fk = format!(
-                    "FOREIGN KEY ({}) REFERENCES {} ({})",
+                    "FOREIGN KEY ({}) REFERENCES {}",
                     self.quoted_list(columns),
-                    self.qualified(target),
-                    self.quoted_list(target_columns)
+                    self.qualified(target)
                 );
+                // An empty target column list means the target's primary key.
+                if !target_columns.is_empty() {
+                    fk.push_str(&format!(" ({})", self.quoted_list(target_columns)));
+                }
                 // RESTRICT is NO ACTION here.
                 for (clause, action) in [("DELETE", on_delete), ("UPDATE", on_update)] {
                     if !matches!(action, FkAction::NoAction | FkAction::Restrict) {
@@ -171,6 +174,9 @@ impl MsDialect {
         );
         if v.query.trim().is_empty() {
             return Err(unsupported("a view needs a query"));
+        }
+        if !v.columns.is_empty() {
+            out.push_str(&format!(" ({})", self.quoted_list(&v.columns)));
         }
         out.push_str(&format!(" AS {}", v.query));
         Ok(out)
@@ -432,6 +438,50 @@ mod tests {
             "CREATE TABLE [s]]x].[a]]b] (\n    [id] int IDENTITY(1,1) NOT NULL,\n    \
              [n] int NULL DEFAULT ((1)),\n    CONSTRAINT [pk] PRIMARY KEY ([id]),\n    \
              CONSTRAINT [fk] FOREIGN KEY ([n]) REFERENCES [s]]x].[t] ([id]) ON DELETE CASCADE\n);"
+        );
+    }
+
+    #[test]
+    fn a_foreign_key_without_target_columns_references_the_primary_key() {
+        let mut def = TableDef::new(table("child"));
+        def.columns = vec![ColumnDef {
+            name: "parent_id".into(),
+            type_name: "int".into(),
+            nullable: true,
+            ..Default::default()
+        }];
+        def.constraints = vec![ConstraintDef::ForeignKey {
+            name: Some("fk".into()),
+            columns: vec!["parent_id".into()],
+            target: table("parent"),
+            target_columns: Vec::new(),
+            on_update: FkAction::NoAction,
+            on_delete: FkAction::NoAction,
+            deferrable: false,
+            initially_deferred: false,
+        }];
+        let sql = MsDialect.create_ddl(&ObjectDef::Table(def)).unwrap();
+        assert!(
+            sql.contains("CONSTRAINT [fk] FOREIGN KEY ([parent_id]) REFERENCES [s]]x].[parent]\n"),
+            "{sql}"
+        );
+        assert!(!sql.contains("()"), "{sql}");
+    }
+
+    #[test]
+    fn a_view_keeps_its_explicit_column_names() {
+        let view = ViewDef {
+            view: table("v"),
+            query: "SELECT 1 AS a, 2 AS b".into(),
+            materialized: false,
+            columns: vec!["a".into(), "b".into()],
+            comment: None,
+            options: Vec::new(),
+            indexes: Vec::new(),
+        };
+        assert_eq!(
+            MsDialect.create_ddl(&ObjectDef::View(view)).unwrap(),
+            "CREATE VIEW [s]]x].[v] ([a], [b]) AS SELECT 1 AS a, 2 AS b;"
         );
     }
 

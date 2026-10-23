@@ -111,7 +111,7 @@ impl MyDialect {
         out
     }
 
-    fn constraint(&self, c: &ConstraintDef) -> String {
+    fn constraint(&self, c: &ConstraintDef) -> Result<String, DriverError> {
         let named = match c.name() {
             Some(n) if !matches!(c, ConstraintDef::PrimaryKey { .. }) => {
                 format!("CONSTRAINT {} ", self.q(n))
@@ -134,6 +134,13 @@ impl MyDialect {
                 on_delete,
                 ..
             } => {
+                // MySQL's grammar always names the referenced columns: the "target
+                // primary key" shorthand the model allows is not expressible here.
+                if target_columns.is_empty() {
+                    return Err(unsupported(
+                        "a MySQL foreign key must name the target columns",
+                    ));
+                }
                 let mut fk = format!(
                     "FOREIGN KEY ({}) REFERENCES {} ({})",
                     self.quoted_list(columns),
@@ -150,7 +157,7 @@ impl MyDialect {
             }
             ConstraintDef::Raw { definition, .. } => definition.clone(),
         };
-        format!("{named}{body}")
+        Ok(format!("{named}{body}"))
     }
 
     /// Key parts of an index: quoted columns with prefix and order, or expressions.
@@ -252,7 +259,7 @@ impl MyDialect {
             .into_iter()
             .partition(|c| matches!(c, ConstraintDef::Check { .. }));
         for c in keys {
-            lines.push(format!("    {}", self.constraint(c)));
+            lines.push(format!("    {}", self.constraint(c)?));
         }
         // An index kept as the server's statement is created after the table.
         for i in t.indexes.iter().filter(|i| i.definition.is_none()) {
@@ -264,7 +271,7 @@ impl MyDialect {
             ));
         }
         for c in fks.into_iter().chain(checks) {
-            lines.push(format!("    {}", self.constraint(c)));
+            lines.push(format!("    {}", self.constraint(c)?));
         }
         let mut create = format!(
             "CREATE TABLE {} (\n{}\n){}",
@@ -512,7 +519,7 @@ impl MyDialect {
             SchemaChange::AddConstraint { table, constraint } => vec![format!(
                 "ALTER TABLE {} ADD {}",
                 self.qualified(table),
-                self.constraint(constraint)
+                self.constraint(constraint)?
             )],
             SchemaChange::DropConstraint { table, name } => {
                 let what = if name.is_empty() || name == "PRIMARY" {
@@ -742,6 +749,41 @@ mod tests {
         renamed.columns[1].name = "bb".into();
         let ddl = MyDialect::default().table_ddl(&before, &renamed).unwrap();
         assert_eq!(ddl.len(), 1, "{ddl:#?}");
+    }
+
+    #[test]
+    fn a_foreign_key_needs_the_target_columns() {
+        // MySQL's REFERENCES always names the target columns (`REFERENCES t (c)`):
+        // the target primary key shorthand is not part of its grammar.
+        let mut def = TableDef::new(t("child"));
+        def.columns = vec![ColumnDef {
+            name: "parent_id".into(),
+            type_name: "int".into(),
+            nullable: true,
+            ..Default::default()
+        }];
+        def.constraints = vec![ConstraintDef::ForeignKey {
+            name: Some("fk".into()),
+            columns: vec!["parent_id".into()],
+            target: t("parent"),
+            target_columns: Vec::new(),
+            on_update: FkAction::NoAction,
+            on_delete: FkAction::NoAction,
+            deferrable: false,
+            initially_deferred: false,
+        }];
+        let err = MyDialect::default()
+            .create_ddl(&ObjectDef::Table(def.clone()))
+            .unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Unsupported);
+        // The same on the ALTER TABLE path.
+        let err = MyDialect::default()
+            .ddl(&[SchemaChange::AddConstraint {
+                table: t("child"),
+                constraint: def.constraints[0].clone(),
+            }])
+            .unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Unsupported);
     }
 
     #[test]
