@@ -52,6 +52,9 @@ pub(crate) fn type_name(base: &str, max_length: i16, precision: u8, scale: u8) -
             }
         }
         "decimal" | "numeric" => format!("{base}({precision},{scale})"),
+        // The fractional-second digits are part of the type: `datetime2(3)` reads
+        // milliseconds, and a rebuild must not silently widen it to the default 7.
+        "datetime2" | "datetimeoffset" | "time" if scale != 7 => format!("{base}({scale})"),
         _ => base.to_string(),
     }
 }
@@ -393,4 +396,23 @@ async fn triggers(
             )
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::type_name;
+
+    #[test]
+    fn types_keep_the_lengths_and_scales_that_change_them() {
+        assert_eq!(type_name("varchar", 20, 0, 0), "varchar(20)");
+        assert_eq!(type_name("varchar", -1, 0, 0), "varchar(max)");
+        assert_eq!(type_name("nvarchar", 240, 0, 0), "nvarchar(120)");
+        assert_eq!(type_name("decimal", 9, 12, 3), "decimal(12,3)");
+        // The default scale needs no argument; any other one is part of the type.
+        assert_eq!(type_name("datetime2", 8, 27, 7), "datetime2");
+        assert_eq!(type_name("datetime2", 8, 27, 3), "datetime2(3)");
+        assert_eq!(type_name("datetimeoffset", 10, 34, 2), "datetimeoffset(2)");
+        assert_eq!(type_name("time", 5, 16, 0), "time(0)");
+        assert_eq!(type_name("int", 4, 10, 0), "int");
+    }
 }

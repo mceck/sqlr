@@ -12,7 +12,7 @@ const SETUP: &[&str] = &[
      CONSTRAINT pk_customers PRIMARY KEY (id), CONSTRAINT uq_email UNIQUE (email), \
      CONSTRAINT ck_age CHECK (age >= 0))",
     "CREATE TABLE shop.orders (id int NOT NULL PRIMARY KEY, customer_id int NOT NULL, \
-     total decimal(10,2) NOT NULL, note varchar(max) NULL, \
+     total decimal(10,2) NOT NULL, note varchar(max) NULL, seen datetime2(3) NULL, \
      CONSTRAINT fk_orders_customer FOREIGN KEY (customer_id) REFERENCES shop.customers (id) \
      ON DELETE CASCADE)",
     "CREATE INDEX ix_orders_total ON shop.orders (total DESC) INCLUDE (note)",
@@ -81,6 +81,8 @@ async fn a_schema_loads_with_its_keys_indexes_and_views() {
     assert_eq!(fk.3, FkAction::Cascade);
     assert_eq!(orders.columns[2].type_name, "decimal(10,2)");
     assert_eq!(orders.columns[3].type_name, "varchar(max)");
+    // A non-default fractional-seconds scale is part of the type.
+    assert_eq!(orders.columns[4].type_name, "datetime2(3)");
     let ix = orders
         .indexes
         .iter()
