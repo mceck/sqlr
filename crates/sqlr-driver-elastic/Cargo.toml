@@ -13,7 +13,9 @@ rustls.workspace = true
 rustls-native-certs.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
+tracing.workspace = true
 
 [dev-dependencies]
 sqlr-testkit = { path = "../sqlr-testkit" }
+tempfile.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

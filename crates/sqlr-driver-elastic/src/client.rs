@@ -65,6 +65,42 @@ impl ServerCertVerifier for NoVerify {
     }
 }
 
+/// The trust anchors: the configured CA certificate, else the system's roots. A configured
+/// CA is the whole trust boundary, like the other drivers: an empty file must not silently
+/// fall back to trusting every public CA.
+fn root_store(ca: Option<&str>) -> Result<RootCertStore, DriverError> {
+    let tls_err = |m: String| DriverError::new(ErrorKind::Connection, m);
+    let mut roots = RootCertStore::empty();
+    match ca {
+        Some(path) => {
+            let certs = CertificateDer::pem_file_iter(path)
+                .map_err(|e| tls_err(format!("cannot read the CA certificate {path}: {e}")))?;
+            let mut added = 0usize;
+            for cert in certs {
+                let cert =
+                    cert.map_err(|e| tls_err(format!("invalid CA certificate {path}: {e}")))?;
+                roots
+                    .add(cert)
+                    .map_err(|e| tls_err(format!("invalid CA certificate {path}: {e}")))?;
+                added += 1;
+            }
+            if added == 0 {
+                return Err(tls_err(format!(
+                    "the CA certificate {path} holds no certificate"
+                )));
+            }
+        }
+        None => {
+            let native = rustls_native_certs::load_native_certs();
+            for e in &native.errors {
+                tracing::warn!("system root certificates: {e}");
+            }
+            roots.add_parsable_certificates(native.certs);
+        }
+    }
+    Ok(roots)
+}
+
 fn tls_config(ca: Option<&str>, skip_verify: bool) -> Result<rustls::ClientConfig, DriverError> {
     let tls_err = |m: String| DriverError::new(ErrorKind::Connection, m);
     let provider = Arc::new(rustls::crypto::ring::default_provider());
@@ -77,21 +113,9 @@ fn tls_config(ca: Option<&str>, skip_verify: bool) -> Result<rustls::ClientConfi
             .with_custom_certificate_verifier(Arc::new(NoVerify(provider)))
             .with_no_client_auth());
     }
-    let mut roots = RootCertStore::empty();
-    for cert in rustls_native_certs::load_native_certs().certs {
-        let _ = roots.add(cert);
-    }
-    if let Some(path) = ca {
-        let certs = CertificateDer::pem_file_iter(path)
-            .map_err(|e| tls_err(format!("cannot read the CA certificate {path}: {e}")))?;
-        for cert in certs {
-            let cert = cert.map_err(|e| tls_err(format!("invalid CA certificate {path}: {e}")))?;
-            roots
-                .add(cert)
-                .map_err(|e| tls_err(format!("invalid CA certificate {path}: {e}")))?;
-        }
-    }
-    Ok(builder.with_root_certificates(roots).with_no_client_auth())
+    Ok(builder
+        .with_root_certificates(root_store(ca)?)
+        .with_no_client_auth())
 }
 
 #[derive(Clone)]
@@ -279,5 +303,12 @@ mod tests {
         assert!(tls_config(None, true).is_ok());
         assert!(tls_config(None, false).is_ok());
         assert!(tls_config(Some("/no/such/ca.pem"), false).is_err());
+    }
+
+    #[test]
+    fn an_empty_ca_file_is_an_error_not_a_fallback_to_system_roots() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let error = tls_config(Some(file.path().to_str().unwrap()), false).unwrap_err();
+        assert!(error.message.contains("no certificate"), "{error:?}");
     }
 }
