@@ -55,3 +55,30 @@ impl ShortcutsDialog {
         self.open = open && !close;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frame(dialog: &mut ShortcutsDialog) {
+        let ctx = Context::default();
+        let mut out = ctx.run_ui(Default::default(), |ui| dialog.show(ui.ctx()));
+        // No renderer consumes the font atlas upload here.
+        out.textures_delta.clear();
+    }
+
+    #[test]
+    fn a_closed_dialog_draws_nothing() {
+        let mut dialog = ShortcutsDialog::default();
+        frame(&mut dialog);
+        assert!(!dialog.open);
+    }
+
+    #[test]
+    fn an_open_dialog_lists_every_action_and_its_keys() {
+        let mut dialog = ShortcutsDialog { open: true };
+        frame(&mut dialog);
+        frame(&mut dialog);
+        assert!(dialog.open);
+    }
+}

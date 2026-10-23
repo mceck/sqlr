@@ -378,3 +378,44 @@ impl SqlrApp {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn a_task_name_starts_from_its_kind() {
+        assert_eq!(
+            default_name(&TaskSpec::Dump {
+                conn: "c".into(),
+                database: "app".into(),
+                options: Default::default(),
+                out: PathBuf::from("/tmp/x"),
+            }),
+            "Dump app"
+        );
+        assert_eq!(
+            default_name(&TaskSpec::Restore {
+                conn: "c".into(),
+                database: "app".into(),
+                options: Default::default(),
+                input: PathBuf::from("/tmp/x"),
+            }),
+            "Restore app"
+        );
+        assert_eq!(
+            default_name(&TaskSpec::Script {
+                conn: "c".into(),
+                database: None,
+                sql: "select 1".into(),
+            }),
+            "Script"
+        );
+    }
+
+    #[test]
+    fn timestamps_are_epoch_milliseconds() {
+        assert!(now_ms() > 1_600_000_000_000);
+    }
+}

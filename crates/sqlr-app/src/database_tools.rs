@@ -815,6 +815,25 @@ impl SqlrApp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    use sqlr_engine::DriverRegistry;
+
+    fn engine() -> Engine {
+        Engine::new(DriverRegistry::default(), Arc::new(|| {}))
+    }
+
+    fn frame(engine: &Engine, show: impl FnMut(&egui::Context)) {
+        let ctx = egui::Context::default();
+        let mut once = Some(show);
+        let mut out = ctx.run_ui(Default::default(), |ui| {
+            let show = once.as_mut().expect("one frame");
+            show(ui.ctx());
+        });
+        // No renderer consumes the font atlas upload here.
+        out.textures_delta.clear();
+        let _ = engine;
+    }
 
     #[test]
     fn the_relational_drivers_offer_the_dialogs() {
@@ -834,5 +853,139 @@ mod tests {
         assert_eq!(mysql.options.format, DumpFormat::MysqlSql);
         let sqlite = DumpDialog::new("c", "conn", "app", "sqlite").unwrap();
         assert_eq!(sqlite.options.format, DumpFormat::Plain);
+    }
+
+    #[test]
+    fn every_format_has_a_label_for_its_driver() {
+        for kind in [DumpKind::Postgres, DumpKind::Mysql, DumpKind::Sqlite] {
+            for format in kind.formats() {
+                let label = kind.format_label(*format);
+                assert!(!label.is_empty());
+            }
+        }
+        assert_eq!(
+            DumpKind::Sqlite.format_label(DumpFormat::Plain),
+            "SQL script"
+        );
+        assert_eq!(
+            DumpKind::Sqlite.format_label(DumpFormat::SqliteBinary),
+            "Copy of the database file"
+        );
+        assert_eq!(
+            DumpKind::Postgres.format_label(DumpFormat::Directory),
+            "Directory (parallel)"
+        );
+    }
+
+    #[test]
+    fn every_dump_dialog_draws_its_options_and_log() {
+        let engine = engine();
+        for (driver, formats) in [
+            (
+                "postgres",
+                &[
+                    DumpFormat::Plain,
+                    DumpFormat::Custom,
+                    DumpFormat::Tar,
+                    DumpFormat::Directory,
+                ][..],
+            ),
+            ("mysql", &[DumpFormat::MysqlSql][..]),
+            ("sqlite", &[DumpFormat::Plain, DumpFormat::SqliteBinary][..]),
+        ] {
+            let mut dialog = DumpDialog::new("c", "conn", "app", driver).unwrap();
+            dialog.state.path = "/tmp/backup".into();
+            dialog.state.log = vec!["writing rows".into(), "done".into()];
+            dialog.state.progress = JobProgress {
+                bytes: 2048,
+                rows: 3,
+            };
+            for format in formats {
+                dialog.options.format = *format;
+                frame(&engine, |ctx| {
+                    assert!(dialog.show(ctx, &engine, None));
+                });
+            }
+            dialog.state.progress = JobProgress { bytes: 0, rows: 7 };
+            dialog.state.outcome = Some(Err("boom".into()));
+            frame(&engine, |ctx| {
+                dialog.show(ctx, &engine, None);
+            });
+            dialog.state.outcome = Some(Ok("Dumped to /tmp/backup".into()));
+            frame(&engine, |ctx| {
+                dialog.show(ctx, &engine, None);
+            });
+        }
+    }
+
+    #[test]
+    fn every_restore_dialog_draws_its_options() {
+        let engine = engine();
+        let mut pg = RestoreDialog::new("c", "conn", "app", "postgres").unwrap();
+        for path in ["backup.sql", "backup.dump", "backup.tar"] {
+            pg.state.path = path.into();
+            frame(&engine, |ctx| {
+                pg.show(ctx, &engine, None);
+            });
+        }
+        for flag in [true, false] {
+            pg.options.single_transaction = flag;
+            pg.options.create = !flag;
+            frame(&engine, |ctx| {
+                pg.show(ctx, &engine, None);
+            });
+        }
+        for driver in ["mysql", "sqlite"] {
+            let mut dialog = RestoreDialog::new("c", "conn", "app", driver).unwrap();
+            dialog.state.path = "backup.sql".into();
+            frame(&engine, |ctx| {
+                dialog.show(ctx, &engine, None);
+            });
+        }
+    }
+
+    #[test]
+    fn a_dialog_hands_back_the_task_it_collected() {
+        let mut dump = DumpDialog::new("c", "conn", "app", "sqlite").unwrap();
+        dump.state.path = "/tmp/out.db".into();
+        dump.save_requested = true;
+        let (spec, editing) = dump.take_task().unwrap();
+        assert!(matches!(
+            spec,
+            TaskSpec::Dump { conn, ref out, .. } if conn == "c" && out == &PathBuf::from("/tmp/out.db")
+        ));
+        assert!(editing.is_none());
+
+        let mut restore = RestoreDialog::new("c", "conn", "app", "mysql").unwrap();
+        restore.state.path = "/tmp/in.sql".into();
+        restore.save_requested = true;
+        let (spec, _) = restore.take_task().unwrap();
+        assert!(matches!(
+            spec,
+            TaskSpec::Restore { conn, ref input, .. } if conn == "c" && input == &PathBuf::from("/tmp/in.sql")
+        ));
+    }
+
+    #[test]
+    fn progress_prefers_bytes_then_lines() {
+        let mut state = ToolDialog::new("c", "conn", "app", DumpKind::Sqlite);
+        assert_eq!(state.progress_text(), "working…");
+        state.progress = JobProgress { bytes: 0, rows: 4 };
+        assert_eq!(state.progress_text(), "4 log lines");
+        state.progress = JobProgress {
+            bytes: 1536,
+            rows: 4,
+        };
+        assert_eq!(state.progress_text(), "1.5 KB processed");
+    }
+
+    #[test]
+    fn bytes_are_human_readable() {
+        assert_eq!(human_bytes(0), "0 B");
+        assert_eq!(human_bytes(1023), "1023 B");
+        assert_eq!(human_bytes(1024), "1.0 KB");
+        assert_eq!(human_bytes(1536), "1.5 KB");
+        assert_eq!(human_bytes(1024 * 1024), "1.0 MB");
+        assert_eq!(human_bytes(3 * 1024 * 1024 * 1024), "3.0 GB");
     }
 }

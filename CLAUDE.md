@@ -23,8 +23,9 @@ sqlr is a lightweight, universal database client in native Rust + egui. No webvi
 ## Commands
 
 ```sh
-make test                                                # fixed Docker services + nextest
+make test                                                # fixed Docker services + nextest (services stop at the end)
 make test-fast                                           # no Docker
+make coverage                                            # llvm-cov report per crate; stops the services
 cargo nextest run --workspace --profile containers       # needs the services below
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt

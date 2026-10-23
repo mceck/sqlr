@@ -295,3 +295,170 @@ fn duplicate(
     }
     Ok(copy.id)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
+
+    use sqlr_core::Driver;
+    use sqlr_store::{ConnectionRepo, MemorySecretStore};
+    use sqlr_testkit::FakeDriver;
+
+    fn repo(dir: &std::path::Path) -> ConnectionRepo {
+        ConnectionRepo::open(dir, Box::new(MemorySecretStore::default())).unwrap()
+    }
+
+    fn config(id: &str, name: &str) -> ConnectionConfig {
+        ConnectionConfig {
+            id: id.into(),
+            name: name.into(),
+            driver: "fake".into(),
+            group: None,
+            color: None,
+            values: Default::default(),
+            profile: None,
+            save_secrets: true,
+        }
+    }
+
+    fn manifest() -> DriverManifest {
+        FakeDriver::new(Default::default()).manifest().clone()
+    }
+
+    #[test]
+    fn every_store_operation_answers_with_a_listing() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = repo(dir.path());
+        let cfg = config("c1", "one");
+        assert!(matches!(
+            run(&repo, StoreOp::Save {
+                cfg: cfg.clone(),
+                secrets: Secrets::default(),
+                editing: false,
+            }),
+            StoreReply::Saved { ref id, editing: false, result: Ok(()), listing } if id == "c1" && listing.connections.as_ref().is_ok_and(|c| c.len() == 1)
+        ));
+        assert!(matches!(
+            run(&repo, StoreOp::List),
+            StoreReply::Listed(Listing { connections: Ok(c), .. }) if c.len() == 1
+        ));
+        assert!(matches!(
+            run(&repo, StoreOp::CreateFolder("work".into())),
+            StoreReply::FolderCreated { result: Ok(()), .. }
+        ));
+        assert!(matches!(
+            run(&repo, StoreOp::RenameFolder { from: "work".into(), to: "home".into() }),
+            StoreReply::FolderRenamed { to, result: Ok(()), .. } if to == "home"
+        ));
+        assert!(matches!(
+            run(
+                &repo,
+                StoreOp::MoveConnection {
+                    conn: "c1".into(),
+                    folder: Some("home".into()),
+                    target: MoveTarget::Into("home".into()),
+                }
+            ),
+            StoreReply::ConnectionMoved { result: Ok(()), .. }
+        ));
+        assert!(matches!(
+            run(&repo, StoreOp::MoveFolder {
+                folder: "home".into(),
+                target: MoveTarget::End,
+            }),
+            StoreReply::FolderMoved { folder, result: Ok(()), to, .. } if folder == "home" && to == "home"
+        ));
+        assert!(matches!(
+            run(&repo, StoreOp::DeleteFolder("home".into())),
+            StoreReply::FolderDeleted { result: Ok(()), .. }
+        ));
+        assert!(matches!(
+            run(&repo, StoreOp::SecretsFor {
+                cfg: cfg.clone(),
+                manifest: manifest(),
+            }),
+            StoreReply::Secrets { ref id, result: Ok(_) } if id == "c1"
+        ));
+        assert!(matches!(
+            run(&repo, StoreOp::Duplicate {
+                cfg: cfg.clone(),
+                manifest: manifest(),
+            }),
+            StoreReply::Duplicated { copy: Ok(_), listing, .. } if listing.connections.as_ref().is_ok_and(|c| c.len() == 2)
+        ));
+        assert!(matches!(
+            run(&repo, StoreOp::Delete {
+                cfg,
+                manifest: manifest(),
+            }),
+            StoreReply::Deleted { result: Ok(()), listing, .. } if listing.connections.as_ref().is_ok_and(|c| c.len() == 1)
+        ));
+    }
+
+    #[test]
+    fn failing_operations_report_the_store_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = repo(dir.path());
+        assert!(matches!(
+            run(
+                &repo,
+                StoreOp::RenameFolder {
+                    from: "missing".into(),
+                    to: "x".into()
+                }
+            ),
+            StoreReply::FolderRenamed { result: Err(_), .. }
+        ));
+        assert!(matches!(
+            run(&repo, StoreOp::DeleteFolder("missing".into())),
+            StoreReply::FolderDeleted { result: Ok(()), .. }
+        ));
+        assert!(matches!(
+            run(&repo, StoreOp::MoveFolder {
+                folder: "missing".into(),
+                target: MoveTarget::End,
+            }),
+            StoreReply::FolderMoved { result: Err(_), to, .. } if to.is_empty()
+        ));
+        assert!(matches!(
+            run(
+                &repo,
+                StoreOp::MoveConnection {
+                    conn: "missing".into(),
+                    folder: None,
+                    target: MoveTarget::End,
+                }
+            ),
+            StoreReply::ConnectionMoved { result: Err(_), .. }
+        ));
+    }
+
+    #[test]
+    fn the_worker_runs_ops_in_order_and_counts_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = repo(dir.path());
+        let woke = Arc::new(AtomicBool::new(false));
+        let flag = woke.clone();
+        let mut worker = StoreWorker::spawn(repo, move || {
+            flag.store(true, Ordering::SeqCst);
+        });
+        assert!(!worker.busy());
+        worker.send(StoreOp::List);
+        assert!(worker.busy());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(reply) = worker.try_recv() {
+                assert!(matches!(reply, StoreReply::Listed(_)));
+                break;
+            }
+            assert!(Instant::now() < deadline, "the store worker never answered");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(!worker.busy());
+        assert!(woke.load(Ordering::SeqCst));
+        assert!(worker.try_recv().is_none());
+    }
+}

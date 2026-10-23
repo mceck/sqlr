@@ -1363,6 +1363,12 @@ fn describe(endpoint: Option<&Endpoint>, conns: &[ConnChoice]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
+    use sqlr_core::{
+        ColumnKind, ColumnMeta, DisplayHint, DriverError, ErrorKind, SavedTask, TaskSpec, Value,
+    };
+    use sqlr_engine::DriverRegistry;
 
     fn conns() -> Vec<ConnChoice> {
         vec![
@@ -1377,6 +1383,54 @@ mod tests {
                 driver: "postgres".into(),
             },
         ]
+    }
+
+    fn engine() -> Engine {
+        Engine::new(DriverRegistry::default(), Arc::new(|| {}))
+    }
+
+    fn probe() -> SourceProbe {
+        SourceProbe {
+            columns: vec![
+                ColumnMeta::new("id", "INTEGER", ColumnKind::Int, DisplayHint::Plain),
+                ColumnMeta::new("name", "TEXT", ColumnKind::Text, DisplayHint::Plain),
+            ],
+            rows: vec![vec![Value::Int(1), Value::Text("ann".into())]],
+            sheets: Vec::new(),
+        }
+    }
+
+    fn frame(
+        wizard: &mut TransferWizard,
+        engine: &Engine,
+        conns: &[ConnChoice],
+        answer: Option<&PathBuf>,
+    ) {
+        let ctx = egui::Context::default();
+        let mut out = ctx.run_ui(Default::default(), |ui| {
+            wizard.show(ui.ctx(), engine, conns, answer);
+        });
+        // No renderer consumes the font atlas upload here.
+        out.textures_delta.clear();
+    }
+
+    fn task(spec: TransferSpec) -> SavedTask {
+        SavedTask {
+            id: "t1".into(),
+            name: "saved".into(),
+            spec: TaskSpec::Transfer(spec),
+            created_ms: 0,
+            updated_ms: 0,
+        }
+    }
+
+    fn spec(source: Endpoint, target: Endpoint) -> TransferSpec {
+        TransferSpec {
+            source,
+            target,
+            mapping: vec![ColumnMapping::new(0, Some("id".into()))],
+            options: TransferOptions::default(),
+        }
     }
 
     #[test]
@@ -1459,5 +1513,453 @@ mod tests {
             FileKind::JsonLines
         );
         assert_eq!(FileKind::of_path(Path::new("x")), FileKind::Csv);
+    }
+
+    #[test]
+    fn every_source_kind_becomes_an_endpoint() {
+        let mut wizard = TransferWizard::new(&conns());
+        wizard.s_conn = "a".into();
+        wizard.s_table = "src".into();
+        wizard.s_schema = "main".into();
+        assert!(matches!(
+            wizard.source_endpoint(),
+            Some(Endpoint::Table { .. })
+        ));
+
+        wizard.source_kind = SourceKind::Query;
+        wizard.s_sql = " SELECT 1 ".into();
+        assert_eq!(
+            wizard.source_endpoint(),
+            Some(Endpoint::Query {
+                conn: "a".into(),
+                database: None,
+                sql: "SELECT 1".into()
+            })
+        );
+        wizard.s_sql.clear();
+        assert!(wizard.source_endpoint().is_none());
+
+        wizard.source_kind = SourceKind::File;
+        wizard.s_path = "/tmp/in.csv".into();
+        for (file, expected) in [
+            (FileKind::Csv, "csv"),
+            (FileKind::Tsv, "tsv"),
+            (FileKind::Json, "json"),
+            (FileKind::JsonLines, "jsonl"),
+            (FileKind::SqlInsert, "jsonl"),
+        ] {
+            wizard.s_file = file;
+            match wizard.source_endpoint().unwrap() {
+                Endpoint::File { format, .. } => {
+                    let text = format!("{format:?}").to_ascii_lowercase();
+                    assert!(text.contains(expected), "{file:?}: {text}");
+                }
+                other => panic!("{file:?}: {other:?}"),
+            }
+        }
+        wizard.s_file = FileKind::Xlsx;
+        wizard.s_sheet = Some("Sheet2".into());
+        assert!(matches!(
+            wizard.source_endpoint(),
+            Some(Endpoint::Workbook {
+                sheet: Some(ref s),
+                ..
+            }) if s == "Sheet2"
+        ));
+        wizard.s_file = FileKind::Parquet;
+        assert!(matches!(
+            wizard.source_endpoint(),
+            Some(Endpoint::Parquet { .. })
+        ));
+    }
+
+    #[test]
+    fn every_target_kind_becomes_an_endpoint() {
+        let mut wizard = TransferWizard::new(&conns());
+        wizard.t_conn = "b".into();
+        wizard.t_schema = "public".into();
+        wizard.t_table = "dst".into();
+        assert!(matches!(
+            wizard.target_endpoint(),
+            Some(Endpoint::Table { .. })
+        ));
+        wizard.target_kind = TargetKind::New;
+        assert!(matches!(
+            wizard.target_endpoint(),
+            Some(Endpoint::NewTable {
+                ddl: None,
+                ref table,
+                ..
+            }) if table.name == "dst"
+        ));
+        wizard.ddl_edited = true;
+        wizard.ddl = "CREATE TABLE dst (id integer)".into();
+        assert!(matches!(
+            wizard.target_endpoint(),
+            Some(Endpoint::NewTable { ddl: Some(_), .. })
+        ));
+        wizard.t_table.clear();
+        assert!(wizard.target_endpoint().is_none());
+
+        wizard.target_kind = TargetKind::File;
+        wizard.t_path = "/tmp/out.sql".into();
+        for file in FileKind::TARGETS {
+            wizard.t_file = file;
+            assert!(wizard.target_endpoint().is_some(), "{file:?}");
+        }
+        wizard.t_path.clear();
+        assert!(wizard.target_endpoint().is_none());
+    }
+
+    #[test]
+    fn a_saved_task_reopens_with_its_choices() {
+        let sources = [
+            Endpoint::Table {
+                conn: "a".into(),
+                table: table_ref("main", "src"),
+            },
+            Endpoint::Query {
+                conn: "a".into(),
+                database: Some("db".into()),
+                sql: "SELECT 1".into(),
+            },
+            Endpoint::File {
+                path: "/tmp/in.json".into(),
+                format: TextFormat::Json,
+            },
+            Endpoint::Workbook {
+                path: "/tmp/in.xlsx".into(),
+                sheet: Some("Sheet1".into()),
+                header: false,
+            },
+            Endpoint::Parquet {
+                path: "/tmp/in.parquet".into(),
+            },
+            Endpoint::RedisKeys {
+                conn: "a".into(),
+                db: 1,
+                pattern: b"*".to_vec(),
+            },
+        ];
+        let targets = [
+            Endpoint::Table {
+                conn: "b".into(),
+                table: table_ref("public", "dst"),
+            },
+            Endpoint::NewTable {
+                conn: "b".into(),
+                table: table_ref("public", "new"),
+                ddl: Some("CREATE TABLE new (id integer)".into()),
+            },
+            Endpoint::File {
+                path: "/tmp/out.csv".into(),
+                format: TextFormat::Csv(CsvOptions::default()),
+            },
+            Endpoint::Workbook {
+                path: "/tmp/out.xlsx".into(),
+                sheet: None,
+                header: true,
+            },
+            Endpoint::Parquet {
+                path: "/tmp/out.parquet".into(),
+            },
+        ];
+        for source in sources {
+            for target in &targets {
+                let saved = task(spec(source.clone(), target.clone()));
+                let wizard = TransferWizard::from_task(&conns(), &saved).unwrap();
+                assert_eq!(wizard.editing, Some(("t1".into(), "saved".into())));
+                assert!(wizard.autoprobe && wizard.keep_mapping);
+                if matches!(source, Endpoint::RedisKeys { .. }) {
+                    // The transfer wizard does not reopen key-value sources.
+                    assert!(wizard.spec().is_err());
+                } else if matches!(
+                    target,
+                    Endpoint::File { .. } | Endpoint::Workbook { .. } | Endpoint::Parquet { .. }
+                ) {
+                    assert!(wizard.spec().unwrap().mapping.is_empty());
+                } else {
+                    assert_eq!(wizard.spec().unwrap().mapping.len(), 1);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn another_task_kind_does_not_open_the_wizard() {
+        let saved = SavedTask {
+            id: "t2".into(),
+            name: "dump".into(),
+            spec: TaskSpec::Dump {
+                conn: "a".into(),
+                database: "main".into(),
+                options: sqlr_core::DumpOptions::default(),
+                out: "/tmp/x".into(),
+            },
+            created_ms: 0,
+            updated_ms: 0,
+        };
+        assert!(TransferWizard::from_task(&conns(), &saved).is_none());
+    }
+
+    #[test]
+    fn every_step_draws_with_a_preview_and_a_mapping() {
+        let engine = engine();
+        let mut wizard = TransferWizard::new(&conns());
+        wizard.s_conn = "a".into();
+        wizard.s_table = "src".into();
+        wizard.t_conn = "b".into();
+        wizard.t_table = "dst".into();
+        wizard.target_kind = TargetKind::New;
+        wizard.mapping = vec![
+            ColumnMapping::new(0, Some("id".into())),
+            ColumnMapping::new(1, Some("name".into())),
+        ];
+        for file in FileKind::SOURCES {
+            wizard.source_kind = SourceKind::File;
+            wizard.s_path = "/tmp/in.csv".into();
+            wizard.s_file = file;
+            wizard.probe = Some((wizard.source_key(), probe()));
+            frame(&mut wizard, &engine, &conns(), None);
+        }
+        wizard.source_kind = SourceKind::Table;
+        wizard.probe = Some((wizard.source_key(), probe()));
+
+        for step in 0..wizard.steps(&engine).len() {
+            wizard.step = step;
+            frame(&mut wizard, &engine, &conns(), None);
+        }
+        // The wizard clamps a stale step when steps disappear (a file target).
+        wizard.target_kind = TargetKind::File;
+        wizard.t_path = "/tmp/out.csv".into();
+        wizard.step = 10;
+        frame(&mut wizard, &engine, &conns(), None);
+        assert!(wizard.step < wizard.steps(&engine).len());
+    }
+
+    #[test]
+    fn options_cover_every_toggle() {
+        let engine = engine();
+        let mut wizard = TransferWizard::new(&conns());
+        wizard.s_conn = "a".into();
+        wizard.s_table = "src".into();
+        wizard.t_conn = "b".into();
+        wizard.t_table = "dst".into();
+        wizard.target_kind = TargetKind::New;
+        wizard.mapping = vec![ColumnMapping::new(0, Some("id".into()))];
+        wizard.probe = Some((wizard.source_key(), probe()));
+        wizard.step = 3;
+        for (upsert, truncate, skip, constraints) in
+            [(true, true, true, true), (false, false, false, false)]
+        {
+            wizard.upsert = upsert;
+            wizard.upsert_text = "id".into();
+            wizard.options.truncate_first = truncate;
+            wizard.options.skip_bad_rows = skip;
+            wizard.options.disable_constraints = constraints;
+            frame(&mut wizard, &engine, &conns(), None);
+        }
+        wizard.target_kind = TargetKind::File;
+        wizard.t_path = "/tmp/out.csv".into();
+        frame(&mut wizard, &engine, &conns(), None);
+    }
+
+    #[test]
+    fn file_answers_fill_the_source_target_and_rejected_paths() {
+        let engine = engine();
+        let mut wizard = TransferWizard::new(&conns());
+        let path = PathBuf::from("/tmp/answer.json");
+        wizard.ask = Some((
+            AskFor::Source,
+            FileAsk::open(Some(&path), "source", &["json"]),
+        ));
+        frame(&mut wizard, &engine, &conns(), Some(&path));
+        assert_eq!(wizard.s_path, "/tmp/answer.json");
+        assert_eq!(wizard.s_file, FileKind::Json);
+
+        wizard.ask = Some((
+            AskFor::Target,
+            FileAsk::save(Some(&path), "target", "out.json"),
+        ));
+        frame(&mut wizard, &engine, &conns(), Some(&path));
+        assert_eq!(wizard.t_path, "/tmp/answer.json");
+        assert_eq!(wizard.t_file, FileKind::Json);
+
+        wizard.ask = Some((
+            AskFor::Rejected,
+            FileAsk::save(Some(&path), "rejected", "r.csv"),
+        ));
+        frame(&mut wizard, &engine, &conns(), Some(&path));
+        assert_eq!(wizard.rejected_path, "/tmp/answer.json");
+    }
+
+    #[test]
+    fn review_generates_the_new_table_ddl() {
+        let engine = engine();
+        let mut wizard = TransferWizard::new(&conns());
+        wizard.s_conn = "a".into();
+        wizard.s_table = "src".into();
+        wizard.t_conn = "b".into();
+        wizard.t_table = "dst".into();
+        wizard.target_kind = TargetKind::New;
+        wizard.mapping = vec![
+            ColumnMapping::new(0, Some("id".into())),
+            ColumnMapping::new(1, Some("name".into())),
+        ];
+        wizard.probe = Some((wizard.source_key(), probe()));
+        wizard.step = 4;
+        frame(&mut wizard, &engine, &conns(), None);
+        // With no registered dialect the DDL carries the error for the user.
+        assert!(wizard.ddl.starts_with("-- "), "{}", wizard.ddl);
+    }
+
+    #[test]
+    fn the_run_step_shows_progress_outcomes_and_logs() {
+        let engine = engine();
+        let mut wizard = TransferWizard::new(&conns());
+        wizard.s_conn = "a".into();
+        wizard.s_table = "src".into();
+        wizard.t_conn = "b".into();
+        wizard.t_table = "dst".into();
+        wizard.mapping = vec![ColumnMapping::new(0, Some("id".into()))];
+        wizard.probe = Some((wizard.source_key(), probe()));
+        wizard.step = 5;
+        wizard.progress = JobProgress {
+            rows: 12,
+            bytes: 2048,
+        };
+        wizard.log = vec!["batch 1".into()];
+        frame(&mut wizard, &engine, &conns(), None);
+
+        for outcome in [
+            Ok("Read 1 rows, wrote 1, rejected 0".into()),
+            Err("boom".into()),
+        ] {
+            wizard.outcome = Some(outcome);
+            frame(&mut wizard, &engine, &conns(), None);
+        }
+        wizard.outcome = None;
+        wizard.run = Some(engine.transfer(wizard.spec().unwrap()));
+        frame(&mut wizard, &engine, &conns(), None);
+        let _ = &wizard.progress;
+    }
+
+    #[test]
+    fn an_invalid_spec_becomes_an_error_outcome() {
+        let engine = engine();
+        let mut wizard = TransferWizard::new(&conns());
+        wizard.start(&engine);
+        assert!(wizard.outcome.is_some_and(|o| o.is_err()));
+    }
+
+    #[test]
+    fn outcomes_are_summarized() {
+        let ok = |outcome| summarize(outcome).unwrap();
+        assert_eq!(
+            ok(JobOutcome::Imported {
+                read: 3,
+                written: 2,
+                rejected: vec![(4, "bad".into())],
+            }),
+            "Read 3 rows, wrote 2, rejected 1"
+        );
+        assert_eq!(
+            ok(JobOutcome::Exported {
+                rows: 5,
+                path: PathBuf::from("/tmp/out.csv"),
+            }),
+            "Wrote 5 rows to /tmp/out.csv"
+        );
+        assert_eq!(ok(JobOutcome::Done), "Done");
+        assert_eq!(
+            summarize(JobOutcome::Failed(DriverError::new(
+                ErrorKind::Other,
+                "boom"
+            )))
+            .unwrap_err(),
+            "boom"
+        );
+        assert_eq!(summarize(JobOutcome::Cancelled).unwrap_err(), "Cancelled");
+    }
+
+    #[test]
+    fn endpoints_are_described_for_the_review() {
+        let conns = conns();
+        assert_eq!(describe(None, &conns), "(incomplete)");
+        assert_eq!(
+            describe(
+                Some(&Endpoint::Table {
+                    conn: "a".into(),
+                    table: table_ref("main", "src"),
+                }),
+                &conns
+            ),
+            "table main.src on A"
+        );
+        assert_eq!(
+            describe(
+                Some(&Endpoint::NewTable {
+                    conn: "b".into(),
+                    table: table_ref("", "dst"),
+                    ddl: None,
+                }),
+                &conns
+            ),
+            "new table dst on B"
+        );
+        assert_eq!(
+            describe(
+                Some(&Endpoint::Query {
+                    conn: "a".into(),
+                    database: None,
+                    sql: "SELECT 1".into(),
+                }),
+                &conns
+            ),
+            "a query on A"
+        );
+        for endpoint in [
+            Endpoint::File {
+                path: "/tmp/x.csv".into(),
+                format: TextFormat::Csv(CsvOptions::default()),
+            },
+            Endpoint::Workbook {
+                path: "/tmp/x.xlsx".into(),
+                sheet: None,
+                header: true,
+            },
+            Endpoint::Parquet {
+                path: "/tmp/x.parquet".into(),
+            },
+        ] {
+            assert!(describe(Some(&endpoint), &conns).starts_with("file /tmp/x."));
+        }
+        assert_eq!(
+            describe(
+                Some(&Endpoint::RedisKeys {
+                    conn: "a".into(),
+                    db: 0,
+                    pattern: b"*".to_vec(),
+                }),
+                &conns
+            ),
+            "(other)"
+        );
+    }
+
+    #[test]
+    fn needed_connections_follow_the_endpoints() {
+        let mut wizard = TransferWizard::new(&conns());
+        wizard.s_conn = "a".into();
+        wizard.t_conn = "b".into();
+        assert_eq!(wizard.needed_connections(), ["a", "b"]);
+        wizard.target_kind = TargetKind::File;
+        assert_eq!(wizard.needed_connections(), ["a"]);
+        wizard.source_kind = SourceKind::File;
+        assert!(wizard.needed_connections().is_empty());
+        let mut same = TransferWizard::new(&conns());
+        same.s_conn = "a".into();
+        same.t_conn = "a".into();
+        assert_eq!(same.needed_connections(), ["a"]);
     }
 }

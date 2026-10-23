@@ -6,7 +6,13 @@ use sqlr_core::{Connection, ConnectionConfig, Driver, Secrets};
 use sqlr_driver_oracle::OracleDriver;
 use sqlr_testkit::service;
 
+/// The whole schema is shared by every Oracle test, and catalog paging walks it with
+/// `OFFSET`: a table created by another process between two pages would shift the rows.
+/// One lock per process serializes the tests; nextest gives each test its own process.
+static LOCK: std::sync::OnceLock<sqlr_testkit::TestLock> = std::sync::OnceLock::new();
+
 pub async fn connect() -> Arc<dyn Connection> {
+    let _ = LOCK.get_or_init(|| sqlr_testkit::TestLock::acquire("oracle"));
     let (host, port) = service("ORACLE");
     let cfg = ConnectionConfig {
         id: "o".into(),

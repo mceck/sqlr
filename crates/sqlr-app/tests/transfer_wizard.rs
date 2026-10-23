@@ -212,6 +212,38 @@ fn save_transfer_as_task_and_rerun() {
     }
     // The run is on record.
     wait_for_label_containing(&mut h, "wrote 3");
+
+    // The run's summary opens its log.
+    h.get_by_label_contains("Read 3 rows, wrote 3, rejected 0")
+        .click();
+    h.run_steps(5);
+    h.get_by_label("Copy").click();
+    h.run_steps(2);
+
+    // Duplicate the task, edit the copy, then delete it.
+    h.get_by_label("Transfer data").click();
+    h.run_steps(2);
+    h.get_by_label("Duplicate").click();
+    wait_for_label(&mut h, "Transfer data (copy)");
+    h.get_all_by_label("Edit")
+        .find(|node| node.rect().top() > 60.0)
+        .expect("the tasks pane's Edit")
+        .click();
+    wait_for_label(&mut h, "Load preview");
+    h.get_by_label("Cancel").click();
+    h.run_steps(3);
+    h.get_by_label("Transfer data (copy)").click();
+    h.run_steps(2);
+    h.get_all_by_label("Delete")
+        .find(|node| node.rect().top() > 60.0)
+        .expect("the tasks pane's Delete")
+        .click();
+    let deadline = Instant::now() + TIMEOUT;
+    while h.query_by_label("Transfer data (copy)").is_some() {
+        assert!(Instant::now() < deadline, "the copied task was not deleted");
+        h.step();
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 #[test]

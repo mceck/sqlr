@@ -22,12 +22,7 @@ impl Rig {
     async fn new() -> Self {
         let (client, server_end) = tokio::io::duplex(1 << 20);
         let (sr, sw) = split(server_end);
-        let server = tokio::spawn(serve_io(
-            SqliteDriver::new(),
-            PROTOCOL.to_string(),
-            sr,
-            sw,
-        ));
+        let server = tokio::spawn(serve_io(SqliteDriver::new(), PROTOCOL.to_string(), sr, sw));
         let (rx, tx) = split(client);
         Self {
             tx,
@@ -150,7 +145,9 @@ async fn unknown_connections_and_streams_are_protocol_errors() {
 async fn malformed_requests_and_foreign_frames_are_survivable() {
     let mut rig = Rig::new().await;
     // A frame of another type is skipped without an answer.
-    write_frame(&mut rig.tx, 0x04, 77, b"log line").await.unwrap();
+    write_frame(&mut rig.tx, 0x04, 77, b"log line")
+        .await
+        .unwrap();
     write_frame(&mut rig.tx, CONTROL, 5, b"\xc1not msgpack")
         .await
         .unwrap();
@@ -205,8 +202,7 @@ async fn a_full_session_runs_over_the_pipe() {
     assert!(matches!(r, Response::Affected(1)), "{r:?}");
     rig.ok(exec(1, "insert into t values (2, 'b')", None)).await;
 
-    let Response::Rows { stream, columns } = rig.ok(exec(1, "select * from t", None)).await
-    else {
+    let Response::Rows { stream, columns } = rig.ok(exec(1, "select * from t", None)).await else {
         panic!("rows");
     };
     assert_eq!(columns.len(), 2);

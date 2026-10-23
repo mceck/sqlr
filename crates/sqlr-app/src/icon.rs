@@ -25,3 +25,25 @@ pub(crate) fn native_icon_png() -> Option<Vec<u8>> {
         .ok()?;
     Some(bytes.into_inner())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_window_icon_is_bounded_and_kept_once() {
+        let first = window_icon().expect("the bundled icon decodes");
+        assert_eq!((first.width, first.height), (256, 256));
+        assert_eq!(first.rgba.len(), 256 * 256 * 4);
+        let second = window_icon().expect("the cached icon stays");
+        assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_native_icon_is_a_png() {
+        let png = native_icon_png().expect("the icon encodes");
+        assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"));
+        assert!(png.len() > 100);
+    }
+}

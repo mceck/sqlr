@@ -100,3 +100,54 @@ impl fmt::Display for SuiteReport {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn never_connected() -> Connect {
+        Box::new(|| Box::pin(async { Err(DriverError::new(sqlr_core::ErrorKind::Other, "no db")) }))
+    }
+
+    #[test]
+    fn a_target_starts_with_the_conformance_defaults() {
+        let target = Target::new("fake", never_connected());
+        assert_eq!(target.name, "fake");
+        assert_eq!(target.table.name, "sqlr_conformance");
+        assert!(target.setup_sql.is_empty());
+        assert_eq!(target.capabilities, Capabilities::default());
+        assert!(target.slow_sql.is_none());
+        assert!(target.type_cases.is_empty());
+    }
+
+    #[test]
+    fn setup_statements_are_collected_in_order() {
+        let target = Target::new("fake", never_connected())
+            .with_setup(["CREATE TABLE t (n INTEGER)", "DELETE FROM t"]);
+        assert_eq!(
+            target.setup_sql,
+            ["CREATE TABLE t (n INTEGER)", "DELETE FROM t"]
+        );
+        let target = Target::new("fake", never_connected()).with_setup(Vec::<String>::new());
+        assert!(target.setup_sql.is_empty());
+    }
+
+    #[test]
+    fn a_report_names_every_outcome() {
+        let report = SuiteReport {
+            passed: vec!["connect".into(), "query".into()],
+            failed: vec![("insert".into(), "syntax error".into())],
+            skipped: vec![("cancel".into(), "no slow query".into())],
+        };
+        let text = report.to_string();
+        assert!(
+            text.starts_with("2 passed, 1 failed, 1 skipped\n"),
+            "{text}"
+        );
+        assert!(text.contains("  FAILED insert: syntax error"), "{text}");
+        assert!(text.contains("  skipped cancel: no slow query"), "{text}");
+
+        let empty = SuiteReport::default().to_string();
+        assert_eq!(empty, "0 passed, 0 failed, 0 skipped\n");
+    }
+}

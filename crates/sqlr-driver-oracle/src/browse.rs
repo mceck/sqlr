@@ -37,17 +37,39 @@ fn unsupported(path: &NodePath) -> DriverError {
     )
 }
 
-/// Runs a catalog query with string binds.
+/// Runs a catalog query with string binds, fetching every page.
+///
+/// `oracle-rs` returns at most the first 100 prefetched rows and does not expose the
+/// remaining cursor, so paging is done in SQL: every catalog query ends with `ORDER BY`,
+/// and `OFFSET … FETCH NEXT` walks it to the end.
 pub(crate) async fn query(
     conn: &Connection,
     sql: &str,
     params: &[&str],
 ) -> Result<QueryResult, DriverError> {
+    const PAGE_ROWS: usize = 100;
     let values: Vec<OracleValue> = params
         .iter()
         .map(|v| OracleValue::String((*v).to_string()))
         .collect();
-    conn.query(sql, &values).await.map_err(map_error)
+    let sql = sql.trim().trim_end_matches(';');
+    let mut result = conn.query(sql, &values).await.map_err(map_error)?;
+    let mut rows = std::mem::take(&mut result.rows);
+    let mut fetched = rows.len();
+    while fetched > 0 && fetched % PAGE_ROWS == 0 {
+        let page_sql = format!("{sql} OFFSET {fetched} ROWS FETCH NEXT {PAGE_ROWS} ROWS ONLY");
+        let page = conn.query(&page_sql, &values).await.map_err(map_error)?;
+        let count = page.rows.len();
+        rows.extend(page.rows);
+        fetched += count;
+        if count < PAGE_ROWS {
+            break;
+        }
+    }
+    result.rows = rows;
+    result.has_more_rows = false;
+    result.cursor_id = 0;
+    Ok(result)
 }
 
 /// A dictionary number (a length, a precision): the server may send a NUMBER as text.

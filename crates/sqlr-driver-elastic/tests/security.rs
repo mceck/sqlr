@@ -23,7 +23,13 @@ async fn ambiguous_console_paths_never_reach_the_server() {
                     break;
                 }
             }
-            requests.push(String::from_utf8_lossy(&bytes).lines().next().unwrap().to_owned());
+            requests.push(
+                String::from_utf8_lossy(&bytes)
+                    .lines()
+                    .next()
+                    .unwrap()
+                    .to_owned(),
+            );
             let body = r#"{"version":{"number":"8.15.0"}}"#;
             socket
                 .write_all(

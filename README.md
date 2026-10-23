@@ -89,11 +89,15 @@ The script builds the release binary and wraps it in `dist/sqlr.app` with `docs/
 ## Tests
 
 ```sh
-make test        # fixed service containers + nextest
+make test        # fixed service containers + nextest (services stop at the end)
 make test-fast   # no Docker
+make coverage    # the whole suite under llvm-cov; services start and stop
+make coverage-fast  # no Docker: UI and unit tests only
 ```
 
-`make test` starts every Docker-backed server from `docker-compose.test.yml`: PostgreSQL, MySQL, MariaDB, MongoDB, Redis, Elasticsearch, SQL Server and Oracle. Nothing starts a container per test; Postgres/MySQL tests get a fresh database on the fixed server, and the few tests that touch server-global state serialize through a cross-process lock. The first run also starts Oracle and three Elasticsearch nodes; later runs reuse them. `make test-services-reset` recreates the volumes.
+`make test` starts every Docker-backed server from `docker-compose.test.yml`: PostgreSQL, MySQL, MariaDB, MongoDB, Redis, Elasticsearch, SQL Server and Oracle, and stops them when the run ends. Nothing starts a container per test; Postgres/MySQL tests get a fresh database on the fixed server, and the few tests that touch server-global state serialize through a cross-process lock. The first run also starts Oracle and three Elasticsearch nodes; later runs reuse them. `make test-services-reset` recreates the volumes.
+
+`make coverage` excludes SAP HANA, writes `target/coverage/` (`summary.txt`, `per-crate.txt`, `lcov.info`, `html/`) and fails when a crate is below 80% lines. `make coverage-open` opens the HTML report. `scripts/coverage.sh --fast --check` runs the same in a Docker-free environment.
 
 To run the suite directly, start the services once and then use nextest:
 

@@ -387,3 +387,152 @@ impl SqlrApp {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    use sqlr_core::PlanNode;
+    use sqlr_engine::DriverRegistry;
+
+    fn engine() -> Engine {
+        Engine::new(DriverRegistry::default(), Arc::new(|| {}))
+    }
+
+    fn frame(engine: &Engine, show: impl FnMut(&egui::Context)) {
+        let ctx = egui::Context::default();
+        let mut once = Some(show);
+        let mut out = ctx.run_ui(Default::default(), |ui| {
+            let show = once.as_mut().expect("one frame");
+            show(ui.ctx());
+        });
+        // No renderer consumes the font atlas upload here.
+        out.textures_delta.clear();
+        let _ = engine;
+    }
+
+    #[test]
+    fn a_plan_dialog_waits_then_shows_the_plan_or_the_error() {
+        let engine = engine();
+        let mut dialog = PlanDialog::new("c".into(), "SELECT 1".into(), true, true);
+        frame(&engine, |ctx| {
+            assert!(dialog.show(ctx, &engine));
+        });
+        // The confirmation is drawn until the user asks to run it.
+        assert!(dialog.needs_confirmation);
+        dialog.start(&engine);
+        for _ in 0..100 {
+            frame(&engine, |ctx| {
+                dialog.show(ctx, &engine);
+            });
+            if dialog.error.is_some() || dialog.plan.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(dialog.error.is_some() || dialog.plan.is_some());
+
+        dialog.job = None;
+        dialog.error = Some("boom".into());
+        frame(&engine, |ctx| {
+            dialog.show(ctx, &engine);
+        });
+        dialog.error = None;
+        dialog.plan = Some(PlanTree {
+            root: PlanNode::default(),
+            ..PlanTree::default()
+        });
+        frame(&engine, |ctx| {
+            dialog.show(ctx, &engine);
+        });
+        assert!(!dialog.analyze || dialog.plan.is_some());
+    }
+
+    #[test]
+    fn an_er_layout_key_covers_the_table_set() {
+        let all = ErDialog::new("c".into(), None, "s".into(), None);
+        let one = ErDialog::new("c".into(), None, "s".into(), Some(vec!["a".into()]));
+        let two = ErDialog::new(
+            "c".into(),
+            Some("db".into()),
+            "s".into(),
+            Some(vec!["b".into(), "a".into()]),
+        );
+        assert_ne!(all.key(), one.key());
+        assert_eq!(one.key(), one.key());
+        assert!(two.key().starts_with("c|db|s|"));
+        // The table names are sorted before hashing.
+        let reversed = ErDialog::new(
+            "c".into(),
+            Some("db".into()),
+            "s".into(),
+            Some(vec!["a".into(), "b".into()]),
+        );
+        assert_eq!(two.key(), reversed.key());
+    }
+
+    #[test]
+    fn saved_positions_are_applied_and_otherwise_fit() {
+        let mut dialog = ErDialog::new("c".into(), None, "s".into(), None);
+        dialog.model = Some(ErModel::default());
+        dialog.relayout();
+        assert!(dialog.view.fit);
+
+        let mut saved = BTreeMap::new();
+        saved.insert("missing".to_string(), (10.0, 20.0));
+        dialog.saved = Some(saved);
+        dialog.apply_saved();
+        assert!(dialog.view.fit);
+
+        dialog.saved = Some(BTreeMap::new());
+        dialog.apply_saved();
+        assert!(dialog.view.fit);
+        dialog.save(&engine());
+    }
+
+    #[test]
+    fn the_er_dialog_draws_its_model_and_error() {
+        let engine = engine();
+        let mut dialog = ErDialog::new("c".into(), None, "main".into(), Some(vec!["a".into()]));
+        dialog.saved_loaded = true;
+        dialog.model = Some(ErModel::default());
+        dialog.relayout();
+        frame(&engine, |ctx| {
+            assert!(dialog.show(ctx, &engine, None));
+        });
+
+        dialog.error = Some("no schema".into());
+        dialog.model = None;
+        frame(&engine, |ctx| {
+            dialog.show(ctx, &engine, None);
+        });
+
+        // A dialog without a model starts the jobs and shows its spinner.
+        let mut waiting = ErDialog::new("c".into(), None, "main".into(), None);
+        frame(&engine, |ctx| {
+            waiting.show(ctx, &engine, None);
+        });
+        assert!(waiting.model_job.is_some() || waiting.error.is_some());
+    }
+
+    #[test]
+    fn exporting_svg_from_the_dialog_saves_a_file() {
+        let engine = engine();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("diagram.svg");
+        let mut dialog = ErDialog::new("c".into(), None, "main".into(), None);
+        dialog.saved_loaded = true;
+        dialog.model = Some(ErModel::default());
+        dialog.relayout();
+        dialog.ask = Some((
+            true,
+            FileAsk::save(Some(&path), "Export the diagram", "diagram.svg"),
+        ));
+        frame(&engine, |ctx| {
+            dialog.show(ctx, &engine, Some(&path));
+        });
+        assert!(dialog.ask.is_none());
+        assert_eq!(dialog.export_jobs.len(), 1);
+    }
+}

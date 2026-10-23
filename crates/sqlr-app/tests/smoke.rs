@@ -275,6 +275,20 @@ fn database_menu_offers_native_dump_and_restore() {
 }
 
 #[test]
+fn explorer_copies_names_and_connection_urls() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(&dir);
+    expand_to_orders(&mut h);
+    context_menu(&mut h, "orders", "Copy name");
+    wait_for_label(&mut h, "Copied orders");
+    context_menu(&mut h, "fake-conn", "Copy connection URL");
+    wait_for_label(&mut h, "fake-conn has no connection URL");
+    context_menu(&mut h, "fake-conn", "New editor tab");
+    h.run_steps(5);
+    assert!(!h.state().tab_titles().is_empty());
+}
+
+#[test]
 fn connection_menu_duplicates_it_with_its_stored_secrets() {
     let dir = tempfile::tempdir().unwrap();
     let script = FakeScript {
@@ -888,6 +902,36 @@ fn edit_preview_apply_flow() {
 }
 
 #[test]
+fn discarding_pending_edits_clears_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut h, _driver) = harness_with_script(&dir, orders_table_script());
+    expand_to_orders(&mut h);
+    double_click(&mut h, "orders");
+    wait_for_label(&mut h, "20");
+    double_click(&mut h, "10");
+    h.event(egui::Event::Text("15".into()));
+    h.run_steps(2);
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    wait_for_label(&mut h, "1 pending change");
+    h.get_by_label("Discard").click();
+    wait_for_label(&mut h, "No pending changes");
+}
+
+#[test]
+fn a_driver_without_editing_shows_the_result_read_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut h, _driver) = harness_with_script(
+        &dir,
+        FakeScript {
+            editable: false,
+            ..Default::default()
+        },
+    );
+    open_orders(&mut h);
+    wait_for_label(&mut h, "Read-only: driver does not support editing");
+}
+
+#[test]
 fn status_bar_add_row_adds_a_pending_row() {
     let dir = tempfile::tempdir().unwrap();
     let (mut h, _driver) = harness_with_script(&dir, orders_table_script());
@@ -930,6 +974,34 @@ fn server_filter_waits_for_pending_changes() {
     wait_for_label(&mut h, "Apply or discard the pending changes first");
     assert_eq!(driver.executed().len(), runs, "nothing re-ran");
     h.get_by_label("1 pending change");
+}
+
+#[test]
+fn server_filter_reruns_the_statement() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut h, driver) = harness_with_script(&dir, orders_table_script());
+    expand_to_orders(&mut h);
+    double_click(&mut h, "orders");
+    wait_for_label(&mut h, "20");
+    let field = h
+        .get_all(
+            egui_kittest::kittest::By::new()
+                .role(egui::accesskit::Role::TextInput)
+                .value(""),
+        )
+        .last()
+        .expect("the WHERE field");
+    field.click();
+    h.run_steps(2);
+    h.event(egui::Event::Text("total > 10".into()));
+    h.run_steps(2);
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    step_until(&mut h, "the filtered query", |_| {
+        driver
+            .executed()
+            .iter()
+            .any(|sql| sql.contains("total > 10"))
+    });
 }
 
 #[test]

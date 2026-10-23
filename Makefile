@@ -1,6 +1,6 @@
 
 
-.PHONY: test test-fast test-services test-services-reset check-nextest macos install
+.PHONY: test test-fast test-services test-services-reset check-nextest macos install coverage coverage-fast coverage-open
 
 $(shell mkdir -p dist)
 
@@ -32,8 +32,20 @@ TEST_SERVICES_ENV = \
 	SQLR_TEST_CA=$(CURDIR)/.test-services/certs/ca.crt
 
 test: check-nextest
-	scripts/test-services.sh up
+	@trap 'scripts/test-services.sh down' EXIT INT TERM; \
+	scripts/test-services.sh up; \
 	$(TEST_SERVICES_ENV) cargo nextest run --workspace --profile containers
+
+# Coverage of every crate except SAP HANA; the Docker services start and stop here.
+coverage:
+	scripts/coverage.sh
+
+# No Docker: UI and unit tests only; the 80% check is informational.
+coverage-fast:
+	scripts/coverage.sh --fast
+
+coverage-open:
+	scripts/coverage.sh --open
 
 test-services:
 	scripts/test-services.sh up

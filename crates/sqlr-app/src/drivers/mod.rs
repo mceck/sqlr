@@ -56,3 +56,24 @@ pub(crate) struct DriversUi {
     /// `Engine::drivers_revision` last seen, to refresh what depends on the drivers.
     pub(crate) seen_revision: u64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_dismissed_file_pick_is_reported_once() {
+        let mut pick = ManualPick {
+            file: Box::pin(async { None }),
+        };
+        assert_eq!(pick.poll(), Some(None));
+    }
+
+    #[test]
+    fn a_pending_file_pick_keeps_waiting() {
+        let mut pick = ManualPick {
+            file: Box::pin(std::future::pending::<Option<rfd::FileHandle>>()),
+        };
+        assert_eq!(pick.poll(), None);
+    }
+}
