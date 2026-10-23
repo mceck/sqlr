@@ -33,6 +33,7 @@ async fn run(conn: &Arc<dyn sqlr_core::Connection>, sql: &str) {
 
 #[tokio::test]
 async fn schema_corners_and_object_loading() {
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = server().await;
     for sql in [
         "CREATE SCHEMA shop",
@@ -177,6 +178,7 @@ async fn schema_corners_and_object_loading() {
 
 #[tokio::test]
 async fn statements_report_rows_counts_and_errors() {
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = server().await;
     let rel = conn.relational().unwrap();
     run(&conn, "CREATE SCHEMA shop").await;
@@ -291,6 +293,7 @@ fn config(values: &[(&str, &str)]) -> ConnectionConfig {
 
 #[tokio::test]
 async fn bad_connection_settings_fail_with_a_useful_kind() {
+    sqlr_testkit::skip_container_tests!();
     let driver = SqlServerDriver::new();
     let pw = |p: &str| Secrets([("password".to_string(), p.to_string())].into());
     let good = pw("yourStrong(!)Password");

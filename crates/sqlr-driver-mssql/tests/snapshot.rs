@@ -21,6 +21,7 @@ const SETUP: &[&str] = &[
 
 #[tokio::test]
 async fn a_schema_loads_with_its_keys_indexes_and_views() {
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = server().await;
     let rel = conn.relational().unwrap();
     for sql in SETUP {

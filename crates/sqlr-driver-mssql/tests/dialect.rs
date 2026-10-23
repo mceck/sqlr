@@ -16,6 +16,7 @@ async fn first_cell(rel: &dyn sqlr_core::RelationalConn, sql: &str) -> String {
 
 #[tokio::test]
 async fn ddl_that_needs_a_batch_of_its_own_runs() {
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = server().await;
     let rel = conn.relational().unwrap();
     for sql in [
@@ -32,6 +33,7 @@ async fn ddl_that_needs_a_batch_of_its_own_runs() {
 
 #[tokio::test]
 async fn upsert_toggles_literals_and_wrapping_work_on_the_server() {
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = server().await;
     let rel = conn.relational().unwrap();
     let d = MsDialect;
@@ -70,6 +72,7 @@ async fn upsert_toggles_literals_and_wrapping_work_on_the_server() {
 
 #[tokio::test]
 async fn explain_returns_the_estimated_plan() {
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = server().await;
     let rel = conn.relational().unwrap();
     rel.execute("CREATE TABLE up (id int primary key)")

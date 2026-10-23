@@ -18,10 +18,12 @@ fn create_alter_drop(server: Server) {
 
 #[test]
 fn engine_creates_alters_and_drops_a_table_mysql() {
+    sqlr_testkit::skip_container_tests!();
     create_alter_drop(Server::MySql);
 }
 
 #[test]
 fn engine_creates_alters_and_drops_a_table_mariadb() {
+    sqlr_testkit::skip_container_tests!();
     create_alter_drop(Server::MariaDb);
 }

@@ -64,6 +64,7 @@ fn text(v: &Value) -> String {
 
 #[tokio::test]
 async fn the_explorer_tree_walks_schemas_down_to_columns() {
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = server().await;
     let rel = conn.relational().unwrap();
     for sql in SETUP {
@@ -163,6 +164,7 @@ async fn the_explorer_tree_walks_schemas_down_to_columns() {
 
 #[tokio::test]
 async fn describe_and_catalog_report_columns_and_keys() {
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = server().await;
     let rel = conn.relational().unwrap();
     for sql in SETUP {
@@ -229,6 +231,7 @@ async fn describe_and_catalog_report_columns_and_keys() {
 
 #[tokio::test]
 async fn values_of_every_type_decode_to_cells() {
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = server().await;
     let r = rows(
         &conn,
@@ -280,6 +283,7 @@ async fn values_of_every_type_decode_to_cells() {
 
 #[tokio::test]
 async fn column_metadata_names_every_tds_type() {
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = server().await;
     let Execution::Rows(s) = conn
         .relational()
@@ -337,6 +341,7 @@ async fn column_metadata_names_every_tds_type() {
 
 #[tokio::test]
 async fn bound_parameters_round_trip_and_the_connection_reports_itself() {
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = server().await;
     let rel = conn.relational().unwrap();
     let Execution::Rows(s) = rel

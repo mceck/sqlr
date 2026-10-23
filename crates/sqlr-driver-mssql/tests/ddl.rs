@@ -93,6 +93,7 @@ fn copy_of(t: &TableDef) -> TableDef {
 
 #[tokio::test]
 async fn created_tables_and_views_read_back_as_they_were() {
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = server().await;
     run(
         &*conn,
@@ -149,6 +150,7 @@ async fn created_tables_and_views_read_back_as_they_were() {
 
 #[tokio::test]
 async fn table_changes_apply() {
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = server().await;
     run(
         &*conn,
