@@ -7,6 +7,8 @@ A universal database client: native Rust, egui, no webview. One app for relation
 
 ## What it does
 
+Link to [documentation](https://mceck.github.io/sqlr/usage/README.html).
+
 - **Edit data in the grid**: double-click a cell, add/duplicate/delete rows, changes tinted until **Preview** (the generated SQL), **Apply** or **Discard**; concurrent changes are detected and named.
 - **SQL editor built for big scripts**: only visible lines are laid out; a 10 MB file scrolls and takes typing in well under a frame. Statement coloring, autocomplete, find/replace, multi-caret editing, SQL formatting (⌥⌘L), a command palette (⌘⇧P) over commands, snippets and history.
 - **Profiles and commit modes** per connection: Development / Test / Production, each with its color, commit mode (**Auto**, **Manual**, **Smart**), read-only flag and confirmation rules for writes and destructive statements.
@@ -30,7 +32,7 @@ A universal database client: native Rust, egui, no webview. One app for relation
 | SQL Server 2016+ | `tiberius` (rustls) | native TDS, SQL and Windows-less authentication, SSH tunnel |
 | Oracle 12c+ | `oracle-rs` (pure Rust) | no Oracle Instant Client or OCI, TLS, SSH tunnel |
 | SQLite 3 | `rusqlite` (bundled) | files, read-only open |
-| MongoDB | `mongodb` (rustls) | [Mongo shell subset](docs/mongo-shell-subset.md), TLS, SSH tunnel |
+| MongoDB | `mongodb` (rustls) | [Mongo shell subset](docs/tech/mongo-shell-subset.md), TLS, SSH tunnel |
 | Elasticsearch 7.17 / 8.x | `reqwest` (rustls) | Kibana-console requests, ES\|QL and SQL, SSH tunnel |
 | Redis (standalone) | `redis` (rustls) | key browser, console, TLS, SSH tunnel |
 | SAP HANA | `hdbconnect_async` sidecar (install from a file) | TLS with a custom CA [docs/drivers/hana.md](docs/drivers/hana.md) |
@@ -47,7 +49,7 @@ Drivers run as separate processes against a fixed protocol a crash takes down on
 3. Check it with the conformance suite in `crates/sqlr-driver-tests`.
 4. Package it with `scripts/package-driver.sh` and install it through **Settings → Drivers… → Install from file…**. The Driver Manager keeps every version, so rollback and removal need no restart; a file is the only install source.
 
-Start with [docs/writing-a-driver.md](docs/writing-a-driver.md) and [docs/driver-protocol.md](docs/driver-protocol.md).
+Start with [docs/tech/writing-a-driver.md](docs/tech/writing-a-driver.md) and [docs/tech/driver-protocol.md](docs/tech/driver-protocol.md).
 
 ## Architecture
 
@@ -118,4 +120,4 @@ MacOS: both under `~/Library/Application Support/dev.sqlr.sqlr/`. Linux: `~/.con
 
 MIT, see [LICENSE.md](LICENSE.md).
 
-CI runs formatting, clippy, dependency constraints and full tests on Linux and macOS; startup time, release size, million-row grid scrolling and editor budgets are enforced on both platforms. See [docs/performance-budgets.md](docs/performance-budgets.md).
+CI runs formatting, clippy, dependency constraints and full tests on Linux and macOS; startup time, release size, million-row grid scrolling and editor budgets are enforced on both platforms. See [docs/tech/performance-budgets.md](docs/tech/performance-budgets.md).

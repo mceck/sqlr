@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Using sqlr · sqlr</title>
+<style>
+:root{--bg:#0b0e14;--bg-soft:#10151f;--panel:#141b27;--line:#243049;--text:#e8edf5;--muted:#9aa7bd;--dim:#6b7a93;--accent:#4fd1a5;--accent-soft:rgba(79,209,165,.14);--blue:#6ea8fe;--mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,monospace;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.7 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+.topbar{position:sticky;top:0;z-index:10;background:rgba(11,14,20,.88);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.topbar .in{max-width:1180px;margin:0 auto;padding:0 24px;height:56px;display:flex;align-items:center;gap:18px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;color:var(--text)}
+.brand img{width:26px;height:26px;border-radius:6px}.brand:hover{text-decoration:none}
+.topbar .back{margin-left:auto;font-size:14px;color:var(--muted)}
+.layout{max-width:1180px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:230px minmax(0,1fr);gap:48px}
+aside{position:sticky;top:56px;align-self:start;height:calc(100vh - 56px);overflow:auto;padding:28px 0;font-size:14.5px}
+aside h4{margin:18px 0 6px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+aside h4:first-child{margin-top:0}
+aside a{display:block;padding:5px 10px;border-radius:8px;color:var(--muted)}
+aside a:hover{color:var(--text);background:var(--panel);text-decoration:none}
+aside a.on{color:var(--accent);background:var(--accent-soft)}
+main{padding:36px 0 80px;max-width:780px}
+h1{font-size:36px;letter-spacing:-.02em;margin:0 0 18px;line-height:1.2}
+h2{font-size:25px;letter-spacing:-.01em;margin:44px 0 10px;padding-top:26px;border-top:1px solid var(--line)}
+h3{font-size:19px;margin:30px 0 8px}h4{font-size:16px;margin:22px 0 6px}
+p{margin:0 0 14px;color:#cfd8e6}li{color:#cfd8e6}
+ul,ol{margin:0 0 16px;padding-left:24px}li{margin:4px 0}li>ul,li>ol{margin:4px 0 0}
+code{font-family:var(--mono);font-size:.88em;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:var(--blue)}
+pre{background:var(--bg-soft);border:1px solid var(--line);border-radius:12px;padding:14px 16px;overflow-x:auto;line-height:1.55;margin:0 0 18px}
+pre code{background:none;border:0;padding:0;color:var(--text);font-size:13.5px}
+blockquote{margin:0 0 16px;padding:2px 16px;border-left:3px solid var(--accent);background:var(--panel);border-radius:0 10px 10px 0}
+table{width:100%;border-collapse:collapse;margin:0 0 20px;font-size:14.5px;display:block;overflow-x:auto}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-size:12.5px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+td{color:#cfd8e6}
+hr{border:0;border-top:1px solid var(--line);margin:30px 0}
+img{max-width:100%}
+@media(max-width:820px){.layout{grid-template-columns:1fr;gap:0}aside{position:static;height:auto;padding:18px 0 0;border-bottom:1px solid var(--line)}h1{font-size:29px}}
+</style>
+</head>
+<body>
+<div class="topbar"><div class="in">
+<a class="brand" href="../index.html"><img src="../media/icon.png" alt="">sqlr</a>
+<a class="back" href="../index.html#docs">All documentation</a>
+</div></div>
+<div class="layout">
+<aside><h4>Using sqlr</h4><a class="on" href="../usage/README.html">Start here</a><a class="" href="../usage/getting-started.html">Getting started</a><a class="" href="../usage/connections.html">Connections</a><a class="" href="../usage/explorer-and-objects.html">Explorer and object editors</a><a class="" href="../usage/sql-editor.html">The SQL editor</a><a class="" href="../usage/results-and-editing.html">Results and data editing</a><a class="" href="../usage/profiles-and-transactions.html">Profiles and transactions</a><a class="" href="../usage/moving-data.html">Import, export, transfer</a><a class="" href="../usage/schema-tools.html">Schema tools</a><a class="" href="../usage/administration.html">Administration</a><a class="" href="../usage/nosql.html">Document and key-value</a><a class="" href="../usage/drivers.html">Drivers</a><a class="" href="../usage/settings-and-shortcuts.html">Settings and shortcuts</a><h4>Reference</h4><a class="" href="../tech/mongo-shell-subset.html">Mongo shell subset</a><a class="" href="../tech/writing-a-driver.html">Writing a driver</a><a class="" href="../tech/driver-protocol.html">Driver protocol</a><a class="" href="../tech/performance-budgets.html">Performance budgets</a><a class="" href="../drivers/hana.html">SAP HANA notes</a><a class="" href="../drivers/jdbc.html">JDBC bridge notes</a></aside>
+<main>
+<h1 id="using-sqlr">Using sqlr</h1>
+<p>sqlr is a database client. You connect to a database, look around, run queries, edit data and move it from one place to another. This guide explains how each of those things works, in the order you will probably meet them.</p>
+<p>Keyboard shortcuts are written for macOS (⌘ is Command). On Windows and Linux, ⌘ becomes Ctrl.</p>
+<h2 id="start-here">Start here</h2>
+<table><thead><tr><th>If you want to...</th><th>Read</th></tr></thead><tbody><tr><td>Install sqlr and run your first query</td><td><a href="getting-started.html">Getting started</a></td></tr><tr><td>Connect to a database, through SSH or TLS</td><td><a href="connections.html">Connections</a></td></tr><tr><td>Browse tables and change their structure</td><td><a href="explorer-and-objects.html">The explorer and object editors</a></td></tr><tr><td>Write and run SQL comfortably</td><td><a href="sql-editor.html">The SQL editor</a></td></tr><tr><td>Read, sort, filter and edit results</td><td><a href="results-and-editing.html">Results and data editing</a></td></tr><tr><td>Control how and when changes are committed</td><td><a href="profiles-and-transactions.html">Profiles, transactions and safety</a></td></tr><tr><td>Move data in and out, or back it up</td><td><a href="moving-data.html">Import, export, transfer and backup</a></td></tr><tr><td>Compare schemas, draw diagrams, read query plans</td><td><a href="schema-tools.html">Schema tools</a></td></tr><tr><td>Manage users, sessions and server settings</td><td><a href="administration.html">Administration</a></td></tr><tr><td>Work with MongoDB, Elasticsearch or Redis</td><td><a href="nosql.html">Document and key-value databases</a></td></tr><tr><td>Add support for another database</td><td><a href="drivers.html">Drivers</a></td></tr><tr><td>Change the theme, formats or shortcuts</td><td><a href="settings-and-shortcuts.html">Settings and shortcuts</a></td></tr></tbody></table>
+<h2 id="the-window-at-a-glance">The window at a glance</h2>
+<ul><li><strong>Left:</strong> the explorer. Every saved connection lives here, in folders you can rearrange by drag and drop. Expanding a connection shows its databases, schemas, tables and so on.</li><li><strong>Center, top:</strong> tabs. A tab is a query editor, a table, an object editor, a collection or a Redis database.</li><li><strong>Center, bottom:</strong> results for the query you just ran, plus Messages, History and the Operations list.</li><li><strong>Right:</strong> the value panel, which shows the full content of the selected cell or document.</li><li><strong>Toolbar:</strong> the current connection, the Run and Stop button, commit mode and Run script.</li><li><strong>Status bar:</strong> connection state, commit mode, transaction state, cursor position, row count and timing.</li></ul>
+<p>Panels are docked, so you can drag them where you want them. The arrangement is remembered.</p>
+<h2 id="two-ideas-that-help-everywhere">Two ideas that help everywhere</h2>
+<p><strong>Everything that can take time runs in the background.</strong> Connecting, loading a schema, running a query and exporting a table never freeze the window. The Operations list shows what is running and lets you cancel any of it, including a connection attempt that is still waiting for a server.</p>
+<p><strong>Changes wait for your approval.</strong> Edits in the grid and in object editors collect as a pending list. You see the SQL that will run, then you press Apply, or Discard to throw the changes away.</p>
+</main>
+</div>
+</body>
+</html>

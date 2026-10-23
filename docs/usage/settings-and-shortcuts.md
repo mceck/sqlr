@@ -109,4 +109,4 @@ sqlr is built to stay light, and the numbers below are checked on every change:
 | Autocomplete popup, opening a table | under 50 ms |
 | Size of the application | under 50 MB |
 
-Details are in [Performance budgets](../performance-budgets.md).
+Details are in [Performance budgets](../tech/performance-budgets.md).

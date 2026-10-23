@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Import, export, transfer and backup · sqlr</title>
+<style>
+:root{--bg:#0b0e14;--bg-soft:#10151f;--panel:#141b27;--line:#243049;--text:#e8edf5;--muted:#9aa7bd;--dim:#6b7a93;--accent:#4fd1a5;--accent-soft:rgba(79,209,165,.14);--blue:#6ea8fe;--mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,monospace;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.7 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+.topbar{position:sticky;top:0;z-index:10;background:rgba(11,14,20,.88);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.topbar .in{max-width:1180px;margin:0 auto;padding:0 24px;height:56px;display:flex;align-items:center;gap:18px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;color:var(--text)}
+.brand img{width:26px;height:26px;border-radius:6px}.brand:hover{text-decoration:none}
+.topbar .back{margin-left:auto;font-size:14px;color:var(--muted)}
+.layout{max-width:1180px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:230px minmax(0,1fr);gap:48px}
+aside{position:sticky;top:56px;align-self:start;height:calc(100vh - 56px);overflow:auto;padding:28px 0;font-size:14.5px}
+aside h4{margin:18px 0 6px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+aside h4:first-child{margin-top:0}
+aside a{display:block;padding:5px 10px;border-radius:8px;color:var(--muted)}
+aside a:hover{color:var(--text);background:var(--panel);text-decoration:none}
+aside a.on{color:var(--accent);background:var(--accent-soft)}
+main{padding:36px 0 80px;max-width:780px}
+h1{font-size:36px;letter-spacing:-.02em;margin:0 0 18px;line-height:1.2}
+h2{font-size:25px;letter-spacing:-.01em;margin:44px 0 10px;padding-top:26px;border-top:1px solid var(--line)}
+h3{font-size:19px;margin:30px 0 8px}h4{font-size:16px;margin:22px 0 6px}
+p{margin:0 0 14px;color:#cfd8e6}li{color:#cfd8e6}
+ul,ol{margin:0 0 16px;padding-left:24px}li{margin:4px 0}li>ul,li>ol{margin:4px 0 0}
+code{font-family:var(--mono);font-size:.88em;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:var(--blue)}
+pre{background:var(--bg-soft);border:1px solid var(--line);border-radius:12px;padding:14px 16px;overflow-x:auto;line-height:1.55;margin:0 0 18px}
+pre code{background:none;border:0;padding:0;color:var(--text);font-size:13.5px}
+blockquote{margin:0 0 16px;padding:2px 16px;border-left:3px solid var(--accent);background:var(--panel);border-radius:0 10px 10px 0}
+table{width:100%;border-collapse:collapse;margin:0 0 20px;font-size:14.5px;display:block;overflow-x:auto}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-size:12.5px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+td{color:#cfd8e6}
+hr{border:0;border-top:1px solid var(--line);margin:30px 0}
+img{max-width:100%}
+@media(max-width:820px){.layout{grid-template-columns:1fr;gap:0}aside{position:static;height:auto;padding:18px 0 0;border-bottom:1px solid var(--line)}h1{font-size:29px}}
+</style>
+</head>
+<body>
+<div class="topbar"><div class="in">
+<a class="brand" href="../index.html"><img src="../media/icon.png" alt="">sqlr</a>
+<a class="back" href="../index.html#docs">All documentation</a>
+</div></div>
+<div class="layout">
+<aside><h4>Using sqlr</h4><a class="" href="../usage/README.html">Start here</a><a class="" href="../usage/getting-started.html">Getting started</a><a class="" href="../usage/connections.html">Connections</a><a class="" href="../usage/explorer-and-objects.html">Explorer and object editors</a><a class="" href="../usage/sql-editor.html">The SQL editor</a><a class="" href="../usage/results-and-editing.html">Results and data editing</a><a class="" href="../usage/profiles-and-transactions.html">Profiles and transactions</a><a class="on" href="../usage/moving-data.html">Import, export, transfer</a><a class="" href="../usage/schema-tools.html">Schema tools</a><a class="" href="../usage/administration.html">Administration</a><a class="" href="../usage/nosql.html">Document and key-value</a><a class="" href="../usage/drivers.html">Drivers</a><a class="" href="../usage/settings-and-shortcuts.html">Settings and shortcuts</a><h4>Reference</h4><a class="" href="../tech/mongo-shell-subset.html">Mongo shell subset</a><a class="" href="../tech/writing-a-driver.html">Writing a driver</a><a class="" href="../tech/driver-protocol.html">Driver protocol</a><a class="" href="../tech/performance-budgets.html">Performance budgets</a><a class="" href="../drivers/hana.html">SAP HANA notes</a><a class="" href="../drivers/jdbc.html">JDBC bridge notes</a></aside>
+<main>
+<h1 id="import-export-transfer-and-backup">Import, export, transfer and backup</h1>
+<p>sqlr has four ways to move data, from the quickest to the most thorough.</p>
+<table><thead><tr><th>Tool</th><th>Best for</th></tr></thead><tbody><tr><td>Copy from the grid</td><td>A few rows, into a chat or a document</td></tr><tr><td>Export a result</td><td>Saving what a query returned to a file</td></tr><tr><td>Transfer data</td><td>Copying between two databases, or between a database and a file</td></tr><tr><td>Dump and restore</td><td>A faithful backup using the database's own tools</td></tr></tbody></table>
+<h2 id="export-a-result">Export a result</h2>
+<p>Run a query, then choose <strong>Export result</strong> from the palette (⌘⇧P) or the result's menu. Pick a format and a file name. Supported formats:</p>
+<ul><li>CSV and TSV</li><li>JSON (an array of objects) and JSON Lines (one object per line)</li><li>SQL <code>INSERT</code> statements</li><li>Markdown tables</li></ul>
+<p>Export streams straight from the database to the file, so exporting a table with millions of rows does not need to hold it all in memory, and you can cancel it midway.</p>
+<p>By default exports write raw values. If you want them to follow your display formats for dates, numbers and so on, switch on <strong>Use these formats for export</strong> in Settings under Data formats.</p>
+<h2 id="transfer-data">Transfer data</h2>
+<p>The transfer wizard copies data between any two places:</p>
+<ul><li><strong>Sources:</strong> a table, the result of a query, or a file (CSV, TSV, JSON, JSON Lines, Excel <code>.xlsx</code>, Parquet)</li><li><strong>Targets:</strong> an existing table, a new table, or a file in any of those formats</li></ul>
+<p>Because sources and targets can be on different connections, you can copy from PostgreSQL to SQLite, from MySQL to Oracle, or from a spreadsheet into a table, with the same steps.</p>
+<p>The wizard walks you through:</p>
+<ol><li><strong>Source.</strong> Pick a connection and a table or query, or pick a file. The wizard shows a sample of what is there so you can check you picked the right thing.</li><li><strong>Target.</strong> Pick an existing table, or create a new one. For a new table sqlr writes the <code>CREATE TABLE</code> for you and maps column types between the two databases' dialects.</li><li><strong>Column mapping.</strong> Each source column is matched to a target column, or skipped. You can convert the type and apply a transform per column: trim, upper case, lower case, empty text to NULL, or a constant value.</li><li><strong>Options.</strong> Batch size, whether to commit after each batch or once at the end, whether to truncate the target first, whether to <strong>upsert</strong> by key instead of inserting, and whether to switch off constraints and indexes during the load.</li><li><strong>Review and run.</strong> You see a summary of what will happen, then run it.</li></ol>
+<p>Data flows in bounded batches, so memory use stays small whatever the table size. When it finishes you get a summary of rows read, written and rejected. Rejected rows can be saved to a file so you can fix and retry them. For file imports, a bad row is reported with its line number.</p>
+<h3 id="saving-a-transfer-as-a-task">Saving a transfer as a task</h3>
+<p>Any wizard can be saved as a named <strong>task</strong>. A saved task keeps the settings (but never passwords) and can be run again from the Tasks panel, which also lists running jobs and past runs with their logs. Tasks run when you start them.</p>
+<h2 id="dump-and-restore">Dump and restore</h2>
+<p>Dump and restore use the database's own command-line tools, which is the most faithful way to take a backup:</p>
+<table><thead><tr><th>Database</th><th>Tools</th><th>Formats</th></tr></thead><tbody><tr><td>PostgreSQL</td><td><code>pg_dump</code>, <code>pg_restore</code>, <code>psql</code></td><td>plain SQL, custom archive, tar, directory (parallel)</td></tr><tr><td>MySQL and MariaDB</td><td><code>mysqldump</code>, <code>mysql</code></td><td>SQL script</td></tr><tr><td>SQLite</td><td>the SQLite backup</td><td>SQL script, or a copy of the database file</td></tr></tbody></table>
+<p>Start from the database in the explorer and choose the dump or restore action. The dialog lets you choose what to include and how, for example compression level, schema only or data only, the number of parallel jobs for PostgreSQL's directory format, and for MySQL whether to include routines, events and triggers and whether to use a consistent snapshot.</p>
+<p>Before it runs, sqlr shows you the exact command line. While it runs, the tool's output streams into a live log, and Cancel stops the process.</p>
+<p>sqlr looks for the tools on your <code>PATH</code> and in the usual install places (Homebrew, Postgres.app). If it cannot find one, it tells you how to install it. You can also set an explicit path for a connection.</p>
+<p>Passwords never appear on the command line. They are passed to the tool through its environment or a temporary file that only you can read, and removed afterwards. If the connection uses an SSH tunnel, the tool goes through the same tunnel.</p>
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Results and data editing · sqlr</title>
+<style>
+:root{--bg:#0b0e14;--bg-soft:#10151f;--panel:#141b27;--line:#243049;--text:#e8edf5;--muted:#9aa7bd;--dim:#6b7a93;--accent:#4fd1a5;--accent-soft:rgba(79,209,165,.14);--blue:#6ea8fe;--mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,monospace;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.7 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+.topbar{position:sticky;top:0;z-index:10;background:rgba(11,14,20,.88);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.topbar .in{max-width:1180px;margin:0 auto;padding:0 24px;height:56px;display:flex;align-items:center;gap:18px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;color:var(--text)}
+.brand img{width:26px;height:26px;border-radius:6px}.brand:hover{text-decoration:none}
+.topbar .back{margin-left:auto;font-size:14px;color:var(--muted)}
+.layout{max-width:1180px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:230px minmax(0,1fr);gap:48px}
+aside{position:sticky;top:56px;align-self:start;height:calc(100vh - 56px);overflow:auto;padding:28px 0;font-size:14.5px}
+aside h4{margin:18px 0 6px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+aside h4:first-child{margin-top:0}
+aside a{display:block;padding:5px 10px;border-radius:8px;color:var(--muted)}
+aside a:hover{color:var(--text);background:var(--panel);text-decoration:none}
+aside a.on{color:var(--accent);background:var(--accent-soft)}
+main{padding:36px 0 80px;max-width:780px}
+h1{font-size:36px;letter-spacing:-.02em;margin:0 0 18px;line-height:1.2}
+h2{font-size:25px;letter-spacing:-.01em;margin:44px 0 10px;padding-top:26px;border-top:1px solid var(--line)}
+h3{font-size:19px;margin:30px 0 8px}h4{font-size:16px;margin:22px 0 6px}
+p{margin:0 0 14px;color:#cfd8e6}li{color:#cfd8e6}
+ul,ol{margin:0 0 16px;padding-left:24px}li{margin:4px 0}li>ul,li>ol{margin:4px 0 0}
+code{font-family:var(--mono);font-size:.88em;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:var(--blue)}
+pre{background:var(--bg-soft);border:1px solid var(--line);border-radius:12px;padding:14px 16px;overflow-x:auto;line-height:1.55;margin:0 0 18px}
+pre code{background:none;border:0;padding:0;color:var(--text);font-size:13.5px}
+blockquote{margin:0 0 16px;padding:2px 16px;border-left:3px solid var(--accent);background:var(--panel);border-radius:0 10px 10px 0}
+table{width:100%;border-collapse:collapse;margin:0 0 20px;font-size:14.5px;display:block;overflow-x:auto}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-size:12.5px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+td{color:#cfd8e6}
+hr{border:0;border-top:1px solid var(--line);margin:30px 0}
+img{max-width:100%}
+@media(max-width:820px){.layout{grid-template-columns:1fr;gap:0}aside{position:static;height:auto;padding:18px 0 0;border-bottom:1px solid var(--line)}h1{font-size:29px}}
+</style>
+</head>
+<body>
+<div class="topbar"><div class="in">
+<a class="brand" href="../index.html"><img src="../media/icon.png" alt="">sqlr</a>
+<a class="back" href="../index.html#docs">All documentation</a>
+</div></div>
+<div class="layout">
+<aside><h4>Using sqlr</h4><a class="" href="../usage/README.html">Start here</a><a class="" href="../usage/getting-started.html">Getting started</a><a class="" href="../usage/connections.html">Connections</a><a class="" href="../usage/explorer-and-objects.html">Explorer and object editors</a><a class="" href="../usage/sql-editor.html">The SQL editor</a><a class="on" href="../usage/results-and-editing.html">Results and data editing</a><a class="" href="../usage/profiles-and-transactions.html">Profiles and transactions</a><a class="" href="../usage/moving-data.html">Import, export, transfer</a><a class="" href="../usage/schema-tools.html">Schema tools</a><a class="" href="../usage/administration.html">Administration</a><a class="" href="../usage/nosql.html">Document and key-value</a><a class="" href="../usage/drivers.html">Drivers</a><a class="" href="../usage/settings-and-shortcuts.html">Settings and shortcuts</a><h4>Reference</h4><a class="" href="../tech/mongo-shell-subset.html">Mongo shell subset</a><a class="" href="../tech/writing-a-driver.html">Writing a driver</a><a class="" href="../tech/driver-protocol.html">Driver protocol</a><a class="" href="../tech/performance-budgets.html">Performance budgets</a><a class="" href="../drivers/hana.html">SAP HANA notes</a><a class="" href="../drivers/jdbc.html">JDBC bridge notes</a></aside>
+<main>
+<h1 id="results-and-data-editing">Results and data editing</h1>
+<h2 id="reading-results">Reading results</h2>
+<p>Results appear in a grid under the editor. The grid draws only the rows and columns you can see, so a result with a million rows scrolls as smoothly as one with ten.</p>
+<h3 id="loading-more-rows">Loading more rows</h3>
+<p>sqlr fetches results in pages, 500 rows by default. Scroll near the bottom and the next page loads. The status bar shows <strong>Fetch: 500</strong>, which you can change per result (100, 500, 1000, 5000 or a number of your own). <strong>Fetch all</strong> streams the rest of the result with visible progress, and you can cancel it at any time. The global default, and the cap for Fetch all, are in Settings under Result grid.</p>
+<p>Large results do not have to fit in memory. When a result grows past its memory budget, older parts are moved to a temporary file and read back when you scroll to them. Closing the result tab releases everything.</p>
+<h3 id="sorting-and-filtering">Sorting and filtering</h3>
+<p>Click a column header to sort. Use the filter field above the grid to narrow the rows. When the whole result is already loaded, sorting and filtering happen instantly on your machine. When only part of it is loaded, sqlr offers to run the query again on the server with the sort or filter applied, so you see the right rows and not just the right order of the ones you happened to fetch.</p>
+<h3 id="reading-values">Reading values</h3>
+<ul><li>NULL is shown in grey italics, so it is never confused with the text "NULL" or an empty string.</li><li>Numbers are right-aligned. Exact decimals stay exact.</li><li>Dates, times, timestamps, UUIDs, JSON, XML, arrays, binary and geometry values each get a suitable rendering.</li><li>Long values are cut in the grid. Select the cell and the <strong>value panel</strong> on the right shows the whole thing: formatted JSON, hex for binary, a preview if the bytes are an image. Toggle the panel from the View menu.</li></ul>
+<p>How dates, numbers, booleans, binary data and JSON look is up to you. See <a href="settings-and-shortcuts.html">Settings</a>.</p>
+<h3 id="selecting-and-copying">Selecting and copying</h3>
+<p>Click and drag to select a rectangle of cells, and move around with the arrow keys as in a spreadsheet. You can freeze columns so they stay in view while you scroll sideways.</p>
+<p><strong>Copy</strong> puts the selection on the clipboard as tab-separated text. <strong>Copy as</strong> offers CSV, JSON, SQL <code>INSERT</code> statements and Markdown, which is handy for pasting into a chat, a ticket or a README.</p>
+<p>To save a whole result to a file, use <strong>Export result</strong> (see <a href="moving-data.html">Import, export, transfer and backup</a>).</p>
+<h2 id="editing-data">Editing data</h2>
+<p>When a result comes from a single table that has a primary key or a unique key, you can edit it right in the grid.</p>
+<ul><li><strong>Double-click</strong> a cell to change it.</li><li>Use <strong>Add row</strong>, <strong>Duplicate</strong> and <strong>Delete</strong> for whole rows.</li><li>Edited cells, new rows and deleted rows each get their own tint, so you can see at a glance what is pending.</li></ul>
+<p>Nothing is sent to the database yet. Press <strong>Preview</strong> to read the <code>INSERT</code>, <code>UPDATE</code> and <code>DELETE</code> statements sqlr generated, then <strong>Apply</strong> to run them, or <strong>Discard</strong> to drop the changes.</p>
+<p>Apply runs the statements in a transaction. If one of them fails, the transaction is rolled back and nothing changes. If someone else changed a row you were editing in the meantime, sqlr notices and names the conflicting rows instead of silently overwriting their work.</p>
+<h3 id="which-results-are-editable">Which results are editable</h3>
+<p>sqlr finds a row by its primary key or a unique key, and only edits rows it can identify exactly. A result is editable when:</p>
+<ul><li>it comes from one table, and</li><li>the table has a primary key or a unique key, and</li><li>the connection is not in read-only mode.</li></ul>
+<p>When a result is read-only, the grid tells you why. A result from a join, an aggregate or a table without a key shows the reason, so you know what to change (for instance, add a primary key to the table).</p>
+<p>Documents in MongoDB and Elasticsearch are identified by <code>_id</code>. Redis values are edited per key or per field. See <a href="nosql.html">Document and key-value databases</a>.</p>
+<h2 id="seeing-the-querys-story">Seeing the query's story</h2>
+<p>The <strong>Messages</strong> tab next to the results lists, for each statement of a run, what it was, how long it took, how many rows it touched, and any notices or truncation the server reported. When a long script misbehaves, this is the first place to look.</p>
+</main>
+</div>
+</body>
+</html>
