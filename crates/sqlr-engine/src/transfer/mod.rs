@@ -980,7 +980,7 @@ impl Load<'_> {
         let dialect = rel.dialect();
         let savepoint = dialect.savepoint_sql("sqlr_row");
         let rollback_to = dialect.rollback_to_sql("sqlr_row");
-        let release = format!("RELEASE SAVEPOINT {}", dialect.quote_ident("sqlr_row"));
+        let release = dialect.release_savepoint_sql("sqlr_row");
         let begin = dialect.begin_sql();
         job.set_cancel(Some(conn.cancel_handle()));
 
@@ -1056,7 +1056,17 @@ impl Load<'_> {
                         }
                         match session.insert(insert, &params).await {
                             Ok(()) => {
-                                if protected && let Err(e) = session.run(&release).await {
+                                // A server without RELEASE keeps the savepoint until the
+                                // transaction ends: nothing to run.
+                                let released = if protected {
+                                    match &release {
+                                        Some(release) => session.run(release).await,
+                                        None => Ok(()),
+                                    }
+                                } else {
+                                    Ok(())
+                                };
+                                if let Err(e) = released {
                                     session.rollback().await;
                                     return cancelled_or(job, e);
                                 }
@@ -1074,7 +1084,10 @@ impl Load<'_> {
                             Err(e) => {
                                 if protected {
                                     let undo = match session.run(&rollback_to).await {
-                                        Ok(()) => session.run(&release).await,
+                                        Ok(()) => match &release {
+                                            Some(release) => session.run(release).await,
+                                            None => Ok(()),
+                                        },
                                         Err(e) => Err(e),
                                     };
                                     if let Err(e) = undo {

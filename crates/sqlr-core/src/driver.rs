@@ -236,6 +236,12 @@ pub trait Dialect: Send + Sync {
     fn rollback_to_sql(&self, name: &str) -> String {
         format!("ROLLBACK TO SAVEPOINT {}", self.quote_ident(name))
     }
+    /// The statement that drops `name` (and the savepoints made after it) without undoing
+    /// its work; `None` when the server has no such statement (SQL Server, Oracle), so the
+    /// savepoint stays harmless until its transaction ends.
+    fn release_savepoint_sql(&self, name: &str) -> Option<String> {
+        Some(format!("RELEASE SAVEPOINT {}", self.quote_ident(name)))
+    }
     /// The statement that turns the session's read-only mode on or off; `None` when the
     /// server has no such setting.
     fn read_only_sql(&self, _on: bool) -> Option<String> {
@@ -562,6 +568,10 @@ mod tests {
         assert_eq!(Ansi.qualified(&t), "\"s\".\"a\"\"b\"");
         assert_eq!(Ansi.savepoint_sql("sp"), "SAVEPOINT \"sp\"");
         assert_eq!(Ansi.rollback_to_sql("sp"), "ROLLBACK TO SAVEPOINT \"sp\"");
+        assert_eq!(
+            Ansi.release_savepoint_sql("sp").as_deref(),
+            Some("RELEASE SAVEPOINT \"sp\"")
+        );
         assert_eq!(Ansi.string_literal("it's"), "'it''s'");
         assert_eq!(Ansi.bytes_literal(&[0, 255]), "X'00ff'");
     }

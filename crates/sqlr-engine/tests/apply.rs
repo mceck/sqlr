@@ -234,6 +234,64 @@ fn manual_mode_apply_opens_the_session_transaction() {
 }
 
 #[test]
+fn apply_joins_open_manual_transaction_without_releasing_the_savepoint() {
+    // SQL Server and Oracle have no RELEASE SAVEPOINT: the changeset must still apply and
+    // keep the user's transaction open, and must not send a statement they reject.
+    let (engine, fake) = engine_with(FakeScript {
+        savepoints_never_released: true,
+        ..Default::default()
+    });
+    engine.set_commit_mode(&tab(), CommitMode::Manual);
+    open_tab_session(&engine);
+    let before = fake.executed().len();
+    let job = engine.apply_changeset(&tab(), changeset(vec![update(1, "total", Value::Int(5))]));
+    assert!(
+        matches!(
+            outcome(&engine, job),
+            JobOutcome::Applied(ApplyReport {
+                applied: 1,
+                failed: None
+            })
+        ),
+        "the apply must not fail on a missing RELEASE SAVEPOINT"
+    );
+    let run = executed_after(&fake, before);
+    assert!(run.iter().any(|s| s.starts_with("SAVEPOINT")), "{run:?}");
+    assert!(
+        !run.iter().any(|s| s.contains("RELEASE")),
+        "no RELEASE SAVEPOINT on a server that has none: {run:?}"
+    );
+    assert_eq!(engine.transaction(&tab()).unwrap().phase, TxPhase::Open);
+}
+
+#[test]
+fn failed_apply_without_release_undoes_only_the_changeset() {
+    let (engine, fake) = engine_with(FakeScript {
+        savepoints_never_released: true,
+        dml_affected: vec![0],
+        ..Default::default()
+    });
+    engine.set_commit_mode(&tab(), CommitMode::Manual);
+    open_tab_session(&engine);
+    let before = fake.executed().len();
+    let job = engine.apply_changeset(&tab(), changeset(vec![update(1, "total", Value::Int(5))]));
+    let JobOutcome::Applied(report) = outcome(&engine, job) else {
+        panic!("expected an apply report");
+    };
+    assert_eq!(report.failed.unwrap().0, "row id=1");
+    let run = executed_after(&fake, before);
+    assert!(
+        run.iter().any(|s| s.starts_with("ROLLBACK TO SAVEPOINT")),
+        "{run:?}"
+    );
+    assert!(
+        !run.iter().any(|s| s.contains("RELEASE")),
+        "no RELEASE SAVEPOINT on a server that has none: {run:?}"
+    );
+    assert_eq!(engine.transaction(&tab()).unwrap().phase, TxPhase::Open);
+}
+
+#[test]
 fn edit_key_column_uses_original_key() {
     let (engine, fake) = engine_with(FakeScript::default());
     open_tab_session(&engine);

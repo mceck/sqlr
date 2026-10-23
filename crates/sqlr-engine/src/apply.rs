@@ -183,10 +183,7 @@ impl Shared {
         job.set_cancel(None);
         let finish = match mode {
             Mode::Own => Some("COMMIT".to_string()),
-            Mode::Joins => Some(format!(
-                "RELEASE SAVEPOINT {}",
-                dialect.quote_ident(SAVEPOINT)
-            )),
+            Mode::Joins => dialect.release_savepoint_sql(SAVEPOINT),
             Mode::Opens => None,
         };
         if let Some(sql) = finish
@@ -231,11 +228,12 @@ impl Shared {
             Mode::Joins => {
                 let back = run_sql(conn, &rel.dialect().rollback_to_sql(SAVEPOINT)).await;
                 match back {
-                    Ok(()) => {
-                        let release =
-                            format!("RELEASE SAVEPOINT {}", rel.dialect().quote_ident(SAVEPOINT));
-                        run_sql(conn, &release).await
-                    }
+                    Ok(()) => match rel.dialect().release_savepoint_sql(SAVEPOINT) {
+                        Some(release) => run_sql(conn, &release).await,
+                        // The server has no RELEASE: the savepoint stays until the
+                        // transaction ends, which is harmless.
+                        None => Ok(()),
+                    },
                     Err(e) => Err(e),
                 }
             }

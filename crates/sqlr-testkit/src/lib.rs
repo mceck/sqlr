@@ -193,6 +193,9 @@ pub struct FakeScript {
     pub error_aborts_transaction: bool,
     /// The dialect's `read_only_sql` returns `SET READ ONLY` / `SET READ WRITE`.
     pub read_only_sql: bool,
+    /// The dialect's `release_savepoint_sql` returns `None` (SQL Server, Oracle): a
+    /// savepoint is left to its transaction.
+    pub savepoints_never_released: bool,
     /// `connect` opens a TCP connection to the config's `host:port`, writes `ping\n` and
     /// expects it echoed back (to test tunnels); `ping()` repeats that exchange.
     pub tcp_echo: bool,
@@ -703,6 +706,7 @@ impl FakeDriver {
             ddl_commits_transaction: script.ddl_commits_transaction,
             error_aborts_transaction: script.error_aborts_transaction,
             read_only_sql: script.read_only_sql,
+            savepoints_never_released: script.savepoints_never_released,
             ddl: script.editing.is_some().then(|| self.shared.ddl.clone()),
             quote_idents: script.quote_idents,
         }
@@ -1395,6 +1399,7 @@ struct FakeDialect {
     ddl_commits_transaction: bool,
     error_aborts_transaction: bool,
     read_only_sql: bool,
+    savepoints_never_released: bool,
     ddl: Option<Arc<FakeDdl>>,
     quote_idents: bool,
 }
@@ -1411,6 +1416,10 @@ impl Dialect for FakeDialect {
 
     fn rollback_to_sql(&self, name: &str) -> String {
         format!("ROLLBACK TO SAVEPOINT {}", ansi_quote(name))
+    }
+
+    fn release_savepoint_sql(&self, name: &str) -> Option<String> {
+        (!self.savepoints_never_released).then(|| format!("RELEASE SAVEPOINT {}", ansi_quote(name)))
     }
 
     fn read_only_sql(&self, on: bool) -> Option<String> {

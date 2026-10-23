@@ -98,6 +98,11 @@ impl Dialect for MsDialect {
         format!("ROLLBACK TRANSACTION {}", self.quote_ident(name))
     }
 
+    /// T-SQL has no `RELEASE SAVEPOINT`: a savepoint ends with its transaction.
+    fn release_savepoint_sql(&self, _name: &str) -> Option<String> {
+        None
+    }
+
     /// T-SQL has no `NULLS LAST`: an explicit sort key puts NULLs after the values.
     fn wrap_order(&self, sql: &str, order: &[(String, bool)]) -> String {
         let keys: Vec<String> = order
@@ -306,6 +311,8 @@ mod tests {
         assert_eq!(MsDialect.begin_sql(), "BEGIN TRANSACTION");
         assert_eq!(MsDialect.savepoint_sql("sp"), "SAVE TRANSACTION [sp]");
         assert_eq!(MsDialect.rollback_to_sql("sp"), "ROLLBACK TRANSACTION [sp]");
+        // T-SQL has no RELEASE SAVEPOINT; the savepoint ends with its transaction.
+        assert_eq!(MsDialect.release_savepoint_sql("sp"), None);
         assert_eq!(MsDialect.bytes_literal(&[0, 0xab]), "0x00ab");
         assert_eq!(
             MsDialect.wrap_order("SELECT * FROM t", &[("a".into(), true)]),
