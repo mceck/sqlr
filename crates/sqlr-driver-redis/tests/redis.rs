@@ -64,11 +64,22 @@ async fn start_tls() -> Server {
     }
 }
 
+/// The `redis` crate's own defaults are a 500 ms response timeout, too short for the
+/// multi-megabyte values these tests seed while the rest of the suite runs in parallel.
+fn client_config() -> redis::AsyncConnectionConfig {
+    redis::AsyncConnectionConfig::new()
+        .set_connection_timeout(Some(Duration::from_secs(10)))
+        .set_response_timeout(Some(Duration::from_secs(30)))
+}
+
 /// Every test starts from an empty server; the lock keeps nextest's processes apart.
 async fn reset(host: &str, port: u16) {
     let client = redis::Client::open(format!("redis://{host}:{port}/")).unwrap();
     for attempt in 0..3 {
-        let mut con = match client.get_multiplexed_async_connection().await {
+        let mut con = match client
+            .get_multiplexed_async_connection_with_config(&client_config())
+            .await
+        {
             Ok(con) => con,
             Err(_) if attempt < 2 => {
                 tokio::time::sleep(Duration::from_millis(250)).await;
@@ -113,7 +124,10 @@ fn kv(conn: &Arc<dyn Connection>) -> &dyn KeyValueConn {
 async fn raw(server: &Server) -> redis::aio::MultiplexedConnection {
     let client = redis::Client::open(format!("redis://{}:{}/", server.host, server.port)).unwrap();
     for attempt in 0..3 {
-        match client.get_multiplexed_async_connection().await {
+        match client
+            .get_multiplexed_async_connection_with_config(&client_config())
+            .await
+        {
             Ok(con) => return con,
             Err(_) if attempt < 2 => tokio::time::sleep(Duration::from_millis(250)).await,
             Err(e) => panic!("raw redis: {e}"),
