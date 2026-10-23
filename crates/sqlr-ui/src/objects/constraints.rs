@@ -36,29 +36,46 @@ pub(super) fn constraints_tab(
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = Spacing::S;
         if !has_pk
-            && icons::button(ui, true, icons::KEY, Some(p.icon_key), "Add primary key").clicked()
+            && icons::short_button(
+                ui,
+                true,
+                icons::KEY,
+                Some(p.icon_key),
+                "Primary key",
+                "Add primary key",
+            )
+            .clicked()
         {
             added = Some(ConstraintDef::PrimaryKey {
                 name: None,
                 columns: first.clone().unwrap_or_default(),
             });
         }
-        if icons::button(ui, true, icons::ADD, Some(p.success), "Add unique").clicked() {
+        if icons::short_button(
+            ui,
+            true,
+            icons::ADD,
+            Some(p.success),
+            "Unique",
+            "Add unique",
+        )
+        .clicked()
+        {
             added = Some(ConstraintDef::Unique {
                 name: None,
                 columns: first.clone().unwrap_or_default(),
             });
         }
-        if icons::button(ui, true, icons::ADD, Some(p.success), "Add check").clicked() {
+        if icons::short_button(ui, true, icons::ADD, Some(p.success), "Check", "Add check")
+            .clicked()
+        {
             added = Some(ConstraintDef::Check {
                 name: None,
                 expression: String::new(),
             });
         }
         let current = selected.filter(|i| shown.contains(i));
-        if ui
-            .add_enabled(current.is_some(), egui::Button::new("Delete constraint"))
-            .clicked()
+        if icons::delete_button(ui, current.is_some(), "Delete constraint").clicked()
             && let Some(i) = current
         {
             table.constraints.remove(i);

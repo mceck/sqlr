@@ -45,3 +45,6 @@ mod welcome;
 pub use app::{AppDeps, SqlrApp, production_deps, production_deps_in};
 pub use library::open_db_or_memory;
 pub use logging::init as init_logging;
+
+#[cfg(test)]
+mod visual_audit;

@@ -82,12 +82,14 @@ impl PlanDialog {
         } else {
             "Explain"
         };
-        egui::Window::new(title)
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(true)
-            .default_size([760.0, 480.0])
-            .show(ctx, |ui| {
+        theme::tool_dialog(
+            ctx,
+            &mut open,
+            title,
+            theme::icons::QUERY,
+            "Inspect the execution plan and the work done by each node",
+            800.0,
+            |ui| {
                 ui.label(
                     RichText::new(self.sql.lines().next().unwrap_or("").to_string())
                         .monospace()
@@ -113,7 +115,8 @@ impl PlanDialog {
                 {
                     ui.ctx().copy_text(plan.raw.clone());
                 }
-            });
+            },
+        );
         if run {
             self.start(engine);
         }
@@ -315,12 +318,15 @@ impl ErDialog {
         }
         let mut open = true;
         let mut action = None;
-        egui::Window::new(format!("ER diagram · {}", self.schema))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(true)
-            .default_size([900.0, 600.0])
-            .show(ctx, |ui| {
+        theme::tool_dialog(
+            ctx,
+            &mut open,
+            &format!("ER diagram · {}", self.schema),
+            theme::icons::SCHEMA,
+            "Explore tables and relationships · Drag to arrange, scroll to zoom",
+            960.0,
+            |ui| {
+                ui.set_height((ctx.content_rect().height() - 260.0).clamp(180.0, 520.0));
                 if let Some(e) = &self.error {
                     ui.colored_label(theme::palette(ui.ctx()).error, e);
                 } else if let Some(model) = &self.model {
@@ -328,7 +334,8 @@ impl ErDialog {
                 } else {
                     ui.spinner();
                 }
-            });
+            },
+        );
         match action {
             Some(ErAction::Moved(..)) => self.save(engine),
             Some(ErAction::Relayout) => {

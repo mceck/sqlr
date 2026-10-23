@@ -146,7 +146,12 @@ pub fn snippets_panel(
         } else {
             "No matching snippets"
         };
-        ui.label(RichText::new(text).color(theme::palette(ui.ctx()).text_muted));
+        let description = if snippets.is_empty() {
+            "Save SQL you use often. Choose + to create a snippet, then open it or insert it into a query."
+        } else {
+            "Try a different filter or switch to the connection this snippet belongs to."
+        };
+        theme::empty_panel(ui, icons::SNIPPET, text, description);
         return actions;
     }
     let mut root = Folder::default();

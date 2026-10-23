@@ -335,11 +335,14 @@ impl ExportDialog {
         }
         let mut event = ExportEvent::None;
         let mut open = true;
-        egui::Window::new("Export data")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .show(ctx, |ui| {
+        theme::tool_dialog(
+            ctx,
+            &mut open,
+            "Export data",
+            theme::icons::EXPORT,
+            "Choose which rows to export and how to format them",
+            520.0,
+            |ui| {
                 ui.label(RichText::new(&self.name).font(theme::semibold(ui.ctx(), 13.0)));
                 ui.add_space(Spacing::S);
                 if let Some((_, rows)) = self.loaded {
@@ -372,7 +375,9 @@ impl ExportDialog {
                         );
                     }
                 }
-                ui.add_space(Spacing::S);
+                ui.add_space(Spacing::L);
+                theme::section_title(ui, "File format");
+                ui.add_space(Spacing::M);
                 ComboBox::from_label("Format")
                     .selected_text(self.format.label())
                     .show_ui(ui, |ui| {
@@ -390,11 +395,16 @@ impl ExportDialog {
                     }
                     _ => {}
                 }
+                ui.add_space(Spacing::L);
+                theme::hairline(ui);
                 ui.add_space(Spacing::M);
-                ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let waiting = self.ask.is_some();
                     if ui
-                        .add_enabled(!waiting, egui::Button::new("Export"))
+                        .add_enabled(
+                            !waiting,
+                            theme::primary_button_state(ui.ctx(), !waiting, "Export"),
+                        )
                         .clicked()
                     {
                         let name = suggested_name(&self.name, self.format.extension());
@@ -407,7 +417,8 @@ impl ExportDialog {
                         ui.spinner();
                     }
                 });
-            });
+            },
+        );
         if !open {
             event = ExportEvent::Close;
         }
@@ -635,62 +646,80 @@ impl ImportDialog {
         let targets = self.target_columns(engine);
         let mut open = true;
         let mut close = false;
-        egui::Window::new(format!("Import into {}", self.target.name))
-            .open(&mut open)
-            .collapsible(false)
-            .default_width(640.0)
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    let shown = self
-                        .path
-                        .as_ref()
-                        .map_or("No file chosen".to_string(), |p| p.display().to_string());
-                    ui.label(shown);
-                    if ui
-                        .add_enabled(self.run.is_none(), egui::Button::new("Choose file…"))
-                        .clicked()
-                    {
-                        self.ask = Some(FileAsk::open(
-                            answer,
-                            "Import from",
-                            &["csv", "tsv", "json", "jsonl", "ndjson", "txt"],
-                        ));
-                    }
-                });
-                let before = (self.format, self.csv.options());
-                ComboBox::from_label("Format")
-                    .selected_text(self.format.label())
-                    .show_ui(ui, |ui| {
-                        for f in ImportFormat::ALL {
-                            ui.selectable_value(&mut self.format, f, f.label());
+        theme::tool_dialog(
+            ctx,
+            &mut open,
+            &format!("Import into {}", self.target.name),
+            theme::icons::IMPORT,
+            "Preview a file, map its columns and review import options",
+            700.0,
+            |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("import-options")
+                    .max_height((ctx.content_rect().height() - 340.0).max(140.0))
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            let shown = self
+                                .path
+                                .as_ref()
+                                .map_or("No file chosen".to_string(), |p| p.display().to_string());
+                            ui.label(shown);
+                            if ui
+                                .add_enabled(self.run.is_none(), egui::Button::new("Choose file…"))
+                                .clicked()
+                            {
+                                self.ask = Some(FileAsk::open(
+                                    answer,
+                                    "Import from",
+                                    &["csv", "tsv", "json", "jsonl", "ndjson", "txt"],
+                                ));
+                            }
+                        });
+                        let before = (self.format, self.csv.options());
+                        ComboBox::from_label("Format")
+                            .selected_text(self.format.label())
+                            .show_ui(ui, |ui| {
+                                for f in ImportFormat::ALL {
+                                    ui.selectable_value(&mut self.format, f, f.label());
+                                }
+                            });
+                        if self.format == ImportFormat::Csv {
+                            egui::CollapsingHeader::new("CSV options")
+                                .id_salt("import-csv-options")
+                                .show(ui, |ui| self.csv.ui(ui, false));
                         }
+                        if before != (self.format, self.csv.options()) {
+                            self.start_preview(engine);
+                        }
+                        if let Some(e) = &self.error {
+                            ui.colored_label(theme::palette(ui.ctx()).error, e);
+                        }
+                        if self.preview_job.is_some() {
+                            ui.spinner();
+                        }
+                        if let Some(preview) = &mut self.preview {
+                            ui.separator();
+                            ui.label(format!("First {} rows", preview.rows.row_count()));
+                            ui.allocate_ui(egui::vec2(ui.available_width(), 180.0), |ui| {
+                                result_grid(ui, &mut preview.grid, &preview.rows, false);
+                            });
+                            ui.separator();
+                            mapping_ui(ui, &preview.columns, &mut self.mapping, targets.as_deref());
+                        }
+                        ui.add_space(Spacing::M);
+                        theme::hairline(ui);
+                        ui.add_space(Spacing::M);
+                        theme::section_title(ui, "Import options");
+                        ui.add_space(Spacing::S);
+                        options_ui(ui, &mut self.options, self.collection.is_none());
                     });
-                if self.format == ImportFormat::Csv {
-                    self.csv.ui(ui, false);
-                }
-                if before != (self.format, self.csv.options()) {
-                    self.start_preview(engine);
-                }
-                if let Some(e) = &self.error {
-                    ui.colored_label(theme::palette(ui.ctx()).error, e);
-                }
-                if self.preview_job.is_some() {
-                    ui.spinner();
-                }
-                if let Some(preview) = &mut self.preview {
-                    ui.separator();
-                    ui.label(format!("First {} rows", preview.rows.row_count()));
-                    ui.allocate_ui(egui::vec2(ui.available_width(), 180.0), |ui| {
-                        result_grid(ui, &mut preview.grid, &preview.rows, false);
-                    });
-                    ui.separator();
-                    mapping_ui(ui, &preview.columns, &mut self.mapping, targets.as_deref());
-                }
-                ui.separator();
-                options_ui(ui, &mut self.options, self.collection.is_none());
-                ui.add_space(Spacing::S);
+                ui.add_space(Spacing::M);
+                theme::hairline(ui);
+                ui.add_space(Spacing::M);
                 self.run_ui(ui, engine, answer, &mut close);
-            });
+            },
+        );
         open && !close
     }
 
@@ -768,7 +797,10 @@ impl ImportDialog {
         let ready = self.preview.is_some() && self.mapping.iter().any(Option::is_some);
         ui.horizontal(|ui| {
             if ui
-                .add_enabled(ready, egui::Button::new("Run import"))
+                .add_enabled(
+                    ready,
+                    theme::primary_button_state(ui.ctx(), ready, "Run import"),
+                )
                 .clicked()
             {
                 match self.run_prompt() {

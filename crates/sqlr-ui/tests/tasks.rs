@@ -151,3 +151,28 @@ fn a_running_task_shows_progress_and_can_be_cancelled() {
     assert!(h.get_by_label("Run task").accesskit_node().is_disabled());
     assert_eq!(click(&mut h, "Cancel"), vec![TasksAction::Cancel(42)]);
 }
+
+#[test]
+fn task_actions_remain_reachable_in_a_narrow_sidebar() {
+    let tasks = vec![transfer("t1", "Copy users")];
+    let running = vec![RunningTask {
+        task_id: "t1".into(),
+        job: 42,
+        progress: "1500 rows".into(),
+    }];
+    let mut selected = Some("t1".into());
+    let mut h = Harness::builder()
+        .with_size((260.0, 600.0))
+        .build_ui(move |ui| {
+            theme::apply(ui.ctx(), &Palette::dark(), 13.0);
+            tasks_panel(ui, &tasks, &running, &[], &mut selected);
+        });
+    h.run_steps(3);
+    for label in ["Run task", "Edit", "Duplicate", "Delete", "Cancel"] {
+        let rect = h.get_by_label(label).rect();
+        assert!(
+            rect.right() <= 260.0,
+            "{label} is outside the sidebar: {rect:?}"
+        );
+    }
+}

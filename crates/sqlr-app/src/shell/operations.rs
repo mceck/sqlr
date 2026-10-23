@@ -34,6 +34,8 @@ impl SqlrApp {
                             kind: format!("{:?}", o.kind),
                             state: match &o.state {
                                 OperationState::Done { ok: true } => "Done".into(),
+                                OperationState::Done { ok: false } => "Failed".into(),
+                                OperationState::Failed(message) => format!("Failed: {message}"),
                                 OperationState::Cancelled => "Cancelled".into(),
                                 s => format!("{s:?}"),
                             },

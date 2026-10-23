@@ -133,7 +133,7 @@ pub fn sessions_table(
         .filter(|id| visible.iter().any(|s| s.id == **id))
         .cloned();
 
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = Spacing::S;
         if icons::button(ui, true, icons::REFRESH, None, "Refresh").clicked() {
             action = Some(SessionsAction::Refresh);

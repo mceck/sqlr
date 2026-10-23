@@ -5,7 +5,7 @@ use egui::TextEdit;
 use sqlr_core::{ObjectDef, ObjectEditing, PartitionDef, SequenceDef, TableDef, TableRef};
 
 use super::{ObjectEditorContext, caption, form_grid, optional_text};
-use crate::theme::{self, Spacing};
+use crate::theme::{self, Spacing, icons};
 
 pub(super) fn properties_tab(ui: &mut egui::Ui, def: &mut ObjectDef, editing: &ObjectEditing) {
     match def {
@@ -67,7 +67,7 @@ fn options(ui: &mut egui::Ui, options: &mut Vec<(String, String)>) {
                         .desired_width(260.0)
                         .hint_text("value"),
                 );
-                if ui.small_button("Remove").clicked() {
+                if icons::row_button(ui, icons::CLOSE, "Remove").clicked() {
                     remove = Some(i);
                 }
                 ui.end_row();

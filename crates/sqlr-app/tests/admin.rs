@@ -703,3 +703,40 @@ fn object_permissions_and_statistics() {
             .contains(&"GRANT INSERT ON s.orders TO reader".to_string())
     });
 }
+
+#[path = "support/visual.rs"]
+mod visual;
+
+#[test]
+#[ignore = "visual audit; needs a GPU adapter"]
+fn admin_visual_audit() {
+    for light in [false, true] {
+        let (mut h, _, _dir) = harness(full_admin());
+        visual::set_theme(&mut h, light);
+        open_users(&mut h);
+        h.get_by_label("reader").click();
+        h.run_steps(5);
+        visual::capture(&mut h, "admin-roles", light);
+        h.get_by_label("New role").click();
+        h.run_steps(3);
+        visual::capture(&mut h, "admin-new-role", light);
+
+        let (mut h, _, _dir) = harness(full_admin());
+        visual::set_theme(&mut h, light);
+        open_sessions(&mut h);
+        visual::capture(&mut h, "admin-sessions-locks", light);
+
+        let (mut h, _, _dir) = harness(full_admin());
+        visual::set_theme(&mut h, light);
+        connect(&mut h);
+        context_menu(&mut h, "fake-conn", "Server properties");
+        wait_for_label(&mut h, "max_connections");
+        visual::capture(&mut h, "admin-properties", light);
+        h.get_by_label("Database sizes").click();
+        wait_for_label(&mut h, "20 MB");
+        visual::capture(&mut h, "admin-database-sizes", light);
+        h.get_by_label("Table statistics").click();
+        wait_for_label(&mut h, "1234");
+        visual::capture(&mut h, "admin-table-statistics", light);
+    }
+}

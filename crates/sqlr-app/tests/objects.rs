@@ -917,3 +917,62 @@ fn an_applied_definition_asks_before_dropping_row_edits() {
         h.query_by_label("10").is_some() && h.query_by_label("1 pending change").is_none()
     });
 }
+
+#[path = "support/visual.rs"]
+mod visual;
+
+#[test]
+#[ignore = "visual audit; needs a GPU adapter"]
+fn objects_visual_audit() {
+    for light in [false, true] {
+        let (mut h, _, _dir) = harness_themed(
+            FakeScript::default(),
+            if light {
+                sqlr_ui::theme::ThemePref::Light
+            } else {
+                sqlr_ui::theme::ThemePref::Dark
+            },
+        );
+        visual::set_theme(&mut h, light);
+        open_orders_editor(&mut h);
+        for tab in [
+            "Columns",
+            "Indexes",
+            "Constraints",
+            "Foreign keys",
+            "Triggers",
+            "Properties",
+            "DDL",
+            "Data",
+        ] {
+            h.get_by_label(tab).click();
+            h.run_steps(10);
+            visual::capture(
+                &mut h,
+                &format!("object-{}", tab.to_lowercase().replace(' ', "-")),
+                light,
+            );
+        }
+        h.get_by_label("Columns").click();
+        h.run_steps(3);
+        h.get_by_label("Add column").click();
+        h.run_steps(3);
+        h.get_by_label("Preview DDL").click();
+        h.run_steps(5);
+        visual::capture(&mut h, "object-preview-ddl", light);
+    }
+}
+
+#[test]
+#[ignore = "visual audit; needs a GPU adapter"]
+fn keymap_visual_audit() {
+    let (mut h, _, _dir) = harness_themed(FakeScript::default(), sqlr_ui::theme::ThemePref::Dark);
+    sqlr_ui::theme::install_fonts(&h.ctx, &[]);
+    h.get_by_label("File").click();
+    h.run_steps(3);
+    h.get_by_label_contains("Settings…").click();
+    h.run_steps(5);
+    h.get_by_label("Keymap").click();
+    h.run_steps(5);
+    visual::capture(&mut h, "prefs-keymap", false);
+}

@@ -306,12 +306,18 @@ impl SqlrApp {
         if let Some(prompt) = &mut self.tasks_ui.name_prompt {
             let mut save = false;
             let mut close = false;
-            egui::Window::new("Save as task")
-                .collapsible(false)
-                .resizable(false)
-                .show(ctx, |ui| {
+            let mut open = true;
+            theme::tool_dialog(
+                ctx,
+                &mut open,
+                "Save as task",
+                theme::icons::SAVEPOINT,
+                "Save these options so you can run this task again",
+                480.0,
+                |ui| {
                     ui.label("Name");
-                    let edit = ui.add(TextEdit::singleline(&mut prompt.name).desired_width(280.0));
+                    let edit =
+                        ui.add(TextEdit::singleline(&mut prompt.name).desired_width(f32::INFINITY));
                     let valid = !prompt.name.trim().is_empty();
                     if edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && valid {
                         save = true;
@@ -326,7 +332,8 @@ impl SqlrApp {
                             close = true;
                         }
                     });
-                });
+                },
+            );
             if save {
                 if let Some(prompt) = self.tasks_ui.name_prompt.take() {
                     let id = prompt
@@ -334,7 +341,7 @@ impl SqlrApp {
                         .map_or_else(|| uuid::Uuid::new_v4().to_string(), |(id, _)| id);
                     self.store_task(id, prompt.name.trim().to_string(), prompt.spec, false);
                 }
-            } else if close {
+            } else if close || !open {
                 self.tasks_ui.name_prompt = None;
             }
         }
@@ -342,10 +349,14 @@ impl SqlrApp {
             let mut open = true;
             let mut copy = false;
             let mut shown = text.as_str();
-            egui::Window::new(format!("Run log · {title}"))
-                .open(&mut open)
-                .default_size([640.0, 380.0])
-                .show(ctx, |ui| {
+            theme::tool_dialog(
+                ctx,
+                &mut open,
+                &format!("Run log · {title}"),
+                theme::icons::HISTORY,
+                "Task output and execution details",
+                720.0,
+                |ui| {
                     if ui.button("Copy").clicked() {
                         copy = true;
                     }
@@ -356,7 +367,8 @@ impl SqlrApp {
                                 .desired_width(f32::INFINITY),
                         );
                     });
-                });
+                },
+            );
             if copy {
                 ctx.copy_text(text.clone());
             }

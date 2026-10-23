@@ -44,7 +44,17 @@ pub fn wizard_frame(
                 std::cmp::Ordering::Less => text.color(p.text),
                 std::cmp::Ordering::Greater => text.color(p.text_muted),
             };
-            ui.label(text);
+            egui::Frame::new()
+                .fill(if i == current {
+                    p.accent_soft
+                } else {
+                    egui::Color32::TRANSPARENT
+                })
+                .corner_radius(Spacing::RADIUS_S)
+                .inner_margin(egui::Margin::symmetric(8, 6))
+                .show(ui, |ui| {
+                    ui.label(text);
+                });
             if i + 1 < steps.len() {
                 ui.label(RichText::new("›").color(p.text_muted));
             }

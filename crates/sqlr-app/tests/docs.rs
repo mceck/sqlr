@@ -329,3 +329,57 @@ fn palette_opens_collections_and_creates_indexes() {
     h.key_press(egui::Key::Enter);
     wait_for_label(&mut h, "New index on users");
 }
+
+#[path = "support/visual.rs"]
+mod visual;
+
+#[test]
+#[ignore = "visual audit; needs a GPU adapter"]
+fn documents_visual_audit() {
+    for light in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut h, _) = app(dir.path());
+        visual::set_theme(&mut h, light);
+        expand_to_users(&mut h);
+        double_click(&mut h, "users");
+        wait_for_label(&mut h, "2 documents");
+        visual::capture(&mut h, "documents-table", light);
+        h.get_by_label("Tree").click();
+        wait_for_label(&mut h, "Expand document 1");
+        h.get_by_label("Expand document 1").click();
+        h.run_steps(3);
+        visual::capture(&mut h, "documents-tree", light);
+        h.get_by_label("JSON").click();
+        h.run_steps(5);
+        visual::capture(&mut h, "documents-json", light);
+        context_menu(&mut h, "users", Some("New"), "Index");
+        wait_for_label(&mut h, "New index on users");
+        visual::capture(&mut h, "documents-new-index", light);
+    }
+}
+
+#[test]
+fn document_results_have_one_inspector_and_respect_the_value_panel_toggle() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut h, _) = app(dir.path());
+    expand_to_users(&mut h);
+    double_click(&mut h, "users");
+    wait_for_label(&mut h, "2 documents");
+    h.run_steps(5);
+    let inspectors = || egui_kittest::kittest::By::new().label("No cell selected");
+    assert_eq!(
+        h.query_all(inspectors()).count(),
+        1,
+        "Document results need one inspector"
+    );
+    h.get_by_label("View").click();
+    h.run_steps(3);
+    h.get_by_label("Value panel").click();
+    h.key_press(egui::Key::Escape);
+    h.run_steps(5);
+    assert_eq!(
+        h.query_all(inspectors()).count(),
+        0,
+        "Value panel toggle must hide the document inspector"
+    );
+}

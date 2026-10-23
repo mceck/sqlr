@@ -5,7 +5,7 @@ use sqlr_core::{SqlSyntax, TableRef, TriggerDef};
 
 use super::indexes::table_picker;
 use super::{ObjectEditorContext, caption, code_editor, expr_field, form_grid, master_detail};
-use crate::theme::{self, Spacing, icons};
+use crate::theme::{Spacing, icons};
 
 const TIMINGS: [&str; 3] = ["BEFORE", "AFTER", "INSTEAD OF"];
 const EVENTS: [&str; 4] = ["INSERT", "UPDATE", "DELETE", "TRUNCATE"];
@@ -29,9 +29,8 @@ pub(super) fn triggers_tab(
     selected: &mut Option<usize>,
     syntax: &SqlSyntax,
 ) {
-    let p = theme::palette(ui.ctx());
     ui.horizontal(|ui| {
-        if icons::button(ui, true, icons::ADD, Some(p.success), "Add trigger").clicked() {
+        if icons::add_button(ui, "Add trigger").clicked() {
             let name = (1..)
                 .map(|n| format!("trigger{n}"))
                 .find(|n| !triggers.iter().any(|t| &t.name == n))
@@ -39,9 +38,7 @@ pub(super) fn triggers_tab(
             triggers.push(new_trigger(table, name));
             *selected = Some(triggers.len() - 1);
         }
-        if ui
-            .add_enabled(selected.is_some(), egui::Button::new("Delete trigger"))
-            .clicked()
+        if icons::delete_button(ui, selected.is_some(), "Delete trigger").clicked()
             && let Some(i) = selected.take()
         {
             triggers.remove(i);

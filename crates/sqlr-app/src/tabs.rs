@@ -415,6 +415,7 @@ pub struct Viewer<'a> {
     pub profiles: &'a [sqlr_core::ConnectionProfile],
     /// The grids' display formats, per connection.
     pub formats: &'a crate::prefs::Formats,
+    pub show_value_panel: bool,
     /// The keys of each leaf's active tab (their titles are underlined).
     pub active: HashSet<u64>,
     pub palette: Palette,
@@ -531,7 +532,15 @@ impl egui_dock::TabViewer for Viewer<'_> {
         }
         if let Some(doc) = tab.doc.as_deref_mut() {
             let commands = &mut self.commands;
-            crate::nosql::doc_ui(ui, tab.key, &mut tab.editor, doc, self.engine, commands);
+            crate::nosql::doc_ui(
+                ui,
+                tab.key,
+                &mut tab.editor,
+                doc,
+                self.engine,
+                commands,
+                self.show_value_panel,
+            );
             return;
         }
         if let Some(ddl) = tab.ddl.as_deref_mut() {

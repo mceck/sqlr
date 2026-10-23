@@ -559,14 +559,23 @@ impl ConnDialog {
             .title_bar(false)
             .collapsible(false)
             .resizable(true)
-            .default_size(vec2(880.0, 580.0))
-            .default_pos(ctx.content_rect().center() - vec2(440.0, 290.0))
-            .min_width(720.0)
+            .default_size(vec2(
+                880.0_f32.min(ctx.content_rect().width() - 32.0),
+                580.0_f32.min(ctx.content_rect().height() - 32.0),
+            ))
+            .default_pos(
+                ctx.content_rect().center()
+                    - vec2(
+                        440.0_f32.min((ctx.content_rect().width() - 32.0) / 2.0),
+                        290.0_f32.min((ctx.content_rect().height() - 32.0) / 2.0),
+                    ),
+            )
+            .min_width(640.0)
             .min_height(460.0)
             .frame(Frame::window(&ctx.global_style()).inner_margin(Margin::ZERO))
             .show(ctx, |ui| {
-                ui.set_min_width(860.0);
-                ui.set_min_height(540.0);
+                ui.set_min_width(640.0_f32.min(ctx.content_rect().width() - 32.0));
+                ui.set_min_height(400.0_f32.min(ctx.content_rect().height() - 32.0));
 
                 if theme::dialog_header(
                     ui,

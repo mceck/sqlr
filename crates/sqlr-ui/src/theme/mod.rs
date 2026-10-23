@@ -108,6 +108,69 @@ pub fn section_title(ui: &mut egui::Ui, text: &str) {
     ui.label(RichText::new(text).font(semibold(ui.ctx(), 13.0)));
 }
 
+/// A useful empty state for a side panel, with an explanation of its next action.
+pub fn empty_panel(ui: &mut egui::Ui, icon: &str, title: &str, description: &str) {
+    let p = palette(ui.ctx());
+    egui::Frame::new()
+        .inner_margin(Margin::symmetric(12, 20))
+        .show(ui, |ui| {
+            icons::paint(ui, icon, p.text_muted);
+            ui.add_space(Spacing::M);
+            section_title(ui, title);
+            ui.add_space(Spacing::S);
+            ui.label(RichText::new(description).color(p.text_muted));
+        });
+}
+
+/// Shared chrome for the operational tools: centered, bounded, with a clear heading and
+/// scrollable contents on small displays. Closing retains each caller's cleanup semantics.
+pub fn tool_dialog<R>(
+    ctx: &egui::Context,
+    open: &mut bool,
+    title: &str,
+    icon: &str,
+    description: &str,
+    width: f32,
+    body: impl FnOnce(&mut egui::Ui) -> R,
+) -> Option<R> {
+    let screen = ctx.content_rect();
+    let width = width.min((screen.width() - 32.0).max(240.0));
+    let mut close = false;
+    let response = egui::Window::new(format!("{title} dialog"))
+        .id(egui::Id::new(title))
+        .open(open)
+        .title_bar(false)
+        .collapsible(false)
+        .resizable(true)
+        .default_width(width)
+        .default_height((screen.height() - 160.0).max(160.0))
+        .min_width(320.0_f32.min(width))
+        .default_pos(egui::pos2(
+            screen.center().x - width / 2.0,
+            screen.top() + (screen.height() * 0.12).min(96.0),
+        ))
+        .constrain_to(screen.shrink(8.0))
+        .frame(egui::Frame::window(&ctx.global_style()).inner_margin(Margin::ZERO))
+        .show(ctx, |ui| {
+            close = dialog_header(ui, icon, title, Some(description));
+            egui::Frame::new()
+                .inner_margin(Margin::same(16))
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt((title, "body"))
+                        .max_height((screen.height() - 180.0).max(100.0))
+                        .auto_shrink([false, true])
+                        .show(ui, body)
+                        .inner
+                })
+                .inner
+        });
+    if close {
+        *open = false;
+    }
+    response.and_then(|response| response.inner)
+}
+
 /// The default height of a query editor above its results: about a third of the tab, so the
 /// result grid gets the larger share. Bounded so both panes stay usable on any window.
 pub fn editor_split_height(available: f32) -> f32 {

@@ -243,14 +243,17 @@ impl DumpDialog {
             }
         }
         let mut open = true;
-        egui::Window::new("Dump database")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(true)
-            .default_width(620.0)
-            .show(ctx, |ui| {
+        theme::tool_dialog(
+            ctx,
+            &mut open,
+            "Dump database",
+            theme::icons::EXPORT,
+            "Back up a database to a file or archive",
+            680.0,
+            |ui| {
                 self.body(ui, engine, answer);
-            });
+            },
+        );
         if !open {
             self.state.close(engine);
         }
@@ -293,7 +296,9 @@ impl DumpDialog {
             ui.label("File");
             ui.add_enabled(
                 !self.state.running(),
-                TextEdit::singleline(&mut self.state.path).desired_width(460.0),
+                TextEdit::singleline(&mut self.state.path)
+                    .desired_width((ui.available_width() - 130.0).max(80.0))
+                    .hint_text("Choose a backup file…"),
             );
             if ui
                 .add_enabled(!self.state.running(), egui::Button::new("Browse…"))
@@ -313,6 +318,8 @@ impl DumpDialog {
             );
         }
 
+        ui.add_space(Spacing::L);
+        theme::section_title(ui, "Backup options");
         ui.add_space(Spacing::S);
         match self.state.kind {
             DumpKind::Postgres => self.postgres_options(ui),
@@ -323,6 +330,8 @@ impl DumpDialog {
         self.state.log_ui(ui);
         self.state.outcome_ui(ui);
 
+        ui.add_space(Spacing::L);
+        theme::hairline(ui);
         ui.add_space(Spacing::M);
         ui.horizontal(|ui| {
             let valid = !self.state.path.trim().is_empty()
@@ -360,18 +369,18 @@ impl DumpDialog {
     }
 
     fn postgres_options(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.checkbox(&mut self.options.schema_only, "Schema only");
             ui.checkbox(&mut self.options.data_only, "Data only");
             ui.checkbox(&mut self.options.clean, "Add DROP statements");
             ui.checkbox(&mut self.options.if_exists, "Use IF EXISTS");
         });
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.checkbox(&mut self.options.create, "Create the database");
             ui.checkbox(&mut self.options.no_owner, "No owner");
             ui.checkbox(&mut self.options.no_privileges, "No privileges");
         });
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label("Encoding");
             let mut encoding = self.options.encoding.clone().unwrap_or_default();
             if ui
@@ -406,12 +415,12 @@ impl DumpDialog {
     }
 
     fn mysql_options(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.checkbox(&mut self.options.schema_only, "Schema only");
             ui.checkbox(&mut self.options.data_only, "Data only");
             ui.checkbox(&mut self.options.clean, "Add DROP statements");
         });
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.checkbox(&mut self.options.create, "Include CREATE DATABASE");
             ui.label("Character set");
             let mut encoding = self.options.encoding.clone().unwrap_or_default();
@@ -422,7 +431,7 @@ impl DumpDialog {
                 self.options.encoding = (!encoding.trim().is_empty()).then_some(encoding);
             }
         });
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.checkbox(&mut self.options.mysql_routines, "Routines");
             ui.checkbox(&mut self.options.mysql_events, "Events");
             ui.checkbox(&mut self.options.mysql_triggers, "Triggers");
@@ -442,7 +451,7 @@ impl DumpDialog {
             );
             return;
         }
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.checkbox(&mut self.options.schema_only, "Schema only");
         });
     }
@@ -451,7 +460,7 @@ impl DumpDialog {
         egui::CollapsingHeader::new("Advanced")
             .id_salt("dump_advanced")
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.label("Executable");
                     ui.add(
                         TextEdit::singleline(&mut self.options.executable)
@@ -462,7 +471,7 @@ impl DumpDialog {
                         "Empty searches PATH, Homebrew, Postgres.app and /usr/local/bin",
                     );
                 });
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.label("Extra arguments");
                     ui.add(
                         TextEdit::singleline(&mut self.options.extra_args)
@@ -544,14 +553,17 @@ impl RestoreDialog {
             }
         }
         let mut open = true;
-        egui::Window::new("Restore database")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(true)
-            .default_width(620.0)
-            .show(ctx, |ui| {
+        theme::tool_dialog(
+            ctx,
+            &mut open,
+            "Restore database",
+            theme::icons::IMPORT,
+            "Restore objects and data from an existing backup",
+            680.0,
+            |ui| {
                 self.body(ui, engine, answer);
-            });
+            },
+        );
         if !open {
             self.state.close(engine);
         }
@@ -579,7 +591,9 @@ impl RestoreDialog {
             ui.label("File");
             ui.add_enabled(
                 !self.state.running(),
-                TextEdit::singleline(&mut self.state.path).desired_width(460.0),
+                TextEdit::singleline(&mut self.state.path)
+                    .desired_width((ui.available_width() - 130.0).max(80.0))
+                    .hint_text("Choose a backup file…"),
             );
             if ui
                 .add_enabled(!self.state.running(), egui::Button::new("Browse…"))
@@ -603,6 +617,8 @@ impl RestoreDialog {
                 .color(theme::palette(ui.ctx()).text_muted),
             );
         }
+        ui.add_space(Spacing::L);
+        theme::section_title(ui, "Restore options");
         ui.add_space(Spacing::S);
         if self.state.kind == DumpKind::Postgres {
             if self.is_plain_sql() {
@@ -614,6 +630,8 @@ impl RestoreDialog {
         self.advanced(ui);
         self.state.log_ui(ui);
         self.state.outcome_ui(ui);
+        ui.add_space(Spacing::L);
+        theme::hairline(ui);
         ui.add_space(Spacing::M);
         ui.horizontal(|ui| {
             let valid = !self.state.path.trim().is_empty()
@@ -658,7 +676,7 @@ impl RestoreDialog {
             .small()
             .color(theme::palette(ui.ctx()).text_muted),
         );
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.checkbox(
                 &mut self.options.single_transaction,
                 "Single transaction (all or nothing)",
@@ -668,18 +686,18 @@ impl RestoreDialog {
     }
 
     fn postgres_options(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.checkbox(&mut self.options.clean, "Clean (drop before restore)");
             ui.checkbox(&mut self.options.if_exists, "Use IF EXISTS");
             ui.checkbox(&mut self.options.create, "Create the database");
         });
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.checkbox(&mut self.options.schema_only, "Schema only");
             ui.checkbox(&mut self.options.data_only, "Data only");
             ui.checkbox(&mut self.options.no_owner, "No owner");
             ui.checkbox(&mut self.options.no_privileges, "No privileges");
         });
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.checkbox(
                 &mut self.options.single_transaction,
                 "Single transaction (all or nothing)",
@@ -709,7 +727,7 @@ impl RestoreDialog {
         egui::CollapsingHeader::new("Advanced")
             .id_salt("restore_advanced")
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.label("Executable");
                     ui.add(
                         TextEdit::singleline(&mut self.options.executable)
@@ -717,7 +735,7 @@ impl RestoreDialog {
                             .hint_text("auto-detect"),
                     );
                 });
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.label("Extra arguments");
                     ui.add(
                         TextEdit::singleline(&mut self.options.extra_args)

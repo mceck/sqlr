@@ -49,12 +49,12 @@ pub fn history_panel(
     entries: Option<&[HistoryEntry]>,
 ) -> Vec<HistoryAction> {
     let mut actions = Vec::new();
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         crate::text_menu::text_edit(
             ui,
             TextEdit::singleline(&mut state.search)
                 .hint_text("Search history")
-                .desired_width(320.0),
+                .desired_width(ui.available_width().min(320.0)),
         );
         let current = state
             .conn_filter
@@ -103,7 +103,12 @@ pub fn history_panel(
         return actions;
     };
     if entries.is_empty() {
-        ui.label(RichText::new("No history").color(muted));
+        theme::empty_panel(
+            ui,
+            icons::HISTORY,
+            "No history",
+            "Queries you run appear here. Search or filter by connection, then reopen a query to use it again.",
+        );
         return actions;
     }
     let row_height = ui.spacing().interact_size.y;

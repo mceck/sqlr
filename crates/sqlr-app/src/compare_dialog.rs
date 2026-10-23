@@ -119,7 +119,7 @@ impl CompareDialog {
             .map_or("choose a connection", |c| c.name.as_str());
         ComboBox::from_id_salt(id)
             .selected_text(shown)
-            .width(200.0)
+            .width(ui.available_width())
             .show_ui(ui, |ui| {
                 for c in conns {
                     if ui.selectable_label(*current == c.id, &c.name).clicked() {
@@ -154,12 +154,14 @@ impl CompareDialog {
         self.poll(engine);
         let mut event = CompareEvent::None;
         let mut open = true;
-        egui::Window::new("Compare schemas")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(true)
-            .default_size([900.0, 560.0])
-            .show(ctx, |ui| {
+        theme::tool_dialog(
+            ctx,
+            &mut open,
+            "Compare schemas",
+            theme::icons::SCHEMA,
+            "Compare a reference schema with the schema you want to update",
+            900.0,
+            |ui| {
                 self.header(ui, engine, conns);
                 if let Some(e) = &self.error {
                     ui.colored_label(theme::palette(ui.ctx()).error, e);
@@ -168,7 +170,8 @@ impl CompareDialog {
                     ui.add_space(Spacing::M);
                     event = self.results(ui, engine);
                 }
-            });
+            },
+        );
         if !open {
             return CompareEvent::Close;
         }
@@ -177,41 +180,61 @@ impl CompareDialog {
 
     fn header(&mut self, ui: &mut egui::Ui, engine: &Engine, conns: &[ConnChoice]) {
         let muted = theme::palette(ui.ctx()).text_muted;
-        egui::Grid::new("compare-sides")
-            .num_columns(5)
-            .spacing([Spacing::L, Spacing::S])
-            .show(ui, |ui| {
-                ui.label(RichText::new("Source (what it should be)").color(muted));
-                Self::conn_combo(ui, "cmp-source", conns, &mut self.s_conn);
-                ui.add(
-                    TextEdit::singleline(&mut self.s_database)
-                        .hint_text("database (optional)")
-                        .desired_width(150.0),
-                );
-                ui.add(
-                    TextEdit::singleline(&mut self.s_schema)
-                        .hint_text("schema")
-                        .desired_width(150.0),
-                );
-                Self::status(ui, engine, &self.s_conn);
-                ui.end_row();
-                ui.label(RichText::new("Target (to be changed)").color(muted));
-                Self::conn_combo(ui, "cmp-target", conns, &mut self.t_conn);
-                ui.add(
-                    TextEdit::singleline(&mut self.t_database)
-                        .hint_text("database (optional)")
-                        .desired_width(150.0),
-                );
-                ui.add(
-                    TextEdit::singleline(&mut self.t_schema)
-                        .hint_text("schema")
-                        .desired_width(150.0),
-                );
-                Self::status(ui, engine, &self.t_conn);
-                ui.end_row();
-            });
+        ui.columns(2, |columns| {
+            for (ui, (title, hint, id, conn, database, schema)) in columns.iter_mut().zip([
+                (
+                    "Source",
+                    "Reference schema",
+                    "cmp-source",
+                    &mut self.s_conn,
+                    &mut self.s_database,
+                    &mut self.s_schema,
+                ),
+                (
+                    "Target",
+                    "Schema to update",
+                    "cmp-target",
+                    &mut self.t_conn,
+                    &mut self.t_database,
+                    &mut self.t_schema,
+                ),
+            ]) {
+                egui::Frame::new()
+                    .fill(theme::palette(ui.ctx()).bg_subtle)
+                    .corner_radius(Spacing::RADIUS_M)
+                    .inner_margin(egui::Margin::same(12))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        theme::section_title(ui, title);
+                        theme::hint(ui, hint);
+                        ui.add_space(Spacing::M);
+                        theme::field_label(ui, "Connection");
+                        Self::conn_combo(ui, id, conns, conn);
+                        Self::status(ui, engine, conn);
+                        let label = ui.label(
+                            egui::RichText::new(format!("{title} database (optional)"))
+                                .small()
+                                .color(muted),
+                        );
+                        ui.add(
+                            TextEdit::singleline(database)
+                                .hint_text("Connection default")
+                                .desired_width(f32::INFINITY),
+                        )
+                        .labelled_by(label.id);
+                        let label = ui.label(format!("{title} schema"));
+                        ui.add(
+                            TextEdit::singleline(schema)
+                                .hint_text("Schema name")
+                                .desired_width(f32::INFINITY),
+                        )
+                        .labelled_by(label.id);
+                    });
+            }
+        });
+        ui.add_space(Spacing::L);
         ui.add_space(Spacing::S);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let ready = !self.s_conn.is_empty()
                 && !self.t_conn.is_empty()
                 && !self.s_schema.trim().is_empty()

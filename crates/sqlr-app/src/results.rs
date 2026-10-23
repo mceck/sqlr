@@ -251,11 +251,14 @@ impl SqlrApp {
         let mut open = true;
         let mut apply = false;
         let mut close = false;
-        egui::Window::new("Pending changes")
-            .open(&mut open)
-            .collapsible(false)
-            .default_size([640.0, 320.0])
-            .show(ctx, |ui| {
+        theme::tool_dialog(
+            ctx,
+            &mut open,
+            "Pending changes",
+            theme::icons::EDIT,
+            "Review the SQL before applying your edits",
+            720.0,
+            |ui| {
                 if dialog.confirm {
                     ui.colored_label(
                         theme::palette(ui.ctx()).warning,
@@ -271,14 +274,18 @@ impl SqlrApp {
                 }
                 ui.add_space(Spacing::S);
                 ui.horizontal(|ui| {
-                    if ui.button("Apply changes").clicked() {
+                    if ui
+                        .add(theme::primary_button(ui.ctx(), "Apply changes"))
+                        .clicked()
+                    {
                         apply = true;
                     }
                     if ui.button("Close").clicked() {
                         close = true;
                     }
                 });
-            });
+            },
+        );
         if apply {
             self.changes_dialog = None;
             self.start_apply(tab, q);

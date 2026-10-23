@@ -155,6 +155,12 @@ impl CreateDialog {
                 partial,
                 ..
             } => {
+                theme::section_title(ui, "Indexed fields");
+                theme::hint(
+                    ui,
+                    "Add fields in index order and choose ascending or descending for each.",
+                );
+                ui.add_space(Spacing::M);
                 let mut remove = None;
                 for (i, (field, direction)) in keys.iter_mut().enumerate() {
                     ui.horizontal(|ui| {
@@ -212,9 +218,11 @@ impl CreateDialog {
         if let Some(e) = &self.error {
             ui.colored_label(theme::palette(ui.ctx()).error, e);
         }
+        ui.add_space(Spacing::L);
+        theme::hairline(ui);
         ui.add_space(Spacing::M);
-        ui.horizontal(|ui| {
-            if ui.button("Create").clicked() {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.add(theme::primary_button(ui.ctx(), "Create")).clicked() {
                 answer = Some(true);
             }
             if ui.button("Cancel").clicked() {
@@ -338,11 +346,15 @@ impl SqlrApp {
             };
             let mut answer = None;
             let mut open = true;
-            egui::Window::new(RichText::new(title))
-                .open(&mut open)
-                .collapsible(false)
-                .resizable(false)
-                .show(ctx, |ui| answer = dialog.ui(ui));
+            theme::tool_dialog(
+                ctx,
+                &mut open,
+                &title,
+                theme::icons::KEY,
+                "Choose the indexed fields and review optional index settings",
+                560.0,
+                |ui| answer = dialog.ui(ui),
+            );
             if !open {
                 answer = Some(false);
             }

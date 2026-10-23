@@ -21,9 +21,8 @@ pub(super) fn indexes_tab(
     columns: &[String],
     syntax: &SqlSyntax,
 ) {
-    let p = theme::palette(ui.ctx());
     ui.horizontal(|ui| {
-        if icons::button(ui, true, icons::ADD, Some(p.success), "Add index").clicked() {
+        if icons::add_button(ui, "Add index").clicked() {
             let name = (1..)
                 .map(|n| format!("index{n}"))
                 .find(|n| !indexes.iter().any(|i| &i.name == n))
@@ -38,9 +37,7 @@ pub(super) fn indexes_tab(
             });
             *selected = Some(indexes.len() - 1);
         }
-        if ui
-            .add_enabled(selected.is_some(), egui::Button::new("Delete index"))
-            .clicked()
+        if icons::delete_button(ui, selected.is_some(), "Delete index").clicked()
             && let Some(i) = selected.take()
         {
             indexes.remove(i);
@@ -141,7 +138,7 @@ pub(super) fn index_form(
                     }
                 });
             ui.checkbox(&mut part.desc, "descending");
-            if ui.small_button("Remove").clicked() {
+            if icons::row_button(ui, icons::CLOSE, "Remove").clicked() {
                 remove = Some(k);
             }
         });

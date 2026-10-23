@@ -123,8 +123,17 @@ impl PrefsWindow {
             .title_bar(false)
             .collapsible(false)
             .resizable(true)
-            .default_size(vec2(820.0, 560.0))
-            .default_pos(ctx.content_rect().center() - vec2(410.0, 280.0))
+            .default_size(vec2(
+                820.0_f32.min(ctx.content_rect().width() - 32.0),
+                560.0_f32.min(ctx.content_rect().height() - 32.0),
+            ))
+            .default_pos(
+                ctx.content_rect().center()
+                    - vec2(
+                        410.0_f32.min((ctx.content_rect().width() - 32.0) / 2.0),
+                        280.0_f32.min((ctx.content_rect().height() - 32.0) / 2.0),
+                    ),
+            )
             .min_width(600.0)
             .min_height(400.0)
             .frame(Frame::window(&ctx.global_style()).inner_margin(Margin::ZERO))
@@ -132,8 +141,8 @@ impl PrefsWindow {
                 if self.saving.is_some() {
                     ui.disable();
                 }
-                ui.set_min_width(800.0);
-                ui.set_min_height(520.0);
+                ui.set_min_width(600.0_f32.min(ctx.content_rect().width() - 32.0));
+                ui.set_min_height(400.0_f32.min(ctx.content_rect().height() - 32.0));
                 if theme::dialog_header(
                     ui,
                     icons::SETTINGS,

@@ -384,3 +384,36 @@ fn read_only_switch_on_a_redis_tab_refuses_a_console_write() {
     });
     assert!(driver.commands().is_empty(), "{:?}", driver.commands());
 }
+
+#[path = "support/visual.rs"]
+mod visual;
+
+#[test]
+#[ignore = "visual audit; needs a GPU adapter"]
+fn redis_visual_audit() {
+    for light in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut h, _) = app(dir.path(), None);
+        visual::set_theme(&mut h, light);
+        h.get_by_label("Expand redis-conn").click();
+        wait_for_label(&mut h, "session");
+        visual::capture(&mut h, "redis-browser", light);
+        h.get_by_label("New key").click();
+        h.run_steps(5);
+        visual::capture(&mut h, "redis-new-key", light);
+        h.get_by_label("Cancel").click();
+        h.run_steps(5);
+        h.get_by_label("session").click();
+        wait_for_label(&mut h, "Edit id");
+        visual::capture(&mut h, "redis-hash", light);
+        h.get_by_label("Delete key").click();
+        h.run_steps(5);
+        visual::capture(&mut h, "redis-delete-key", light);
+        h.get_by_label("Cancel").click();
+        h.run_steps(5);
+        console_input(&mut h);
+        run_line(&mut h, "PING");
+        wait_for_label(&mut h, "PONG");
+        visual::capture(&mut h, "redis-console", light);
+    }
+}

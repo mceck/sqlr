@@ -188,6 +188,7 @@ pub(crate) fn doc_ui(
     d: &mut DocTab,
     engine: &Engine,
     commands: &mut Vec<TabCommand>,
+    show_value_panel: bool,
 ) {
     let p = theme::palette(ui.ctx());
     // The results get the larger share by default, as in a SQL tab.
@@ -200,7 +201,7 @@ pub(crate) fn doc_ui(
         .show(ui, |ui| {
             sqlr_ui::query_editor(ui, editor, &sqlr_ui::NoCatalog);
         });
-    doc_results_ui(ui, tab, d, engine, commands);
+    doc_results_ui(ui, tab, d, engine, commands, show_value_panel);
 }
 
 /// Draws the result area of document tab `tab`.
@@ -210,6 +211,7 @@ fn doc_results_ui(
     d: &mut DocTab,
     engine: &Engine,
     commands: &mut Vec<TabCommand>,
+    show_value_panel: bool,
 ) {
     poll_jobs(d, engine, tab, commands);
     let p = theme::palette(ui.ctx());
@@ -264,7 +266,7 @@ fn doc_results_ui(
         return;
     };
     let mut after = Vec::new();
-    result_ui(ui, d, engine, q, &mut after);
+    result_ui(ui, d, engine, q, &mut after, show_value_panel);
     for a in after {
         match a {
             After::FetchMore(q) => engine.fetch_more_docs(q),
@@ -352,6 +354,7 @@ fn result_ui(
     engine: &Engine,
     q: QueryId,
     after: &mut Vec<After>,
+    show_value_panel: bool,
 ) {
     let p = theme::palette(ui.ctx());
     let Some(result) = engine.doc_result(q) else {
@@ -420,30 +423,34 @@ fn result_ui(
     let es = d.language == QueryLanguage::EsConsole;
     let action = match d.view {
         DocView::Table => {
-            egui::Panel::right(egui::Id::new(("doc_value", q.0)))
-                .resizable(true)
-                .default_size(260.0)
-                .show(ui, |ui| {
-                    let selected = views.table.grid.selected;
-                    let rows = views.table.rows(&r.chunks, r.page_size);
-                    let cell = selected.and_then(|(row, col)| {
-                        Some((rows.columns().get(col)?, rows.cell(row, col)?))
+            if show_value_panel {
+                egui::Panel::right(egui::Id::new(("doc_value", q.0)))
+                    .resizable(true)
+                    .default_size(260.0)
+                    .show(ui, |ui| {
+                        let selected = views.table.grid.selected;
+                        let rows = views.table.rows(&r.chunks, r.page_size);
+                        let cell = selected.and_then(|(row, col)| {
+                            Some((rows.columns().get(col)?, rows.cell(row, col)?))
+                        });
+                        value_panel(ui, cell);
                     });
-                    value_panel(ui, cell);
-                });
+            }
             doc_table(ui, &mut views.table, &r.chunks, r.page_size, more)
         }
         DocView::Tree => {
-            egui::Panel::right(egui::Id::new(("doc_field", q.0)))
-                .resizable(true)
-                .default_size(260.0)
-                .show(ui, |ui| match views.tree.selected_field() {
-                    Some((path, value)) => {
-                        let text = value.to_relaxed_json_pretty();
-                        value_panel(ui, Some((&field_meta(&path), Cell::Text(&text))));
-                    }
-                    None => value_panel(ui, None),
-                });
+            if show_value_panel {
+                egui::Panel::right(egui::Id::new(("doc_field", q.0)))
+                    .resizable(true)
+                    .default_size(260.0)
+                    .show(ui, |ui| match views.tree.selected_field() {
+                        Some((path, value)) => {
+                            let text = value.to_relaxed_json_pretty();
+                            value_panel(ui, Some((&field_meta(&path), Cell::Text(&text))));
+                        }
+                        None => value_panel(ui, None),
+                    });
+            }
             doc_tree(ui, &mut views.tree, &r.chunks, editable)
         }
         DocView::Json => {

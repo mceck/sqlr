@@ -155,14 +155,23 @@ impl SqlrApp {
             .title_bar(false)
             .collapsible(false)
             .resizable(true)
-            .default_size(vec2(720.0, 540.0))
-            .default_pos(ctx.content_rect().center() - vec2(360.0, 270.0))
+            .default_size(vec2(
+                720.0_f32.min(ctx.content_rect().width() - 32.0),
+                540.0_f32.min(ctx.content_rect().height() - 32.0),
+            ))
+            .default_pos(
+                ctx.content_rect().center()
+                    - vec2(
+                        360.0_f32.min((ctx.content_rect().width() - 32.0) / 2.0),
+                        270.0_f32.min((ctx.content_rect().height() - 32.0) / 2.0),
+                    ),
+            )
             .min_width(560.0)
             .min_height(400.0)
             .frame(Frame::window(&ctx.global_style()).inner_margin(Margin::ZERO))
             .show(ctx, |ui| {
-                ui.set_min_width(700.0);
-                ui.set_min_height(420.0);
+                ui.set_min_width(560.0_f32.min(ctx.content_rect().width() - 32.0));
+                ui.set_min_height(400.0_f32.min(ctx.content_rect().height() - 32.0));
                 if theme::dialog_header(
                     ui,
                     theme::icons::CONNECTION,

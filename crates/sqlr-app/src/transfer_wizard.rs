@@ -679,12 +679,15 @@ impl TransferWizard {
         let mut event = WizardEvent::None;
         let mut open = true;
         let mut action = None;
-        egui::Window::new("Transfer data")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(true)
-            .default_size([780.0, 560.0])
-            .show(ctx, |ui| {
+        theme::tool_dialog(
+            ctx,
+            &mut open,
+            "Transfer data",
+            theme::icons::ROWS,
+            "Choose a source and destination, review the mapping, then start the transfer",
+            860.0,
+            |ui| {
+                ui.set_height((ctx.content_rect().height() - 260.0).clamp(200.0, 520.0));
                 let title = steps[self.step].title.clone();
                 action = wizard_frame(ui, &steps, self.step, |ui| match title.as_str() {
                     "Source" => self.source_ui(ui, engine, conns, answer),
@@ -694,7 +697,8 @@ impl TransferWizard {
                     "Review" => self.review_ui(ui, engine, conns),
                     _ => self.run_ui(ui),
                 });
-            });
+            },
+        );
         match action {
             Some(WizardAction::Back) => self.step = self.step.saturating_sub(1),
             Some(WizardAction::Next) => self.step += 1,

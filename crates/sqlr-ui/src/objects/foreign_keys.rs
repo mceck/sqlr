@@ -9,7 +9,7 @@ use super::{
     ObjectEditorAction, ObjectEditorContext, caption, form_grid, master_detail, optional_text,
     sql_view,
 };
-use crate::theme::{self, Spacing, icons};
+use crate::theme::{Spacing, icons};
 
 const ACTIONS: [FkAction; 5] = [
     FkAction::NoAction,
@@ -47,13 +47,12 @@ pub(super) fn foreign_keys_tab(
     selected: &mut Option<usize>,
     ctx: &ObjectEditorContext,
 ) -> Option<ObjectEditorAction> {
-    let p = theme::palette(ui.ctx());
     let shown: Vec<usize> = (0..table.constraints.len())
         .filter(|&i| table.constraints[i].is_foreign_key())
         .collect();
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = Spacing::S;
-        if icons::button(ui, true, icons::ADD, Some(p.success), "Add foreign key").clicked() {
+        if icons::add_button(ui, "Add foreign key").clicked() {
             // The first column outside the primary key is the likeliest reference.
             let pk = table.primary_key().unwrap_or(&[]).to_vec();
             let column = table
@@ -80,9 +79,7 @@ pub(super) fn foreign_keys_tab(
             *selected = Some(table.constraints.len() - 1);
         }
         let current = selected.filter(|i| shown.contains(i));
-        if ui
-            .add_enabled(current.is_some(), egui::Button::new("Delete foreign key"))
-            .clicked()
+        if icons::delete_button(ui, current.is_some(), "Delete foreign key").clicked()
             && let Some(i) = current
         {
             table.constraints.remove(i);
@@ -226,7 +223,7 @@ fn fk_form(
                 target_columns.resize(from.len(), String::new());
                 target_columns[k] = remote;
             }
-            if from.len() > 1 && ui.small_button("Remove").clicked() {
+            if from.len() > 1 && icons::row_button(ui, icons::CLOSE, "Remove").clicked() {
                 remove = Some(k);
             }
         });

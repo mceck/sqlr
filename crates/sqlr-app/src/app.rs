@@ -430,7 +430,8 @@ impl SqlrApp {
             .min_size(160.0)
             .frame(side(ui.style()))
             .show(ui, |ui| self.left_panel(ui));
-        if self.show_value_panel {
+        // Document results own their inspector; Redis has its own value editor.
+        if self.show_value_panel && !self.active_is_nosql_tab() {
             egui::Panel::right("value")
                 .resizable(true)
                 .default_size(280.0)
@@ -769,6 +770,7 @@ impl SqlrApp {
             tints: &tints,
             profiles: &self.profiles,
             formats: &self.formats,
+            show_value_panel: self.show_value_panel,
             active,
             palette: theme::palette(ui.ctx()),
             icon_font: theme::fonts::icons(ui.ctx(), icons::SIZE),

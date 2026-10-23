@@ -56,6 +56,8 @@ pub const CANCELLED: &str = ph::PROHIBIT;
 pub const AFFECTED: &str = ph::PENCIL_SIMPLE;
 pub const EDIT: &str = ph::PENCIL_SIMPLE;
 pub const DELETE: &str = ph::TRASH;
+pub const MOVE_UP: &str = ph::ARROW_UP;
+pub const MOVE_DOWN: &str = ph::ARROW_DOWN;
 // Palette groups and panels.
 pub const COMMAND: &str = ph::LIGHTNING;
 pub const SNIPPET: &str = ph::CODE_BLOCK;
@@ -329,6 +331,48 @@ pub fn button(
     let response = ui.add_enabled(enabled, button);
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, label));
     response
+}
+
+/// [`button`] showing `text` (short, to save space) while `label` stays the accessible name
+/// and the tooltip.
+pub fn short_button(
+    ui: &mut Ui,
+    enabled: bool,
+    icon: &str,
+    color: Option<Color32>,
+    text: &str,
+    label: &str,
+) -> Response {
+    let mut glyph = text_icon(ui, icon, color.filter(|_| enabled));
+    if !enabled {
+        glyph = glyph.color(super::palette(ui.ctx()).text_disabled);
+    }
+    let response = ui.add_enabled(
+        enabled,
+        Button::new((glyph, text)).frame_when_inactive(false),
+    );
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, label));
+    response.on_hover_text(label)
+}
+
+fn text_icon(ui: &Ui, icon: &str, color: Option<Color32>) -> RichText {
+    let glyph = text(ui, icon, SIZE);
+    match color {
+        Some(c) => glyph.color(c),
+        None => glyph,
+    }
+}
+
+/// "Add" with a green plus; `label` names what is added.
+pub fn add_button(ui: &mut Ui, label: &str) -> Response {
+    let color = super::palette(ui.ctx()).success;
+    short_button(ui, true, ADD, Some(color), "Add", label)
+}
+
+/// "Delete" with a trash icon; `label` names what is deleted.
+pub fn delete_button(ui: &mut Ui, enabled: bool, label: &str) -> Response {
+    let color = super::palette(ui.ctx()).error;
+    short_button(ui, enabled, DELETE, Some(color), "Delete", label)
 }
 
 /// A frameless icon-only button labeled `label` (also its tooltip).

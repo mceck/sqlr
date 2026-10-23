@@ -651,6 +651,18 @@ pub fn object_editor(
     editing: &ObjectEditing,
     ctx: &ObjectEditorContext,
 ) -> Option<ObjectEditorAction> {
+    egui::Frame::new()
+        .inner_margin(egui::Margin::symmetric(Spacing::XL as i8, Spacing::S as i8))
+        .show(ui, |ui| object_editor_body(ui, state, editing, ctx))
+        .inner
+}
+
+fn object_editor_body(
+    ui: &mut egui::Ui,
+    state: &mut ObjectEditorState,
+    editing: &ObjectEditing,
+    ctx: &ObjectEditorContext,
+) -> Option<ObjectEditorAction> {
     let mut action = None;
     let kind = state.kind();
     let pending = state.pending();
@@ -686,7 +698,7 @@ pub fn object_editor(
 
     // Toolbar.
     ui.add_space(Spacing::S);
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = Spacing::S;
         let idle = ctx.busy.is_none();
         let can_apply = idle && pending > 0 && !blocking && ctx.apply_blocked.is_none();
@@ -774,10 +786,10 @@ pub fn object_editor(
         state.tab = tabs[0];
     }
     ui.add_space(Spacing::S);
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = Spacing::XS;
         for tab in &tabs {
-            let text = RichText::new(tab.label()).font(theme::semibold(ui.ctx(), 13.0));
-            if ui.selectable_label(state.tab == *tab, text).clicked() {
+            if theme::dialog_tab(ui, state.tab == *tab, tab.label()).clicked() {
                 state.tab = *tab;
             }
         }

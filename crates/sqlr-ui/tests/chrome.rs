@@ -219,3 +219,65 @@ fn status_segment_and_empty_state() {
     h.run();
     assert_eq!(*h.state(), 1);
 }
+
+#[test]
+fn long_dialog_headings_keep_close_and_actions_inside_a_small_window() {
+    let title = "Export orders_with_a_very_long_table_name";
+    let mut open = true;
+    let mut h = egui_kittest::Harness::builder()
+        .with_size((400.0, 360.0))
+        .build_ui(move |ui| {
+            sqlr_ui::theme::apply(ui.ctx(), &sqlr_ui::theme::Palette::dark(), 13.0);
+            sqlr_ui::theme::tool_dialog(
+                ui.ctx(),
+                &mut open,
+                title,
+                sqlr_ui::theme::icons::EXPORT,
+                "Choose which rows to export and how to format the destination file",
+                520.0,
+                |ui| {
+                    let _ = ui.button("Cancel");
+                },
+            );
+        });
+    h.run_steps(5);
+    let close_label = format!("Close {title}");
+    let close = h.get_by_label(&close_label);
+    assert!(
+        close.rect().right() <= 400.0,
+        "close action outside viewport: {:?}",
+        close.rect()
+    );
+    assert!(h.get_by_label("Cancel").rect().bottom() <= 360.0);
+}
+
+#[test]
+fn a_dialog_uses_available_height_before_scrolling_its_actions_away() {
+    let mut open = true;
+    let mut h = egui_kittest::Harness::builder()
+        .with_size((1000.0, 900.0))
+        .build_ui(move |ui| {
+            sqlr_ui::theme::apply(ui.ctx(), &sqlr_ui::theme::Palette::dark(), 13.0);
+            sqlr_ui::theme::tool_dialog(
+                ui.ctx(),
+                &mut open,
+                "Tall form",
+                sqlr_ui::theme::icons::EXPORT,
+                "Review the options",
+                520.0,
+                |ui| {
+                    for i in 0..22 {
+                        ui.label(format!("Option {i}"));
+                    }
+                    let _ = ui.button("Confirm form");
+                },
+            );
+        });
+    h.run_steps(8);
+    let window = h.get_by_label("Tall form dialog").rect();
+    let action = h.get_by_label("Confirm form").rect();
+    assert!(
+        window.contains_rect(action),
+        "Action {action:?} clipped by window {window:?}"
+    );
+}

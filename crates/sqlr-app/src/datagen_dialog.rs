@@ -177,12 +177,14 @@ impl DatagenDialog {
         }
         let mut event = DatagenEvent::None;
         let mut open = true;
-        egui::Window::new(format!("Generate data · {}", self.table.name))
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(true)
-            .default_size([860.0, 520.0])
-            .show(ctx, |ui| {
+        theme::tool_dialog(
+            ctx,
+            &mut open,
+            &format!("Generate data · {}", self.table.name),
+            theme::icons::CREATE,
+            "Configure generators, preview sample rows, then write to the table",
+            900.0,
+            |ui| {
                 let p = theme::palette(ui.ctx());
                 if let Some(e) = &self.error {
                     ui.colored_label(p.error, e);
@@ -207,14 +209,22 @@ impl DatagenDialog {
                             .color(p.text_muted),
                     );
                 });
-                ui.add_space(Spacing::S);
+                ui.add_space(Spacing::L);
+                theme::section_title(ui, "Column generators");
+                theme::hint(
+                    ui,
+                    "Uncheck a column to let the database fill it. NULL % controls how often values are left empty.",
+                );
+                ui.add_space(Spacing::M);
                 egui::ScrollArea::both().max_height(260.0).show(ui, |ui| {
                     if datagen_table(ui, &mut self.columns, &self.types) {
                         self.preview = None;
                     }
                 });
-                ui.add_space(Spacing::S);
-                ui.horizontal(|ui| {
+                ui.add_space(Spacing::L);
+                theme::hairline(ui);
+                ui.add_space(Spacing::M);
+                ui.horizontal_wrapped(|ui| {
                     if ui.button("Preview").clicked() {
                         self.make_preview();
                     }
@@ -271,7 +281,8 @@ impl DatagenDialog {
                     }
                     None => {}
                 }
-            });
+            },
+        );
         if !open {
             if let Some(id) = self.run.take() {
                 engine.cancel_job(id);

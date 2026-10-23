@@ -55,12 +55,15 @@ pub fn tasks_panel(
     let running_here = current
         .as_ref()
         .and_then(|id| running.iter().find(|r| &r.task_id == id));
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         let enabled = current.is_some();
         let can_run = enabled && running_here.is_none();
         if let Some(id) = &current {
             if ui
-                .add_enabled(can_run, egui::Button::new("Run task"))
+                .add_enabled(
+                    can_run,
+                    theme::primary_button_state(ui.ctx(), can_run, "Run task"),
+                )
                 .clicked()
             {
                 action = Some(TasksAction::Run(id.clone()));
@@ -93,11 +96,11 @@ pub fn tasks_panel(
     });
     ui.add_space(Spacing::S);
     if tasks.is_empty() {
-        ui.label(
-            RichText::new(
-                "No tasks yet. Save a transfer, dump or restore as a task from its last step.",
-            )
-            .color(p.text_muted),
+        theme::empty_panel(
+            ui,
+            theme::icons::COMMAND,
+            "No tasks yet",
+            "Save a transfer, dump or restore as a task from its last step. Select a saved task to run it again or view its history.",
         );
     }
     egui::ScrollArea::vertical()

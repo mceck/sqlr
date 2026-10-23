@@ -269,11 +269,14 @@ pub fn status_bar(
     if let Some(value) = &mut state.custom {
         let mut open = true;
         let mut done = None;
-        egui::Window::new("Custom fetch size")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .show(ui.ctx(), |ui| {
+        theme::tool_dialog(
+            ui.ctx(),
+            &mut open,
+            "Custom fetch size",
+            icons::ROWS,
+            "Choose how many rows to load in each result page",
+            440.0,
+            |ui| {
                 ui.horizontal(|ui| {
                     ui.label("Rows per fetch");
                     ui.add(DragValue::new(value).range(PAGE_SIZES));
@@ -286,7 +289,8 @@ pub fn status_bar(
                         done = Some(None);
                     }
                 });
-            });
+            },
+        );
         if let Some(applied) = done {
             action = applied.map(StatusAction::SetPageSize).or(action);
             state.custom = None;

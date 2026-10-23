@@ -22,7 +22,12 @@ const LIVE_JSON_MAX: usize = 1024 * 1024;
 pub fn value_panel(ui: &mut egui::Ui, value: Option<(&ColumnMeta, Cell<'_>)>) {
     let palette = theme::palette(ui.ctx());
     let Some((meta, cell)) = value else {
-        ui.label(RichText::new("No cell selected").color(palette.text_muted));
+        theme::empty_panel(
+            ui,
+            theme::icons::PREVIEW,
+            "No cell selected",
+            "Select a cell in a result to inspect its full value, JSON or binary contents here.",
+        );
         return;
     };
     ui.label(RichText::new(&meta.name).font(theme::semibold(ui.ctx(), 13.0)));
