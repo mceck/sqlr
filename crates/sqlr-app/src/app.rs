@@ -850,21 +850,11 @@ impl SqlrApp {
             TreeAction::ImportData { conn, node } => self.open_node_import(&conn, &node),
             TreeAction::GenerateData { conn, node } => self.open_datagen(&conn, &node),
             TreeAction::ErDiagram { conn, node } => {
-                let database = self.engine.database_for_path(&conn, &node.path);
-                let database = if node.kind == sqlr_core::NodeKind::Schema {
-                    database
-                } else {
-                    None
-                };
-                self.open_er_diagram(&conn, database, node.name.clone(), None);
+                let (database, schema) = self.schema_target(&conn, &node);
+                self.open_er_diagram(&conn, database, schema, None);
             }
             TreeAction::CompareSchema { conn, node } => {
-                let database = self.engine.database_for_path(&conn, &node.path);
-                let (database, schema) = if node.kind == sqlr_core::NodeKind::Schema {
-                    (database, node.name.clone())
-                } else {
-                    (None, node.name.clone())
-                };
+                let (database, schema) = self.schema_target(&conn, &node);
                 self.open_compare(Some(&conn), database, Some(schema));
             }
             TreeAction::TransferData { conn, node } => {
@@ -887,6 +877,27 @@ impl SqlrApp {
             }
             TreeAction::OpenAdmin { conn, panel } => self.open_admin(&conn, panel),
             other => self.object_tree_action(other),
+        }
+    }
+
+    /// The database and schema a tree node stands for. A database node of a server that keeps
+    /// schemas inside databases (Postgres) means that database's default schema.
+    fn schema_target(&self, conn: &str, node: &sqlr_core::Node) -> (Option<String>, String) {
+        let database = self.engine.database_for_path(conn, &node.path);
+        match node.kind {
+            sqlr_core::NodeKind::Schema => (database, node.name.clone()),
+            sqlr_core::NodeKind::Database => match self.dialects.get(conn) {
+                Some(d) if !d.database_is_schema() => {
+                    let schema = d
+                        .default_schemas()
+                        .into_iter()
+                        .next()
+                        .unwrap_or_else(|| "public".to_string());
+                    (database, schema)
+                }
+                _ => (None, node.name.clone()),
+            },
+            _ => (None, node.name.clone()),
         }
     }
 
