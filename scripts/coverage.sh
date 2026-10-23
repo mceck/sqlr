@@ -142,6 +142,14 @@ if failed and enforce:
     print(f"\ncoverage: at least one crate is below {minimum:.0f}%", file=sys.stderr)
     sys.exit(1)
 PY
+
+# The databases go down before the summary, so the coverage result is the last
+# thing printed instead of being buried under the Docker teardown output.
+if [ "$FAST" -eq 0 ]; then
+    trap - EXIT INT TERM
+    scripts/test-services.sh down
+fi
+
 cat "$OUT/per-crate.txt"
 
 if [ "$OPEN" -eq 1 ]; then

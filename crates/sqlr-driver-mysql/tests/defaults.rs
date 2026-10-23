@@ -46,8 +46,10 @@ async fn string_defaults_with_bit_prefix_round_trip(server: Server) {
     rel.execute("INSERT INTO defaults_round_trip () VALUES ()")
         .await
         .unwrap();
+    // `CAST(... AS UNSIGNED)` is a `BIGINT UNSIGNED` on MySQL, which the driver carries as
+    // decimal text; `SIGNED` keeps the value readable as an integer on both servers.
     let Execution::Rows(mut rows) = rel
-        .execute("SELECT note, tag, CAST(flags AS UNSIGNED) FROM defaults_round_trip")
+        .execute("SELECT note, tag, CAST(flags AS SIGNED) FROM defaults_round_trip")
         .await
         .unwrap()
     else {

@@ -144,7 +144,10 @@ fn renamed_constraint(c: &ConstraintDef, renames: &HashMap<&str, &str>) -> Const
 fn renamed_index(i: &IndexDef, renames: &HashMap<&str, &str>) -> IndexDef {
     let mut i = i.clone();
     for c in &mut i.columns {
-        if let Some(r) = renames.get(c.expr.as_str()) {
+        // A key part that is SQL is not a column name, even when both read the same.
+        if !c.is_expression()
+            && let Some(r) = renames.get(c.expr.as_str())
+        {
             c.expr = r.to_string();
         }
     }

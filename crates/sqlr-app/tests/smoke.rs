@@ -689,7 +689,9 @@ fn script_result_error_uses_its_statement_origin() {
     // The second statement's next page fails; its position is inside statement 2.
     h.get_by_label("Fetch all").click();
     wait_for_label(&mut h, "fetch failed");
-    h.get_by_label("at line 2, column 8");
+    // The position comes from the run's state and may reach the panel one frame after the
+    // message, depending on when the worker reports the failure.
+    wait_for_label(&mut h, "at line 2, column 8");
 }
 
 fn is_disabled(h: &Harness<'static, SqlrApp>, label: &str) -> bool {
