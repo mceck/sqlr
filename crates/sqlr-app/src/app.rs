@@ -283,6 +283,8 @@ pub struct SqlrApp {
         HashMap<String, Vec<crate::agents::PendingConnectionWrite>>,
     /// The integrated terminal (session-only visibility and height).
     pub(crate) terminal: sqlr_terminal::TerminalPanel,
+    /// Persistent terminal directory and background MCP configuration writer.
+    pub(crate) terminal_workspace: crate::terminal_workspace::TerminalWorkspace,
     /// The context of the current frame, for work queued outside `ui` (settings saves).
     pub(crate) ui_ctx: Option<egui::Context>,
 }
@@ -393,6 +395,7 @@ impl SqlrApp {
             approval_focus_pending: false,
             pending_connection_writes: HashMap::new(),
             terminal: Default::default(),
+            terminal_workspace: Default::default(),
             ui_ctx: None,
         };
         if let Some(notice) = startup_notice {

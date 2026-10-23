@@ -13,6 +13,10 @@ fn app(dir: &std::path::Path) -> SqlrApp {
 }
 
 fn app_with_shell(dir: &std::path::Path, shell: &str) -> SqlrApp {
+    app_with_terminal_settings(dir, shell, "")
+}
+
+fn app_with_terminal_settings(dir: &std::path::Path, shell: &str, cwd: &str) -> SqlrApp {
     let mut drivers = DriverRegistry::default();
     drivers.register(FakeDriver::new(Default::default()));
     let engine = Engine::new(drivers, Arc::new(|| {}));
@@ -33,6 +37,11 @@ fn app_with_shell(dir: &std::path::Path, shell: &str) -> SqlrApp {
     repo.save(&cfg, &Secrets::default()).unwrap();
     let settings = Settings {
         terminal_shell: shell.into(),
+        terminal_cwd: cwd.into(),
+        agents_port: {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port()
+        },
         ..Settings::default()
     };
     let deps = AppDeps {
@@ -43,9 +52,209 @@ fn app_with_shell(dir: &std::path::Path, shell: &str) -> SqlrApp {
         data_dir: None,
         startup_notice: None,
         storage_warning: None,
-        mcp_token_store: None,
+        mcp_token_store: Some(Arc::new(sqlr_store::MemoryMcpTokenStore::with_token(
+            "terminal-test-token",
+        ))),
     };
     SqlrApp::new(deps, &egui::Context::default())
+}
+
+fn wait_for_terminal_canvas(harness: &mut Harness<'_, SqlrApp>) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        harness.step();
+        let rect = harness.state().terminal_rect_for_tests();
+        if rect.width() > 0.0 && rect.height() > 0.0 {
+            return;
+        }
+        assert!(Instant::now() < deadline, "terminal did not start");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn the_default_terminal_starts_in_the_config_workspace_with_mcp_instructions() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = app_with_shell(
+        dir.path(),
+        "pwd -P > shell-cwd; test -f AGENTS.md && test -f .mcp.json && printf 'agents-ready\\n'; sleep 30",
+    );
+    let mut harness = Harness::builder()
+        .with_size((1100.0, 760.0))
+        .with_step_dt(0.01)
+        .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    harness.run_steps(3);
+    harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Backtick);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        harness.step();
+        let text = harness.state().terminal_text_for_tests();
+        if text.contains("agents-ready") {
+            break;
+        }
+        assert!(Instant::now() < deadline, "terminal output: {text:?}");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let workspace = dir.path().join("terminal");
+    assert_eq!(
+        std::fs::read_to_string(workspace.join("shell-cwd"))
+            .unwrap()
+            .trim(),
+        workspace.canonicalize().unwrap().to_str().unwrap()
+    );
+    let guide = std::fs::read_to_string(workspace.join("AGENTS.md")).unwrap();
+    for required in [
+        "Copy MCP config",
+        "get_guide",
+        "config_list",
+        "browse",
+        "close_result",
+    ] {
+        assert!(guide.contains(required), "missing {required}: {guide}");
+    }
+    assert!(guide.contains(&dir.path().join("mcp.json").display().to_string()));
+    assert!(!guide.contains("Bearer "));
+    let config: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(workspace.join(".mcp.json")).unwrap())
+            .unwrap();
+    assert_eq!(config["mcpServers"], serde_json::json!({}));
+
+    // Enabling MCP after opening the terminal refreshes the configuration in place.
+    harness.state_mut().set_mcp_enabled_for_tests(true);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        harness.step();
+        let config: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(workspace.join(".mcp.json")).unwrap())
+                .unwrap();
+        if config["mcpServers"]["sqlr"]["headers"]["Authorization"] == "Bearer terminal-test-token"
+        {
+            assert!(
+                config["mcpServers"]["sqlr"]["url"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("http://127.0.0.1:")
+            );
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            let response = tokio::runtime::Runtime::new().unwrap().block_on(async {
+                reqwest::Client::new()
+                    .post(config["mcpServers"]["sqlr"]["url"].as_str().unwrap())
+                    .header(
+                        "Authorization",
+                        config["mcpServers"]["sqlr"]["headers"]["Authorization"]
+                            .as_str()
+                            .unwrap(),
+                    )
+                    .header("Accept", "application/json, text/event-stream")
+                    .json(&serde_json::json!({
+                        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+                        "params": {
+                            "protocolVersion": "2025-11-25", "capabilities": {},
+                            "clientInfo": {"name": "terminal-test", "version": "1.0"}
+                        }
+                    }))
+                    .send()
+                    .await
+                    .unwrap()
+            });
+            assert!(
+                response.status().is_success(),
+                "MCP config must authenticate"
+            );
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "MCP configuration did not refresh"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&workspace).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            std::fs::metadata(workspace.join(".mcp.json"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+
+    // Reopening the panel keeps the same shell and its scratch files.
+    std::fs::write(workspace.join("scratch.sql"), "select 1").unwrap();
+    harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Backtick);
+    harness.run_steps(2);
+    harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Backtick);
+    harness.run_steps(2);
+    assert!(workspace.join("scratch.sql").is_file());
+    assert!(
+        harness
+            .state()
+            .terminal_text_for_tests()
+            .contains("agents-ready")
+    );
+
+    // Disabling MCP while the panel is hidden removes credentials from its config.
+    harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Backtick);
+    harness.state_mut().set_mcp_enabled_for_tests(false);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        harness.step();
+        let config: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(workspace.join(".mcp.json")).unwrap())
+                .unwrap();
+        if config["mcpServers"] == serde_json::json!({}) {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "disabled MCP credentials remain in config"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn an_explicit_terminal_directory_is_preserved() {
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = tempfile::tempdir().unwrap();
+    std::fs::write(cwd.path().join("AGENTS.md"), "user instructions").unwrap();
+    let app = app_with_terminal_settings(
+        dir.path(),
+        "test -f AGENTS.md && printf 'custom-directory-ready\\n'; sleep 30",
+        cwd.path().to_str().unwrap(),
+    );
+    let mut harness = Harness::builder()
+        .with_size((1100.0, 760.0))
+        .with_step_dt(0.01)
+        .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Backtick);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        harness.step();
+        if harness
+            .state()
+            .terminal_text_for_tests()
+            .contains("custom-directory-ready")
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "custom cwd was ignored");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(
+        std::fs::read_to_string(cwd.path().join("AGENTS.md")).unwrap(),
+        "user instructions"
+    );
+    assert!(!cwd.path().join(".mcp.json").exists());
 }
 
 #[test]
@@ -60,6 +269,7 @@ fn terminal_toggles_starts_lazily_and_keeps_running_when_hidden() {
     assert!(!harness.state().terminal_visible_for_tests());
 
     harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Backtick);
+    wait_for_terminal_canvas(&mut harness);
     harness.run_steps(2);
     assert!(harness.state().terminal_visible_for_tests());
     assert_eq!(
@@ -100,6 +310,7 @@ fn a_dialog_takes_the_keyboard_away_from_the_terminal() {
     harness.run_steps(3);
 
     harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Backtick);
+    wait_for_terminal_canvas(&mut harness);
     harness.run_steps(2);
     assert!(harness.state().terminal_focused_for_tests());
 
@@ -125,6 +336,7 @@ fn terminal_keys_do_not_move_the_ui_focus() {
     harness.run_steps(3);
 
     harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Backtick);
+    wait_for_terminal_canvas(&mut harness);
     harness.run_steps(2);
     assert!(harness.state().terminal_focused_for_tests());
 
@@ -238,6 +450,7 @@ fn the_wheel_reaches_an_application_that_enables_mouse_reports() {
         .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
     harness.run_steps(3);
     harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Backtick);
+    wait_for_terminal_canvas(&mut harness);
     harness.run_steps(2);
     assert!(harness.state().terminal_visible_for_tests());
 
@@ -281,6 +494,7 @@ fn mouse_motion_reaches_an_application_that_enables_mouse_reports() {
         .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
     harness.run_steps(3);
     harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Backtick);
+    wait_for_terminal_canvas(&mut harness);
     harness.run_steps(2);
     assert!(harness.state().terminal_visible_for_tests());
 

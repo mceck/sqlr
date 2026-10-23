@@ -792,7 +792,7 @@ fn build_defs() -> Vec<SettingDef> {
             "terminal.cwd",
             "Terminal",
             "Working directory",
-            "Empty starts in your home directory.",
+            "Empty uses the terminal folder in sqlr's configuration directory, with AGENTS.md and MCP configuration.",
             &["folder", "path", "directory"],
             K::Text,
             text(""),

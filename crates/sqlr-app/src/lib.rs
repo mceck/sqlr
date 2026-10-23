@@ -38,6 +38,7 @@ mod shell;
 mod store_worker;
 mod tabs;
 mod tasks_ui;
+mod terminal_workspace;
 mod transaction;
 mod transfer_dialogs;
 mod transfer_wizard;

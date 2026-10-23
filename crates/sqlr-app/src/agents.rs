@@ -1004,6 +1004,7 @@ impl SqlrApp {
             self.mcp_token_store.clone(),
             repaint,
         );
+        self.terminal_workspace.sync(self.mcp.client_config());
         if self.settings.agents_enabled || self.terminal.is_open() {
             ctx.request_repaint_after(Duration::from_millis(250));
         }
@@ -1131,6 +1132,49 @@ impl SqlrApp {
     }
 
     pub(crate) fn terminal_ui(&mut self, ui: &mut egui::Ui) {
+        if self.settings.terminal_cwd.trim().is_empty()
+            && self.mcp.status == McpStatus::Starting
+            && !self.terminal.started()
+        {
+            ui.horizontal(|ui| {
+                ui.spinner();
+                ui.label("Starting MCP server…");
+            });
+            return;
+        }
+        let cwd = if self.settings.terminal_cwd.trim().is_empty() {
+            let config = self.mcp.client_config();
+            self.terminal_workspace.start(
+                &self.config_dir,
+                &self.data_dir,
+                config.clone(),
+                ui.ctx(),
+            );
+            self.terminal_workspace.sync(config);
+            if let Some(error) = self.terminal_workspace.error() {
+                ui.colored_label(sqlr_ui::theme::palette(ui.ctx()).error, error);
+                if !self.terminal.started() && ui.button("Retry").clicked() {
+                    self.terminal_workspace = Default::default();
+                    ui.ctx().request_repaint();
+                }
+                if !self.terminal.started() {
+                    return;
+                }
+            }
+            if !self.terminal_workspace.ready() && !self.terminal.started() {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label("Preparing terminal workspace…");
+                });
+                return;
+            }
+            let Some(path) = self.terminal_workspace.path() else {
+                return;
+            };
+            path.to_string_lossy().into_owned()
+        } else {
+            self.settings.terminal_cwd.clone()
+        };
         let palette = sqlr_ui::theme::palette(ui.ctx());
         let ansi = [
             palette.bg_editor,
@@ -1160,7 +1204,7 @@ impl SqlrApp {
         };
         self.terminal.set_config(sqlr_terminal::SessionConfig {
             shell: self.settings.terminal_shell.clone(),
-            cwd: self.settings.terminal_cwd.clone(),
+            cwd,
             scrollback: self.settings.terminal_scrollback,
             ..Default::default()
         });

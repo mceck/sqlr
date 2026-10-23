@@ -277,9 +277,13 @@ SQL without executing it. To update, read with `get_snippet` and supply its exis
 
 ## Set up an agent in the terminal
 
-Open the terminal (`Ctrl+Backtick`), use **Copy MCP config** in its header, and paste the
-configuration into Claude Code, Codex or another client. No token is injected into the
-shell environment and no agent is started automatically. MCP cannot control the terminal.
+Open the terminal (`Ctrl+Backtick`). By default it starts in the persistent `terminal`
+folder inside sqlr's configuration directory, with an `AGENTS.md` guide and `.mcp.json`
+containing the active server's URL and bearer token. Use that file with clients that
+support project MCP configuration, or use **Copy MCP config** in the header to import
+the configuration into another client. The configuration refreshes when MCP changes;
+reconnect your client afterwards. No token is injected into the shell environment and
+no agent is started automatically. MCP cannot control the terminal.
 "#;
 
 pub fn guide(topic: Option<&str>) -> String {
@@ -309,6 +313,12 @@ readable through MCP; `terminal.cwd`, `terminal.font_size` and `terminal.scrollb
 ordinary settings.\n\
 Output and the shell command are never logged, and no MCP token is placed in its\n\
 environment.\n\n\
+The default working directory is the persistent `terminal` folder inside sqlr's\n\
+configuration directory. `AGENTS.md` is created only when missing; `.mcp.json` contains\n\
+the server URL and bearer token and refreshes when MCP changes, even while hidden.\n\
+The directory is created with mode 0700 and the config with mode 0600 on Unix. Files\n\
+remain after sqlr closes. An explicit `terminal.cwd` is respected and receives no\n\
+generated files. Reload your client's MCP configuration after server changes.\n\n\
 **Copy MCP config** in the terminal header copies the client configuration (including\n\
 the token) for a one-paste setup. The terminal itself works when MCP is disabled.\n",
             );

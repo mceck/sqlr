@@ -261,7 +261,7 @@ New settings:
 | `agents.enabled` | bool | `false` | global only | Starts/stops the MCP server |
 | `agents.port` | int, 1024–65535 | `47821` | global only | Changing restarts the server |
 | `terminal.shell` | text | empty | global only | Empty means automatic; human-only, unreadable and unwritable by agents |
-| `terminal.cwd` | text | empty | global only | Empty means the user's home directory |
+| `terminal.cwd` | text | empty | global only | Empty means `terminal/` inside the app's configuration directory |
 | `terminal.font_size` | float, 10–24 | `12` | global only | Terminal text size in points |
 | `terminal.scrollback` | int, 100–10000 | `2000` | global only | Lines retained by the terminal |
 
@@ -624,7 +624,18 @@ available egui terminal crates do not support the pinned egui version.
 - Default shell: on Unix, the user's `$SHELL` with login and interactive behaviour
   (`-l`); on Windows, `pwsh.exe` when available, then `powershell.exe`, then `cmd.exe`.
   A configured shell command is run through the platform shell wrapper so arguments and
-  quoting work. The working directory defaults to the user's home directory.
+  quoting work. The working directory defaults to `terminal/` inside the app's
+  configuration directory. It is stable across app launches and is prepared on a
+  background worker before the shell starts. An explicit `terminal.cwd` is respected.
+- The default terminal directory contains `AGENTS.md`, created only if missing, with
+  MCP setup instructions and the required `get_guide` workflow. `.mcp.json` contains
+  the active server's client configuration, including the bearer token, and is
+  refreshed atomically when the server starts, stops, changes port or rotates its
+  token, including while the terminal is hidden. When MCP is disabled, it contains
+  an empty `mcpServers` object. Existing identical configuration is not rewritten.
+  On Unix the directory is created with mode 0700 and `.mcp.json` with mode 0600.
+  Both files and user-created scratch files persist when sqlr closes. User edits to
+  `AGENTS.md` are preserved. No files are generated in an explicit `terminal.cwd`.
 - Environment: inherit the application environment, set `TERM=xterm-256color` and
   `COLORTERM=truecolor`, and do not inject MCP tokens or agent-specific variables.
 - Terminal settings are global: shell command, working directory, font size and
