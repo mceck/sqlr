@@ -179,6 +179,11 @@ impl TerminalSession {
         self.emulator.take_bell()
     }
 
+    /// The largest scrollback offset [`Self::snapshot`] accepts; `0` is the live screen.
+    pub fn scrollback_len(&self) -> usize {
+        self.emulator.scrollback_len()
+    }
+
     /// Writes input to the PTY; a dead child ignores it.
     pub fn write(&self, bytes: &[u8]) {
         if !self.status().is_running() {

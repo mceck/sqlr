@@ -84,3 +84,61 @@ fn terminal_toggles_starts_lazily_and_keeps_running_when_hidden() {
     let text = harness.state().terminal_text_for_tests();
     assert!(text.contains("terminal-ready"), "{text:?}");
 }
+
+#[test]
+fn a_dialog_takes_the_keyboard_away_from_the_terminal() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(dir.path());
+    let mut harness = Harness::builder()
+        .with_size((1100.0, 760.0))
+        .with_step_dt(0.01)
+        .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    harness.run_steps(3);
+
+    harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Backtick);
+    harness.run_steps(2);
+    assert!(harness.state().terminal_focused_for_tests());
+
+    // The command palette asks for the keyboard: the terminal must stop reading keys in
+    // the same frame, or typed text would land in both.
+    harness.key_press_modifiers(
+        egui::Modifiers::COMMAND.plus(egui::Modifiers::SHIFT),
+        egui::Key::P,
+    );
+    harness.run_steps(2);
+    assert!(harness.state().palette_open());
+    assert!(!harness.state().terminal_focused_for_tests());
+}
+
+#[test]
+fn terminal_keys_do_not_move_the_ui_focus() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(dir.path());
+    let mut harness = Harness::builder()
+        .with_size((1100.0, 760.0))
+        .with_step_dt(0.01)
+        .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    harness.run_steps(3);
+
+    harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Backtick);
+    harness.run_steps(2);
+    assert!(harness.state().terminal_focused_for_tests());
+
+    // egui moves the focus on arrows, Tab and Escape unless the focused widget locks them;
+    // in a terminal they belong to the shell and the focus must stay put.
+    for key in [
+        egui::Key::ArrowUp,
+        egui::Key::ArrowDown,
+        egui::Key::ArrowLeft,
+        egui::Key::ArrowRight,
+        egui::Key::Tab,
+        egui::Key::Escape,
+    ] {
+        harness.key_press(key);
+        harness.run_steps(2);
+        assert!(
+            harness.state().terminal_focused_for_tests(),
+            "{key:?} moved the focus away from the terminal"
+        );
+    }
+}

@@ -171,6 +171,11 @@ impl Emulator {
         self.bell.swap(false, std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// The number of rows kept above the live screen.
+    pub fn scrollback_len(&self) -> usize {
+        self.parser.lock().unwrap().screen().scrollback_len()
+    }
+
     pub fn resize(&self, rows: u16, cols: u16) {
         self.parser.lock().unwrap().set_size(nz(rows), nz(cols));
     }

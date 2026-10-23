@@ -914,6 +914,11 @@ impl SqlrApp {
     }
 
     #[doc(hidden)]
+    pub fn terminal_focused_for_tests(&self) -> bool {
+        self.terminal.focused()
+    }
+
+    #[doc(hidden)]
     pub fn terminal_text_for_tests(&self) -> String {
         let Some(session) = self.terminal.session() else {
             return String::new();

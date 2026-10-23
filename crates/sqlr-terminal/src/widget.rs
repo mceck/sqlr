@@ -97,6 +97,8 @@ pub struct TerminalPanel {
     selection: Option<Selection>,
     dragging: bool,
     scroll: usize,
+    /// Fractional rows not applied yet, so a slow trackpad still scrolls the history.
+    scroll_pending: f32,
     started_once: bool,
     bell_until: Option<Instant>,
     last_rect: Rect,
@@ -114,6 +116,7 @@ impl Default for TerminalPanel {
             selection: None,
             dragging: false,
             scroll: 0,
+            scroll_pending: 0.0,
             started_once: false,
             bell_until: None,
             last_rect: Rect::NOTHING,
@@ -194,6 +197,7 @@ impl TerminalPanel {
     fn start(&mut self, repaint: Arc<dyn Fn() + Send + Sync>) {
         self.started_once = true;
         self.scroll = 0;
+        self.scroll_pending = 0.0;
         self.selection = None;
         self.session = Some(TerminalSession::spawn(&self.config, repaint));
     }
@@ -338,21 +342,39 @@ impl TerminalPanel {
             ui.memory_mut(|m| m.request_focus(response.id));
         }
         if response.clicked() || response.drag_started() {
-            self.focused = true;
             ui.memory_mut(|m| m.request_focus(response.id));
         }
-        if ui.memory(|m| m.has_focus(response.id)) {
-            self.focused = true;
-        } else if response.clicked_elsewhere() {
-            self.focused = false;
+        // egui's focus is the single source of truth. A palette, a dialog or an editor that
+        // takes it must also stop the terminal from reading the same keys, even when no
+        // click moved the focus.
+        self.focused = ui.memory(|m| m.has_focus(response.id));
+        if self.focused {
+            // Arrows, Tab and Escape are shell input: egui must not use them to move the
+            // focus to the editor or to the toolbar.
+            ui.memory_mut(|m| {
+                m.set_focus_lock_filter(
+                    response.id,
+                    egui::EventFilter {
+                        tab: true,
+                        horizontal_arrows: true,
+                        vertical_arrows: true,
+                        escape: true,
+                    },
+                );
+            });
         }
         // Wheel scrollback.
         let scroll_delta = ui.input(|i| i.smooth_scroll_delta.y);
         if response.hovered() && scroll_delta != 0.0 {
-            let snapshot = session.snapshot(self.scroll);
-            let max = snapshot.scrollback_len;
-            let step = (scroll_delta / row_height).round() as i64;
-            self.scroll = (self.scroll as i64 - step).clamp(0, max as i64) as usize;
+            // Consume the scroll so the scroll areas under the panel do not move too.
+            ui.input_mut(|i| i.smooth_scroll_delta.y = 0.0);
+            self.scroll = scroll_offset(
+                self.scroll,
+                &mut self.scroll_pending,
+                scroll_delta,
+                row_height,
+                session.scrollback_len(),
+            );
         }
         let snapshot = session.snapshot(self.scroll);
         self.paint(ui, rect, &snapshot, theme, char_width, row_height);
@@ -575,6 +597,7 @@ impl TerminalPanel {
                     session.write(&encoded.bytes);
                 }
                 self.scroll = 0;
+                self.scroll_pending = 0.0;
             }
         }
         let _ = theme;
@@ -593,6 +616,22 @@ impl TerminalPanel {
 
 fn font_from(theme: &TerminalTheme) -> FontId {
     theme.font()
+}
+
+/// Moves the scrollback offset by a wheel delta in points. A positive delta moves the content
+/// down, i.e. towards older lines, so the offset grows. Fractions stay pending, so a slow
+/// trackpad scrolls one row after a few frames instead of rounding every frame away.
+fn scroll_offset(
+    current: usize,
+    pending: &mut f32,
+    delta: f32,
+    row_height: f32,
+    max: usize,
+) -> usize {
+    *pending += delta / row_height.max(1.0);
+    let rows = pending.trunc();
+    *pending -= rows;
+    (current as f32 + rows).clamp(0.0, max as f32) as usize
 }
 
 impl TerminalSession {
@@ -662,5 +701,28 @@ mod tests {
         let panel = TerminalPanel::default();
         assert!(!panel.is_open());
         assert!(!panel.started());
+    }
+
+    #[test]
+    fn scrolling_up_moves_into_the_scrollback() {
+        // A positive delta moves the content down: older lines, a larger offset.
+        let mut pending = 0.0;
+        assert_eq!(scroll_offset(0, &mut pending, 36.0, 18.0, 50), 2);
+        assert_eq!(scroll_offset(2, &mut pending, -18.0, 18.0, 50), 1);
+    }
+
+    #[test]
+    fn slow_trackpad_deltas_accumulate() {
+        let mut pending = 0.0;
+        assert_eq!(scroll_offset(0, &mut pending, 6.0, 18.0, 50), 0);
+        assert_eq!(scroll_offset(0, &mut pending, 6.0, 18.0, 50), 0);
+        assert_eq!(scroll_offset(0, &mut pending, 6.0, 18.0, 50), 1);
+    }
+
+    #[test]
+    fn scrollback_offset_stays_within_the_history() {
+        let mut pending = 0.0;
+        assert_eq!(scroll_offset(45, &mut pending, 180.0, 18.0, 50), 50);
+        assert_eq!(scroll_offset(0, &mut pending, -90.0, 18.0, 50), 0);
     }
 }
