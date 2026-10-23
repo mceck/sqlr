@@ -14,6 +14,8 @@ Open Settings with ⌘, (or the sqlr menu). A search field at the top finds a se
 | Keymap | Every shortcut, with presets |
 | Connections | A session per editor tab, connect timeout, read-only and confirmation switches |
 | Drivers | Extra properties for each driver, how long an idle driver process is kept |
+| Agents | Enable the loopback MCP server, port, status, endpoint, token rotation, Copy MCP config |
+| Terminal | Shell command, working directory, scrollback; changes apply on Restart |
 
 **Open settings folder** takes you to the files described below, in case you prefer to read or back them up directly.
 
@@ -30,6 +32,19 @@ These control display only. The database keeps the value it has. You can choose 
 ### Driver properties
 
 Under Drivers you can pass extra properties to a driver for every connection that uses it. For PostgreSQL that includes `application_name`, `statement_timeout` and `search_path`. For MySQL, `sql_mode`, `time_zone` and `wait_timeout`. For SQLite, `foreign_keys`, `journal_mode`, `busy_timeout` and `cache_size`.
+
+## Agents and terminal
+
+**Settings → Agents** turns on the local MCP server. It is off by default and listens
+only on `127.0.0.1`. Enabling it exposes no connection: set **Agent access** to Read or
+Write on each connection. The bearer token lives in the OS keychain; **Rotate token**
+revokes it and disconnects agents. **Copy MCP config** copies a ready client
+configuration containing the token.
+
+**Settings → Terminal** sets the shell command, working directory and scrollback. The
+shell command is not visible to agents and is never logged. Changes apply on Restart;
+opening the terminal starts the shell lazily and hiding it keeps it running. See
+[Agents and the terminal](agents.md).
 
 ## Keyboard shortcuts
 
@@ -59,6 +74,7 @@ Shortcuts below use the default keymap, with macOS keys. On Windows and Linux us
 | Rename the selected item in the explorer | F2 |
 | Show operations | ⇧⌘O |
 | Settings | ⌘, |
+| Terminal | Ctrl+Backtick (every platform) |
 
 ### Editing
 

@@ -102,6 +102,16 @@ pub struct StatusView<'a> {
     pub storage_warning: Option<&'a str>,
     /// A running export or copy: its progress line.
     pub job: Option<&'a str>,
+    /// The MCP server's state while it is enabled.
+    pub mcp: Option<McpView>,
+}
+
+/// What the status bar shows of the MCP server.
+#[derive(Clone, Debug, PartialEq)]
+pub struct McpView {
+    pub running: bool,
+    pub sessions: usize,
+    pub detail: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -110,6 +120,7 @@ pub enum StatusAction {
     FetchAll,
     /// Cancel the running job.
     CancelJob,
+    OpenAgents,
 }
 
 #[derive(Default)]
@@ -249,6 +260,28 @@ pub fn status_bar(
     // The right group first, so the left one gets what is left and never runs under it.
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = Spacing::S;
+        if let Some(mcp) = view.mcp.as_ref().filter(|_| fits(ui, 90.0)) {
+            let (dot, word) = if mcp.running {
+                (palette.success, "MCP")
+            } else {
+                (palette.text_disabled, "MCP off")
+            };
+            let response = ui
+                .add(
+                    Button::new(RichText::new(format!("{word} {}", mcp.sessions)).small())
+                        .frame(false),
+                )
+                .on_hover_text(&mcp.detail);
+            let rect = egui::Rect::from_center_size(
+                response.rect.left_center() + egui::vec2(-8.0, 0.0),
+                egui::vec2(6.0, 6.0),
+            );
+            ui.painter().circle_filled(rect.center(), 3.0, dot);
+            if response.clicked() {
+                action = Some(StatusAction::OpenAgents);
+            }
+            ui.separator();
+        }
         status_segment(ui, "UTF-8", None);
         if let Some((line, col)) = view.caret {
             ui.separator();

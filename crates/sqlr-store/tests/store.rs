@@ -43,6 +43,7 @@ fn cfg(id: &str, name: &str, group: Option<&str>) -> ConnectionConfig {
         values: [("host".to_string(), "localhost".to_string())].into(),
         profile: None,
         save_secrets: true,
+        agent_access: Default::default(),
     }
 }
 

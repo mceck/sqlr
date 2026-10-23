@@ -45,6 +45,7 @@ fn fixture(dir: &Path, theme: ThemePref) -> SqlrApp {
             values: [("path".into(), file.display().to_string())].into(),
             profile: None,
             save_secrets: false,
+            agent_access: Default::default(),
         };
         repo.save(&cfg, &Secrets::default()).unwrap();
         engine.connect(cfg, Secrets::default(), ConnectionProfile::development());
@@ -69,6 +70,7 @@ fn fixture(dir: &Path, theme: ThemePref) -> SqlrApp {
             data_dir: Some(dir.into()),
             startup_notice: None,
             storage_warning: None,
+            mcp_token_store: None,
         },
         &egui::Context::default(),
     )

@@ -21,6 +21,8 @@ sqlr-driver-postgres = { path = "../sqlr-driver-postgres" }
 sqlr-driver-redis = { path = "../sqlr-driver-redis" }
 sqlr-driver-sqlite = { path = "../sqlr-driver-sqlite" }
 sqlr-engine = { path = "../sqlr-engine" }
+sqlr-mcp = { path = "../sqlr-mcp" }
+sqlr-terminal = { path = "../sqlr-terminal" }
 sqlr-store = { path = "../sqlr-store" }
 sqlr-ui = { path = "../sqlr-ui" }
 anyhow.workspace = true
@@ -36,6 +38,8 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 tracing-appender.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 serde_json.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true, features = ["sync"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # The native menu bar and About panel; eframe/winit only provide the minimal app menu.

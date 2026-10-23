@@ -33,6 +33,7 @@ fn app(dir: &Path) -> Harness<'static, SqlrApp> {
         values: Default::default(),
         profile: None,
         save_secrets: true,
+        agent_access: Default::default(),
     };
     repo.save(&cfg, &Secrets::default()).unwrap();
     let deps = AppDeps {
@@ -43,6 +44,7 @@ fn app(dir: &Path) -> Harness<'static, SqlrApp> {
         data_dir: None,
         startup_notice: None,
         storage_warning: None,
+        mcp_token_store: None,
     };
     let app = SqlrApp::new(deps, &egui::Context::default());
     let mut h = Harness::builder()

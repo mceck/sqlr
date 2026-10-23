@@ -38,6 +38,7 @@ struct SnapConn {
     color: Option<[u8; 3]>,
     tint: Option<[u8; 3]>,
     open_transaction: bool,
+    agent_access: sqlr_core::AgentAccess,
     badge: ConnBadge,
 }
 
@@ -123,6 +124,7 @@ impl<'a> TreeSnapshot<'a> {
                     color: cfg.color,
                     tint: tints.get(&cfg.id).copied(),
                     open_transaction: open.contains(&cfg.id),
+                    agent_access: cfg.agent_access,
                     badge,
                 }
             })
@@ -239,6 +241,7 @@ impl SchemaSource for TreeSnapshot<'_> {
                 badge: c.badge.clone(),
                 tint: c.tint,
                 open_transaction: c.open_transaction,
+                agent_access: c.agent_access,
             })
             .collect()
     }

@@ -43,7 +43,22 @@ pub struct Settings {
     /// Minutes a sidecar driver keeps running after its last connection closes, within
     /// [`SIDECAR_IDLE_MINUTES`].
     pub sidecar_idle_minutes: u32,
+    /// Whether the loopback MCP server runs while the app is open.
+    pub agents_enabled: bool,
+    /// The loopback port the MCP server listens on.
+    pub agents_port: u16,
+    /// The terminal's shell command; empty uses the login shell.
+    pub terminal_shell: String,
+    /// The terminal's working directory; empty uses the home directory.
+    pub terminal_cwd: String,
+    /// Lines the terminal keeps in its scrollback, within [`TERMINAL_SCROLLBACK`].
+    pub terminal_scrollback: usize,
 }
+
+/// The terminal scrollback sizes the settings accept, in lines.
+pub const TERMINAL_SCROLLBACK: std::ops::RangeInclusive<usize> = 100..=10_000;
+pub const MCP_PORTS: std::ops::RangeInclusive<u16> = 1024..=65535;
+pub const DEFAULT_MCP_PORT: u16 = 47821;
 
 impl Default for Settings {
     fn default() -> Self {
@@ -59,6 +74,11 @@ impl Default for Settings {
             soft_wrap: false,
             row_cap: 100_000,
             sidecar_idle_minutes: 5,
+            agents_enabled: false,
+            agents_port: DEFAULT_MCP_PORT,
+            terminal_shell: String::new(),
+            terminal_cwd: String::new(),
+            terminal_scrollback: 2000,
         }
     }
 }
@@ -84,6 +104,12 @@ impl Settings {
             soft_wrap: get("editor.soft_wrap").as_bool(),
             row_cap: get("grid.row_cap").as_i64() as usize,
             sidecar_idle_minutes: get("drivers.sidecar_idle_minutes").as_i64() as u32,
+            agents_enabled: get("agents.enabled").as_bool(),
+            agents_port: get("agents.port").as_i64().clamp(1024, 65535) as u16,
+            terminal_shell: get("terminal.shell").as_str().to_string(),
+            terminal_cwd: get("terminal.cwd").as_str().to_string(),
+            terminal_scrollback: (get("terminal.scrollback").as_i64() as usize)
+                .clamp(*TERMINAL_SCROLLBACK.start(), *TERMINAL_SCROLLBACK.end()),
         }
     }
 
@@ -123,6 +149,23 @@ impl Settings {
             (
                 "drivers.sidecar_idle_minutes",
                 SettingValue::Int(i64::from(self.sidecar_idle_minutes)),
+            ),
+            ("agents.enabled", SettingValue::Bool(self.agents_enabled)),
+            (
+                "agents.port",
+                SettingValue::Int(i64::from(self.agents_port)),
+            ),
+            (
+                "terminal.shell",
+                SettingValue::Text(self.terminal_shell.clone()),
+            ),
+            (
+                "terminal.cwd",
+                SettingValue::Text(self.terminal_cwd.clone()),
+            ),
+            (
+                "terminal.scrollback",
+                SettingValue::Int(self.terminal_scrollback as i64),
             ),
         ];
         for (id, value) in values {
@@ -210,12 +253,28 @@ mod tests {
         assert_eq!(load_with("ui_scale = 0.1\n").ui_scale, *UI_SCALES.start());
         assert_eq!(load_with("ui_scale = nan\n").ui_scale, 1.0);
 
+        assert_eq!(
+            load_with("terminal_scrollback = 5\n").terminal_scrollback,
+            100
+        );
+        assert_eq!(
+            load_with("terminal_scrollback = 99999\n").terminal_scrollback,
+            10_000
+        );
+        assert_eq!(load_with("agents_port = 80\n").agents_port, 1024);
+        assert!(load_with("agents_enabled = true\n").agents_enabled);
+
         let dir = tempfile::tempdir().unwrap();
         let settings = Settings {
             ui_scale: 1.25,
             line_numbers: false,
             soft_wrap: true,
             row_cap: 0,
+            agents_enabled: true,
+            agents_port: 50000,
+            terminal_shell: "zsh -l".into(),
+            terminal_cwd: "/tmp".into(),
+            terminal_scrollback: 5000,
             ..Settings::default()
         };
         settings.save(dir.path()).unwrap();

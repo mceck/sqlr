@@ -24,6 +24,7 @@ fn sqlite_config(id: &str, name: &str, path: &Path) -> ConnectionConfig {
         values: [("path".to_string(), path.display().to_string())].into(),
         profile: None,
         save_secrets: true,
+        agent_access: Default::default(),
     }
 }
 
@@ -62,6 +63,7 @@ fn harness(dir: &Path) -> Harness<'static, SqlrApp> {
         data_dir: None,
         startup_notice: None,
         storage_warning: None,
+        mcp_token_store: None,
     };
     let app = SqlrApp::new(deps, &egui::Context::default());
     let mut h = Harness::builder()

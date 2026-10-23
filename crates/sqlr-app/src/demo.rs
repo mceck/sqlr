@@ -435,6 +435,7 @@ fn temp_config(id: &str, path: &Path) -> ConnectionConfig {
         .into(),
         profile: None,
         save_secrets: true,
+        agent_access: Default::default(),
     }
 }
 
@@ -581,6 +582,7 @@ impl SqlrApp {
                 values: Default::default(),
                 profile: None,
                 save_secrets: true,
+                agent_access: Default::default(),
             });
             cfg.values.insert("path".into(), path);
             cfg.values

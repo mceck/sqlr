@@ -114,6 +114,20 @@ pub struct SettingDef {
     pub default: SettingValue,
     pub levels: Levels,
     pub safety: Safety,
+    /// Whether an MCP agent may read the value.
+    pub agent_readable: bool,
+    /// Whether an MCP agent may set or reset the value.
+    pub agent_writable: bool,
+}
+
+impl SettingDef {
+    /// Whether the setting may be set at `level`.
+    pub fn allows_level(&self, level: &Level) -> bool {
+        matches!(
+            (self.levels, level),
+            (Levels::GlobalOnly, Level::Global) | (Levels::All, _)
+        )
+    }
 }
 
 impl SettingDef {
@@ -227,6 +241,8 @@ pub const SECTIONS: &[&str] = &[
     "Data formats",
     "Keymap",
     "Connections",
+    "Agents",
+    "Terminal",
     "Drivers",
 ];
 
@@ -284,6 +300,58 @@ fn def(
         default,
         levels,
         safety: Safety::None,
+        agent_readable: true,
+        agent_writable: true,
+    }
+}
+
+/// A setting agents may read but never write (the MCP server's own configuration).
+fn agents_readable(
+    id: &'static str,
+    label: &'static str,
+    description: &'static str,
+    keywords: &'static [&'static str],
+    kind: SettingKind,
+    default: SettingValue,
+) -> SettingDef {
+    SettingDef {
+        agent_writable: false,
+        ..def(
+            id,
+            "Agents",
+            label,
+            description,
+            keywords,
+            kind,
+            default,
+            Levels::GlobalOnly,
+        )
+    }
+}
+
+/// A setting neither readable nor writable by agents (`terminal.shell`).
+fn human_only(
+    id: &'static str,
+    section: &'static str,
+    label: &'static str,
+    description: &'static str,
+    keywords: &'static [&'static str],
+    kind: SettingKind,
+    default: SettingValue,
+) -> SettingDef {
+    SettingDef {
+        agent_readable: false,
+        agent_writable: false,
+        ..def(
+            id,
+            section,
+            label,
+            description,
+            keywords,
+            kind,
+            default,
+            Levels::GlobalOnly,
+        )
     }
 }
 
@@ -692,6 +760,57 @@ fn build_defs() -> Vec<SettingDef> {
             "Ask before DROP, TRUNCATE and DELETE without WHERE. Can only be switched on below the global level.",
             &["confirm", "drop", "truncate", "delete"],
         ),
+        agents_readable(
+            "agents.enabled",
+            "Enable agent access (MCP)",
+            "Expose a loopback-only MCP server while sqlr is running. No connection is exposed until you mark it.",
+            &["mcp", "agent", "server", "remote", "claude", "codex"],
+            K::Bool,
+            V::Bool(false),
+        ),
+        agents_readable(
+            "agents.port",
+            "MCP port",
+            "The loopback port the MCP server listens on; changing it restarts the server.",
+            &["mcp", "port", "listen"],
+            K::Int {
+                min: 1024,
+                max: 65535,
+            },
+            V::Int(47821),
+        ),
+        human_only(
+            "terminal.shell",
+            "Terminal",
+            "Shell command",
+            "Empty uses your login shell. Run through the platform shell wrapper; the command is never shown to agents or logged.",
+            &["pty", "bash", "zsh", "powershell", "command"],
+            K::Text,
+            text(""),
+        ),
+        def(
+            "terminal.cwd",
+            "Terminal",
+            "Working directory",
+            "Empty starts in your home directory.",
+            &["folder", "path", "directory"],
+            K::Text,
+            text(""),
+            GlobalOnly,
+        ),
+        def(
+            "terminal.scrollback",
+            "Terminal",
+            "Scrollback lines",
+            "Lines the terminal keeps above the visible screen.",
+            &["history", "buffer", "lines"],
+            K::Int {
+                min: 100,
+                max: 10_000,
+            },
+            V::Int(2000),
+            GlobalOnly,
+        ),
         def(
             "drivers.postgres.properties",
             "Drivers",
@@ -854,6 +973,28 @@ mod tests {
             // The stored form reads back as the same value.
             assert_eq!(d.from_json(&d.default.to_json()), Some(d.default.clone()));
         }
+    }
+
+    #[test]
+    fn agent_visibility_of_settings() {
+        let shell = setting_def("terminal.shell").unwrap();
+        assert!(!shell.agent_readable && !shell.agent_writable);
+        for id in ["agents.enabled", "agents.port"] {
+            let def = setting_def(id).unwrap();
+            assert!(def.agent_readable && !def.agent_writable, "{id}");
+        }
+        for id in ["terminal.cwd", "terminal.scrollback"] {
+            let def = setting_def(id).unwrap();
+            assert!(def.agent_readable && def.agent_writable, "{id}");
+        }
+        assert_eq!(
+            setting_def("agents.port").unwrap().default,
+            SettingValue::Int(47821)
+        );
+        assert_eq!(
+            setting_def("terminal.scrollback").unwrap().default,
+            SettingValue::Int(2000)
+        );
     }
 
     #[test]

@@ -452,6 +452,101 @@ impl Engine {
         self.shared.repaint();
     }
 
+    /// The engine session key for an MCP agent (`agent_id` is the MCP session id) on
+    /// `conn`.
+    pub fn agent_session(&self, conn: &str, agent_id: &str) -> SessionKey {
+        SessionKey::agent(conn, agent_id)
+    }
+
+    /// Prepares an agent session: `read_only` forces the server-side read-only flag (a
+    /// `Read` exposure), and the profile still supplies the commit mode. The session opens
+    /// lazily on its first query.
+    pub fn prepare_agent_session(&self, key: &SessionKey, read_only: bool) {
+        if !matches!(key.slot, Slot::Agent(_)) {
+            return;
+        }
+        let mut inner = self.shared.inner.lock();
+        let Some(entry) = inner.conns.get(&key.conn) else {
+            return;
+        };
+        let mode = entry.profile.commit_mode;
+        let profile_read_only = entry.profile.read_only;
+        inner
+            .prefs
+            .insert(key.clone(), (mode, read_only || profile_read_only));
+    }
+
+    /// Closes every agent session of one MCP session: pending queries are cancelled, their
+    /// results closed and the connections retired (open transactions roll back when the
+    /// server connection goes away).
+    pub fn close_agent_sessions(&self, agent_id: &str) {
+        let mut results = Vec::new();
+        {
+            let mut inner = self.shared.inner.lock();
+            let keys: Vec<SessionKey> = inner
+                .sessions
+                .keys()
+                .filter(|k| matches!(&k.slot, Slot::Agent(a) if a == agent_id))
+                .cloned()
+                .collect();
+            results.extend(
+                inner
+                    .results
+                    .iter()
+                    .filter(|(_, e)| matches!(&e.key.slot, Slot::Agent(a) if a == agent_id))
+                    .map(|(q, _)| *q),
+            );
+            for key in keys {
+                inner.prefs.remove(&key);
+                if let Some(old) = inner.sessions.remove(&key) {
+                    self.shared.retire(old);
+                }
+            }
+        }
+        for q in results {
+            self.shared.close_query(q);
+        }
+        self.shared.close_agent_docs(agent_id);
+        self.shared.repaint();
+    }
+
+    /// Closes every agent session on one connection (exposure became `None`).
+    pub fn close_agent_sessions_for_connection(&self, conn: &str) {
+        let mut results = Vec::new();
+        {
+            let mut inner = self.shared.inner.lock();
+            let keys: Vec<SessionKey> = inner
+                .sessions
+                .keys()
+                .filter(|k| k.conn == conn && matches!(k.slot, Slot::Agent(_)))
+                .cloned()
+                .collect();
+            results.extend(
+                inner
+                    .results
+                    .iter()
+                    .filter(|(_, e)| e.key.conn == conn && matches!(e.key.slot, Slot::Agent(_)))
+                    .map(|(q, _)| *q),
+            );
+            for key in keys {
+                inner.prefs.remove(&key);
+                if let Some(old) = inner.sessions.remove(&key) {
+                    self.shared.retire(old);
+                }
+            }
+        }
+        for q in results {
+            self.shared.close_query(q);
+        }
+        self.shared.repaint();
+    }
+
+    /// Whether the connection's metadata session was opened and is live (the explorer
+    /// shows the connection).
+    pub fn is_connected(&self, conn_id: &str) -> bool {
+        self.shared.live_io(conn_id).is_some()
+    }
+
     /// Loads the children of `path` into the explorer cache; a no-op if they are already
     /// loading or loaded. Waits for a session that is still connecting.
     pub fn browse(&self, conn_id: &str, path: NodePath) {
@@ -708,9 +803,10 @@ impl Engine {
         .filter_map(|k| Some((k.clone(), self.transaction(&k)?)))
         .collect();
         open.sort_by_key(|(k, _)| {
-            let slot = match k.slot {
+            let slot = match &k.slot {
                 Slot::Meta => 0,
                 Slot::Tab(t) => t + 1,
+                Slot::Agent(_) => 1,
             };
             (k.conn.clone(), slot)
         });

@@ -297,6 +297,7 @@ fn config(values: &[(&str, &str)]) -> ConnectionConfig {
         values: all,
         profile: None,
         save_secrets: true,
+        agent_access: Default::default(),
     }
 }
 

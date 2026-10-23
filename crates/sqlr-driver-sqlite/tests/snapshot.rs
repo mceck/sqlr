@@ -32,6 +32,7 @@ impl Env {
             .collect(),
             profile: None,
             save_secrets: true,
+            agent_access: Default::default(),
         };
         let conn = SqliteDriver::new()
             .connect(&cfg, &Secrets::default())

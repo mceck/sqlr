@@ -75,6 +75,7 @@ fn app(dir: &std::path::Path) -> (Harness<'static, SqlrApp>, Arc<FakeDocDriver>)
             values: Default::default(),
             profile: None,
             save_secrets: true,
+            agent_access: Default::default(),
         },
         &Secrets::default(),
     )
@@ -87,6 +88,7 @@ fn app(dir: &std::path::Path) -> (Harness<'static, SqlrApp>, Arc<FakeDocDriver>)
         data_dir: None,
         startup_notice: None,
         storage_warning: None,
+        mcp_token_store: None,
     };
     let app = SqlrApp::new(deps, &egui::Context::default());
     let mut h = Harness::builder()

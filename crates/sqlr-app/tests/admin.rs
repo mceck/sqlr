@@ -218,6 +218,7 @@ fn harness_with(
         values: [("host".to_string(), "fake-host".to_string())].into(),
         profile: read_only.then(|| "ro".to_string()),
         save_secrets: true,
+        agent_access: Default::default(),
     };
     repo.save(&cfg, &Secrets::default()).unwrap();
     let deps = AppDeps {
@@ -228,6 +229,7 @@ fn harness_with(
         data_dir: None,
         startup_notice: None,
         storage_warning: None,
+        mcp_token_store: None,
     };
     let app = SqlrApp::new(deps, &egui::Context::default());
     let mut h = Harness::builder()

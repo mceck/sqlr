@@ -316,6 +316,7 @@ async fn wrong_password_is_an_auth_error() {
         .collect(),
         profile: None,
         save_secrets: true,
+        agent_access: Default::default(),
     };
     let secrets = Secrets([("password".to_string(), "wrong".to_string())].into());
     let result = tokio::time::timeout(

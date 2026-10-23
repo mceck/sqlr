@@ -74,6 +74,7 @@ mod tests {
                 values: Default::default(),
                 profile: None,
                 save_secrets: true,
+                agent_access: Default::default(),
             };
             repo.save(&cfg, &Secrets::default()).unwrap();
         }
@@ -85,6 +86,7 @@ mod tests {
             data_dir: None,
             startup_notice: None,
             storage_warning: None,
+            mcp_token_store: None,
         };
         (SqlrApp::new(deps, &egui::Context::default()), dir)
     }

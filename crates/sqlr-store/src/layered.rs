@@ -117,6 +117,30 @@ impl LayeredSettings {
         self.layer(level)?.get(id)
     }
 
+    /// Every stored value with its level key (`global`, `profile:<id>`,
+    /// `connection:<id>`), for the read-only settings view agents get.
+    pub fn stored_values(&self) -> Vec<(String, String, SettingValue)> {
+        let mut out = Vec::new();
+        for (id, value) in &self.global {
+            out.push(("global".to_string(), id.clone(), value.clone()));
+        }
+        for (profile, values) in &self.profiles {
+            for (id, value) in values {
+                out.push((format!("profile:{profile}"), id.clone(), value.clone()));
+            }
+        }
+        for (connection, values) in &self.connections {
+            for (id, value) in values {
+                out.push((
+                    format!("connection:{connection}"),
+                    id.clone(),
+                    value.clone(),
+                ));
+            }
+        }
+        out
+    }
+
     /// The value in force for `id` and where it comes from. `conn` is the connection's id and
     /// its profile's id; without it only the global level applies. A safety flag is on when
     /// any level has it on.
@@ -257,6 +281,11 @@ fn read_global(table: &toml::Table) -> Values {
         ("line_numbers", "editor.line_numbers"),
         ("soft_wrap", "editor.soft_wrap"),
         ("sidecar_idle_minutes", "drivers.sidecar_idle_minutes"),
+        ("agents_enabled", "agents.enabled"),
+        ("agents_port", "agents.port"),
+        ("terminal_shell", "terminal.shell"),
+        ("terminal_cwd", "terminal.cwd"),
+        ("terminal_scrollback", "terminal.scrollback"),
     ];
     for (old, new) in OLD {
         let Some(value) = table.get(*old) else {

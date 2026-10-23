@@ -101,6 +101,7 @@ fn config(driver: &str, values: &[(&str, &str)]) -> ConnectionConfig {
             .collect(),
         profile: None,
         save_secrets: true,
+        agent_access: Default::default(),
     }
 }
 

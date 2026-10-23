@@ -448,6 +448,7 @@ fn config(overrides: &[(&str, &str)]) -> ConnectionConfig {
         values: values.into_iter().collect(),
         profile: None,
         save_secrets: true,
+        agent_access: Default::default(),
     }
 }
 

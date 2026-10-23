@@ -498,3 +498,34 @@ All widgets take data in and return action values. None of them calls the engine
 | `hdbconnect` has essentially one maintainer and a slow release cadence | The driver runs as a sidecar, so a `SAP/go-hdb` sidecar can replace it transparently. Upstream the PEM fix. Validate the driver against native HANA and HANA Cloud environments. |
 | GPU-dependent rendering on old or virtualized machines | eframe's glow (OpenGL) fallback, selectable in settings. |
 | Mongo shell syntax expectations beyond our subset | Document the supported subset clearly, and provide a raw-command mode (`runCommand` JSON) for anything else. |
+
+## 14. Agent access and the integrated terminal
+
+sqlr can expose a native MCP server while it runs. It is disabled by default, binds only
+`127.0.0.1`, requires a keychain-backed bearer token on every request, validates `Host`
+and `Origin`, publishes a token-free `mcp.json`, and exposes MCP tools only. The server
+stops and removes its discovery file when disabled or when sqlr quits.
+
+Each connection has an **agent access** level, `None` (the default), `Read` or `Write`,
+chosen only by the person in the connection dialog or the explorer. `Read` forces the
+agent's engine session read-only; `Write` still follows the connection profile's commit
+mode, read-only flag and confirmations. Exposed connections are marked in the explorer.
+Connections open lazily and visibly; the agent has its own engine session per connection
+and MCP session, isolated from editor transactions, and its open transactions are rolled
+back when the MCP session ends. There is no connect or disconnect tool.
+
+The tool surface covers a guide, catalog browsing and searching, schemas, one-statement
+queries with paged typed results, editor-tab read/edit/run with revision checks, snippets,
+and configuration reads/writes. Connection values and secrets are write-only. Driver
+installs, MCP settings, application updates and `terminal.shell` are human-only; safety
+flags are tighten-only, including profile changes, setting resets and transport-security
+driver fields. Destructive statements and configuration/snippet deletes use the same
+in-app approval dialog as human runs, with a 60-second deny-by-default timeout and a
+structured `denied`/`timeout` error.
+
+The integrated terminal is a real PTY with a login shell, opened with `Ctrl+Backtick`,
+kept running when hidden, and rendered with the app theme and monospace font (ANSI, wide
+characters, alternate screen, resize, selection, bracketed paste). It is human-only and
+never exposed to MCP; its output and shell command are never logged, no MCP token is
+injected, and its process group is killed on quit. Existing performance budgets are
+unchanged when MCP and the terminal are disabled or unopened.

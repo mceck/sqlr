@@ -406,6 +406,7 @@ mod tests {
             .into(),
             profile: None,
             save_secrets: true,
+            agent_access: Default::default(),
         };
         let url = connection_url(&cfg, &manifest).unwrap();
         assert_eq!(url, "postgresql://bob%40corp@db.example:6543/shop");

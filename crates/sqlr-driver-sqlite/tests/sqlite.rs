@@ -25,6 +25,7 @@ fn config(path: &Path, read_only: bool, create: bool) -> ConnectionConfig {
         .collect(),
         profile: None,
         save_secrets: true,
+        agent_access: Default::default(),
     }
 }
 

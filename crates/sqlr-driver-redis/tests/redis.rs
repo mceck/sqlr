@@ -34,6 +34,7 @@ fn config(host: &str, port: u16, extra: &[(&str, &str)]) -> ConnectionConfig {
         values,
         profile: None,
         save_secrets: true,
+        agent_access: Default::default(),
     }
 }
 

@@ -79,6 +79,8 @@ pub struct AppDeps {
     /// Why history and snippets live in memory only, when they do: a warning that stays in
     /// the status bar for the whole session.
     pub storage_warning: Option<String>,
+    /// Where the MCP bearer token lives; tests pass an in-memory store.
+    pub mcp_token_store: Option<Arc<dyn sqlr_store::McpTokenStore>>,
 }
 
 /// The real dependencies: keychain secrets, the user's config directory, `sqlr.db` (or an
@@ -132,6 +134,7 @@ pub fn production_deps_in(
         data_dir,
         storage_warning: startup_notice.clone(),
         startup_notice,
+        mcp_token_store: None,
     })
 }
 
@@ -144,7 +147,7 @@ pub(crate) enum LeftPane {
 }
 
 pub struct SqlrApp {
-    pub(crate) engine: Engine,
+    pub(crate) engine: Arc<Engine>,
     /// `connections.toml` and the keychain, off the UI thread.
     pub(crate) store: crate::store_worker::StoreWorker,
     /// Connections whose saved edit reconnects them once the new listing arrives.
@@ -256,6 +259,22 @@ pub struct SqlrApp {
     pub(crate) drivers_ui: crate::drivers::DriversUi,
     /// The demo database being prepared.
     pub(crate) demo: Option<crate::demo::DemoSetup>,
+    /// The MCP server, its status and its start/stop bookkeeping.
+    pub(crate) mcp: crate::agents::AgentsUi,
+    pub(crate) mcp_token_store: Arc<dyn sqlr_store::McpTokenStore>,
+    pub(crate) host_jobs: std::sync::mpsc::Receiver<crate::agents::HostTask>,
+    pub(crate) host_tx: std::sync::mpsc::Sender<crate::agents::HostTask>,
+    /// Agent approvals waiting for the person, oldest first.
+    pub(crate) pending_approvals: std::collections::VecDeque<crate::agents::PendingApproval>,
+    /// Focus the Deny button when the next approval draws.
+    pub(crate) approval_focus_pending: bool,
+    /// Connection writes waiting for the store's answer, by connection id.
+    pub(crate) pending_connection_writes:
+        HashMap<String, Vec<crate::agents::PendingConnectionWrite>>,
+    /// The integrated terminal (session-only visibility and height).
+    pub(crate) terminal: sqlr_terminal::TerminalPanel,
+    /// The context of the current frame, for work queued outside `ui` (settings saves).
+    pub(crate) ui_ctx: Option<egui::Context>,
 }
 
 impl SqlrApp {
@@ -271,7 +290,9 @@ impl SqlrApp {
             data_dir,
             startup_notice,
             storage_warning,
+            mcp_token_store,
         } = deps;
+        let engine = Arc::new(engine);
         // The only UI-thread I/O outside the store thread: `connections.toml`, once, before
         // the first frame (like `settings.toml`). Profiles are read by the engine.
         let listing = crate::store_worker::Listing::read(&repo);
@@ -280,6 +301,7 @@ impl SqlrApp {
         settings.apply_to(&mut layered);
         let wake = ctx.clone();
         let store = crate::store_worker::StoreWorker::spawn(repo, move || wake.request_repaint());
+        let (host_tx, host_rx) = std::sync::mpsc::channel();
         let mut app = Self {
             engine,
             store,
@@ -349,6 +371,16 @@ impl SqlrApp {
             databases_dialog: None,
             drivers_ui: Default::default(),
             demo: None,
+            mcp: Default::default(),
+            mcp_token_store: mcp_token_store
+                .unwrap_or_else(|| Arc::new(sqlr_store::KeyringMcpTokenStore)),
+            host_jobs: host_rx,
+            host_tx,
+            pending_approvals: Default::default(),
+            approval_focus_pending: false,
+            pending_connection_writes: HashMap::new(),
+            terminal: Default::default(),
+            ui_ctx: None,
         };
         if let Some(notice) = startup_notice {
             app.notify(notice);
@@ -381,13 +413,26 @@ impl SqlrApp {
         #[cfg(target_os = "macos")]
         self.native_menu_ui(ui.ctx());
         sqlr_ui::keymap::set_ui_keymap(ui.ctx(), self.keymap.keymap.clone());
+        let terminal_focused = self.terminal.focused();
         for action in crate::actions::dispatch_actions(ui.ctx(), &self.keymap.keymap, |action| {
-            self.prefs.is_none() && action != sqlr_core::ActionId::Stop
+            self.prefs.is_none()
+                && action != sqlr_core::ActionId::Stop
+                && (!terminal_focused
+                    || matches!(
+                        action,
+                        sqlr_core::ActionId::ToggleTerminal
+                            | sqlr_core::ActionId::Settings
+                            | sqlr_core::ActionId::Quit
+                            | sqlr_core::ActionId::Shortcuts
+                            | sqlr_core::ActionId::Commands
+                            | sqlr_core::ActionId::ShowOperations
+                    ))
         }) {
             self.dispatch_action(action, ui.ctx());
         }
         self.sync_profiles();
         self.poll_store();
+        self.agents_frame(ui.ctx());
         self.poll_settings_save(ui.ctx());
         self.open_pending_redis();
         self.forget_failed_secrets();
@@ -417,6 +462,17 @@ impl SqlrApp {
             .frame(bar(ui.style()))
             .show(ui, |ui| self.status(ui));
         self.operations_ui(ui);
+        if self.terminal.is_open() {
+            egui::Panel::bottom("terminal")
+                .resizable(true)
+                .default_size(300.0)
+                .min_size(120.0)
+                .frame(
+                    egui::Frame::side_top_panel(ui.style())
+                        .inner_margin(Margin::same(Spacing::M as i8)),
+                )
+                .show(ui, |ui| self.terminal_ui(ui));
+        }
         if self.show_history {
             egui::Panel::bottom("history")
                 .resizable(true)
@@ -536,7 +592,7 @@ impl SqlrApp {
 
     /// Writes the layered settings on a worker thread. One save runs at a time: a request
     /// made meanwhile is saved once it ends, so an older state cannot land last.
-    fn save_settings(&mut self, ctx: &egui::Context) {
+    pub(crate) fn save_settings(&mut self, ctx: &egui::Context) {
         if self.settings_save.is_some() {
             self.settings_dirty = true;
             return;
@@ -637,6 +693,7 @@ impl SqlrApp {
             ctx,
             self.show_value_panel,
             self.show_history,
+            self.terminal.is_open(),
             self.settings.soft_wrap,
         ) {
             Ok(menu) => self.native_menu = Some(menu),
@@ -661,6 +718,7 @@ impl SqlrApp {
             menu.sync(
                 self.show_value_panel,
                 self.show_history,
+                self.terminal.is_open(),
                 self.settings.soft_wrap,
             );
         }
@@ -717,6 +775,21 @@ impl SqlrApp {
             info: info.as_ref(),
             storage_warning: self.storage_warning.as_deref(),
             job: job.as_ref().map(|(text, _)| text.as_str()),
+            mcp: self
+                .settings
+                .agents_enabled
+                .then(|| crate::shell::status::McpView {
+                    running: self.mcp.status.is_running(),
+                    sessions: self.mcp.sessions(),
+                    detail: format!(
+                        "{}: {} active session(s){}",
+                        self.mcp.status.label(),
+                        self.mcp.sessions(),
+                        self.mcp
+                            .url()
+                            .map_or(String::new(), |url| format!(" · {url}"))
+                    ),
+                }),
         };
         let action = status_bar(ui, &mut self.status_bar, &view);
         match action {
@@ -737,6 +810,9 @@ impl SqlrApp {
                 if let Some((_, id)) = job {
                     self.engine.cancel_job(id);
                 }
+            }
+            Some(StatusAction::OpenAgents) => {
+                self.open_preferences_section("Agents");
             }
             None => {}
         }
@@ -888,6 +964,7 @@ impl SqlrApp {
             TreeAction::Edit(id) => self.open_edit_connection(&id),
             TreeAction::Duplicate(id) => self.duplicate_connection(&id),
             TreeAction::Delete(id) => self.delete_pending = Some(id),
+            TreeAction::SetAgentAccess { conn, access } => self.set_agent_access(&conn, access),
             TreeAction::Expand { conn, path } => self.engine.browse(&conn, path),
             TreeAction::Refresh { conn, path } => self.engine.refresh(&conn, path),
             TreeAction::OpenData { conn, node } => self.open_data(&conn, &node),
@@ -1003,6 +1080,14 @@ impl SqlrApp {
         if self.prefs.is_none() {
             self.prefs = Some(PrefsWindow::new(&self.layered, scope));
         }
+    }
+
+    pub(crate) fn open_preferences_section(&mut self, section: &'static str) {
+        self.prefs = Some(PrefsWindow::new_for_section(
+            &self.layered,
+            sqlr_core::Level::Global,
+            section,
+        ));
     }
 
     /// The JSON text of the value of setting `id` for a connection (global for none).
@@ -1254,7 +1339,20 @@ impl SqlrApp {
                 listing,
             } => {
                 self.apply_listing(listing);
+                let outcome = result.clone();
                 self.connection_save_ended(&id, editing, result);
+                if let Some(acks) = self.pending_connection_writes.remove(&id) {
+                    for (ack, name) in acks {
+                        let result = match &outcome {
+                            Ok(()) => {
+                                self.notify(format!("Agent updated connection {name}"));
+                                Ok(())
+                            }
+                            Err(error) => Err(sqlr_mcp::error::ToolError::invalid(error.clone())),
+                        };
+                        let _ = ack.send(result);
+                    }
+                }
             }
             StoreReply::Deleted {
                 id,
@@ -1638,6 +1736,7 @@ mod tests {
             values: Default::default(),
             profile: None,
             save_secrets: true,
+            agent_access: Default::default(),
         };
         repo.save(&cfg, &Secrets::default()).unwrap();
         let deps = AppDeps {
@@ -1648,6 +1747,7 @@ mod tests {
             data_dir: None,
             startup_notice: None,
             storage_warning: None,
+            mcp_token_store: None,
         };
         let mut app = SqlrApp::new(deps, &egui::Context::default());
         let on_c1 = app.new_tab(None, Some("c1".into()), "");
@@ -1680,6 +1780,7 @@ mod tests {
             values: Default::default(),
             profile: Some(ConnectionProfile::TEST.into()),
             save_secrets: true,
+            agent_access: Default::default(),
         };
         repo.save(&cfg, &Secrets::default()).unwrap();
         let deps = AppDeps {
@@ -1690,6 +1791,7 @@ mod tests {
             data_dir: None,
             startup_notice: None,
             storage_warning: None,
+            mcp_token_store: None,
         };
         let mut app = SqlrApp::new(deps, &egui::Context::default());
 
@@ -1746,6 +1848,7 @@ mod tests {
             values: Default::default(),
             profile: None,
             save_secrets: true,
+            agent_access: Default::default(),
         };
         let pw = Secrets([("password".to_string(), "hunter2".to_string())].into());
         repo.save(&cfg, &pw).unwrap();
@@ -1757,6 +1860,7 @@ mod tests {
             data_dir: None,
             startup_notice: None,
             storage_warning: None,
+            mcp_token_store: None,
         };
         SqlrApp::new(deps, &egui::Context::default())
     }
@@ -1847,6 +1951,7 @@ mod tests {
             values: Default::default(),
             profile: Some("mine".into()),
             save_secrets: true,
+            agent_access: Default::default(),
         };
         let pw = Secrets([("password".to_string(), "hunter2".to_string())].into());
         repo.save(&cfg, &pw).unwrap();
@@ -1867,6 +1972,7 @@ mod tests {
             data_dir: None,
             startup_notice: None,
             storage_warning: None,
+            mcp_token_store: None,
         };
         let mut app = SqlrApp::new(deps, &egui::Context::default());
         // The profiles arrive from the engine.
@@ -1904,6 +2010,7 @@ mod tests {
             values: Default::default(),
             profile: None,
             save_secrets: true,
+            agent_access: Default::default(),
         };
         repo.save(&cfg, &Secrets::default()).unwrap();
         let deps = AppDeps {
@@ -1914,6 +2021,7 @@ mod tests {
             data_dir: None,
             startup_notice: None,
             storage_warning: None,
+            mcp_token_store: None,
         };
         let mut app = SqlrApp::new(deps, &egui::Context::default());
         app.connect("c1");

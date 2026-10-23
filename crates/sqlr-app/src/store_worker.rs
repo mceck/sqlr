@@ -285,6 +285,8 @@ fn duplicate(
     let saved = repo.list()?;
     let taken: Vec<&str> = saved.iter().map(|c| c.name.as_str()).collect();
     copy.name = crate::dialogs::copy_name(&cfg.name, &taken);
+    // Consent never travels with a copy.
+    copy.agent_access = sqlr_core::AgentAccess::None;
     repo.save(&copy, &secrets).inspect_err(|e| {
         tracing::warn!(conn = %copy.id, error = %e, "duplicating the connection failed");
     })?;
@@ -321,11 +323,26 @@ mod tests {
             values: Default::default(),
             profile: None,
             save_secrets: true,
+            agent_access: Default::default(),
         }
     }
 
     fn manifest() -> DriverManifest {
         FakeDriver::new(Default::default()).manifest().clone()
+    }
+
+    #[test]
+    fn duplicating_a_connection_resets_agent_access() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = repo(dir.path());
+        let mut cfg = config("c1", "one");
+        cfg.agent_access = sqlr_core::AgentAccess::Write;
+        let manifest = manifest();
+        repo.save(&cfg, &Secrets::default()).unwrap();
+        let copy = duplicate(&repo, &cfg, &manifest).unwrap();
+        let saved = repo.list().unwrap();
+        let copy = saved.iter().find(|config| config.id == copy).unwrap();
+        assert_eq!(copy.agent_access, sqlr_core::AgentAccess::None);
     }
 
     #[test]

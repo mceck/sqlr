@@ -50,6 +50,7 @@ fn from_env() -> Option<(ConnectionConfig, Secrets)> {
             values,
             profile: None,
             save_secrets: true,
+            agent_access: Default::default(),
         },
         Secrets([("password".to_string(), password)].into()),
     ))

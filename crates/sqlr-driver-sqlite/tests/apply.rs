@@ -21,6 +21,7 @@ fn config(path: &Path) -> ConnectionConfig {
         values: [("path".to_string(), path.display().to_string())].into(),
         profile: None,
         save_secrets: true,
+        agent_access: Default::default(),
     }
 }
 

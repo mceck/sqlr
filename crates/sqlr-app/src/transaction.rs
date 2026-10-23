@@ -459,6 +459,11 @@ impl SqlrApp {
     pub(crate) fn guard_quit(&mut self, ctx: &egui::Context) {
         if self.quit_now {
             self.quit_now = false;
+            self.mcp.stop();
+            self.terminal.kill();
+            while let Some(mut pending) = self.pending_approvals.pop_front() {
+                pending.answer(Err(sqlr_mcp::error::ToolError::denied()));
+            }
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
@@ -534,12 +539,15 @@ impl SqlrApp {
                 let name = self
                     .connection(&k.conn)
                     .map_or(k.conn.clone(), |c| c.name.clone());
-                match k.slot {
+                match &k.slot {
                     Slot::Meta => name,
-                    Slot::Tab(t) => match self.dock.iter_all_tabs().find(|(_, tab)| tab.key == t) {
-                        Some((_, tab)) => format!("{name} ({})", tab.title),
-                        None => name,
-                    },
+                    Slot::Tab(t) => {
+                        match self.dock.iter_all_tabs().find(|(_, tab)| tab.key == *t) {
+                            Some((_, tab)) => format!("{name} ({})", tab.title),
+                            None => name,
+                        }
+                    }
+                    Slot::Agent(_) => format!("{name} (agent)"),
                 }
             })
             .collect();
@@ -660,6 +668,7 @@ mod tests {
             values: Default::default(),
             profile: None,
             save_secrets: true,
+            agent_access: Default::default(),
         };
         repo.save(&cfg, &Secrets::default()).unwrap();
         let deps = AppDeps {
@@ -670,6 +679,7 @@ mod tests {
             data_dir: None,
             startup_notice: None,
             storage_warning: None,
+            mcp_token_store: None,
         };
         let mut app = SqlrApp::new(deps, &egui::Context::default());
         let key = app.new_tab(None, Some("c1".into()), "select 1");
@@ -699,6 +709,7 @@ mod tests {
             values: Default::default(),
             profile: None,
             save_secrets: true,
+            agent_access: Default::default(),
         };
         repo.save(&cfg, &Secrets::default()).unwrap();
         let deps = AppDeps {
@@ -709,6 +720,7 @@ mod tests {
             data_dir: None,
             startup_notice: None,
             storage_warning: None,
+            mcp_token_store: None,
         };
         (SqlrApp::new(deps, &egui::Context::default()), dir)
     }

@@ -13,7 +13,8 @@ use tracing_subscriber::{EnvFilter, Layer, fmt};
 /// background thread, so logging never blocks the UI. Keep the returned guard alive until
 /// exit; dropping it flushes the file.
 pub fn init(log_dir: Option<&Path>) -> Option<WorkerGuard> {
-    let filter = || EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter =
+        || EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,rmcp=warn"));
     let stderr = fmt::layer().with_writer(std::io::stderr);
     // Under `cargo test` the harness captures it.
     #[cfg(test)]

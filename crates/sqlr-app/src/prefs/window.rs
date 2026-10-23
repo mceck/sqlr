@@ -39,6 +39,11 @@ pub struct PrefsWindow {
     pub open_databases: bool,
     /// "Open settings folder" was clicked; the app opens it with the OS.
     pub open_settings_folder: bool,
+    /// Settings → Agents status, set by the app before showing.
+    pub mcp: crate::agents::McpPrefs,
+    pub copy_mcp_config: bool,
+    pub rotate_token: bool,
+    pub open_terminal: bool,
 }
 
 fn section_icon(section: &str) -> &'static str {
@@ -48,12 +53,21 @@ fn section_icon(section: &str) -> &'static str {
         "Result grid" => icons::TABLE,
         "Data formats" => icons::COLUMN,
         "Connections" => icons::CONNECTION,
+        "Agents" => icons::VIEW,
+        "Terminal" => icons::QUERY,
         "Drivers" => icons::DATABASE,
         _ => icons::SETTINGS,
     }
 }
 
 impl PrefsWindow {
+    pub fn new_for_section(live: &LayeredSettings, scope: Level, section: &'static str) -> Self {
+        let mut window = Self::new(live, scope);
+        window.section = section;
+        window.focus_search = false;
+        window
+    }
+
     pub fn new(live: &LayeredSettings, scope: Level) -> Self {
         Self {
             saving: None,
@@ -73,6 +87,10 @@ impl PrefsWindow {
             open_drivers: false,
             open_databases: false,
             open_settings_folder: false,
+            mcp: Default::default(),
+            copy_mcp_config: false,
+            rotate_token: false,
+            open_terminal: false,
         }
     }
 
@@ -288,6 +306,7 @@ impl PrefsWindow {
         editing.rows(ui, &defs);
         if self.scope == Level::Global {
             self.section_actions(ui);
+            self.agents_actions(ui);
         }
     }
 
@@ -310,6 +329,92 @@ impl PrefsWindow {
                 );
             }
         });
+    }
+
+    /// Settings → Agents' status and actions.
+    fn agents_actions(&mut self, ui: &mut egui::Ui) {
+        let p = theme::palette(ui.ctx());
+        if self.section == "Agents" {
+            ui.add_space(Spacing::M);
+            theme::hairline(ui);
+            ui.add_space(Spacing::S);
+            ui.horizontal(|ui| {
+                let color = match self.mcp.status {
+                    crate::agents::McpStatus::Running => p.success,
+                    crate::agents::McpStatus::Starting => p.warning,
+                    crate::agents::McpStatus::Stopped => p.text_disabled,
+                    _ => p.error,
+                };
+                ui.label(
+                    egui::RichText::new(self.mcp.status.label())
+                        .strong()
+                        .color(color),
+                );
+                if let Some(url) = &self.mcp.url {
+                    ui.label(egui::RichText::new(url).monospace().small());
+                    if ui.small_button("Copy endpoint").clicked() {
+                        ui.ctx().copy_text(url.clone());
+                    }
+                    ui.label(
+                        egui::RichText::new(format!("{} active session(s)", self.mcp.sessions))
+                            .small()
+                            .weak(),
+                    );
+                }
+            });
+            if self.mcp.token_present {
+                ui.label(
+                    egui::RichText::new("A bearer token is stored in the OS keychain.")
+                        .small()
+                        .weak(),
+                );
+            }
+            ui.add_space(Spacing::S);
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(
+                        self.mcp.status.is_running(),
+                        egui::Button::new("Copy MCP config"),
+                    )
+                    .on_hover_text("Contains the bearer token; paste it into the agent")
+                    .clicked()
+                {
+                    self.copy_mcp_config = true;
+                }
+                if ui
+                    .add_enabled(
+                        self.mcp.status.is_running(),
+                        egui::Button::new("Rotate token"),
+                    )
+                    .on_hover_text("Revokes the old token and disconnects active agents")
+                    .clicked()
+                {
+                    self.rotate_token = true;
+                }
+            });
+            ui.add_space(Spacing::XS);
+            theme::hint(
+                ui,
+                "The server listens on 127.0.0.1 only. Enabling it exposes no connection: set agent access on each connection.",
+            );
+            if let Some(error) = &self.mcp.error {
+                ui.add_space(Spacing::XS);
+                ui.colored_label(p.error, error);
+            }
+        }
+        if self.section == "Terminal" {
+            ui.add_space(Spacing::M);
+            theme::hairline(ui);
+            ui.add_space(Spacing::S);
+            if ui.button("Open terminal").clicked() {
+                self.open_terminal = true;
+            }
+            ui.add_space(Spacing::XS);
+            theme::hint(
+                ui,
+                "Changes apply on Restart. The shell command is never shown to agents or logged; do not embed credentials in it. Terminal output is never logged.",
+            );
+        }
     }
 
     /// Buttons that open something else, at the end of the section they belong to.

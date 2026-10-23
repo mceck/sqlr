@@ -28,6 +28,7 @@ async fn sqlite_passes_the_conformance_suite() {
                             .into(),
                             profile: None,
                             save_secrets: true,
+                            agent_access: Default::default(),
                         },
                         &Secrets::default(),
                     )

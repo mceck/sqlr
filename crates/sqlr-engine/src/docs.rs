@@ -364,6 +364,12 @@ impl Engine {
         self.shared.repaint();
     }
 
+    /// Closes every document result of one MCP session (session end, timeout, token
+    /// rotation or server stop).
+    pub fn close_agent_docs(&self, agent_id: &str) {
+        self.shared.close_agent_docs(agent_id);
+    }
+
     /// Sets the per-result memory budget of document results (default
     /// [`DOC_RESULT_BUDGET`]); fetches stop once a result holds this many bytes.
     pub fn set_doc_budget(&self, bytes: usize) {
@@ -491,6 +497,37 @@ impl Shared {
             Some(e) if e.cancel_requested => Some(PageEnd::Stopped),
             Some(e) if e.superseded => Some(PageEnd::CutShort),
             Some(_) => None,
+        }
+    }
+
+    /// Closes every document result of one MCP session.
+    pub(crate) fn close_agent_docs(self: &Arc<Self>, agent_id: &str) {
+        let ids: Vec<QueryId> = self
+            .docs
+            .entries
+            .lock()
+            .iter()
+            .filter(|(_, e)| matches!(&e.key.slot, crate::session::Slot::Agent(a) if a == agent_id))
+            .map(|(q, _)| *q)
+            .collect();
+        for q in ids {
+            let Some(entry) = self.docs.entries.lock().remove(&q) else {
+                continue;
+            };
+            if entry.result.read().tabular {
+                self.close_query(q);
+            }
+            if entry.result.read().status == QueryStatus::Running
+                && let Some(handle) = entry.cancel
+            {
+                self.send(Command::Cancel(handle));
+            }
+            let stream = entry.stream;
+            self.send(Command::Spawn(Box::pin(async move {
+                if let Some(mut s) = stream.lock().await.take() {
+                    let _ = s.close().await;
+                }
+            })));
         }
     }
 
