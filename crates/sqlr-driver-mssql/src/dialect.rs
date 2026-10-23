@@ -90,6 +90,40 @@ impl Dialect for MsDialect {
         "BEGIN TRANSACTION"
     }
 
+    fn nested_begin_increments_depth(&self) -> bool {
+        true
+    }
+
+    fn statement_class(&self, sql: &str) -> Option<sqlr_core::StatementClass> {
+        use sqlr_core::{StatementClass, TxVerb};
+        let syntax = self.syntax();
+        if syntax.classify(sql) != StatementClass::Transaction(TxVerb::Begin) {
+            return None;
+        }
+        let mut tokens = Vec::new();
+        syntax.lex(sql, LexState::Normal, &mut tokens);
+        let words: Vec<_> = tokens
+            .iter()
+            .filter(|t| t.kind != TokenKind::Comment)
+            .take(3)
+            .map(|t| sql[t.start..t.end].to_ascii_uppercase())
+            .collect();
+        let transaction = matches!(
+            words.get(1).map(String::as_str),
+            Some("TRAN" | "TRANSACTION")
+        ) || (words.get(1).is_some_and(|w| w == "DISTRIBUTED")
+            && matches!(
+                words.get(2).map(String::as_str),
+                Some("TRAN" | "TRANSACTION")
+            ));
+        Some(if transaction {
+            StatementClass::Transaction(TxVerb::Begin)
+        } else {
+            // A control-flow BEGIN/END block does not change @@TRANCOUNT.
+            syntax.classify_script(sql)
+        })
+    }
+
     fn savepoint_sql(&self, name: &str) -> String {
         format!("SAVE TRANSACTION {}", self.quote_ident(name))
     }

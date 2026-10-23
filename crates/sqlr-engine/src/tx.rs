@@ -24,6 +24,8 @@ pub struct TxState {
     pub mode: CommitMode,
     pub read_only: bool,
     pub phase: TxPhase,
+    /// Successful BEGIN levels still waiting for COMMIT (zero when idle).
+    pub depth: u32,
     /// Statements run in the open transaction.
     pub statements: u32,
     /// When the open transaction started, in Unix milliseconds.
@@ -74,6 +76,8 @@ pub(crate) struct TxRules {
     pub ddl_commits: bool,
     /// A failed statement aborts the open transaction (PostgreSQL).
     pub error_aborts: bool,
+    /// BEGIN inside an open transaction adds a level that COMMIT must remove.
+    pub nested_begin: bool,
 }
 
 pub(crate) const FAILED_COMMIT_NOTE: &str = "The failed transaction was rolled back";
@@ -123,6 +127,7 @@ impl TxState {
             mode,
             read_only,
             phase: TxPhase::Idle,
+            depth: 0,
             statements: 0,
             since_ms: None,
             savepoints: Vec::new(),
@@ -179,6 +184,7 @@ impl TxState {
 
     pub(crate) fn open(&mut self, now_ms: i64) {
         self.phase = TxPhase::Open;
+        self.depth = 1;
         self.statements = 0;
         self.since_ms = Some(now_ms);
         self.savepoints.clear();
@@ -188,11 +194,22 @@ impl TxState {
 
     pub(crate) fn close(&mut self, now_ms: i64) {
         self.phase = TxPhase::Idle;
+        self.depth = 0;
         self.statements = 0;
         self.since_ms = None;
         self.savepoints.clear();
         self.last_activity_ms = now_ms;
         self.wrote = false;
+    }
+
+    /// A successful COMMIT ends only the innermost level on servers with nested BEGIN.
+    fn committed(&mut self, now_ms: i64) {
+        if self.depth > 1 {
+            self.depth -= 1;
+            self.last_activity_ms = now_ms;
+        } else {
+            self.close(now_ms);
+        }
     }
 
     /// Keeps only the savepoints up to and including `name` (the target of a rollback).
@@ -217,12 +234,21 @@ impl TxState {
             StatementClass::Transaction(TxVerb::Begin) => {
                 if !self.is_open() {
                     self.open(now_ms);
+                } else if rules.nested_begin {
+                    self.depth += 1;
                 }
                 Some(RunMessage::new(MessageLevel::Info, "Transaction started"))
             }
             StatementClass::Transaction(TxVerb::Commit) => {
+                if self.depth > 1 {
+                    self.committed(now_ms);
+                    return Some(RunMessage::new(
+                        MessageLevel::Info,
+                        "Nested COMMIT completed; the outer transaction remains open",
+                    ));
+                }
                 let phase = self.phase.clone();
-                self.close(now_ms);
+                self.committed(now_ms);
                 if stmt.chain {
                     self.open(now_ms);
                 }
@@ -405,7 +431,13 @@ impl Shared {
                         let now = now_ms();
                         s.tx.last_activity_ms = now;
                         match &op {
-                            TxOp::Commit | TxOp::Rollback => {
+                            TxOp::Commit => {
+                                s.tx.committed(now);
+                                if !s.tx.is_open() {
+                                    s.tx_conn = None;
+                                }
+                            }
+                            TxOp::Rollback => {
                                 s.tx.close(now);
                                 s.tx_conn = None;
                             }

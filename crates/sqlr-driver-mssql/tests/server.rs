@@ -62,6 +62,25 @@ async fn transaction_commands_succeed_without_procedure_transaction_count_errors
 }
 
 #[tokio::test]
+async fn begin_end_blocks_keep_their_output_rowsets() {
+    sqlr_testkit::skip_container_tests!();
+    let (_lock, conn) = server().await;
+    let rel = conn.relational().unwrap();
+    run(&conn, "CREATE TABLE #block_output (id INT)").await;
+    run(&conn, "INSERT INTO #block_output VALUES (1)").await;
+    let Execution::Rows(mut rows) = rel
+        .execute("BEGIN UPDATE #block_output SET id = id + 1 OUTPUT inserted.id; END")
+        .await
+        .unwrap()
+    else {
+        panic!("a BEGIN/END block must keep its OUTPUT rowset");
+    };
+    let chunk = rows.next_chunk(1).await.unwrap().unwrap();
+    assert_eq!(Value::from_cell(chunk.cell(0, 0)), Value::Int(2));
+    rows.close().await.unwrap();
+}
+
+#[tokio::test]
 async fn schema_corners_and_object_loading() {
     sqlr_testkit::skip_container_tests!();
     let (_c, conn) = server().await;

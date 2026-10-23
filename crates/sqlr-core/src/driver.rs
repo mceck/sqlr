@@ -230,6 +230,11 @@ pub trait Dialect: Send + Sync {
     fn begin_sql(&self) -> &'static str {
         "BEGIN"
     }
+    /// A successful BEGIN inside an open transaction increments a nesting counter
+    /// (SQL Server). Each COMMIT removes one level; ROLLBACK ends every level.
+    fn nested_begin_increments_depth(&self) -> bool {
+        false
+    }
     fn savepoint_sql(&self, name: &str) -> String {
         format!("SAVEPOINT {}", self.quote_ident(name))
     }

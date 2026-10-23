@@ -4,12 +4,13 @@ use std::sync::Arc;
 
 use futures_util::TryStreamExt;
 use sqlr_core::{
-    Cell, ChunkBuilder, ColumnMeta, DriverError, ErrorKind, Execution, LexState, ResultChunk,
-    RowStream, TokenKind, Value, trim_statement_in,
+    Cell, ChunkBuilder, ColumnMeta, Dialect, DriverError, ErrorKind, Execution, LexState,
+    ResultChunk, RowStream, TokenKind, Value, trim_statement_in,
 };
 use tiberius::{ColumnData, QueryItem, ToSql};
 
 use crate::browse::MsClient;
+use crate::dialect::MsDialect;
 use crate::map_error;
 use crate::syntax::tsql_syntax;
 use crate::types;
@@ -27,6 +28,9 @@ pub(crate) async fn execute(
     } else {
         sql
     };
+    let class = MsDialect
+        .statement_class(&sql)
+        .unwrap_or_else(|| syntax.classify(&sql));
     // `CREATE VIEW`, `CREATE SCHEMA` and the like must be the first statement of a batch, and
     // a `SET SHOWPLAN_…` only holds for the session when it is one: a statement run with
     // `execute` travels inside `sp_executesql`. Transaction commands must also be plain
@@ -35,10 +39,7 @@ pub(crate) async fn execute(
     if params.is_empty()
         && (syntax.is_ddl(&sql)
             || first_word(&sql).eq_ignore_ascii_case("SET")
-            || matches!(
-                syntax.classify(&sql),
-                sqlr_core::StatementClass::Transaction(_)
-            ))
+            || matches!(class, sqlr_core::StatementClass::Transaction(_)))
     {
         client
             .simple_query(sql.as_ref())

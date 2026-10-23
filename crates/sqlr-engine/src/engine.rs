@@ -2257,6 +2257,7 @@ impl Shared {
         let rules = TxRules {
             ddl_commits: dialect.ddl_commits_transaction(),
             error_aborts: dialect.error_aborts_transaction(),
+            nested_begin: dialect.nested_begin_increments_depth(),
         };
         let (read_only, begin, elsewhere) = {
             let mut inner = self.inner.lock();

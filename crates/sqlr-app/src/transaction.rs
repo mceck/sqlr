@@ -777,10 +777,12 @@ mod tests {
     }
 
     fn tx(phase: TxPhase, statements: u32) -> TxState {
+        let depth = u32::from(phase != TxPhase::Idle);
         TxState {
             mode: CommitMode::Manual,
             read_only: false,
             phase,
+            depth,
             statements,
             since_ms: None,
             savepoints: Vec::new(),
