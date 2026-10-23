@@ -563,7 +563,7 @@ impl SqlrApp {
             AppCommand::Stop => self.stop_active(),
             AppCommand::ToggleValuePanel => self.show_value_panel = !self.show_value_panel,
             AppCommand::ToggleHistory => self.show_history = !self.show_history,
-            AppCommand::ToggleSoftWrap => self.toggle_soft_wrap(),
+            AppCommand::ToggleSoftWrap => self.toggle_soft_wrap(ctx),
             AppCommand::SaveSnippet => self.save_as_snippet(),
             AppCommand::Connect(id) => {
                 self.connect(&id);

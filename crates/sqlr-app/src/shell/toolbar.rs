@@ -109,7 +109,7 @@ impl SqlrApp {
             ui.checkbox(&mut self.show_history, "History");
             let mut soft_wrap = self.settings.soft_wrap;
             if ui.checkbox(&mut soft_wrap, "Soft wrap").changed() {
-                self.toggle_soft_wrap();
+                self.toggle_soft_wrap(ui.ctx());
             }
         });
         ui.menu_button("Query", |ui| {

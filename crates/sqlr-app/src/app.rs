@@ -153,6 +153,10 @@ pub struct SqlrApp {
     pub(crate) keymap: sqlr_store::StoredKeymap,
     /// Every level of the settings; `settings` is its global resolution.
     pub(crate) layered: LayeredSettings,
+    /// A settings save running off the UI thread; its error is shown when it lands.
+    settings_save: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+    /// A save was asked for while another one was running.
+    settings_dirty: bool,
     /// The display formats of the grids, per connection.
     pub(crate) formats: Formats,
     pub(crate) config_dir: PathBuf,
@@ -283,6 +287,8 @@ impl SqlrApp {
             settings,
             keymap: sqlr_store::StoredKeymap::load(&config_dir),
             layered,
+            settings_save: None,
+            settings_dirty: false,
             formats: Formats::default(),
             data_dir: data_dir.unwrap_or_else(|| config_dir.clone()),
             config_dir,
@@ -382,6 +388,7 @@ impl SqlrApp {
         }
         self.sync_profiles();
         self.poll_store();
+        self.poll_settings_save(ui.ctx());
         self.open_pending_redis();
         self.forget_failed_secrets();
         let failures = self.engine.take_notices();
@@ -519,15 +526,54 @@ impl SqlrApp {
             .collect()
     }
 
-    /// Flips soft wrap and saves the setting (the editors pick it up next frame).
-    pub(crate) fn toggle_soft_wrap(&mut self) {
+    /// Flips soft wrap and saves the setting off the UI thread (the editors pick it up next
+    /// frame).
+    pub(crate) fn toggle_soft_wrap(&mut self, ctx: &egui::Context) {
         self.settings.soft_wrap = !self.settings.soft_wrap;
         self.settings.apply_to(&mut self.layered);
-        if let Err(error) = self.layered.save(&self.config_dir) {
+        self.save_settings(ctx);
+    }
+
+    /// Writes the layered settings on a worker thread. One save runs at a time: a request
+    /// made meanwhile is saved once it ends, so an older state cannot land last.
+    fn save_settings(&mut self, ctx: &egui::Context) {
+        if self.settings_save.is_some() {
+            self.settings_dirty = true;
+            return;
+        }
+        let live = self.layered.clone();
+        let dir = self.config_dir.clone();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        self.settings_save = Some(receiver);
+        let repaint = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = sender.send(live.save(&dir).map_err(|e| e.to_string()));
+            repaint.request_repaint();
+        });
+    }
+
+    /// Shows the error of a finished settings save, then starts the one that was asked for
+    /// meanwhile.
+    fn poll_settings_save(&mut self, ctx: &egui::Context) {
+        let Some(receiver) = &self.settings_save else {
+            return;
+        };
+        let result = match receiver.try_recv() {
+            Ok(result) => result,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                Err("the save thread stopped".into())
+            }
+        };
+        self.settings_save = None;
+        if let Err(error) = result {
             self.toasts.push(
                 ToastKind::Error,
                 format!("Could not save settings: {error}"),
             );
+        }
+        if std::mem::take(&mut self.settings_dirty) {
+            self.save_settings(ctx);
         }
     }
 
@@ -1752,6 +1798,28 @@ mod tests {
             reads.iter().chain(&writes).all(|t| *t != here),
             "{reads:?} {writes:?}"
         );
+    }
+
+    #[test]
+    fn soft_wrap_saves_the_settings_off_the_ui_thread() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_with_keychain(&dir, Arc::new(Recording::default()));
+        let ctx = egui::Context::default();
+        assert!(!app.soft_wrap_enabled());
+        app.toggle_soft_wrap(&ctx);
+        assert!(app.soft_wrap_enabled());
+        assert!(app.settings_save.is_some(), "the save is queued, not done");
+        wait("the settings save", || {
+            app.poll_settings_save(&ctx);
+            app.settings_save.is_none()
+        });
+        let (saved, _) = LayeredSettings::load(dir.path());
+        assert_eq!(
+            saved.get("editor.soft_wrap", None).0,
+            sqlr_core::SettingValue::Bool(true)
+        );
+        // The UI reads the new value at once, before the save has landed.
+        assert!(app.soft_wrap_enabled());
     }
 
     fn wait(what: &str, mut done: impl FnMut() -> bool) {
