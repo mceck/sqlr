@@ -241,6 +241,21 @@ fn context_menu(h: &mut Harness<'static, SqlrApp>, label: &str, item: &str) {
     h.run_steps(2);
 }
 
+fn context_menu_sub(h: &mut Harness<'static, SqlrApp>, label: &str, submenu: &str, item: &str) {
+    h.run_steps(100);
+    h.get_all_by_label(label)
+        .min_by(|a, b| a.rect().left().total_cmp(&b.rect().left()))
+        .unwrap_or_else(|| panic!("no node labeled {label}"))
+        .click_secondary();
+    let submenu = format!("{submenu} ⏵");
+    wait_for_label(h, &submenu);
+    h.get_by_label(&submenu).hover();
+    h.run_steps(30);
+    wait_for_label(h, item);
+    h.get_by_label(item).click();
+    h.run_steps(2);
+}
+
 fn open_orders(h: &mut Harness<'static, SqlrApp>) {
     expand_to_orders(h);
     double_click(h, "orders");
@@ -1128,7 +1143,7 @@ fn explorer_import_runs_with_a_mapping() {
     std::fs::write(&path, "ID,Total,extra\n7,70,x\n8,80,y\n").unwrap();
     h.state_mut().set_file_dialog_answer(Some(path));
     expand_to_orders(&mut h);
-    context_menu(&mut h, "orders", "Import data…");
+    context_menu_sub(&mut h, "orders", "Import/Export", "Import data…");
     h.get_by_label("Choose file…").click();
     // The preview shows the file's rows; columns are mapped by name.
     wait_for_label(&mut h, "80");
@@ -1167,7 +1182,7 @@ fn import_asks_first_when_the_profile_confirms_writes() {
     std::fs::write(&path, "id,total\n7,70\n8,80\n").unwrap();
     h.state_mut().set_file_dialog_answer(Some(path));
     expand_to_orders(&mut h);
-    context_menu(&mut h, "orders", "Import data…");
+    context_menu_sub(&mut h, "orders", "Import/Export", "Import data…");
     h.get_by_label("Choose file…").click();
     wait_for_label(&mut h, "80");
     h.get_by_label("Run import").click();
@@ -1192,7 +1207,7 @@ fn import_saves_its_rejected_rows() {
     std::fs::write(&input, "id,total\n7,70\nabc,80\n").unwrap();
     h.state_mut().set_file_dialog_answer(Some(input));
     expand_to_orders(&mut h);
-    context_menu(&mut h, "orders", "Import data…");
+    context_menu_sub(&mut h, "orders", "Import/Export", "Import data…");
     h.get_by_label("Choose file…").click();
     wait_for_label(&mut h, "abc");
     h.get_by_label("Skip bad rows and report them").click();
@@ -1996,30 +2011,6 @@ fn open_ddl_tab() {
     h.get_by_label("Open in new editor tab").click();
     h.run_steps(3);
     assert_eq!(h.state_mut().active_text().as_deref(), Some(text.as_str()));
-}
-
-#[test]
-fn select_100_rows_and_copy_names() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut h = harness(&dir);
-    expand_to_orders(&mut h);
-    context_menu(&mut h, "orders", "Select 100 rows");
-    step_until(&mut h, "the first page", |h| {
-        h.query_by_label_contains("100 rows").is_some()
-            || h.query_by_label_contains("500 rows").is_some()
-    });
-    let sql = h.state_mut().active_text().unwrap();
-    assert!(sql.contains("LIMIT 100"), "{sql}");
-
-    context_menu(&mut h, "orders", "Copy qualified name");
-    assert!(
-        h.state()
-            .toast_texts()
-            .iter()
-            .any(|t| t.contains("Copied s.orders")),
-        "{:?}",
-        h.state().toast_texts()
-    );
 }
 
 #[test]

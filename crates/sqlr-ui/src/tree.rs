@@ -1076,14 +1076,19 @@ fn folder_row(
         .as_ref()
         .is_some_and(|(folder, _)| folder == path);
     let mut toggle = false;
+    let mut icon_clicked = false;
+    let mut icon_double_clicked = false;
     let hit = row_ui_hit(ui, Id::new(("tree_folder", path)), |ui| {
         ui.add_space(depth as f32 * INDENT);
         toggle |= arrow(ui, name, true, open, palette.text_muted);
-        icons::paint(ui, icons::FOLDER, palette.icon_schema);
         if renaming {
+            icons::paint(ui, icons::FOLDER, palette.icon_schema);
             rename_folder_field(ui, path, state, actions);
             return;
         }
+        let icon = icons::paint_clickable(ui, icons::FOLDER, palette.icon_schema);
+        icon_clicked = icon.clicked();
+        icon_double_clicked = icon.double_clicked();
         ui.spacing_mut().item_spacing.x = Spacing::XS;
         ui.spacing_mut().button_padding.x = Spacing::XS;
         let selected = state.selected_folder.as_deref() == Some(path);
@@ -1094,11 +1099,11 @@ fn folder_row(
             response
         };
         response.dnd_set_drag_payload(TreeDrag::Folder(path.to_string()));
-        if response.clicked() {
+        if response.clicked() || icon_clicked {
             state.selected_folder = Some(path.to_string());
             state.selected = None;
         }
-        toggle |= response.double_clicked();
+        toggle |= response.double_clicked() || icon_double_clicked;
         theme::context_menu(&response, |ui| {
             if icons::menu_item(ui, icons::CONNECTION, "New connection").clicked() {
                 actions.push(TreeAction::NewConnectionIn(path.to_string()));
@@ -1365,6 +1370,8 @@ fn conn_row(
 ) {
     let root = NodePath::root();
     let mut toggle = false;
+    let mut icon_clicked = false;
+    let mut icon_double_clicked = false;
     let hit = row_ui_hit(ui, Id::new(("tree_conn", conn.id)), |ui| {
         ui.add_space(depth as f32 * INDENT);
         if let Some([r, g, b]) = conn.color.or(conn.tint) {
@@ -1409,7 +1416,9 @@ fn conn_row(
             // Keep the database mark close to the name; the row's other gaps stay wider.
             ui.spacing_mut().item_spacing.x = Spacing::XS;
             ui.spacing_mut().button_padding.x = Spacing::XS;
-            icons::paint_database(ui, conn.driver);
+            let icon = icons::paint_database(ui, conn.driver);
+            icon_clicked = icon.clicked();
+            icon_double_clicked = icon.double_clicked();
             ui.add(
                 Button::selectable(selected, conn.name)
                     .truncate()
@@ -1433,11 +1442,11 @@ fn conn_row(
             });
         }
         response.dnd_set_drag_payload(TreeDrag::Connection(conn.id.to_string()));
-        if response.clicked() {
+        if response.clicked() || icon_clicked {
             state.selected = Some((conn.id.to_string(), root.clone()));
             state.selected_folder = None;
         }
-        toggle |= response.double_clicked();
+        toggle |= response.double_clicked() || icon_double_clicked;
         if conn.agent_access.is_exposed() {
             let tip = match conn.agent_access {
                 sqlr_core::AgentAccess::Read => "Agents: read",
@@ -1670,6 +1679,8 @@ fn node_row(
     actions: &mut Vec<TreeAction>,
 ) {
     let mut toggle = false;
+    let mut icon_clicked = false;
+    let mut icon_double_clicked = false;
     row_ui(ui, |ui| {
         ui.add_space(depth as f32 * INDENT);
         toggle |= arrow(ui, &node.name, node.has_children, open, palette.text_muted);
@@ -1689,7 +1700,9 @@ fn node_row(
                 // Match the connection rows: the icon sits right next to its name.
                 ui.spacing_mut().item_spacing.x = Spacing::XS;
                 ui.spacing_mut().button_padding.x = Spacing::XS;
-                icons::paint(ui, icon, color(palette));
+                let icon = icons::paint_clickable(ui, icon, color(palette));
+                icon_clicked = icon.clicked();
+                icon_double_clicked = icon.double_clicked();
                 ui.selectable_label(selected, &node.name)
             })
             .inner;
@@ -1709,11 +1722,11 @@ fn node_row(
                 );
             });
         }
-        if response.clicked() {
+        if response.clicked() || icon_clicked {
             state.selected = Some((conn.to_string(), node.path.clone()));
             state.selected_folder = None;
         }
-        if response.double_clicked() {
+        if response.double_clicked() || icon_double_clicked {
             if node.kind.opens_data() {
                 actions.push(TreeAction::OpenData {
                     conn: conn.to_string(),
@@ -1736,17 +1749,6 @@ fn node_row(
             // Key-value stores (the driver's manifest says so, spec §5.3) export keys (a
             // database, a prefix group or a key) but take no imports.
             let redis = source.key_value(conn);
-            if node.kind.opens_data()
-                && !redis
-                && icons::menu_item(ui, icons::ROWS, "Select 100 rows").clicked()
-            {
-                actions.push(TreeAction::SelectRows {
-                    conn: conn.to_string(),
-                    node: node.clone(),
-                    limit: 100,
-                });
-                ui.close();
-            }
             if node.kind.opens_data() && icons::menu_item(ui, icons::ROWS, "Open data").clicked() {
                 actions.push(TreeAction::OpenData {
                     conn: conn.to_string(),
@@ -1769,42 +1771,40 @@ fn node_row(
             } else {
                 node.kind.opens_data()
             };
-            if exports && icons::menu_item(ui, icons::EXPORT, "Export data…").clicked() {
-                actions.push(TreeAction::ExportData {
-                    conn: conn.to_string(),
-                    node: node.clone(),
+            let imports = !redis && node.kind == NodeKind::Table;
+            if exports || imports {
+                icons::menu_button(ui, icons::EXPORT, "Import/Export", |ui| {
+                    if exports && icons::menu_item(ui, icons::EXPORT, "Export data…").clicked() {
+                        actions.push(TreeAction::ExportData {
+                            conn: conn.to_string(),
+                            node: node.clone(),
+                        });
+                        ui.close();
+                    }
+                    if imports && icons::menu_item(ui, icons::IMPORT, "Import data…").clicked() {
+                        actions.push(TreeAction::ImportData {
+                            conn: conn.to_string(),
+                            node: node.clone(),
+                        });
+                        ui.close();
+                    }
+                    if imports && icons::menu_item(ui, icons::IMPORT, "Generate data…").clicked()
+                    {
+                        actions.push(TreeAction::GenerateData {
+                            conn: conn.to_string(),
+                            node: node.clone(),
+                        });
+                        ui.close();
+                    }
+                    if imports && icons::menu_item(ui, icons::EXPORT, "Transfer data…").clicked()
+                    {
+                        actions.push(TreeAction::TransferData {
+                            conn: conn.to_string(),
+                            node: node.clone(),
+                        });
+                        ui.close();
+                    }
                 });
-                ui.close();
-            }
-            if !redis
-                && node.kind == NodeKind::Table
-                && icons::menu_item(ui, icons::IMPORT, "Import data…").clicked()
-            {
-                actions.push(TreeAction::ImportData {
-                    conn: conn.to_string(),
-                    node: node.clone(),
-                });
-                ui.close();
-            }
-            if !redis
-                && node.kind == NodeKind::Table
-                && icons::menu_item(ui, icons::IMPORT, "Generate data…").clicked()
-            {
-                actions.push(TreeAction::GenerateData {
-                    conn: conn.to_string(),
-                    node: node.clone(),
-                });
-                ui.close();
-            }
-            if !redis
-                && node.kind == NodeKind::Table
-                && icons::menu_item(ui, icons::EXPORT, "Transfer data…").clicked()
-            {
-                actions.push(TreeAction::TransferData {
-                    conn: conn.to_string(),
-                    node: node.clone(),
-                });
-                ui.close();
             }
             let tools = source.database_tools(conn);
             if tools.dump
@@ -1873,17 +1873,6 @@ fn node_row(
                     conn: conn.to_string(),
                     node: node.clone(),
                     qualified: false,
-                });
-                ui.close();
-            }
-            if !redis
-                && node.kind.opens_data()
-                && icons::menu_item(ui, icons::COPY, "Copy qualified name").clicked()
-            {
-                actions.push(TreeAction::CopyName {
-                    conn: conn.to_string(),
-                    node: node.clone(),
-                    qualified: true,
                 });
                 ui.close();
             }

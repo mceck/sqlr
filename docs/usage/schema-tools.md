@@ -30,7 +30,7 @@ Explain Analyze runs the statement for real. For a statement that changes data, 
 
 ## Generate test data
 
-Right-click a table in the explorer and choose **Generate data**. For each column you pick a generator: sequences, random ranges, names, emails, dates, or values picked from the rows that a foreign key points to, so the data respects your relations.
+Right-click a table in the explorer and choose **Import/Export → Generate data**. For each column you pick a generator: sequences, random ranges, names, emails, dates, or values picked from the rows that a foreign key points to, so the data respects your relations.
 
 You set:
 

@@ -219,12 +219,62 @@ fn open_folder(h: &mut Harness<'static, App>, folder: &str) {
     h.run_steps(2);
 }
 
+fn click_at(h: &mut Harness<'static, App>, pos: egui::Pos2) {
+    h.event(egui::Event::PointerMoved(pos));
+    h.step();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.step();
+    }
+    h.run_steps(2);
+}
+
 #[test]
 fn shows_connections_by_label() {
     let mut h = harness(StubSource::new());
     h.get_by_label("local");
     open_folder(&mut h, "prod");
     h.get_by_label("prod-db");
+}
+
+#[test]
+fn clicking_the_driver_icon_selects_the_connection() {
+    let mut h = harness(StubSource::new());
+    open_folder(&mut h, "prod");
+    // The driver icon sits immediately before the name button.
+    let name = h.get_by_label("prod-db").rect();
+    click_at(&mut h, egui::pos2(name.left() - 10.0, name.center().y));
+    assert_eq!(
+        h.state().state.selected,
+        Some(("prod".to_string(), NodePath::root()))
+    );
+}
+
+#[test]
+fn clicking_tree_icons_selects_their_rows() {
+    let mut h = harness(StubSource::new());
+    open_prod(&mut h);
+
+    let folder = h.get_by_label("prod").rect();
+    click_at(&mut h, egui::pos2(folder.left() - 10.0, folder.center().y));
+    assert_eq!(h.state().state.selected_folder.as_deref(), Some("prod"));
+    assert!(h.state().state.selected.is_none());
+
+    let table = h.get_by_label("orders").rect();
+    click_at(&mut h, egui::pos2(table.left() - 10.0, table.center().y));
+    assert_eq!(
+        h.state().state.selected,
+        Some((
+            "prod".to_string(),
+            NodePath::root().child("public").child("orders")
+        ))
+    );
+    assert!(h.state().state.selected_folder.is_none());
 }
 
 #[test]
@@ -387,6 +437,8 @@ fn transfer_entries_follow_the_source() {
         h.get_by_label("orders").click_secondary();
         h.run_steps(2);
         h.get_by_label("Open data");
+        h.get_by_label("Import/Export ⏵").hover();
+        h.run_steps(30);
         h.get_by_label("Export data…");
         assert_eq!(h.query_by_label("Import data…").is_some(), !key_value);
     }
@@ -1047,13 +1099,10 @@ fn table_context_menu_entries() {
     h.get_by_label("orders").click_secondary();
     h.run_steps(2);
     for entry in [
-        "Select 100 rows",
         "Open data",
         "Open DDL",
+        "Import/Export ⏵",
         "Copy name",
-        "Copy qualified name",
-        "Export data…",
-        "Import data…",
         "Refresh",
     ] {
         h.get_by_label(entry);
@@ -1068,26 +1117,10 @@ fn table_context_menu_entries() {
     );
     for (entry, action) in [
         (
-            "Select 100 rows",
-            TreeAction::SelectRows {
-                conn: "prod".into(),
-                node: orders.clone(),
-                limit: 100,
-            },
-        ),
-        (
             "Open DDL",
             TreeAction::OpenDdl {
                 conn: "prod".into(),
                 node: orders.clone(),
-            },
-        ),
-        (
-            "Copy qualified name",
-            TreeAction::CopyName {
-                conn: "prod".into(),
-                node: orders.clone(),
-                qualified: true,
             },
         ),
         (
@@ -1103,11 +1136,20 @@ fn table_context_menu_entries() {
         menu(&mut h, "orders", None, entry);
         assert_eq!(h.state().actions, [action], "{entry}");
     }
+    h.state_mut().actions.clear();
+    menu(&mut h, "orders", Some("Import/Export"), "Export data…");
+    assert_eq!(
+        h.state().actions,
+        [TreeAction::ExportData {
+            conn: "prod".into(),
+            node: orders.clone(),
+        }]
+    );
 
     // A schema has no data and, without DDL support, no "Open DDL".
     h.get_by_label("public").click_secondary();
     h.run_steps(2);
-    assert!(h.query_by_label("Select 100 rows").is_none());
+    assert!(h.query_by_label("Import/Export ⏵").is_none());
     let mut h = harness(StubSource::new());
     open_prod(&mut h);
     h.run_steps(100);
@@ -1128,13 +1170,9 @@ fn table_menu_opens_the_editor_first() {
     h.run_steps(2);
     let open = h.get_by_label("Open editor").rect().top();
     for entry in [
-        "Select 100 rows",
         "Open data",
         "Open DDL",
-        "Export data…",
-        "Import data…",
-        "Generate data…",
-        "Transfer data…",
+        "Import/Export ⏵",
         "New ⏵",
         "Generate SQL ⏵",
         "Rename",
@@ -1142,7 +1180,6 @@ fn table_menu_opens_the_editor_first() {
         "Drop…",
         "Refresh",
         "Copy name",
-        "Copy qualified name",
     ] {
         assert!(
             open < h.get_by_label(entry).rect().top(),

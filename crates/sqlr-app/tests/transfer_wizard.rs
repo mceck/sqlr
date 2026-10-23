@@ -109,6 +109,21 @@ fn context_menu(h: &mut Harness<'static, SqlrApp>, label: &str, item: &str) {
     h.run_steps(2);
 }
 
+fn context_menu_sub(h: &mut Harness<'static, SqlrApp>, label: &str, submenu: &str, item: &str) {
+    h.run_steps(100);
+    h.get_all_by_label(label)
+        .min_by(|a, b| a.rect().left().total_cmp(&b.rect().left()))
+        .unwrap_or_else(|| panic!("no node labeled {label}"))
+        .click_secondary();
+    let submenu = format!("{submenu} ⏵");
+    wait_for_label(h, &submenu);
+    h.get_by_label(&submenu).hover();
+    h.run_steps(30);
+    wait_for_label(h, item);
+    h.get_by_label(item).click();
+    h.run_steps(2);
+}
+
 /// Opens `src` of `db-a` in the explorer and starts "Transfer data…" on it.
 fn open_wizard(h: &mut Harness<'static, SqlrApp>) {
     h.get_by_label("Expand db-a").click();
@@ -117,7 +132,7 @@ fn open_wizard(h: &mut Harness<'static, SqlrApp>) {
     wait_for_label(h, "Expand tables");
     h.get_by_label("Expand tables").click();
     wait_for_label(h, "src");
-    context_menu(h, "src", "Transfer data…");
+    context_menu_sub(h, "src", "Import/Export", "Transfer data…");
     wait_for_label(h, "Load preview");
 }
 
@@ -296,7 +311,7 @@ fn generate_data_preview_then_run() {
     wait_for_label(&mut h, "Expand tables");
     h.get_by_label("Expand tables").click();
     wait_for_label(&mut h, "src");
-    context_menu(&mut h, "src", "Generate data…");
+    context_menu_sub(&mut h, "src", "Import/Export", "Generate data…");
     wait_for_label(&mut h, "Preview");
     h.get_by_label("Preview").click();
     h.run_steps(3);

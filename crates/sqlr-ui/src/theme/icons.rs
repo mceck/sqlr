@@ -174,7 +174,7 @@ const DB_ICON_PX: usize = 32;
 pub fn paint_database(ui: &mut Ui, driver: &str) -> Response {
     let height = ui.spacing().interact_size.y;
     let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(SIZE + Spacing::XS, height), Sense::hover());
+        ui.allocate_exact_size(egui::vec2(SIZE + Spacing::XS, height), Sense::click());
     paint_database_at(ui, rect, driver);
     response
 }
@@ -269,9 +269,17 @@ pub fn text(ui: &Ui, icon: &str, size: f32) -> RichText {
 
 /// Paints `icon` in a square of the row's height, with no accessibility node of its own.
 pub fn paint(ui: &mut Ui, icon: &str, color: Color32) -> Response {
+    paint_with_sense(ui, icon, color, Sense::hover())
+}
+
+/// [`paint`] as a click target, for rows that select when their icon is pressed.
+pub fn paint_clickable(ui: &mut Ui, icon: &str, color: Color32) -> Response {
+    paint_with_sense(ui, icon, color, Sense::click())
+}
+
+fn paint_with_sense(ui: &mut Ui, icon: &str, color: Color32, sense: Sense) -> Response {
     let height = ui.spacing().interact_size.y;
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(SIZE + Spacing::XS, height), Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(SIZE + Spacing::XS, height), sense);
     ui.painter().text(
         rect.center(),
         Align2::CENTER_CENTER,

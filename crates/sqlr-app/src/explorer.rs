@@ -1,5 +1,5 @@
-//! The explorer actions: "Select 100 rows", "Copy name" / "Copy qualified
-//! name", "Copy connection URL", "New editor tab" and the failed connection's Retry.
+//! The explorer actions: opening a table's first rows, copying names and connection
+//! URLs, a new editor tab and the failed connection's Retry.
 
 use sqlr_core::{Node, NodePath, connection_url};
 use sqlr_ui::ToastKind;

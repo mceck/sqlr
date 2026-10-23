@@ -14,10 +14,10 @@ Right-click an object for the actions that apply to it. Depending on the object 
 
 - **Open data** to browse a table or view
 - **New console** to open a query tab on that connection
-- **Select 100 rows** to open a ready-made query
 - **Open DDL** to read the `CREATE` statement in a read-only tab, and **Copy DDL** to copy it
+- **Import/Export** for **Export data**, **Import data**, **Generate data** and **Transfer data**
 - **Generate SQL** for `SELECT`, `INSERT`, `UPDATE`, `DELETE` and `CREATE` templates
-- **Copy name** and **Copy qualified name**
+- **Copy name**
 - **Rename** (or press F2), **Duplicate**, **Truncate**, **Drop**
 - **Refresh**, **Edit**, **Disconnect**, **Remove** on connections
 
