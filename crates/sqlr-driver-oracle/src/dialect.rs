@@ -45,6 +45,11 @@ impl Dialect for OracleDialect {
         "SET TRANSACTION READ WRITE"
     }
 
+    /// `BEGIN … END` is an anonymous PL/SQL block, not the start of a transaction.
+    fn begin_is_plsql(&self) -> bool {
+        true
+    }
+
     fn ddl_commits_transaction(&self) -> bool {
         true
     }
@@ -178,6 +183,12 @@ mod tests {
             "ROLLBACK TO SAVEPOINT \"sp\""
         );
         assert_eq!(OracleDialect.release_savepoint_sql("sp"), None);
+    }
+
+    #[test]
+    fn begin_is_a_plsql_block_not_a_transaction() {
+        assert!(OracleDialect.begin_is_plsql());
+        assert_eq!(OracleDialect.begin_sql(), "SET TRANSACTION READ WRITE");
     }
 
     #[test]

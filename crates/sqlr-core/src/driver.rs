@@ -274,6 +274,12 @@ pub trait Dialect: Send + Sync {
     fn error_aborts_transaction(&self) -> bool {
         false
     }
+    /// Whether a statement that starts with `BEGIN` starts a transaction. False for a
+    /// dialect where `BEGIN` opens an anonymous PL/SQL block (Oracle), which the engine
+    /// then classifies by its body.
+    fn begin_is_plsql(&self) -> bool {
+        false
+    }
     /// `text` as a string literal.
     fn string_literal(&self, text: &str) -> String {
         format!("'{}'", text.replace('\'', "''"))

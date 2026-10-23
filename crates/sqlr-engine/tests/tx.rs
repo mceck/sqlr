@@ -125,6 +125,37 @@ fn smart_mode_begins_on_first_write() {
 }
 
 #[test]
+fn a_plsql_block_is_not_a_transaction_begin() {
+    // Oracle's `BEGIN … END` is an anonymous block. In Auto mode it must not open a
+    // transaction; in Smart mode a block that writes must open one like any write.
+    let (engine, _, key) = setup(
+        FakeScript {
+            begin_is_plsql: true,
+            ..Default::default()
+        },
+        profile(CommitMode::Auto),
+    );
+    ok(&engine, &key, "begin null; end;");
+    assert_eq!(phase(&engine, &key), TxPhase::Idle);
+
+    let (engine, fake, key) = setup(
+        FakeScript {
+            begin_is_plsql: true,
+            affected: Some(1),
+            ..Default::default()
+        },
+        profile(CommitMode::Smart),
+    );
+    ok(&engine, &key, "begin insert into t values (1); end;");
+    assert_eq!(
+        fake.executed(),
+        ["BEGIN", "begin insert into t values (1); end;"]
+    );
+    let tx = engine.transaction(&key).unwrap();
+    assert_eq!((tx.phase, tx.statements), (TxPhase::Open, 1));
+}
+
+#[test]
 fn smart_returns_to_auto_after_commit() {
     let (engine, fake, key) = setup(writes(), profile(CommitMode::Smart));
     ok(&engine, &key, "update t set a = 1 where id = 1");

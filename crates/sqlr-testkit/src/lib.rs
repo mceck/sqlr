@@ -196,6 +196,8 @@ pub struct FakeScript {
     /// The dialect's `release_savepoint_sql` returns `None` (SQL Server, Oracle): a
     /// savepoint is left to its transaction.
     pub savepoints_never_released: bool,
+    /// The dialect's `begin_is_plsql()` is true (Oracle): `BEGIN … END` is a block.
+    pub begin_is_plsql: bool,
     /// `connect` opens a TCP connection to the config's `host:port`, writes `ping\n` and
     /// expects it echoed back (to test tunnels); `ping()` repeats that exchange.
     pub tcp_echo: bool,
@@ -707,6 +709,7 @@ impl FakeDriver {
             error_aborts_transaction: script.error_aborts_transaction,
             read_only_sql: script.read_only_sql,
             savepoints_never_released: script.savepoints_never_released,
+            begin_is_plsql: script.begin_is_plsql,
             ddl: script.editing.is_some().then(|| self.shared.ddl.clone()),
             quote_idents: script.quote_idents,
         }
@@ -1400,6 +1403,7 @@ struct FakeDialect {
     error_aborts_transaction: bool,
     read_only_sql: bool,
     savepoints_never_released: bool,
+    begin_is_plsql: bool,
     ddl: Option<Arc<FakeDdl>>,
     quote_idents: bool,
 }
@@ -1420,6 +1424,10 @@ impl Dialect for FakeDialect {
 
     fn release_savepoint_sql(&self, name: &str) -> Option<String> {
         (!self.savepoints_never_released).then(|| format!("RELEASE SAVEPOINT {}", ansi_quote(name)))
+    }
+
+    fn begin_is_plsql(&self) -> bool {
+        self.begin_is_plsql
     }
 
     fn read_only_sql(&self, on: bool) -> Option<String> {

@@ -2139,7 +2139,17 @@ impl Shared {
         };
         let dialect = rel.dialect();
         let syntax = dialect.syntax();
-        let stmt = Stmt::of(&syntax, sql);
+        let mut stmt = Stmt::of(&syntax, sql);
+        if dialect.begin_is_plsql()
+            && matches!(
+                stmt.class,
+                sqlr_core::StatementClass::Transaction(sqlr_core::TxVerb::Begin)
+            )
+        {
+            // Oracle's `BEGIN … END` is a block, not a transaction start: what it does is
+            // what its body does.
+            stmt.class = syntax.classify_script(sql);
+        }
         let script_class = syntax.classify_script(sql);
         let rules = TxRules {
             ddl_commits: dialect.ddl_commits_transaction(),
