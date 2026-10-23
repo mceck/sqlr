@@ -186,7 +186,7 @@
     </div>
     <div class="card">
       <h3>SQL editor for big scripts</h3>
-      <p>Only visible lines are laid out: a 10 MB file scrolls and takes typing in well under a frame. Statement coloring, autocomplete, find/replace, multi-caret editing, formatting (⌥⌘L) and a command palette (⌘K) over commands, snippets and history.</p>
+      <p>Only visible lines are laid out: a 10 MB file scrolls and takes typing in well under a frame. Statement coloring, autocomplete, find/replace, multi-caret editing, formatting (⌥⌘L) and a command palette (⌘⇧P) over commands, snippets and history.</p>
     </div>
     <div class="card">
       <h3>Profiles &amp; commit modes</h3>
@@ -309,15 +309,21 @@ cargo test -p sqlr-driver-hana</pre>
 
 <section id="docs">
   <h2><span class="num">07</span>Documentation</h2>
-  <p class="sub">The full design specification and developer docs live in this repository:</p>
+  <p class="sub">A step-by-step guide to using sqlr, from the first connection to backups and custom drivers.</p>
   <div class="doclinks">
-    <a href="spec/sqlr-design.md">Product specification <span class="path">docs/spec/sqlr-design.md</span></a>
-    <a href="writing-a-driver.md">Writing a driver <span class="path">docs/writing-a-driver.md</span></a>
-    <a href="driver-protocol.md">Sidecar driver protocol v1.0.0 <span class="path">docs/driver-protocol.md</span></a>
-    <a href="performance-budgets.md">Performance budgets <span class="path">docs/performance-budgets.md</span></a>
-    <a href="mongo-shell-subset.md">MongoDB shell subset <span class="path">docs/mongo-shell-subset.md</span></a>
-    <a href="drivers/hana.md">HANA sidecar notes <span class="path">docs/drivers/hana.md</span></a>
-    <a href="drivers/jdbc.md">JDBC bridge notes <span class="path">docs/drivers/jdbc.md</span></a>
+    <a href="usage/README.md">Start here <span class="path">The map of the guide</span></a>
+    <a href="usage/getting-started.md">Getting started <span class="path">Install, demo database, first query</span></a>
+    <a href="usage/connections.md">Connections <span class="path">URLs, SSH tunnels, TLS, keychain</span></a>
+    <a href="usage/explorer-and-objects.md">The explorer and object editors <span class="path">Browse, preview DDL, apply</span></a>
+    <a href="usage/sql-editor.md">The SQL editor <span class="path">Running, autocomplete, history, snippets</span></a>
+    <a href="usage/results-and-editing.md">Results and data editing <span class="path">Paging, copy as, edit in the grid</span></a>
+    <a href="usage/profiles-and-transactions.md">Profiles, transactions and safety <span class="path">Auto, Manual, Smart, read-only</span></a>
+    <a href="usage/moving-data.md">Import, export, transfer and backup <span class="path">Wizards, tasks, dump and restore</span></a>
+    <a href="usage/schema-tools.md">Schema tools <span class="path">Compare, ER diagrams, plans, test data</span></a>
+    <a href="usage/administration.md">Administration <span class="path">Users, sessions, locks, server info</span></a>
+    <a href="usage/nosql.md">Document and key-value databases <span class="path">MongoDB, Elasticsearch, Redis</span></a>
+    <a href="usage/drivers.md">Drivers <span class="path">Driver files, versions, HANA, JDBC</span></a>
+    <a href="usage/settings-and-shortcuts.md">Settings and shortcuts <span class="path">Formats, keymap, where files live</span></a>
   </div>
 </section>
 
