@@ -14,6 +14,17 @@ use crate::transfer::take_turn;
 impl Engine {
     /// Explains `sql` on session `key` as a job ([`JobOutcome::Plan`]); `analyze` runs it.
     pub fn explain(&self, key: &SessionKey, sql: String, analyze: bool) -> JobId {
+        self.explain_in(key, None, sql, analyze)
+    }
+
+    /// Explains a statement in the selected database, reusing the session's query connection.
+    pub fn explain_in(
+        &self,
+        key: &SessionKey,
+        database: Option<&str>,
+        sql: String,
+        analyze: bool,
+    ) -> JobId {
         let job = self.shared.jobs.create(JobKind::Explain);
         let id = job.id;
         let io = {
@@ -29,10 +40,15 @@ impl Engine {
                 .finish(id, JobOutcome::Failed(not_connected())),
             Some(io) => {
                 let ticket = io.issue_ticket();
-                let task =
-                    self.shared
-                        .clone()
-                        .run_explain(job, key.clone(), io, ticket, sql, analyze);
+                let task = self.shared.clone().run_explain(
+                    job,
+                    key.clone(),
+                    io,
+                    ticket,
+                    database.map(str::to_owned),
+                    sql,
+                    analyze,
+                );
                 self.shared.send(Command::Spawn(Box::pin(task)));
             }
         }
@@ -42,17 +58,21 @@ impl Engine {
 }
 
 impl Shared {
+    #[allow(clippy::too_many_arguments)]
     async fn run_explain(
         self: Arc<Self>,
         job: JobControl,
         key: SessionKey,
         io: Arc<SessionIo>,
         ticket: u64,
+        database: Option<String>,
         sql: String,
         analyze: bool,
     ) {
         let _slot = take_turn(&self, &io, ticket).await;
-        let outcome = self.explain_on(&key, &io, &sql, analyze).await;
+        let outcome = self
+            .explain_on(&key, &io, database.as_deref(), &sql, analyze)
+            .await;
         let outcome = match outcome {
             Ok(plan) => JobOutcome::Plan(plan),
             Err(e) => JobOutcome::Failed(e),
@@ -65,10 +85,12 @@ impl Shared {
         &self,
         key: &SessionKey,
         io: &Arc<SessionIo>,
+        database: Option<&str>,
         sql: &str,
         analyze: bool,
     ) -> Result<sqlr_core::PlanTree, DriverError> {
-        let conn = self.connected(key, io).await.ok_or_else(not_connected)?;
+        self.connected(key, io).await.ok_or_else(not_connected)?;
+        let conn = self.session_connection(key, io, database).await?;
         let rel = conn.relational().ok_or_else(|| {
             DriverError::new(ErrorKind::Unsupported, "this connection has no query plans")
         })?;

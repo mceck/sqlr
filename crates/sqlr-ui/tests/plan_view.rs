@@ -75,6 +75,51 @@ fn harness() -> Harness<'static, App> {
 }
 
 #[test]
+fn cards_are_compact_and_show_node_times_in_milliseconds() {
+    let h = harness();
+    let card = h.get_by_label("Select Nested Loop").rect();
+    assert!(card.height() <= 58.0, "card is too tall: {card:?}");
+    assert!(card.width() <= 470.0, "card is too wide: {card:?}");
+    h.get_by_label("self 1.0 ms · total 5.0 ms · 20%");
+    h.get_by_label("self 3.0 ms · total 3.0 ms · 60%");
+    // The index scan takes 0.25 ms per loop, four loops: display their total once.
+    h.get_by_label("self 1.0 ms · total 1.0 ms · 20%");
+}
+
+#[test]
+fn estimated_plans_explain_how_to_get_measured_times() {
+    let h = harness_with(
+        parse_pg_json(ESTIMATED).unwrap(),
+        "SELECT * FROM t",
+        false,
+        false,
+    );
+    h.get_by_label("Execution not measured");
+    h.get_by_label("Run Explain Analyze to measure execution time in ms.");
+    assert!(h.query_by_label_contains("self 0").is_none());
+}
+
+#[test]
+fn node_timings_are_visible_even_without_row_counts_or_estimated_costs() {
+    let h = harness_with(
+        PlanTree {
+            root: sqlr_core::PlanNode {
+                label: "Remote query".into(),
+                time_ms: Some(4.0),
+                self_time_ms: Some(4.0),
+                ..Default::default()
+            },
+            execution_ms: Some(4.0),
+            ..Default::default()
+        },
+        "SELECT 1",
+        false,
+        false,
+    );
+    h.get_by_label("self 4.0 ms · total 4.0 ms · 100%");
+}
+
+#[test]
 fn plan_view_summarizes_the_plan_and_marks_the_hottest_nodes() {
     let h = harness();
     h.get_by_label("Analyzed");

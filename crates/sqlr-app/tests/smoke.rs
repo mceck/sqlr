@@ -2308,14 +2308,16 @@ fn hana_connection_form_from_manifest() {
     // TLS and redirect options) comes from the manifest it announces.
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let exe = std::env::current_exe().unwrap();
+    let target = exe.ancestors().nth(2).unwrap().to_path_buf(); // .../target/debug
     let built = std::process::Command::new(&cargo)
         .args(["build", "-p", "sqlr-driver-hana"])
+        .arg("--target-dir")
+        .arg(target.parent().unwrap())
         .current_dir(&root)
         .status()
         .unwrap();
     assert!(built.success());
-    let exe = std::env::current_exe().unwrap();
-    let target = exe.ancestors().nth(2).unwrap().to_path_buf(); // .../target/debug
     let dir = tempfile::tempdir().unwrap();
     let archive = dir.path().join("hana.tar.gz");
     let packed = std::process::Command::new("sh")

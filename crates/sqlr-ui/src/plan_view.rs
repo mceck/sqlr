@@ -16,7 +16,7 @@ use sqlr_core::{PlanInsights, PlanIssue, PlanIssueLevel, PlanNode, PlanRole, Pla
 use crate::theme::{self, Palette, Spacing, icons};
 
 /// The widest a node card gets.
-const CARD_W: f32 = 600.0;
+const CARD_W: f32 = 440.0;
 /// The horizontal room a child subtree adds under its parent.
 const INDENT: f32 = 26.0;
 /// The space between two sibling cards.
@@ -137,12 +137,18 @@ fn header(
     ui.add_space(Spacing::XS);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = Spacing::L;
-        let execution = plan
-            .execution_ms
-            .map(fmt_ms)
-            .unwrap_or_else(|| "—".to_string());
-        ui.label(RichText::new(execution).font(theme::semibold(ui.ctx(), 19.0)));
-        ui.label(RichText::new("execution").small().color(p.text_muted));
+        if let Some(execution) = plan.execution_ms {
+            ui.label(RichText::new(fmt_ms(execution)).font(theme::semibold(ui.ctx(), 19.0)));
+            ui.label(RichText::new("execution").small().color(p.text_muted));
+        } else if let Some(time) = plan.root.time_ms {
+            metric(ui, p, "root total", fmt_ms(time));
+        } else {
+            ui.label(
+                RichText::new("Execution not measured")
+                    .small()
+                    .color(p.text_muted),
+            );
+        }
         if let Some(planning) = plan.planning_ms {
             metric(ui, p, "planning", fmt_ms(planning));
         }
@@ -202,6 +208,10 @@ fn header(
             }
         });
     });
+
+    if !insights.timed {
+        theme::hint(ui, "Run Explain Analyze to measure execution time in ms.");
+    }
 
     ui.add_space(Spacing::S);
     composition(ui, p, insights);
@@ -461,7 +471,7 @@ fn draw_node(
     let selected = state.selected.as_deref() == Some(path.as_slice());
     let collapsed = state.collapsed.contains(path);
 
-    let width = (ui.available_width() - 8.0).clamp(180.0, CARD_W);
+    let width = (ui.available_width() - 20.0).clamp(180.0, CARD_W);
     let stroke = if selected {
         Stroke::new(1.5, p.accent)
     } else if rank == Some(0) {
@@ -483,9 +493,11 @@ fn draw_node(
         .fill(fill)
         .stroke(stroke)
         .corner_radius(CornerRadius::same(Spacing::RADIUS_M))
-        .inner_margin(Margin::symmetric(10, 7))
+        .inner_margin(Margin::symmetric(8, 4))
         .show(ui, |ui| {
             ui.set_width(width);
+            ui.spacing_mut().item_spacing.y = 2.0;
+            ui.spacing_mut().interact_size.y = 16.0;
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = Spacing::S;
                 icons::paint(ui, icon, color);
@@ -505,7 +517,7 @@ fn draw_node(
             } else {
                 0.0
             };
-            if !rows.is_empty() || node.cost.is_some() || loops > 1.0 {
+            if !rows.is_empty() || node.cost.is_some() || node.time_ms.is_some() || loops > 1.0 {
                 ui.add_space(2.0);
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = Spacing::S;
@@ -534,34 +546,25 @@ fn draw_node(
                                     .color(p.text_muted),
                             );
                         }
-                        if let Some((_, cost)) = node.cost {
-                            ui.label(
-                                RichText::new(format!("cost {}", fmt_num(cost)))
-                                    .small()
-                                    .color(p.text_muted),
-                            );
-                        }
+                        let percent = fmt_percent(f64::from(share) * 100.0);
+                        let metric = match (node.self_time_ms, node.time_ms, node.cost) {
+                            (Some(own), Some(total), _) => format!("self {} · total {} · {percent}", fmt_ms(own), fmt_ms(total)),
+                            (_, Some(total), _) => format!("total {} · {percent}", fmt_ms(total)),
+                            (_, _, Some((_, cost))) => format!("cost {} · {percent}", fmt_num(cost)),
+                            _ => String::new(),
+                        };
+                        ui.label(RichText::new(metric).small().color(if node.time_ms.is_some() { p.text } else { p.text_muted }))
+                            .on_hover_text("Self: time in this operator, excluding children. Total: time including children. Both include all loops. Estimated costs are relative units, not milliseconds.");
                     });
                 });
             }
             if total > 0.0 {
-                ui.add_space(3.0);
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = Spacing::S;
-                    let width = (ui.available_width() - 44.0).max(40.0);
-                    let (bar, _) = ui.allocate_exact_size(vec2(width, 4.0), Sense::hover());
+                let width = ui.available_width();
+                    let (bar, _) = ui.allocate_exact_size(vec2(width, 3.0), Sense::hover());
                     ui.painter().rect_filled(bar, 2.0, p.bg_subtle);
                     let mut filled = bar;
                     filled.set_width(bar.width() * share);
                     ui.painter().rect_filled(filled, 2.0, color);
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(
-                            RichText::new(fmt_percent(f64::from(share) * 100.0))
-                                .small()
-                                .color(p.text_muted),
-                        );
-                    });
-                });
             }
         });
     let rect = card.response.rect;

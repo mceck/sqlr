@@ -344,10 +344,10 @@ impl EditorState {
 
     /// Highlights the first changed range for the next frame.
     pub fn highlight_agent_edit(&mut self, at: usize) {
-        self.markers = vec![Marker {
+        self.set_markers(vec![Marker {
             at,
             message: "Agent edit".into(),
-        }];
+        }]);
         self.scroll_to_caret = true;
     }
 

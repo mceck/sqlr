@@ -74,8 +74,9 @@ else
         SQLR_TEST_CA="$PWD/.test-services/certs/ca.crt"
 fi
 
-# Old profiles would otherwise merge with this run and hide what is no longer covered.
-find target/llvm-cov-target -maxdepth 1 \( -name '*.profraw' -o -name '*.profdata' \) -delete 2>/dev/null || true
+# Old instrumented binaries also carry coverage mappings. Keeping them after source
+# changes makes llvm-cov count multiple versions of the same file in the report.
+cargo llvm-cov clean --workspace
 
 echo "coverage: running tests (profile: $PROFILE)"
 status=0

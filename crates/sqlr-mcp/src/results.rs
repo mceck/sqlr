@@ -635,6 +635,111 @@ mod tests {
     use super::*;
 
     #[test]
+    fn document_values_keep_extended_types_and_nested_structure() {
+        let cases = [
+            (DocValue::Undefined, Value::Null),
+            (DocValue::MinKey, Value::Null),
+            (DocValue::MaxKey, Value::Null),
+            (DocValue::Null, Value::Null),
+            (DocValue::Bool(true), json!(true)),
+            (DocValue::Int32(-4), json!(-4)),
+            (DocValue::Int64(i64::MAX), json!(9223372036854775807i64)),
+            (DocValue::Double(1.5), json!(1.5)),
+            (DocValue::Double(f64::NAN), json!("NaN")),
+            (DocValue::Decimal128("1.100".into()), json!("1.100")),
+            (DocValue::String("hello".into()), json!("hello")),
+            (
+                DocValue::ObjectId([0xab; 12]),
+                json!("abababababababababababab"),
+            ),
+            (DocValue::DateTime(1234), json!(1234)),
+            (
+                DocValue::Binary {
+                    subtype: 4,
+                    bytes: vec![0, 255],
+                },
+                json!({"subtype":4,"base64":"AP8="}),
+            ),
+            (
+                DocValue::Regex {
+                    pattern: "^a".into(),
+                    options: "i".into(),
+                },
+                json!({"pattern":"^a","options":"i"}),
+            ),
+            (DocValue::Timestamp { t: 42, i: 7 }, json!({"t":42,"i":7})),
+            (
+                DocValue::Document(vec![(
+                    "nested".into(),
+                    DocValue::Array(vec![DocValue::Null, DocValue::Int32(3)]),
+                )]),
+                json!({"nested":[null,3]}),
+            ),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(doc_json(&input), expected, "{input:?}");
+        }
+    }
+
+    #[test]
+    fn redis_values_preserve_binary_data_and_non_string_map_keys() {
+        let cases = [
+            (RespValue::Nil, Value::Null),
+            (RespValue::Int(42), json!(42)),
+            (RespValue::Simple("OK".into()), json!("OK")),
+            (RespValue::Bulk(b"hello\n\t".to_vec()), json!("hello\n\t")),
+            (RespValue::Bulk(vec![0, 255]), json!({"base64":"AP8="})),
+            (RespValue::Bulk(vec![0]), json!({"base64":"AA=="})),
+            (
+                RespValue::Array(vec![RespValue::Int(1), RespValue::Nil]),
+                json!([1, null]),
+            ),
+            (
+                RespValue::Map(vec![(RespValue::Int(1), RespValue::Bool(true))]),
+                json!([[1, true]]),
+            ),
+            (RespValue::Double(1.5), json!(1.5)),
+            (RespValue::Double(f64::INFINITY), json!("NaN")),
+            (RespValue::Bool(false), json!(false)),
+            (
+                RespValue::Error("WRONGTYPE".into()),
+                json!({"error":"WRONGTYPE"}),
+            ),
+            (RespValue::Verbatim("text".into()), json!("text")),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(resp_json(&input), expected, "{input:?}");
+        }
+    }
+
+    #[test]
+    fn sweeping_expires_only_idle_results_and_keeps_their_kind() {
+        let results = Results::default();
+        let old = results.insert("s1", ResultKind::Document, QueryId(1), Some("old".into()));
+        let touched = results.insert("s1", ResultKind::Tabular, QueryId(2), None);
+        let reply = results.insert_reply("s1", &RespValue::Int(42));
+        for id in [&old, &touched, &reply] {
+            results.entries.lock().get_mut(id).unwrap().last_access = Instant::now() - RESULT_TTL;
+        }
+        results.touch(&touched);
+        assert_eq!(results.sweep(), vec![(QueryId(1), ResultKind::Document)]);
+        assert_eq!(results.get(&old), None);
+        assert_eq!(results.reply(&reply), None);
+        assert_eq!(
+            results.get(&touched),
+            Some((QueryId(2), ResultKind::Tabular))
+        );
+        assert_eq!(results.len(), 1);
+        assert!(!results.is_empty());
+        assert_eq!(results.sweep_owner("other"), vec![]);
+        assert_eq!(
+            results.sweep_owner("s1"),
+            vec![(QueryId(2), ResultKind::Tabular)]
+        );
+        assert!(results.is_empty());
+    }
+
+    #[test]
     fn value_mapping_preserves_precision_and_specials() {
         assert_eq!(cell_json(Cell::Null, DisplayHint::Plain), Value::Null);
         assert_eq!(cell_json(Cell::Bool(true), DisplayHint::Plain), json!(true));

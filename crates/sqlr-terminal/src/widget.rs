@@ -874,6 +874,174 @@ mod tests {
     }
 
     #[test]
+    fn focused_canvas_sends_input_and_copy_uses_the_selected_screen_text() {
+        use crate::session::{BackendFactory, BackendParts};
+        use crate::shell::CommandSpec;
+        use parking_lot::Mutex;
+        use std::io::{Cursor, Write};
+
+        #[derive(Clone, Default)]
+        struct Output(Arc<Mutex<Vec<u8>>>, Arc<std::sync::atomic::AtomicBool>);
+        impl Write for Output {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl BackendFactory for Output {
+            fn start(&self, _: &CommandSpec, _: u16, _: u16) -> Result<BackendParts, String> {
+                let killed = self.1.clone();
+                let stopped = self.1.clone();
+                Ok(BackendParts {
+                    reader: Box::new(Cursor::new(b"hello\r\n\x1b[1;3;4;31mworld\x1b[0m\x07")),
+                    writer: Box::new(self.clone()),
+                    resize: Box::new(|_, _| {}),
+                    kill: Box::new(move || {
+                        killed.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }),
+                    wait: Box::new(move || {
+                        while !stopped.load(std::sync::atomic::Ordering::SeqCst) {
+                            std::thread::sleep(Duration::from_millis(1));
+                        }
+                        Ok(0)
+                    }),
+                    pid: None,
+                })
+            }
+        }
+        let output = Output::default();
+        let config = SessionConfig::default();
+        let spec = crate::shell::resolve_current(&config.shell, &config.cwd);
+        let session = TerminalSession::spawn_with(&output, &spec, &config, Arc::new(|| {}));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while session.snapshot(0).cell(1, 0).is_none_or(|c| c.text != "w") {
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        let mut panel = TerminalPanel {
+            session: Some(session),
+            started_once: true,
+            focus_next: true,
+            ..Default::default()
+        };
+        let ctx = egui::Context::default();
+        let frame = |panel: &mut TerminalPanel, events| {
+            let mut result = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(640.0, 300.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    panel.show(ui, &theme(), true, Arc::new(|| {}));
+                },
+            );
+            result.textures_delta.clear();
+            result
+        };
+        let _ = frame(&mut panel, vec![]);
+        let _ = frame(&mut panel, vec![egui::Event::Text("echo ready".into())]);
+        assert!(panel.focused());
+        assert_eq!(&*output.0.lock(), b"echo ready");
+        assert!(panel.canvas_rect().width() > 500.0);
+        panel.selection = Some(Selection {
+            anchor: (0, 0),
+            cursor: (0, 5),
+        });
+        let snapshot = panel.session().unwrap().snapshot(0);
+        let mut copied = ctx.run_ui(Default::default(), |ui| panel.copy(ui.ctx(), &snapshot));
+        assert!(
+            copied
+                .platform_output
+                .commands
+                .iter()
+                .any(|command| matches!(
+                    command, egui::OutputCommand::CopyText(text) if text == "hello"
+                ))
+        );
+        copied.textures_delta.clear();
+        panel.clear();
+        assert_eq!(
+            panel
+                .session()
+                .unwrap()
+                .snapshot(0)
+                .cell(0, 0)
+                .unwrap()
+                .text,
+            ""
+        );
+        panel.close();
+        assert!(!panel.focused());
+        panel.kill();
+    }
+
+    #[test]
+    fn restarting_a_failed_shell_clears_selection_and_reports_the_failure() {
+        struct FailedBackend;
+        impl crate::session::BackendFactory for FailedBackend {
+            fn start(
+                &self,
+                _: &crate::shell::CommandSpec,
+                _: u16,
+                _: u16,
+            ) -> Result<crate::session::BackendParts, String> {
+                Err("test backend unavailable".into())
+            }
+        }
+        let config = SessionConfig {
+            shell: "exit 0".into(),
+            ..Default::default()
+        };
+        let spec = crate::shell::resolve_current(&config.shell, &config.cwd);
+        let mut panel = TerminalPanel {
+            session: Some(TerminalSession::spawn_with(
+                &FailedBackend,
+                &spec,
+                &config,
+                Arc::new(|| {}),
+            )),
+            started_once: true,
+            ..Default::default()
+        };
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            assert!(panel.show(ui, &theme(), false, Arc::new(|| {})).is_empty());
+        });
+        output.textures_delta.clear();
+        assert_eq!(
+            panel.status(),
+            Some(TerminalStatus::Failed {
+                message: "test backend unavailable".into()
+            })
+        );
+        panel.set_config(config);
+        panel.open();
+        panel.scroll = 12;
+        panel.selection = Some(Selection {
+            anchor: (0, 0),
+            cursor: (0, 3),
+        });
+        panel.restart(Arc::new(|| {}));
+        assert!(panel.started());
+        assert_eq!(panel.scroll, 0);
+        assert_eq!(panel.selection, None);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while panel.status().is_some_and(|s| s.is_running()) {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(panel.status(), Some(TerminalStatus::Exited { code: 0 }));
+        panel.toggle();
+        assert!(!panel.is_open());
+        panel.toggle();
+        assert!(panel.is_open());
+    }
+
+    #[test]
     fn colour_mapping_covers_ansi_256_and_truecolour() {
         let theme = theme();
         assert_eq!(theme.color(TermColor::Default), Color32::WHITE);

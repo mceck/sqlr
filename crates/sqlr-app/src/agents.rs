@@ -1251,6 +1251,172 @@ mod tests {
     use sqlr_engine::DriverRegistry;
     use sqlr_store::{ConnectionRepo, MemorySecretStore, Settings};
 
+    fn app_for_agent_tests(dir: &std::path::Path) -> SqlrApp {
+        let mut drivers = DriverRegistry::default();
+        drivers.register(sqlr_testkit::FakeDriver::new(Default::default()));
+        let repo = ConnectionRepo::open(dir, Box::new(MemorySecretStore::default())).unwrap();
+        repo.save(
+            &sqlr_core::ConnectionConfig {
+                id: "c1".into(),
+                name: "Test".into(),
+                driver: "fake".into(),
+                group: None,
+                color: None,
+                profile: None,
+                values: Default::default(),
+                save_secrets: false,
+                agent_access: sqlr_core::AgentAccess::Read,
+            },
+            &Default::default(),
+        )
+        .unwrap();
+        SqlrApp::new(
+            AppDeps {
+                engine: Engine::new(drivers, Arc::new(|| {})),
+                repo,
+                settings: Settings::default(),
+                config_dir: dir.into(),
+                data_dir: None,
+                startup_notice: None,
+                storage_warning: None,
+                mcp_token_store: None,
+            },
+            &egui::Context::default(),
+        )
+    }
+
+    #[test]
+    fn agent_edits_update_real_tabs_and_reject_stale_revisions() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_for_agent_tests(dir.path());
+        app.new_tab(Some("Agent query".into()), Some("c1".into()), "SELECT 1");
+        let id = app.active_key().unwrap();
+        let tab = app.agent_tab(id).unwrap();
+        assert_eq!(tab.text, "SELECT 1");
+        assert!(
+            app.agent_tabs()
+                .iter()
+                .any(|tab| tab.id == id && tab.connection_id.as_deref() == Some("c1"))
+        );
+        let edited = app
+            .agent_edit_tab(id, tab.revision, TabEdit::Replace("SELECT 22".into()))
+            .unwrap();
+        assert_eq!(edited.text, "SELECT 22");
+        assert!(edited.dirty);
+        assert!(edited.revision > tab.revision);
+        assert_eq!(
+            app.agent_edit_tab(id, tab.revision, TabEdit::Replace("lost update".into()))
+                .unwrap_err()
+                .code,
+            "conflict"
+        );
+        let edited = app
+            .agent_edit_tab(
+                id,
+                edited.revision,
+                TabEdit::Edits(vec![sqlr_mcp::host::EditRange {
+                    start: 7,
+                    end: 9,
+                    text: "3".into(),
+                }]),
+            )
+            .unwrap();
+        assert_eq!(edited.text, "SELECT 3");
+        assert_eq!(app.agent_tab(id).unwrap().text, "SELECT 3");
+        assert_eq!(app.agent_tab(u64::MAX).unwrap_err().code, "not_found");
+        assert_eq!(
+            app.agent_edit_tab(u64::MAX, 0, TabEdit::Replace(String::new()))
+                .unwrap_err()
+                .code,
+            "not_found"
+        );
+    }
+
+    #[test]
+    fn agent_metadata_and_folder_changes_match_the_live_application() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_for_agent_tests(dir.path());
+        let settings = app.agent_settings();
+        let wrap = settings
+            .iter()
+            .find(|entry| entry.id == "editor.soft_wrap")
+            .unwrap();
+        assert_eq!(wrap.kind, serde_json::json!({"type":"bool"}));
+        assert_eq!(
+            wrap.values.get("global"),
+            Some(&serde_json::json!(app.settings.soft_wrap))
+        );
+        let keymap = app.agent_keymap();
+        let new_tab = keymap
+            .iter()
+            .find(|entry| entry.action == sqlr_core::ActionId::NewTab.id())
+            .unwrap();
+        assert!(!new_tab.chords.is_empty());
+        assert!(!new_tab.differs_from_preset);
+        assert_eq!(app.agent_connections()[0].id, "c1");
+        assert_eq!(
+            app.agent_connection("missing").err().unwrap().code,
+            "not_found"
+        );
+        app.agent_folder(FolderOp::Create {
+            name: "work".into(),
+        })
+        .unwrap();
+        app.agent_folder(FolderOp::Rename {
+            from: "work".into(),
+            to: "renamed".into(),
+        })
+        .unwrap();
+        app.agent_folder(FolderOp::Create {
+            name: "parent".into(),
+        })
+        .unwrap();
+        for target in [
+            sqlr_mcp::host::MoveTarget::End,
+            sqlr_mcp::host::MoveTarget::Before {
+                id: "parent".into(),
+            },
+            sqlr_mcp::host::MoveTarget::After {
+                id: "parent".into(),
+            },
+            sqlr_mcp::host::MoveTarget::Into {
+                id: "parent".into(),
+            },
+        ] {
+            app.agent_folder(FolderOp::Move {
+                name: "renamed".into(),
+                target,
+            })
+            .unwrap();
+        }
+        app.agent_delete("folder", "parent/renamed").unwrap();
+        app.agent_delete("task", "missing").unwrap();
+        assert_eq!(
+            app.agent_delete("connection", "missing").unwrap_err().code,
+            "not_found"
+        );
+        assert_eq!(
+            app.agent_delete("unsupported", "c1").unwrap_err().code,
+            "invalid"
+        );
+        app.agent_delete("connection", "c1").unwrap();
+        assert!(app.agent_connections().is_empty());
+        // The same worker persists the folder operations in order.
+        let ctx = egui::Context::default();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            app.logic(&ctx);
+            let repo =
+                ConnectionRepo::open(dir.path(), Box::new(MemorySecretStore::default())).unwrap();
+            if repo.list().unwrap().is_empty() {
+                assert_eq!(repo.folders().unwrap(), vec!["parent".to_string()]);
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     #[test]
     fn secret_presence_reads_the_applications_injected_store() {
         use sqlr_core::{ConnectionConfig, Secrets};

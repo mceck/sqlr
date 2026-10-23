@@ -92,7 +92,14 @@ impl PlanPane {
     }
 
     /// Starts explaining `sql`, keeping the previous plan visible until the new one arrives.
-    pub fn start(&mut self, engine: &Engine, key: &SessionKey, sql: String, analyze: bool) {
+    pub fn start(
+        &mut self,
+        engine: &Engine,
+        key: &SessionKey,
+        database: Option<&str>,
+        sql: String,
+        analyze: bool,
+    ) {
         self.release(engine);
         self.error = None;
         self.sql = sql.clone();
@@ -102,7 +109,7 @@ impl PlanPane {
         self.view.selected = None;
         self.view.collapsed.clear();
         self.view.scroll_to = None;
-        self.job = Some(engine.explain(key, sql, analyze));
+        self.job = Some(engine.explain_in(key, database, sql, analyze));
     }
 
     /// Collects the job's outcome, once it has one.
@@ -303,7 +310,8 @@ impl QueryTab {
             return;
         }
         let key = self.session(engine, conn);
-        self.plan.start(engine, &key, sql, analyze);
+        self.plan
+            .start(engine, &key, self.database.as_deref(), sql, analyze);
     }
 
     /// Runs the Analyze the confirmation banner was waiting for.
@@ -312,7 +320,13 @@ impl QueryTab {
             return;
         };
         let key = self.session(engine, conn);
-        self.plan.start(engine, &key, request.sql, request.analyze);
+        self.plan.start(
+            engine,
+            &key,
+            self.database.as_deref(),
+            request.sql,
+            request.analyze,
+        );
     }
 
     /// Explains the current target again, with the same Analyze setting as the last plan.
@@ -920,9 +934,9 @@ fn explain_controls(ui: &mut egui::Ui, tab: &mut QueryTab, cx: &mut ViewCx<'_>) 
     };
     let mut requested: Option<bool> = None;
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        ui.spacing_mut().item_spacing.x = 2.0;
-        let arrow = icons::text(ui, icons::CARET_DOWN, 10.0).color(if enabled {
-            p.accent
+        ui.spacing_mut().item_spacing.x = 0.0;
+        let arrow = icons::text(ui, icons::CARET_DOWN, 12.0).color(if enabled {
+            p.text
         } else {
             p.text_disabled
         });
@@ -930,8 +944,15 @@ fn explain_controls(ui: &mut egui::Ui, tab: &mut QueryTab, cx: &mut ViewCx<'_>) 
             .add_enabled(
                 enabled,
                 egui::Button::new(arrow)
-                    .frame(false)
-                    .min_size(egui::vec2(18.0, 22.0)),
+                    .fill(p.bg_raised)
+                    .stroke(egui::Stroke::new(1.0, p.border))
+                    .corner_radius(egui::CornerRadius {
+                        nw: 0,
+                        sw: 0,
+                        ne: Spacing::RADIUS_S,
+                        se: Spacing::RADIUS_S,
+                    })
+                    .min_size(egui::vec2(32.0, 28.0)),
             )
             .on_hover_text(if enabled {
                 "Explain options"
@@ -954,19 +975,21 @@ fn explain_controls(ui: &mut egui::Ui, tab: &mut QueryTab, cx: &mut ViewCx<'_>) 
             });
         }
         let glyph = icons::text(ui, icons::PLAN, icons::SIZE).color(if enabled {
-            p.accent
+            p.text_muted
         } else {
             p.text_disabled
         });
-        let label =
-            RichText::new("Explain").color(if enabled { p.accent } else { p.text_disabled });
+        let label = RichText::new("Explain").color(if enabled { p.text } else { p.text_disabled });
         let primary = egui::Button::new((glyph, label))
-            .fill(if enabled {
-                p.accent_soft
-            } else {
-                Color32::TRANSPARENT
-            })
-            .corner_radius(egui::CornerRadius::same(Spacing::RADIUS_S));
+            .fill(p.bg_raised)
+            .stroke(egui::Stroke::new(1.0, p.border))
+            .min_size(egui::vec2(100.0, 28.0))
+            .corner_radius(egui::CornerRadius {
+                nw: Spacing::RADIUS_S,
+                sw: Spacing::RADIUS_S,
+                ne: 0,
+                se: 0,
+            });
         let response = ui.add_enabled(enabled, primary).on_hover_text(tip.as_str());
         response.widget_info(|| {
             egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, "Explain")
@@ -1955,6 +1978,179 @@ mod tests {
     }
 
     #[test]
+    fn global_actions_switch_tabs_and_open_the_requested_tools() {
+        use sqlr_core::ActionId as A;
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = sqlite_app(dir.path());
+        let ctx = egui::Context::default();
+        app.dock = egui_dock::DockState::new(vec![]);
+        app.new_tab(Some("first".into()), Some("db".into()), "SELECT 1");
+        let first = app.active_key().unwrap();
+        app.dispatch_action(A::NewTab, &ctx);
+        let second = app.active_key().unwrap();
+        assert_ne!(first, second);
+        app.dispatch_action(A::PreviousTab, &ctx);
+        assert_eq!(app.active_key(), Some(first));
+        app.dispatch_action(A::NextTab, &ctx);
+        assert_eq!(app.active_key(), Some(second));
+        app.dispatch_action(A::NextTab, &ctx);
+        assert_eq!(app.active_key(), Some(first));
+        let history = app.show_history;
+        let values = app.show_value_panel;
+        app.dispatch_action(A::ToggleHistory, &ctx);
+        app.dispatch_action(A::ToggleValuePanel, &ctx);
+        assert_eq!(app.show_history, !history);
+        assert_eq!(app.show_value_panel, !values);
+        app.dispatch_action(A::ShowOperations, &ctx);
+        assert!(app.show_operations);
+        app.dispatch_action(A::ShowTasks, &ctx);
+        assert!(matches!(app.left, crate::app::LeftPane::Tasks));
+        app.dispatch_action(A::Settings, &ctx);
+        assert!(app.prefs.is_some());
+        app.dispatch_action(A::Profiles, &ctx);
+        assert!(app.profiles_dialog.is_some());
+        app.dispatch_action(A::NewConnection, &ctx);
+        assert!(app.conn_dialog.is_some());
+        app.dispatch_action(A::TransferData, &ctx);
+        assert!(app.transfer_wizard.is_some());
+        let mut other = app.connections[0].clone();
+        other.id = "second-db".into();
+        app.connections.push(other);
+        app.dispatch_action(A::CompareSchemas, &ctx);
+        assert!(app.compare_dialog.is_some());
+        app.dispatch_action(A::CloseTab, &ctx);
+        assert_eq!(app.dock.iter_all_tabs().count(), 1);
+    }
+
+    #[test]
+    fn explain_uses_the_tabs_selected_postgres_database() {
+        sqlr_testkit::skip_container_tests!();
+        use sqlr_core::{ConnectionConfig, ConnectionProfile, Secrets};
+        use sqlr_engine::SessionStatus;
+        let (host, port) = sqlr_testkit::service("POSTGRES");
+        let mut drivers = DriverRegistry::default();
+        drivers.register(sqlr_driver_postgres::PostgresDriver::new());
+        let engine = Engine::new(drivers, Arc::new(|| {}));
+        engine.connect(
+            ConnectionConfig {
+                id: "pg".into(),
+                name: "pg".into(),
+                driver: "postgres".into(),
+                group: None,
+                color: None,
+                profile: None,
+                save_secrets: false,
+                agent_access: Default::default(),
+                values: [
+                    ("host".into(), host),
+                    ("port".into(), port.to_string()),
+                    ("database".into(), "postgres".into()),
+                    ("user".into(), "postgres".into()),
+                    ("show_all_databases".into(), "true".into()),
+                ]
+                .into(),
+            },
+            Secrets([("password".into(), "postgres".into())].into()),
+            ConnectionProfile::development(),
+        );
+        let wait = |done: &dyn Fn() -> bool| {
+            let deadline = Instant::now() + std::time::Duration::from_secs(10);
+            while !done() {
+                assert!(Instant::now() < deadline, "database operation timed out");
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        };
+        wait(&|| {
+            matches!(
+                engine.session_status("pg"),
+                Some(SessionStatus::Connected(_))
+            )
+        });
+        let run = |key: &SessionKey, database: Option<&str>, sql: String| {
+            let q = engine.execute_in(key, database, sql.clone(), 100);
+            wait(&|| {
+                engine
+                    .result(q)
+                    .is_some_and(|r| r.read().status != QueryStatus::Running)
+            });
+            assert!(
+                matches!(
+                    engine.result(q).unwrap().read().status,
+                    QueryStatus::Ready { .. }
+                ),
+                "{sql}"
+            );
+            q
+        };
+        let database = sqlr_testkit::unique_name("explain_db");
+        let meta = SessionKey::meta("pg");
+        run(&meta, None, format!("CREATE DATABASE \"{database}\""));
+        run(
+            &meta,
+            Some(&database),
+            "CREATE TABLE public.\"PuckDraft\" (id integer)".into(),
+        );
+        let mut tab = QueryTab::new(
+            901,
+            "Plan".into(),
+            Some("pg".into()),
+            "SELECT * FROM public.\"PuckDraft\"",
+            SqlSyntax::ansi(),
+            100,
+        );
+        tab.database = Some(database.clone());
+        // Explain must work before the tab's first normal query, including Retry and Analyze.
+        for analyze in [false, true] {
+            tab.start_explain(
+                &engine,
+                "pg",
+                "SELECT * FROM public.\"PuckDraft\"".into(),
+                analyze,
+                false,
+            );
+            wait(&|| {
+                engine
+                    .job(tab.plan.job.unwrap())
+                    .is_some_and(|j| j.outcome.is_some())
+            });
+            tab.poll_plan(&engine);
+            assert!(tab.plan.error.is_none(), "{:?}", tab.plan.error);
+            assert!(tab.plan.tree.is_some());
+            assert_eq!(tab.plan.analyzed, analyze);
+        }
+        tab.start_explain(
+            &engine,
+            "pg",
+            "INSERT INTO public.\"PuckDraft\" VALUES (1)".into(),
+            true,
+            true,
+        );
+        assert!(tab.plan.pending.is_some());
+        tab.confirm_plan(&engine, "pg");
+        wait(&|| {
+            engine
+                .job(tab.plan.job.unwrap())
+                .is_some_and(|j| j.outcome.is_some())
+        });
+        tab.poll_plan(&engine);
+        assert!(tab.plan.error.is_none(), "{:?}", tab.plan.error);
+        let q = run(
+            &meta,
+            Some(&database),
+            "SELECT count(*) FROM public.\"PuckDraft\"".into(),
+        );
+        assert_eq!(
+            engine.result(q).unwrap().read().rows.cell(0, 0),
+            Some(sqlr_core::Cell::Int(0))
+        );
+        run(
+            &meta,
+            None,
+            format!("DROP DATABASE \"{database}\" WITH (FORCE)"),
+        );
+    }
+
+    #[test]
     fn analyze_of_a_write_confirms_then_reports_the_server_error() {
         use egui_kittest::kittest::Queryable;
 
@@ -1967,6 +2163,12 @@ mod tests {
         );
         let mut h = app_harness(app);
         // The chevron menu asks for Analyze; SQLite has none, and the engine says so.
+        let options = h.get_by_label("Explain options").rect();
+        assert!(
+            options.width() >= 30.0,
+            "the options menu needs a generous click target"
+        );
+        assert!(options.height() >= 28.0);
         h.get_by_label("Explain options").click();
         h.run_steps(2);
         h.get_by_label("Explain Analyze").click();
