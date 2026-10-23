@@ -1,6 +1,5 @@
 //! The shared conformance suite against PostgreSQL (needs Docker).
 
-#[allow(dead_code)]
 mod support;
 
 use sqlr_core::{Driver, TableRef, Value};
@@ -9,9 +8,7 @@ use sqlr_driver_tests::{Target, TypeCase, relational_suite};
 
 #[tokio::test]
 async fn postgres_passes_the_conformance_suite() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_container, cfg, secrets) = support::pg().await;
     let mut target = Target::new(
         "postgres",

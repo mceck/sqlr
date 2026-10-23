@@ -145,6 +145,7 @@ fn people() -> DocTarget {
 
 #[test]
 fn mongo_to_pg_flattened() {
+    sqlr_testkit::skip_container_tests!();
     let rt = tokio::runtime::Runtime::new().unwrap();
     // Containers stop inside the runtime (testcontainers needs one to drop them).
     let _guard = rt.enter();
@@ -246,6 +247,7 @@ fn mongo_to_pg_flattened() {
 
 #[test]
 fn csv_to_mongo_documents() {
+    sqlr_testkit::skip_container_tests!();
     let rt = tokio::runtime::Runtime::new().unwrap();
     // Containers stop inside the runtime (testcontainers needs one to drop them).
     let _guard = rt.enter();
@@ -319,6 +321,7 @@ fn csv_to_mongo_documents() {
 
 #[test]
 fn es_to_jsonl() {
+    sqlr_testkit::skip_container_tests!();
     use testcontainers_modules::testcontainers::GenericImage;
     use testcontainers_modules::testcontainers::core::{IntoContainerPort, WaitFor};
 
@@ -420,6 +423,7 @@ fn es_to_jsonl() {
 
 #[test]
 fn redis_keys_to_csv() {
+    sqlr_testkit::skip_container_tests!();
     let rt = tokio::runtime::Runtime::new().unwrap();
     // Containers stop inside the runtime (testcontainers needs one to drop them).
     let _guard = rt.enter();

@@ -9,12 +9,10 @@ use sqlr_core::{
     Connection, Driver, ObjectDef, ObjectKind, ObjectRef, SchemaSnapshot, compare, migration_script,
 };
 use sqlr_driver_postgres::PostgresDriver;
-use support::pg;
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::ContainerAsync;
+use support::{PgServer, pg};
 
 struct Env {
-    _c: ContainerAsync<Postgres>,
+    _c: PgServer,
     raw: tokio_postgres::Client,
     conn: Arc<dyn Connection>,
 }
@@ -27,7 +25,7 @@ impl Env {
             .port(cfg.values["port"].parse().unwrap())
             .user("postgres")
             .password(&sec.0["password"])
-            .dbname("postgres")
+            .dbname(&cfg.values["database"])
             .connect(tokio_postgres::NoTls)
             .await
             .unwrap();
@@ -78,9 +76,7 @@ fn by_ref(snapshot: &SchemaSnapshot) -> Vec<ObjectRef> {
 
 #[tokio::test]
 async fn snapshot_round_trip_equals_load_object() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let env = Env::new(SETUP).await;
     let snap = env.snapshot("a").await;
     assert_eq!(snap.engine, "postgres");
@@ -116,9 +112,7 @@ async fn snapshot_round_trip_equals_load_object() {
 
 #[tokio::test]
 async fn compare_then_apply_script_converges() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let env = Env::new(SETUP).await;
     let rel = env.conn.relational().unwrap();
     let generator = rel.dialect().ddl_gen().unwrap();
@@ -157,9 +151,7 @@ async fn compare_then_apply_script_converges() {
 
 #[tokio::test]
 async fn normalized_ddl_not_a_difference() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     // The same schema, created with other whitespace and type spellings.
     let env = Env::new(
         "CREATE SCHEMA a; CREATE SCHEMA b;
@@ -185,9 +177,7 @@ async fn normalized_ddl_not_a_difference() {
 
 #[tokio::test]
 async fn schemas_on_the_search_path_compare_by_qualified_names() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     // `public` is on the search path: its views and serial defaults print unqualified.
     let env = Env::new(
         "CREATE SCHEMA staging;
@@ -209,9 +199,7 @@ async fn schemas_on_the_search_path_compare_by_qualified_names() {
 
 #[tokio::test]
 async fn serial_tables_script_runs_and_converges() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     // The target has a serial table the source lacks (its sequence goes with it), and the
     // source has an identity table the target lacks (its sequence is named by the server).
     let env = Env::new(

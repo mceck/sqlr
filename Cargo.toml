@@ -65,6 +65,21 @@ objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSApplication", "NSImage", "NSResponder"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["NSAttributedString", "NSData", "NSDictionary", "NSString", "NSObject"] }
 
+# Tests need line tables, not full DWARF: this cuts link time and binary size significantly.
+# Dependencies keep no debug info; their frames still show by symbol in backtraces.
+# A debugging session can restore full info with `CARGO_PROFILE_DEV_DEBUG=2`.
+[profile.dev]
+debug = 1
+
+[profile.dev.package."*"]
+debug = 0
+
+[profile.test]
+debug = 1
+
+[profile.test.package."*"]
+debug = 0
+
 # Spec §1.3: under 50 MB installed. Symbols stripped, thin LTO, one codegen unit; panics
 # still unwind (the app catches nothing, but tests and backtraces rely on it).
 [profile.release]

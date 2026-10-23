@@ -7,7 +7,7 @@ use sqlr_core::{
     Secrets, TableRef,
 };
 use sqlr_driver_postgres::PostgresDriver;
-use support::{config, pg, secrets};
+use support::{config, pg, pg_isolated, secrets};
 use testcontainers_modules::postgres::Postgres;
 use testcontainers_modules::testcontainers::runners::AsyncRunner;
 use testcontainers_modules::testcontainers::{ContainerAsync, ImageExt};
@@ -22,9 +22,7 @@ fn names(nodes: &[Node]) -> Vec<&str> {
 
 #[tokio::test]
 async fn connect_and_ping() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, cfg, sec) = pg().await;
     let conn = PostgresDriver::new().connect(&cfg, &sec).await.unwrap();
     let info = conn.ping().await.unwrap();
@@ -34,9 +32,7 @@ async fn connect_and_ping() {
 
 #[tokio::test]
 async fn wrong_password_is_auth_error() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, cfg, _) = pg().await;
     let err = PostgresDriver::new()
         .connect(&cfg, &secrets("nope"))
@@ -48,9 +44,7 @@ async fn wrong_password_is_auth_error() {
 
 #[tokio::test]
 async fn unreachable_host_is_connection_error() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let cfg = config("127.0.0.1", 1);
     let err = PostgresDriver::new()
         .connect(&cfg, &secrets("x"))
@@ -62,9 +56,7 @@ async fn unreachable_host_is_connection_error() {
 
 #[tokio::test]
 async fn unknown_path_unsupported() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, cfg, sec) = pg().await;
     let conn = PostgresDriver::new().connect(&cfg, &sec).await.unwrap();
     for p in [
@@ -96,7 +88,7 @@ async fn raw(
 
 async fn setup(cfg: &sqlr_core::ConnectionConfig, sec: &sqlr_core::Secrets) {
     // Setup goes through a raw client: execute() belongs to a later task.
-    raw(cfg, sec, "postgres")
+    raw(cfg, sec, &cfg.values["database"])
         .await
         .batch_execute(
             r#"CREATE SCHEMA "select";
@@ -112,9 +104,7 @@ async fn setup(cfg: &sqlr_core::ConnectionConfig, sec: &sqlr_core::Secrets) {
 
 #[tokio::test]
 async fn browse_tree() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, cfg, sec) = pg().await;
     setup(&cfg, &sec).await;
     let conn = PostgresDriver::new().connect(&cfg, &sec).await.unwrap();
@@ -205,10 +195,8 @@ async fn browse_tree() {
 
 #[tokio::test]
 async fn show_all_databases_switches_the_explorer_root() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
-    let (_c, mut cfg, sec) = pg().await;
+    sqlr_testkit::skip_container_tests!();
+    let (_c, mut cfg, sec) = pg_isolated().await;
     raw(&cfg, &sec, "postgres")
         .await
         .batch_execute(r#"CREATE DATABASE "sqlr_other""#)
@@ -356,11 +344,9 @@ fn table_ref(schema: Option<&str>, name: &str) -> TableRef {
 
 #[tokio::test]
 async fn describe_keys() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, cfg, sec) = pg().await;
-    raw(&cfg, &sec, "postgres")
+    raw(&cfg, &sec, &cfg.values["database"])
         .await
         .batch_execute(
             r#"CREATE TABLE public.k(
@@ -442,11 +428,9 @@ async fn describe_keys() {
 
 #[tokio::test]
 async fn ddl_of_table_view_function() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, cfg, sec) = pg().await;
-    let client = raw(&cfg, &sec, "postgres").await;
+    let client = raw(&cfg, &sec, &cfg.values["database"]).await;
     client
         .batch_execute(
             r#"CREATE SCHEMA "s q";
@@ -591,10 +575,8 @@ async fn ddl_of_table_view_function() {
 
 #[tokio::test]
 async fn ddl_in_another_database() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
-    let (_c, mut cfg, sec) = pg().await;
+    sqlr_testkit::skip_container_tests!();
+    let (_c, mut cfg, sec) = pg_isolated().await;
     raw(&cfg, &sec, "postgres")
         .await
         .batch_execute("CREATE DATABASE other")
@@ -645,9 +627,7 @@ async fn connect_within(
 
 #[tokio::test]
 async fn tls_required_but_unavailable() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, cfg, sec) = pg().await;
     for mode in ["require", "verify-ca", "verify-full"] {
         let err = connect_within(&with_values(&cfg, &[("ssl_mode", mode)]), &sec)
@@ -711,9 +691,7 @@ async fn pg_with_tls() -> (ContainerAsync<Postgres>, ConnectionConfig, Secrets, 
 
 #[tokio::test]
 async fn tls_modes_against_a_tls_server() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, cfg, sec, ca_pem) = pg_with_tls().await;
     let dir = tempfile::tempdir().unwrap();
     let ca_path = dir.path().join("ca.pem");

@@ -14,5 +14,6 @@ tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 
 [dev-dependencies]
 rcgen.workspace = true
+sqlr-testkit = { path = "../sqlr-testkit" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "net", "io-util"] }
 testcontainers-modules = { workspace = true, features = ["redis"] }

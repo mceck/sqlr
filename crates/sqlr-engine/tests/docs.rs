@@ -491,6 +491,7 @@ mod mongo {
 
 #[test]
 fn run_doc_pages_and_fetch_all() {
+    sqlr_testkit::skip_container_tests!();
     let server = mongo::start();
     let engine = &server.engine;
     let docs: Vec<String> = (0..1_200)
@@ -538,6 +539,7 @@ fn run_doc_pages_and_fetch_all() {
 
 #[test]
 fn edit_document_preserves_types() {
+    sqlr_testkit::skip_container_tests!();
     let server = mongo::start();
     let engine = &server.engine;
     let oid = new_object_id();
@@ -640,6 +642,7 @@ fn edit_document_preserves_types() {
 
 #[test]
 fn delete_docs_confirms_count() {
+    sqlr_testkit::skip_container_tests!();
     let server = mongo::start();
     let engine = &server.engine;
     mongo::run(engine, "db.del.insertMany([{_id: 1}, {_id: 2}, {_id: 3}])");
@@ -671,6 +674,7 @@ fn delete_docs_confirms_count() {
 
 #[test]
 fn es_doc_edit_by_id_and_index() {
+    sqlr_testkit::skip_container_tests!();
     use testcontainers_modules::testcontainers::core::{IntoContainerPort, WaitFor};
     use testcontainers_modules::testcontainers::runners::AsyncRunner;
     use testcontainers_modules::testcontainers::{GenericImage, ImageExt};

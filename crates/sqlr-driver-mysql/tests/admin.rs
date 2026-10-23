@@ -2,7 +2,6 @@
 //! hosts, grants, sessions, cancel and terminate, locks, variables, database sizes and
 //! table statistics. Every check runs on both servers.
 
-#[allow(dead_code)] // the TLS helpers serve the other suite
 mod support;
 
 use std::sync::Arc;
@@ -14,21 +13,21 @@ use sqlr_core::{
     ObjectRef, Password, RoleDef, TableRef,
 };
 use sqlr_driver_mysql::MysqlDriver;
-use support::{Container, Server, secrets, start};
+use support::{Container, Server, secrets, start_isolated};
 
 macro_rules! suite {
     ($($name:ident),* $(,)?) => {
         mod mysql84 {
             $(#[tokio::test(flavor = "multi_thread")]
             async fn $name() {
-                if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v|v=="1") {return;}
+                sqlr_testkit::skip_container_tests!();
                 super::$name(super::Server::MySql).await
             })*
         }
         mod mariadb114 {
             $(#[tokio::test(flavor = "multi_thread")]
             async fn $name() {
-                if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v|v=="1") {return;}
+                sqlr_testkit::skip_container_tests!();
                 super::$name(super::Server::MariaDb).await
             })*
         }
@@ -70,7 +69,7 @@ struct Env {
 
 impl Env {
     async fn new(server: Server, setup: &[&str]) -> Self {
-        let (c, cfg, sec) = start(server).await;
+        let (c, cfg, sec) = start_isolated(server).await;
         let conn = MysqlDriver::new()
             .connect(&cfg, &sec)
             .await
@@ -220,7 +219,7 @@ async fn roles_list_and_create_alter_drop(server: Server) {
 }
 
 async fn password_with_a_backslash_under_no_backslash_escapes(server: Server) {
-    let (c, cfg, sec) = start(server).await;
+    let (c, cfg, sec) = start_isolated(server).await;
     let opts = mysql_async::OptsBuilder::default()
         .ip_or_hostname(cfg.values["host"].clone())
         .tcp_port(cfg.values["port"].parse().unwrap())

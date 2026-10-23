@@ -24,10 +24,17 @@ sqlr is a lightweight, universal database client in native Rust + egui. No webvi
 
 ```sh
 cargo test --workspace                                   # Postgres tests need Docker (see below)
+cargo nextest run --workspace --profile containers       # runs test binaries concurrently
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt
 cargo run --release -p sqlr-app
 ```
+
+`make test` starts the shared Postgres/MySQL/MariaDB services from
+`docker-compose.test.yml` and runs the nextest `containers` profile; every test gets its
+own database. `make test-services-reset` recreates them. Without `SQLR_TEST_*` variables,
+tests fall back to testcontainers. `make test-fast` sets
+`SQLR_SKIP_CONTAINER_TESTS=1` and needs no Docker.
 
 The Postgres integration tests use testcontainers with Docker Desktop. Set `DOCKER_HOST=unix://$HOME/.docker/run/docker.sock`. The docker CLI is `~/.docker/bin/docker`, which is not on `PATH`.
 

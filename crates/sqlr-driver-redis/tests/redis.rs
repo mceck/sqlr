@@ -111,9 +111,7 @@ fn args(list: &[&str]) -> Vec<Vec<u8>> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn scan_never_uses_keys() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let server = start().await;
     let mut con = raw(&server).await;
     for i in 0..300 {
@@ -156,9 +154,7 @@ async fn scan_never_uses_keys() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn scan_groups_and_types() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let server = start().await;
     let mut con = raw(&server).await;
     run(&mut con, &["SET", "user:1:name", "ann"]).await;
@@ -258,9 +254,7 @@ async fn load_all(kv: &dyn KeyValueConn, key: &str, count: usize) -> (KvPage, us
 
 #[tokio::test(flavor = "multi_thread")]
 async fn values_every_type_paged() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let server = start().await;
     let mut con = raw(&server).await;
     let mut pipe = redis::pipe();
@@ -365,9 +359,7 @@ async fn values_every_type_paged() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn huge_values_paged() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     const FIELDS: usize = 5_000_000;
     let server = start().await;
     let mut con = raw(&server).await;
@@ -410,9 +402,7 @@ async fn huge_values_paged() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn edits_every_type() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let server = start().await;
     let conn = connect(&server, &[]).await;
     let kv = kv(&conn);
@@ -562,9 +552,7 @@ async fn edits_every_type() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ttl_and_persist() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let server = start().await;
     let conn = connect(&server, &[]).await;
     let kv = kv(&conn);
@@ -601,9 +589,7 @@ async fn ttl_and_persist() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn console_resp_types_and_multi_exec() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let server = start().await;
     let conn = connect(&server, &[]).await;
     let kv = kv(&conn);
@@ -701,9 +687,7 @@ async fn console_resp_types_and_multi_exec() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn read_only_refuses_writes() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let server = start().await;
     let mut con = raw(&server).await;
     run(&mut con, &["SET", "k", "v"]).await;
@@ -775,9 +759,7 @@ async fn read_only_refuses_writes() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn tls_and_acl_auth() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let ca_key = rcgen::KeyPair::generate().unwrap();
     let mut ca_params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
     ca_params.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
@@ -897,9 +879,7 @@ fn tempfile_dir() -> std::path::PathBuf {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn scan_resumes_after_reconnect() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let server = start().await;
     let mut con = raw(&server).await;
     let mut pipe = redis::pipe();
@@ -995,9 +975,7 @@ fn is_cluster_refusal(e: &DriverError) -> bool {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn cluster_refused() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let driver = RedisDriver::new();
     let port = fake_cluster(true).await;
     let e = driver
@@ -1019,9 +997,7 @@ async fn cluster_refused() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn create_never_overwrites_an_existing_key() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let server = start().await;
     let conn = connect(&server, &[]).await;
     let kv = kv(&conn);
@@ -1077,9 +1053,7 @@ async fn create_never_overwrites_an_existing_key() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn list_remove_checks_the_index_and_the_value() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let server = start().await;
     let mut con = raw(&server).await;
     run(&mut con, &["RPUSH", "l", "x", "a", "x"]).await;

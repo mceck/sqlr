@@ -1,6 +1,5 @@
 //! Grid edits applied through the engine against a real PostgreSQL server.
 
-#[allow(dead_code)]
 mod support;
 
 use std::sync::Arc;
@@ -99,9 +98,7 @@ fn origin_table(engine: &Engine, q: QueryId) -> TableRef {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn apply_changeset_end_to_end() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, cfg, sec) = pg().await;
     let engine = engine(cfg, sec).await;
     run(
@@ -218,9 +215,7 @@ async fn apply_changeset_end_to_end() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn apply_refuses_a_table_renamed_by_another_session() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, cfg, sec) = pg().await;
     let other = PostgresDriver::new().connect(&cfg, &sec).await.unwrap();
     let engine = engine(cfg, sec).await;

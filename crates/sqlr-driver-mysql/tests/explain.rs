@@ -1,6 +1,5 @@
 //! Explain against MySQL 8.4 and MariaDB 11.4.
 
-#[allow(dead_code)]
 mod support;
 
 use sqlr_core::{Driver, ErrorKind};
@@ -45,16 +44,12 @@ async fn explain_on(server: Server) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn mysql84_explain_tree_parsed() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     explain_on(Server::MySql).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn mariadb114_explain_json_parsed() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     explain_on(Server::MariaDb).await;
 }

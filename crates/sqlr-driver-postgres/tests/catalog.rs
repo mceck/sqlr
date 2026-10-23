@@ -12,8 +12,8 @@ async fn connect() -> (
     let (c, cfg, sec) = pg().await;
     let conn = PostgresDriver::new().connect(&cfg, &sec).await.unwrap();
     let url = format!(
-        "host={} port={} user=postgres password=postgres dbname=postgres",
-        cfg.values["host"], cfg.values["port"]
+        "host={} port={} user=postgres password=postgres dbname={}",
+        cfg.values["host"], cfg.values["port"], cfg.values["database"]
     );
     let (client, io) = tokio_postgres::connect(&url, tokio_postgres::NoTls)
         .await
@@ -24,9 +24,7 @@ async fn connect() -> (
 
 #[tokio::test]
 async fn catalog_lists_relations_and_columns() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn, admin) = connect().await;
     admin
         .batch_execute(
@@ -55,9 +53,7 @@ async fn catalog_lists_relations_and_columns() {
 
 #[tokio::test]
 async fn catalog_of_missing_schema_is_empty() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn, _admin) = connect().await;
     let cat = conn.relational().unwrap().catalog("nope").await.unwrap();
     assert!(cat.relations.is_empty());
@@ -65,9 +61,7 @@ async fn catalog_of_missing_schema_is_empty() {
 
 #[tokio::test]
 async fn pg_reserved_keywords_are_known() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, _conn, admin) = connect().await;
     let rows = admin
         .query(

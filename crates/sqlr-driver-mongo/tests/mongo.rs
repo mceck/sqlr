@@ -198,9 +198,7 @@ async fn seed(conn: &Arc<dyn Connection>, coll: &str, n: usize) {
 
 #[tokio::test]
 async fn browse_tree() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let server = start().await;
     let conn = connect(&server).await;
     let info = conn.ping().await.unwrap();
@@ -264,9 +262,7 @@ async fn browse_tree() {
 
 #[tokio::test]
 async fn find_pages_with_sort_limit_skip_projection() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let server = start().await;
     let conn = connect(&server).await;
     seed(&conn, "big", 10_000).await;
@@ -316,9 +312,7 @@ async fn find_pages_with_sort_limit_skip_projection() {
 
 #[tokio::test]
 async fn aggregate_count_and_distinct() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let server = start().await;
     let conn = connect(&server).await;
     seed(&conn, "items", 300).await;
@@ -356,9 +350,7 @@ async fn aggregate_count_and_distinct() {
 
 #[tokio::test]
 async fn writes_report_counts() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let server = start().await;
     let conn = connect(&server).await;
 
@@ -484,9 +476,7 @@ async fn writes_report_counts() {
 
 #[tokio::test]
 async fn run_command_and_use() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let server = start().await;
     let conn = connect(&server).await;
 
@@ -613,9 +603,7 @@ fn matrix() -> DocValue {
 
 #[tokio::test]
 async fn typed_values_matrix() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let server = start().await;
     let conn = connect(&server).await;
     let original = matrix();
@@ -645,9 +633,7 @@ async fn typed_values_matrix() {
 
 #[tokio::test]
 async fn cancel_a_long_aggregate_kills_it() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let server = start().await;
     let conn = connect(&server).await;
     seed(&conn, "slow", 300).await;
@@ -678,9 +664,7 @@ async fn cancel_a_long_aggregate_kills_it() {
 
 #[tokio::test]
 async fn auth_failure_message() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let server = start_with(&[
         ("MONGO_INITDB_ROOT_USERNAME", "root"),
         ("MONGO_INITDB_ROOT_PASSWORD", "s3cret"),
@@ -717,9 +701,7 @@ async fn auth_failure_message() {
 
 #[tokio::test]
 async fn read_only_refuses_writes() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let server = start().await;
     let rw = connect(&server).await;
     run(&rw, "db.c.insertOne({_id: 1})").await;
@@ -775,9 +757,7 @@ async fn read_only_refuses_writes() {
 
 #[tokio::test]
 async fn chunks_stop_at_a_byte_cap() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let server = start().await;
     let conn = connect(&server).await;
     let big = "x".repeat(1_200_000);
@@ -837,9 +817,7 @@ async fn cancel_after(
 
 #[tokio::test]
 async fn cancel_kills_counts_distinct_and_survives_a_browse() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let server = start().await;
     let conn = connect(&server).await;
     seed(&conn, "slow", 300).await;

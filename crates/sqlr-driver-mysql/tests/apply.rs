@@ -1,6 +1,5 @@
 //! Grid edits applied through the engine against MySQL 8.4 and MariaDB 11.4.
 
-#[allow(dead_code)]
 mod support;
 
 use std::sync::Arc;
@@ -17,17 +16,13 @@ use support::{Server, start};
 mod mysql84 {
     #[tokio::test(flavor = "multi_thread")]
     async fn apply_changeset_end_to_end() {
-        if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-            return;
-        }
+        sqlr_testkit::skip_container_tests!();
         super::apply_changeset_end_to_end(super::Server::MySql).await
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn update_to_the_current_value_succeeds() {
-        if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-            return;
-        }
+        sqlr_testkit::skip_container_tests!();
         super::update_to_the_current_value_succeeds(super::Server::MySql).await
     }
 }
@@ -35,17 +30,13 @@ mod mysql84 {
 mod mariadb114 {
     #[tokio::test(flavor = "multi_thread")]
     async fn apply_changeset_end_to_end() {
-        if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-            return;
-        }
+        sqlr_testkit::skip_container_tests!();
         super::apply_changeset_end_to_end(super::Server::MariaDb).await
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn update_to_the_current_value_succeeds() {
-        if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-            return;
-        }
+        sqlr_testkit::skip_container_tests!();
         super::update_to_the_current_value_succeeds(super::Server::MariaDb).await
     }
 }
@@ -132,6 +123,7 @@ fn origin_table(engine: &Engine, q: QueryId) -> TableRef {
 
 async fn apply_changeset_end_to_end(server: Server) {
     let (_c, cfg, sec) = start(server).await;
+    let database = cfg.values["database"].clone();
     let engine = engine(cfg, sec).await;
     run(
         &engine,
@@ -150,7 +142,7 @@ async fn apply_changeset_end_to_end(server: Server) {
         table,
         TableRef {
             database: None,
-            schema: Some("test".into()),
+            schema: Some(database),
             name: "My Items".into()
         }
     );

@@ -182,13 +182,17 @@ mod tests {
                 "ssl_mode",
                 "ssl_ca",
                 "ssl_cert",
-                "ssl_key"
+                "ssl_key",
+                "property.sql_mode",
+                "property.time_zone",
+                "property.wait_timeout"
             ]
         );
         let password = &m.fields[4];
         assert!(password.secret && !password.required);
         assert!(!m.fields[2].required, "database is optional");
-        assert!(m.fields[6..].iter().all(|f| f.group == "TLS"));
+        assert!(m.fields[6..10].iter().all(|f| f.group == "TLS"));
+        assert!(m.fields[10..].iter().all(|f| f.group == "Properties"));
         assert!(m.capabilities.transactions && m.capabilities.editable_results);
         assert_eq!(m.default_port, Some(3306));
     }

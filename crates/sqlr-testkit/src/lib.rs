@@ -7,6 +7,55 @@ mod kv;
 pub use doc::{FakeDocDriver, FakeDocScript};
 pub use kv::{FakeKvDriver, FakeKvScript};
 
+/// Whether container-backed tests should return early because the environment asks for a
+/// Docker-free run (`SQLR_SKIP_CONTAINER_TESTS=1`).
+pub fn skip_container_tests() -> bool {
+    static SKIP: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *SKIP.get_or_init(|| std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|value| value == "1"))
+}
+
+/// The `host:port` of a shared test service, when the environment provides one
+/// (`SQLR_TEST_POSTGRES`, `SQLR_TEST_MYSQL`, …).
+///
+/// Tests fall back to their own testcontainer when this is `None`.
+pub fn test_service(name: &str) -> Option<(String, u16)> {
+    let value = std::env::var(format!("SQLR_TEST_{name}")).ok()?;
+    let (host, port) = value.rsplit_once(':')?;
+    Some((host.to_string(), port.parse().ok()?))
+}
+
+/// A database name unique across tests, processes and runs: for a shared server every
+/// test gets its own database without colliding with a previous run.
+pub fn unique_name(prefix: &str) -> String {
+    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static RUN: OnceLock<String> = OnceLock::new();
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    let run = RUN.get_or_init(|| {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        format!("{nanos:x}_{}", std::process::id())
+    });
+    format!("{prefix}_{run}_{}", NEXT.fetch_add(1, Ordering::Relaxed))
+}
+
+/// Returns early from a test when [`skip_container_tests`] is true.
+///
+/// Container-backed tests call this first, so one environment variable disables every
+/// Docker-dependent test without repeating the check.
+#[macro_export]
+macro_rules! skip_container_tests {
+    () => {
+        if $crate::skip_container_tests() {
+            return;
+        }
+    };
+}
+
 use std::pin::pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

@@ -11,7 +11,7 @@ use sqlr_core::{
     RoleDef, Secrets, TableRef,
 };
 use sqlr_driver_postgres::PostgresDriver;
-use support::{pg, secrets};
+use support::{pg_isolated, secrets};
 use testcontainers_modules::postgres::Postgres;
 use testcontainers_modules::testcontainers::ContainerAsync;
 
@@ -39,7 +39,7 @@ async fn raw(cfg: &ConnectionConfig, sec: &Secrets) -> tokio_postgres::Client {
 
 impl Env {
     async fn new(setup: &str) -> Self {
-        let (c, cfg, sec) = pg().await;
+        let (c, cfg, sec) = pg_isolated().await;
         let raw = raw(&cfg, &sec).await;
         raw.batch_execute(setup).await.unwrap();
         let conn = PostgresDriver::new().connect(&cfg, &sec).await.unwrap();
@@ -126,9 +126,7 @@ macro_rules! eventually {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn roles_list_and_create_alter_drop() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let env = Env::new("CREATE ROLE reader NOLOGIN;").await;
     let admin = env.admin();
     let support = admin.supports();
@@ -220,9 +218,7 @@ async fn roles_list_and_create_alter_drop() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn grants_round_trip() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let env = Env::new(
         "CREATE SCHEMA shop; CREATE TABLE shop.\"Order Lines\" (id int); \
          CREATE SEQUENCE shop.seq; \
@@ -282,9 +278,7 @@ async fn grants_round_trip() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn sessions_include_own_marked() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let env = Env::new("SELECT 1").await;
     let admin = env.admin();
     let own_ids = admin.session_ids();
@@ -311,9 +305,7 @@ async fn sessions_include_own_marked() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn other_database_connections_are_own() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let env = Env::new("CREATE DATABASE other").await;
     let mut cfg = env.cfg.clone();
     cfg.values
@@ -341,9 +333,7 @@ async fn other_database_connections_are_own() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn cancel_and_terminate_other_session() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let env = Env::new("SELECT 1").await;
     let admin = env.admin();
     let other = Arc::new(raw(&env.cfg, &env.sec).await);
@@ -414,9 +404,7 @@ async fn cancel_and_terminate_other_session() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn locks_show_blocking_chain() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let env =
         Env::new("CREATE TABLE t (id int PRIMARY KEY, v int); INSERT INTO t VALUES (1, 0);").await;
     let admin = env.admin();
@@ -462,9 +450,7 @@ async fn locks_show_blocking_chain() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn properties_and_sizes() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let env = Env::new("CREATE DATABASE other").await;
     let admin = env.admin();
     let properties = admin.properties().await.unwrap();
@@ -492,9 +478,7 @@ async fn properties_and_sizes() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn table_stats() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let env = Env::new(
         "CREATE SCHEMA shop; \
          CREATE TABLE shop.orders (id int PRIMARY KEY, note text); \

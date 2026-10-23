@@ -1,4 +1,8 @@
+#![allow(dead_code)] // each test binary uses a different subset of these helpers
+
+use mysql_async::prelude::Queryable;
 use sqlr_core::{ConnectionConfig, Secrets};
+use sqlr_testkit::{test_service, unique_name};
 use testcontainers_modules::mariadb::Mariadb;
 use testcontainers_modules::mysql::Mysql;
 use testcontainers_modules::testcontainers::runners::AsyncRunner;
@@ -18,13 +22,22 @@ impl Server {
             Server::MariaDb => "MariaDB",
         }
     }
+
+    fn env_name(self) -> &'static str {
+        match self {
+            Server::MySql => "MYSQL",
+            Server::MariaDb => "MARIADB",
+        }
+    }
 }
 
-/// A running test server; dropping it stops the container.
+/// A running test server; dropping a container stops it. `Shared` is a long-lived
+/// service from `docker-compose.test.yml`.
 #[allow(dead_code)] // held only to keep the container running
 pub enum Container {
     MySql(ContainerAsync<Mysql>),
     MariaDb(ContainerAsync<Mariadb>),
+    Shared,
 }
 
 pub fn config(host: &str, port: u16) -> ConnectionConfig {
@@ -53,13 +66,28 @@ pub fn secrets(password: &str) -> Secrets {
     Secrets([("password".to_string(), password.to_string())].into())
 }
 
-/// Starts a pinned MySQL 8.4 or MariaDB 11.4 container: user `root` without a password,
-/// database `test`. Both servers offer TLS with self-signed certificates.
+/// A server for a test that only needs its own database. With a shared service every
+/// test gets a fresh database; otherwise each test gets its own container.
 pub async fn start(server: Server) -> (Container, ConnectionConfig, Secrets) {
+    match test_service(server.env_name()) {
+        Some((host, port)) => {
+            let database = unique_name("sqlr_mysql");
+            create_database(&host, port, &database).await;
+            let (mut cfg, sec) = (config(&host, port), Secrets::default());
+            cfg.values.insert("database".into(), database);
+            (Container::Shared, cfg, sec)
+        }
+        None => start_isolated(server).await,
+    }
+}
+
+/// Always starts a dedicated container: for tests that create databases, list them, or
+/// change the server configuration.
+pub async fn start_isolated(server: Server) -> (Container, ConnectionConfig, Secrets) {
     start_with(server, &[]).await
 }
 
-/// Like [`start`], with TLS turned off on the server.
+/// Like [`start_isolated`], with TLS turned off on the server.
 pub async fn start_without_tls(server: Server) -> (Container, ConnectionConfig, Secrets) {
     let args: &[&str] = match server {
         Server::MySql => &["--tls-version="],
@@ -95,4 +123,18 @@ async fn start_with(server: Server, args: &[&str]) -> (Container, ConnectionConf
         }
     };
     (container, config(&host, port), Secrets::default())
+}
+
+async fn create_database(host: &str, port: u16, database: &str) {
+    let opts = mysql_async::OptsBuilder::default()
+        .ip_or_hostname(host)
+        .tcp_port(port)
+        .user(Some("root"));
+    let mut conn = mysql_async::Conn::new(opts)
+        .await
+        .expect("connect to the shared mysql");
+    conn.query_drop(format!("CREATE DATABASE `{database}`"))
+        .await
+        .expect("create the test database");
+    conn.disconnect().await.ok();
 }

@@ -1,6 +1,5 @@
 //! The shared conformance suite against MySQL and MariaDB (needs Docker).
 
-#[allow(dead_code)]
 mod support;
 
 use sqlr_core::{Driver, Value};
@@ -50,16 +49,12 @@ async fn suite(server: Server) {
 
 #[tokio::test]
 async fn mysql_passes_the_conformance_suite() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     suite(Server::MySql).await;
 }
 
 #[tokio::test]
 async fn mariadb_passes_the_conformance_suite() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     suite(Server::MariaDb).await;
 }

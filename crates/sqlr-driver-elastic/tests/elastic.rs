@@ -241,9 +241,7 @@ fn ids(docs: &[DocValue]) -> HashSet<String> {
 
 #[tokio::test]
 async fn browse_mappings_and_document_writes() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let _turn = ONE_AT_A_TIME.lock().await;
     let server = start8(&[]).await;
     let conn = connect(&server, &[]).await;
@@ -431,9 +429,7 @@ async fn browse_mappings_and_document_writes() {
 
 #[tokio::test]
 async fn search_pages_with_pit_and_tabular_results() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let _turn = ONE_AT_A_TIME.lock().await;
     let server = start8(&[]).await;
     let conn = connect(&server, &[]).await;
@@ -523,9 +519,7 @@ async fn search_pages_with_pit_and_tabular_results() {
 
 #[tokio::test]
 async fn es_pit_expired_restarts() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let _turn = ONE_AT_A_TIME.lock().await;
     // The node reaps expired search contexts every second.
     let server = start8(&[("search.keep_alive_interval", "1s")]).await;
@@ -545,9 +539,7 @@ async fn es_pit_expired_restarts() {
 
 #[tokio::test]
 async fn es_versions_and_auth() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let _turn = ONE_AT_A_TIME.lock().await;
     {
         // 8.x with security on (HTTP without TLS): basic auth, API keys, wrong passwords.

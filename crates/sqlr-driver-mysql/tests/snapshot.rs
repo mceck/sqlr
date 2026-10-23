@@ -1,6 +1,5 @@
 //! Schema snapshots and compare against MySQL 8.4 and MariaDB 11.4.
 
-#[allow(dead_code)]
 mod support;
 
 use std::collections::HashSet;
@@ -11,7 +10,7 @@ use sqlr_core::{
     migration_script,
 };
 use sqlr_driver_mysql::MysqlDriver;
-use support::{Server, start};
+use support::{Server, start_isolated};
 
 struct Env {
     _container: support::Container,
@@ -20,7 +19,7 @@ struct Env {
 
 impl Env {
     async fn new(server: Server, setup: &str) -> Self {
-        let (container, cfg, secrets) = start(server).await;
+        let (container, cfg, secrets) = start_isolated(server).await;
         let conn = MysqlDriver::new().connect(&cfg, &secrets).await.unwrap();
         let env = Self {
             _container: container,
@@ -152,24 +151,18 @@ async fn converges(server: Server) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn mysql84_snapshot_round_trip_equals_load_object() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     round_trip(Server::MySql).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn mysql84_compare_then_apply_script_converges() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     converges(Server::MySql).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn mariadb114_compare_then_apply_script_converges() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     converges(Server::MariaDb).await;
 }

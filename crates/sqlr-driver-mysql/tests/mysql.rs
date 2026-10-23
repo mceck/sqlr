@@ -11,21 +11,21 @@ use sqlr_core::{
     Node, NodeKind, NodePath, RelationKind, RowStream, Secrets, TableRef, Value,
 };
 use sqlr_driver_mysql::MysqlDriver;
-use support::{Server, config, secrets, start, start_without_tls};
+use support::{Server, config, secrets, start, start_isolated, start_without_tls};
 
 macro_rules! suite {
     ($($name:ident),* $(,)?) => {
         mod mysql84 {
             $(#[tokio::test(flavor = "multi_thread")]
             async fn $name() {
-                if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v|v=="1") {return;}
+                sqlr_testkit::skip_container_tests!();
                 super::$name(super::Server::MySql).await
             })*
         }
         mod mariadb114 {
             $(#[tokio::test(flavor = "multi_thread")]
             async fn $name() {
-                if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v|v=="1") {return;}
+                sqlr_testkit::skip_container_tests!();
                 super::$name(super::Server::MariaDb).await
             })*
         }
@@ -166,14 +166,12 @@ async fn connect_and_ping(server: Server) {
     let info = conn.ping().await.unwrap();
     assert_eq!(info.product, server.product(), "{info:?}");
     assert!(!info.version.is_empty());
-    assert_eq!(conn.database_name(), Some("test"));
+    assert_eq!(conn.database_name(), Some(cfg.values["database"].as_str()));
 }
 
 #[tokio::test]
 async fn unreachable_host_is_connection_error() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let err = MysqlDriver::new()
         .connect(&config("127.0.0.1", 1), &secrets("x"))
         .await
@@ -183,7 +181,7 @@ async fn unreachable_host_is_connection_error() {
 }
 
 async fn wrong_password_is_auth_error(server: Server) {
-    let (_c, cfg, sec) = start(server).await;
+    let (_c, cfg, sec) = start_isolated(server).await;
     let root = connect(&cfg, &sec).await;
     run(
         &root,
@@ -205,7 +203,7 @@ async fn wrong_password_is_auth_error(server: Server) {
 }
 
 async fn browse_tree_with_system_folder(server: Server) {
-    let (_c, cfg, sec) = start(server).await;
+    let (_c, cfg, sec) = start_isolated(server).await;
     let conn = connect(&cfg, &sec).await;
     shop(&conn).await;
 
@@ -310,7 +308,7 @@ async fn browse_tree_with_system_folder(server: Server) {
 }
 
 async fn browse_only_current_database(server: Server) {
-    let (_c, mut cfg, sec) = start(server).await;
+    let (_c, mut cfg, sec) = start_isolated(server).await;
     let setup = connect(&cfg, &sec).await;
     shop(&setup).await;
     cfg.values
@@ -400,7 +398,7 @@ async fn closing_a_partial_stream_frees_the_session(server: Server) {
 }
 
 async fn procedure_call_returns_rows(server: Server) {
-    let (_c, cfg, sec) = start(server).await;
+    let (_c, cfg, sec) = start_isolated(server).await;
     let conn = connect(&cfg, &sec).await;
     shop(&conn).await;
     // The row set is followed by the call's own OK packet, which is read and dropped.
@@ -553,7 +551,7 @@ async fn typed_values_matrix(server: Server) {
 }
 
 async fn origins_on_table_select(server: Server) {
-    let (_c, cfg, sec) = start(server).await;
+    let (_c, cfg, sec) = start_isolated(server).await;
     let conn = connect(&cfg, &sec).await;
     shop(&conn).await;
     let s = rows(
@@ -595,7 +593,10 @@ async fn describe_keys(server: Server) {
         name: name.into(),
     };
     let keyed = rel.describe(&t("keyed")).await.unwrap();
-    assert_eq!(keyed.table.schema.as_deref(), Some("test"));
+    assert_eq!(
+        keyed.table.schema.as_deref(),
+        Some(cfg.values["database"].as_str())
+    );
     assert_eq!(keyed.table.database, None);
     assert_eq!(keyed.primary_key, ["b", "a"]);
     assert_eq!(
@@ -644,7 +645,7 @@ async fn describe_keys(server: Server) {
 }
 
 async fn ddl_of_objects(server: Server) {
-    let (_c, cfg, sec) = start(server).await;
+    let (_c, cfg, sec) = start_isolated(server).await;
     let conn = connect(&cfg, &sec).await;
     shop(&conn).await;
     let rel = conn.relational().unwrap();
@@ -765,7 +766,7 @@ async fn execute_with_binds_every_value_kind(server: Server) {
 }
 
 async fn catalog_lists_relations(server: Server) {
-    let (_c, cfg, sec) = start(server).await;
+    let (_c, cfg, sec) = start_isolated(server).await;
     let conn = connect(&cfg, &sec).await;
     shop(&conn).await;
     let cat = conn.relational().unwrap().catalog("shop").await.unwrap();
@@ -796,7 +797,7 @@ async fn catalog_lists_relations(server: Server) {
 }
 
 async fn connect_database_opens_other_database(server: Server) {
-    let (_c, cfg, sec) = start(server).await;
+    let (_c, cfg, sec) = start_isolated(server).await;
     let conn = connect(&cfg, &sec).await;
     shop(&conn).await;
     let shop_conn = conn.connect_database("shop").await.unwrap();
@@ -854,7 +855,7 @@ async fn quote_ident_round_trips_per_dialect(server: Server) {
     for name in ["Order", "my table", "select", "a\"b", "a`b"] {
         let table = TableRef {
             database: None,
-            schema: Some("test".into()),
+            schema: Some(cfg.values["database"].clone()),
             name: name.into(),
         };
         let (t, c) = (d.qualified(&table), d.quote_ident(name));
@@ -899,7 +900,7 @@ async fn quote_ident_round_trips_per_dialect(server: Server) {
 }
 
 async fn tls_required_encrypts(server: Server) {
-    let (_c, mut cfg, sec) = start(server).await;
+    let (_c, mut cfg, sec) = start_isolated(server).await;
     cfg.values.insert("ssl_mode".into(), "required".into());
     let conn = connect(&cfg, &sec).await;
     let status = query(&conn, "SHOW SESSION STATUS LIKE 'Ssl_cipher'").await;
@@ -945,7 +946,7 @@ async fn exported_literals_read_back_in_any_sql_mode(server: Server) {
     let d = conn.relational().unwrap().dialect();
     let table = TableRef {
         database: None,
-        schema: Some("test".into()),
+        schema: Some(cfg.values["database"].clone()),
         name: "lit".into(),
     };
     let t = d.qualified(&table);
@@ -989,9 +990,7 @@ async fn exported_literals_read_back_in_any_sql_mode(server: Server) {
 
 #[tokio::test]
 async fn mysql_sql_mode_applied() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_container, mut cfg, secrets) = start(Server::MySql).await;
     cfg.values
         .insert("property.sql_mode".into(), "ANSI_QUOTES".into());
@@ -1000,5 +999,6 @@ async fn mysql_sql_mode_applied() {
     let conn = connect(&cfg, &secrets).await;
     let rows = query(&conn, "SELECT @@SESSION.sql_mode, @@SESSION.wait_timeout").await;
     assert_eq!(rows[0][0], Value::Text("ANSI_QUOTES".into()));
-    assert_eq!(rows[0][1], Value::Int(1234));
+    // `wait_timeout` is an unsigned bigint; unsigned 64-bit values stay decimal text.
+    assert_eq!(rows[0][1], Value::Text("1234".into()));
 }

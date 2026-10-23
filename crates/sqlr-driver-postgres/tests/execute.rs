@@ -8,11 +8,9 @@ use sqlr_core::{
     NodeKind, NodePath, RowStream, TableRef, Value,
 };
 use sqlr_driver_postgres::PostgresDriver;
-use support::pg;
-use testcontainers_modules::postgres::Postgres;
-use testcontainers_modules::testcontainers::ContainerAsync;
+use support::{PgServer, pg};
 
-async fn connect() -> (ContainerAsync<Postgres>, Arc<dyn Connection>) {
+async fn connect() -> (PgServer, Arc<dyn Connection>) {
     let (container, cfg, sec) = pg().await;
     let conn = PostgresDriver::new().connect(&cfg, &sec).await.unwrap();
     (container, conn)
@@ -42,9 +40,7 @@ async fn affected(conn: &Arc<dyn Connection>, sql: &str) -> u64 {
 
 #[tokio::test]
 async fn streams_in_pages() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = connect().await;
     let mut s = rows(&conn, "SELECT g AS n FROM generate_series(1, 1234) g").await;
     assert_eq!(s.columns()[0].name, "n");
@@ -65,9 +61,7 @@ async fn streams_in_pages() {
 
 #[tokio::test]
 async fn columns_typed() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = connect().await;
     let mut s = rows(
         &conn,
@@ -99,9 +93,7 @@ async fn columns_typed() {
 
 #[tokio::test]
 async fn text_values_round_trip() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = connect().await;
     let mut s = rows(
         &conn,
@@ -132,9 +124,7 @@ async fn text_values_round_trip() {
 
 #[tokio::test]
 async fn ddl_and_dml_affected() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = connect().await;
     assert_eq!(affected(&conn, "CREATE TEMP TABLE t(x int)").await, 0);
     assert_eq!(
@@ -145,9 +135,7 @@ async fn ddl_and_dml_affected() {
 
 #[tokio::test]
 async fn returning_and_show_are_buffered() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = connect().await;
     affected(&conn, "CREATE TEMP TABLE t(x int)").await;
 
@@ -193,9 +181,7 @@ async fn returning_and_show_are_buffered() {
 
 #[tokio::test]
 async fn syntax_error_has_position() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = connect().await;
     let err = conn
         .relational()
@@ -210,9 +196,7 @@ async fn syntax_error_has_position() {
 
 #[tokio::test]
 async fn cancel_running_fetch() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = connect().await;
     let mut s = rows(&conn, "SELECT pg_sleep(30), 1").await;
     let fetch = tokio::spawn(async move {
@@ -237,9 +221,7 @@ async fn cancel_running_fetch() {
 
 #[tokio::test]
 async fn cancelled_stream_dropped_without_close_recovers() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = connect().await;
     let mut s = rows(&conn, "SELECT pg_sleep(30), 1").await;
     let fetch = tokio::spawn(async move { s.next_chunk(500).await.map(|_| ()) });
@@ -259,9 +241,7 @@ async fn cancelled_stream_dropped_without_close_recovers() {
 
 #[tokio::test]
 async fn execute_while_previous_cursor_open_closes_it() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = connect().await;
     let mut s = rows(&conn, "SELECT g FROM generate_series(1, 10000) g").await;
     assert_eq!(s.next_chunk(500).await.unwrap().unwrap().len(), 500);
@@ -281,9 +261,7 @@ async fn execute_while_previous_cursor_open_closes_it() {
 
 #[tokio::test]
 async fn close_mid_cursor_ends_stream_and_frees_connection() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = connect().await;
     let mut a = rows(&conn, "SELECT g FROM generate_series(1, 10000) g").await;
     assert_eq!(a.next_chunk(500).await.unwrap().unwrap().len(), 500);
@@ -304,9 +282,7 @@ async fn close_mid_cursor_ends_stream_and_frees_connection() {
 
 #[tokio::test]
 async fn open_data_sql_runs_for_awkward_names() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = connect().await;
     affected(&conn, r#"CREATE SCHEMA "select""#).await;
     affected(
@@ -356,9 +332,7 @@ async fn table_with_x_1(conn: &Arc<dyn Connection>) {
 
 #[tokio::test]
 async fn select_inside_user_transaction_keeps_it_open() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = connect().await;
     table_with_x_1(&conn).await;
     affected(&conn, "BEGIN").await;
@@ -375,9 +349,7 @@ async fn select_inside_user_transaction_keeps_it_open() {
 
 #[tokio::test]
 async fn dropped_partial_stream_inside_user_transaction_keeps_it_open() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = connect().await;
     table_with_x_1(&conn).await;
     affected(&conn, "BEGIN").await;
@@ -391,9 +363,7 @@ async fn dropped_partial_stream_inside_user_transaction_keeps_it_open() {
 
 #[tokio::test]
 async fn non_cursor_select_inside_user_transaction_keeps_it_healthy() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = connect().await;
     table_with_x_1(&conn).await;
     affected(&conn, "BEGIN").await;
@@ -415,9 +385,7 @@ async fn non_cursor_select_inside_user_transaction_keeps_it_healthy() {
 
 #[tokio::test]
 async fn cancelled_fetch_inside_user_transaction_leaves_block_to_user() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = connect().await;
     table_with_x_1(&conn).await;
     affected(&conn, "BEGIN").await;
@@ -455,9 +423,7 @@ async fn cancelled_fetch_inside_user_transaction_leaves_block_to_user() {
 
 #[tokio::test]
 async fn terminated_backend_is_connection_error() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (container, cfg, sec) = pg().await;
     let conn = PostgresDriver::new().connect(&cfg, &sec).await.unwrap();
     let admin = PostgresDriver::new().connect(&cfg, &sec).await.unwrap();
@@ -495,9 +461,7 @@ async fn rows_with(conn: &Arc<dyn Connection>, sql: &str, params: &[Value]) -> B
 
 #[tokio::test]
 async fn hints_for_typed_values() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = connect().await;
     let mut s = rows(
         &conn,
@@ -516,9 +480,7 @@ async fn hints_for_typed_values() {
 
 #[tokio::test]
 async fn execute_with_binds_every_value_kind() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = connect().await;
     let rel = conn.relational().unwrap();
     assert_eq!(rel.dialect().placeholder(1), "$1");
@@ -659,9 +621,7 @@ fn origin(schema: &str, table: &str, column: &str) -> Option<ColumnOrigin> {
 
 #[tokio::test]
 async fn origins_on_table_select() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = connect().await;
     affected(&conn, r#"CREATE SCHEMA "S 1""#).await;
     affected(
@@ -716,9 +676,7 @@ async fn origins_on_table_select() {
 
 #[tokio::test]
 async fn notices_are_collected() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = connect().await;
     let rel = conn.relational().unwrap();
     assert!(rel.take_notices().await.is_empty());
@@ -741,9 +699,7 @@ async fn notices_are_collected() {
 
 #[tokio::test]
 async fn quote_ident_round_trips_per_dialect() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = connect().await;
     let rel = conn.relational().unwrap();
     let d = rel.dialect();
@@ -776,9 +732,7 @@ async fn quote_ident_round_trips_per_dialect() {
 
 #[tokio::test]
 async fn literals_and_read_only_are_accepted_by_the_server() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = connect().await;
     let d = conn.relational().unwrap().dialect();
     let sql = format!(
@@ -811,9 +765,7 @@ async fn literals_and_read_only_are_accepted_by_the_server() {
 /// and a failure inside a transaction aborts it until a rollback (`error_aborts_transaction`).
 #[tokio::test]
 async fn read_only_enforced_by_server() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = connect().await;
     let d = conn.relational().unwrap().dialect();
     assert!(d.error_aborts_transaction());
@@ -843,9 +795,7 @@ async fn read_only_enforced_by_server() {
 /// Export `INSERT`s and DDL comments mean the same whatever `standard_conforming_strings` is.
 #[tokio::test]
 async fn literals_read_back_with_either_string_setting() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, conn) = connect().await;
     let d = conn.relational().unwrap().dialect();
     let texts = [
@@ -904,9 +854,7 @@ async fn literals_read_back_with_either_string_setting() {
 
 #[tokio::test]
 async fn pg_application_name_applied() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_container, mut cfg, secrets) = pg().await;
     cfg.values.insert(
         "property.application_name".into(),

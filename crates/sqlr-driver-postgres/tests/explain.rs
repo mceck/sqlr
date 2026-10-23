@@ -18,9 +18,7 @@ async fn first_value(rel: &dyn sqlr_core::RelationalConn, sql: &str) -> Value {
 
 #[tokio::test]
 async fn pg_explain_json_parsed() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, cfg, sec) = pg().await;
     let conn = PostgresDriver::new().connect(&cfg, &sec).await.unwrap();
     let rel = conn.relational().unwrap();
@@ -61,9 +59,7 @@ async fn pg_explain_json_parsed() {
 
 #[tokio::test]
 async fn explain_analyze_update_rolls_back() {
-    if std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|v| v == "1") {
-        return;
-    }
+    sqlr_testkit::skip_container_tests!();
     let (_c, cfg, sec) = pg().await;
     let conn = PostgresDriver::new().connect(&cfg, &sec).await.unwrap();
     let rel = conn.relational().unwrap();

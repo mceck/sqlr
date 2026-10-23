@@ -7162,6 +7162,7 @@ dependencies = [
  "rustls-native-certs",
  "serde_json",
  "sqlr-core",
+ "sqlr-testkit",
  "testcontainers-modules",
  "tokio",
 ]
@@ -7206,6 +7207,7 @@ dependencies = [
  "mongodb",
  "rustls",
  "sqlr-core",
+ "sqlr-testkit",
  "testcontainers-modules",
  "tokio",
 ]
@@ -7238,6 +7240,7 @@ dependencies = [
  "sqlr-core",
  "sqlr-driver-tests",
  "sqlr-engine",
+ "sqlr-testkit",
  "testcontainers-modules",
  "tokio",
  "tracing",
@@ -7268,6 +7271,7 @@ dependencies = [
  "sqlr-core",
  "sqlr-driver-tests",
  "sqlr-engine",
+ "sqlr-testkit",
  "tempfile",
  "testcontainers-modules",
  "tokio",
@@ -7285,6 +7289,7 @@ dependencies = [
  "redis",
  "rustls",
  "sqlr-core",
+ "sqlr-testkit",
  "testcontainers-modules",
  "tokio",
 ]

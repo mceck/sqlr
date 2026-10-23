@@ -185,14 +185,21 @@ impl Driver for MysqlDriver {
             .iter()
             .filter_map(|(property, value)| {
                 property.strip_prefix("property.").map(|key| {
-                    let literal = format!(
-                        "X'{}'",
-                        value
-                            .as_bytes()
-                            .iter()
-                            .map(|b| format!("{b:02x}"))
-                            .collect::<String>()
-                    );
+                    // Numeric session variables reject a binary string literal; send
+                    // integers as numbers and everything else as a binary literal, which
+                    // keeps quotes and backslashes safe for string variables.
+                    let literal = if value.parse::<i64>().is_ok() {
+                        value.clone()
+                    } else {
+                        format!(
+                            "X'{}'",
+                            value
+                                .as_bytes()
+                                .iter()
+                                .map(|b| format!("{b:02x}"))
+                                .collect::<String>()
+                        )
+                    };
                     format!("SET SESSION `{key}` = {literal}")
                 })
             })
