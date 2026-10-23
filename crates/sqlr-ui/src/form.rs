@@ -57,7 +57,7 @@ pub struct FormState {
     pub show_secrets: bool,
     /// The connection profile's id; `None` is the development profile.
     pub profile: Option<String>,
-    /// Secrets go to the keychain; when off they are asked for on connect.
+    /// Secrets go to the encrypted vault; when off they are asked for on connect.
     pub save_secrets: bool,
     /// Agent exposure. Human-only; the connection dialog is the only place that sets it.
     pub agent_access: sqlr_core::AgentAccess,

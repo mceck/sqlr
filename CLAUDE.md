@@ -15,7 +15,7 @@ sqlr is a lightweight, universal database client in native Rust + egui. No webvi
 | `sqlr-registry` | driver-file installs, versions and review (no UI) | `sqlr-core`, `sqlr-sidecar` |
 | `sqlr-driver-sdk` | write a driver as a sidecar: re-exports the API, `run` | `sqlr-core`, `sqlr-sidecar` |
 | `sqlr-driver-tests` | conformance suite for drivers (dev-dependency only) | `sqlr-core` |
-| `sqlr-store` | connections TOML, OS keychain secrets, settings | `sqlr-core` |
+| `sqlr-store` | connections TOML, encrypted credential vault with an OS-keychain-protected key, settings | `sqlr-core` |
 | `sqlr-ui` | egui widgets (grid, tree, forms) | `sqlr-core` |
 | `sqlr-mcp` | loopback MCP server, tool registry, policy, `AgentHost` | `sqlr-core`, `sqlr-engine`, `sqlr-store` |
 | `sqlr-terminal` | PTY session, vt100 parser, egui terminal panel | egui, portable-pty, vt100 |
@@ -51,7 +51,7 @@ To run `cargo test` or `cargo nextest` directly, start the services first with
 
 - **egui versions:** `egui`, `eframe`, `egui_extras` and `egui_kittest` are pinned to `=0.36.2`, and `egui_dock` to `0.21.1`. Never allow two egui versions in one build (`cargo tree -d | grep egui` must print nothing).
 - **No OpenSSL:** rustls only (`cargo tree -i openssl-sys` must find no match). Connections begin without TLS unless the driver configuration enables it.
-- **UI thread:** it never does I/O or blocks. All database and keychain work runs in the engine. Never hold an `engine.result(q)` read guard while calling engine methods.
+- **UI thread:** it never does I/O or blocks. Database, keychain and credential-vault work runs on background workers. Never hold an `engine.result(q)` read guard while calling engine methods.
 - **Secrets:** never written to `connections.toml`, to logs, or to `Debug` output.
 - **Catalog SQL:** always parameterized. Identifiers in generated SQL go through `Dialect::quote_ident`.
 - **TDD:** write a failing test first. UI tests use `egui_kittest` 0.36 (`build_ui` / `build_ui_state`; it has no `allow_missing_glyphs()`).

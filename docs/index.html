@@ -251,13 +251,13 @@
     <tr><td><span class="mono">sqlr-registry</span></td><td>Driver-file installs, versions and review, no UI.</td></tr>
     <tr><td><span class="mono">sqlr-driver-sdk</span></td><td>Write a driver as a sidecar: re-exports the API and <span class="mono">run</span>.</td></tr>
     <tr><td><span class="mono">sqlr-driver-tests</span></td><td>Conformance suite for drivers (dev-dependency only).</td></tr>
-    <tr><td><span class="mono">sqlr-store</span></td><td>Connections TOML, OS keychain secrets, settings.</td></tr>
+    <tr><td><span class="mono">sqlr-store</span></td><td>Connections TOML, encrypted credential vault, settings.</td></tr>
     <tr><td><span class="mono">sqlr-ui</span></td><td>egui widgets: grid, tree, forms, docked panels.</td></tr>
   </table>
   <div class="cols" style="margin-top:18px">
     <div>
       <ul class="tight">
-        <li><b>Security:</b> no OpenSSL (rustls only); secrets live only in the OS keychain and arrive at <span class="mono">connect</span> time.</li>
+        <li><b>Security:</b> no OpenSSL (rustls only); secrets live in an encrypted vault protected by the OS keychain and arrive at <span class="mono">connect</span> time.</li>
         <li><b>Threads:</b> the UI thread never does I/O; every engine call is async on tokio.</li>
         <li><b>Caching:</b> catalog explorer and autocomplete share one in-memory cache with bounded size.</li>
       </ul>

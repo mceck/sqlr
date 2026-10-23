@@ -37,7 +37,7 @@ Under Drivers you can pass extra properties to a driver for every connection tha
 
 **Settings → Agents** turns on the local MCP server. It is off by default and listens
 only on `127.0.0.1`. Enabling it exposes no connection: set **Agent access** to Read or
-Write on each connection. The bearer token lives in the OS keychain; **Rotate token**
+Write on each connection. The bearer token lives in the encrypted credential vault, protected by the OS keychain; **Rotate token**
 revokes it and disconnects agents. **Copy MCP config** copies a ready client
 configuration containing the token.
 
@@ -105,7 +105,7 @@ In Settings, open Keymap. The Keymap section lists every command with its keys a
 | Profiles | `profiles.toml` in the config directory |
 | Keymap | `keymap.toml` in the config directory |
 | Installed drivers | `drivers/<id>/<version>/` in the data directory |
-| Passwords | your OS keychain, under the service name `sqlr` |
+| Passwords, SSH secrets and MCP token | encrypted `secrets.vault` in the config directory; the OS keychain holds its encryption key under service `sqlr` |
 | History and snippets | `sqlr.db` in the data directory |
 | Logs | `logs/sqlr.log.<date>` in the data directory |
 

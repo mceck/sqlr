@@ -43,7 +43,7 @@ to **None**. The agent cannot change exposure.
 4. Open the terminal with `Ctrl+Backtick` (the same on macOS, Windows and Linux), or use
    **Copy MCP config** in the terminal header.
 
-The token lives in the OS keychain and is generated once. It is not written to
+The token is generated once and lives in the same encrypted credential vault as connection passwords. The OS keychain protects the vault's encryption key, and the application shares one unlock per session. It is not written to
 `connections.toml`, the database, logs or the discovery file. **Rotate token** replaces it
 and disconnects every active agent immediately. The endpoint and discovery file exist
 only while sqlr runs; they are removed on disable or quit.

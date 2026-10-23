@@ -101,7 +101,10 @@ impl AgentHost for AppHostClient {
     }
 
     async fn secret_presence(&self, id: &str) -> ToolResult<BTreeMap<String, bool>> {
-        let connection = self.connection(id).await?;
+        let id = id.to_string();
+        let (connection, secrets) = self
+            .request(move |app| Ok((app.agent_connection(&id)?, app.secret_store.clone())))
+            .await?;
         let id = connection.config.id.clone();
         let fields: Vec<String> = connection
             .manifest
@@ -122,11 +125,9 @@ impl AgentHost for AppHostClient {
                 .collect());
         }
         tokio::task::spawn_blocking(move || {
-            let secrets = sqlr_store::KeyringStore;
             fields
                 .into_iter()
                 .map(|key| {
-                    use sqlr_store::SecretStore as _;
                     let stored = secrets.get(&id, &key).ok().flatten().is_some();
                     (key, stored)
                 })
@@ -1159,5 +1160,76 @@ impl SqlrApp {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::AppDeps;
+    use sqlr_engine::DriverRegistry;
+    use sqlr_store::{ConnectionRepo, MemorySecretStore, Settings};
+
+    #[test]
+    fn secret_presence_reads_the_applications_injected_store() {
+        use sqlr_core::{ConnectionConfig, Secrets};
+        use sqlr_store::SecretStore as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let ctx = egui::Context::default();
+        let mut drivers = DriverRegistry::default();
+        drivers.register(sqlr_testkit::FakeDriver::new(Default::default()));
+        let secrets = Arc::new(MemorySecretStore::default());
+        secrets.set("c1", "password", "saved-password").unwrap();
+        let repo = ConnectionRepo::open(dir.path(), Box::new(secrets)).unwrap();
+        repo.save(
+            &ConnectionConfig {
+                id: "c1".into(),
+                name: "fake".into(),
+                driver: "fake".into(),
+                group: None,
+                color: None,
+                values: Default::default(),
+                profile: None,
+                save_secrets: true,
+                agent_access: Default::default(),
+            },
+            &Secrets::default(),
+        )
+        .unwrap();
+        let mut app = SqlrApp::new(
+            AppDeps {
+                engine: Engine::new(drivers, Arc::new(|| {})),
+                repo,
+                settings: Settings::default(),
+                config_dir: dir.path().into(),
+                data_dir: None,
+                startup_notice: None,
+                storage_warning: None,
+                mcp_token_store: None,
+            },
+            &ctx,
+        );
+        let host = AppHostClient::new(app.host_tx.clone(), Arc::new(|| {}));
+        let (tx, rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            tx.send(runtime.block_on(host.secret_presence("c1")))
+                .unwrap();
+        });
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let presence = loop {
+            app.agents_frame(&ctx);
+            match rx.try_recv() {
+                Ok(result) => break result.unwrap(),
+                Err(mpsc::TryRecvError::Empty) => {
+                    assert!(Instant::now() < deadline, "secret presence timed out");
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => panic!("presence worker failed: {error}"),
+            }
+        };
+        worker.join().unwrap();
+        assert_eq!(presence.get("password"), Some(&true));
     }
 }

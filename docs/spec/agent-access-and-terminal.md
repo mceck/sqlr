@@ -23,7 +23,7 @@ the app log.
 
 sqlr exposes a **native MCP server** while the application is running. It listens only on
 the loopback interface, is disabled by default and is enabled and configured in
-**Settings → Agents**. A persistent bearer token lives in the OS keychain and a
+**Settings → Agents**. A persistent bearer token lives in the shared encrypted credential vault, protected by the OS keychain, and a
 permission-protected discovery file publishes the endpoint to local tools. The server
 speaks MCP Streamable HTTP with a small, typed tool surface: a guide, catalog browsing,
 queries, editor and snippet operations, and write-only configuration management. Each
@@ -58,7 +58,7 @@ rules instead of ad-hoc copy/paste.
 1. As a developer, I want sqlr to expose an MCP server only while the app is open, so that no background daemon keeps running after I quit.
 2. As a security-conscious user, I want MCP to be disabled by default, so that no local endpoint exists until I explicitly enable it.
 3. As a user, I want a stable loopback URL and a persistent bearer token, so that I configure my agent once instead of after every restart.
-4. As a user, I want the token stored in the OS keychain and rotatable from Settings, so that I can revoke access without editing files.
+4. As a user, I want the token stored in the shared encrypted credential vault with its key protected by the OS keychain and rotatable from Settings, so that I can revoke access without editing files or authorizing a separate token keychain item each session.
 5. As a user, I want the endpoint, port, status and active session count in Settings, so that I can diagnose why an agent cannot connect.
 6. As a user, I want a discovery file with the URL, process id and protocol version but no token, so that local tooling can find the endpoint without exposing the secret.
 7. As a user, I want the server to bind only to `127.0.0.1` and reject non-loopback `Origin` and `Host` headers, so that websites and other machines cannot reach it.
@@ -204,7 +204,7 @@ storage and continues to own connections, profiles, settings, keymap and tasks.
 - The server is **disabled by default**. Enabling or disabling it, changing the port,
   rotating the token, and observing status all happen in Settings → Agents. Enabling does
   not expose any connection: exposure is a separate per-connection decision.
-- Starting the server: read the persistent token from the keychain (generate one if
+- Starting the server: read the persistent token from the shared credential vault (generate one if
   absent), bind the listener, build the router and session manager, publish the discovery
   file, then report `Running`. If the port is busy or the keychain is unavailable, the
   server reports a precise `PortBusy` or `KeychainError` status, writes no discovery
@@ -215,7 +215,7 @@ storage and continues to own connections, profiles, settings, keymap and tasks.
   stops the server before the process exits.
 - Changing the port restarts the listener. Active MCP sessions are dropped and pending
   approvals are denied. The Settings UI warns about this before applying the change.
-- Rotating the token replaces the keychain value, updates the in-memory verifier, drops
+- Rotating the token replaces its encrypted vault value, updates the in-memory verifier, drops
   all MCP sessions and their agent sessions, and leaves the listener bound. The Settings
   UI warns that clients must be updated with the new token.
 - Discovery: a file named `mcp.json` in the data directory contains the URL, process id,
@@ -236,7 +236,7 @@ storage and continues to own connections, profiles, settings, keymap and tasks.
   initialize request. The comparison is constant-time. Missing or wrong tokens receive
   `401 Unauthorized` with `WWW-Authenticate: Bearer`.
 - Tokens are generated with 256 bits of OS randomness, encoded as unpadded base64url,
-  stored in the OS keychain under a dedicated service/account not tied to a connection,
+  stored in the shared encrypted credential vault under a separate namespace not tied to a connection,
   and never written to TOML, the discovery file, logs or `Debug` output.
 - Origin validation: a request with no `Origin` header is accepted (normal non-browser
   clients). An `Origin` is accepted only when it is `http://127.0.0.1:<port>` or
@@ -414,7 +414,7 @@ after creation. A patch never changes `agent_access`.
 Writes are serialized by the application; per field, the last write wins, and fields not
 mentioned by the patch are untouched. `save_secrets` keeps its existing meaning: secrets
 for a connection with it off are kept only in memory for the session and are not written
-to the keychain or to TOML.
+to the credential vault or to TOML.
 
 A connection's secret presence is metadata; its value is not. `config_list` reports, for
 each secret field declared by the driver, whether a value is stored. A `secret_required`
@@ -770,8 +770,11 @@ The UI is intentionally small and integrated rather than a new workspace.
 
 - `ConnectionConfig` gains `agent_access` with a serde default of `None`. Existing TOML
   files load unchanged; new files write the field. Duplicating a connection resets it.
-- The MCP token is stored in the OS keychain, not in TOML or SQLite. The token is not
-  included in `Debug` output or diagnostics.
+- The MCP token is stored in `secrets.vault` in the config directory, not in TOML or SQLite.
+  The OS keychain protects the vault's encryption key, cached once per application session
+  and shared with connection credentials. The token is not included in `Debug` output or
+  diagnostics. The legacy `sqlr-mcp` / `token` keychain item migrates on first use: persist
+  the encrypted token before removing the original and retry pending cleanup after failure.
 - No new SQLite tables are added. History and snippets keep their existing schema; agent
   queries are ordinary history entries. There is no persistent audit table.
 - The discovery file is a runtime artifact, not user configuration, and is removed on

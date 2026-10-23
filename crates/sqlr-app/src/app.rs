@@ -101,7 +101,11 @@ pub fn production_deps_in(
         None => sqlr_store::default_config_dir().context("no config directory for this user")?,
     };
     let data_dir = data_dir.or_else(sqlr_store::default_data_dir);
-    let repo = ConnectionRepo::open(&config_dir, Box::new(KeyringStore))
+    let secrets = Arc::new(sqlr_store::VaultSecretStore::new(
+        &config_dir,
+        Arc::new(KeyringStore),
+    ));
+    let repo = ConnectionRepo::open(&config_dir, Box::new(secrets.clone()))
         .context("open the connection store")?;
     let settings = Settings::load(&config_dir).unwrap_or_else(|e| {
         tracing::warn!(error = %e, "settings unreadable, using defaults");
@@ -122,7 +126,7 @@ pub fn production_deps_in(
     if let Some(data) = &data_dir {
         engine.configure_drivers(data, settings.sidecar_idle_minutes);
     }
-    engine.set_secret_store(Arc::new(KeyringStore));
+    engine.set_secret_store(secrets.clone());
     if let Some(data) = &data_dir {
         engine.set_known_hosts(data.join("known_hosts"));
     }
@@ -134,7 +138,10 @@ pub fn production_deps_in(
         data_dir,
         storage_warning: startup_notice.clone(),
         startup_notice,
-        mcp_token_store: None,
+        mcp_token_store: Some(Arc::new(sqlr_store::VaultMcpTokenStore::new(
+            secrets,
+            Arc::new(sqlr_store::KeyringMcpTokenStore),
+        ))),
     })
 }
 
@@ -150,6 +157,8 @@ pub struct SqlrApp {
     pub(crate) engine: Arc<Engine>,
     /// `connections.toml` and the keychain, off the UI thread.
     pub(crate) store: crate::store_worker::StoreWorker,
+    /// Shared by editor, engine and MCP; cloning it never performs I/O.
+    pub(crate) secret_store: Arc<dyn sqlr_store::SecretStore>,
     /// Connections whose saved edit reconnects them once the new listing arrives.
     pub(crate) reconnect_on_listing: Vec<String>,
     pub(crate) settings: Settings,
@@ -300,12 +309,14 @@ impl SqlrApp {
         // The overrides come from the files; the global level is what `deps` carries.
         let (mut layered, layered_notice) = LayeredSettings::load(&config_dir);
         settings.apply_to(&mut layered);
+        let secret_store = repo.secret_store();
         let wake = ctx.clone();
         let store = crate::store_worker::StoreWorker::spawn(repo, move || wake.request_repaint());
         let (host_tx, host_rx) = std::sync::mpsc::channel();
         let mut app = Self {
             engine,
             store,
+            secret_store,
             reconnect_on_listing: Vec::new(),
             settings,
             keymap: sqlr_store::StoredKeymap::load(&config_dir),
@@ -1916,6 +1927,88 @@ mod tests {
         assert!(
             reads.iter().chain(&writes).all(|t| *t != here),
             "{reads:?} {writes:?}"
+        );
+    }
+
+    #[test]
+    fn connection_editor_and_engine_share_one_vault_unlock() {
+        use sqlr_store::SecretStore as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let keyring = Arc::new(Recording::default());
+        let seed = sqlr_store::VaultSecretStore::new(dir.path(), keyring.clone());
+        seed.set("c1", "password", "first-password").unwrap();
+        seed.set("c2", "password", "second-password").unwrap();
+        drop(seed);
+        keyring.reads.lock().unwrap().clear();
+        let secrets = Arc::new(sqlr_store::VaultSecretStore::new(
+            dir.path(),
+            keyring.clone(),
+        ));
+        let repo = ConnectionRepo::open(dir.path(), Box::new(secrets.clone())).unwrap();
+        for id in ["c1", "c2"] {
+            repo.save(
+                &ConnectionConfig {
+                    id: id.into(),
+                    name: id.into(),
+                    driver: "fake".into(),
+                    group: None,
+                    color: None,
+                    values: Default::default(),
+                    profile: None,
+                    save_secrets: true,
+                    agent_access: Default::default(),
+                },
+                &Secrets::default(),
+            )
+            .unwrap();
+        }
+        let fake = FakeDriver::new(Default::default());
+        let mut drivers = DriverRegistry::default();
+        drivers.register(fake.clone());
+        let engine = Engine::new(drivers, Arc::new(|| {}));
+        engine.set_secret_store(secrets);
+        let mut app = SqlrApp::new(
+            AppDeps {
+                engine,
+                repo,
+                settings: Settings::default(),
+                config_dir: dir.path().into(),
+                data_dir: None,
+                startup_notice: None,
+                storage_warning: None,
+                mcp_token_store: None,
+            },
+            &egui::Context::default(),
+        );
+        assert!(
+            keyring.reads.lock().unwrap().is_empty(),
+            "startup stays lazy"
+        );
+        app.open_edit_connection("c1");
+        wait("editor secrets", || {
+            app.poll_store();
+            !app.store.busy()
+        });
+        app.connect("c1");
+        app.connect("c2");
+        wait("both connections", || fake.connects().len() == 2);
+        let reads = keyring.reads.lock().unwrap();
+        assert_eq!(
+            reads.len(),
+            1,
+            "the editor and both connections share one key"
+        );
+        let here = std::thread::current().name().unwrap_or("?").to_string();
+        assert_ne!(reads[0], here);
+        let passwords: std::collections::BTreeSet<_> = fake
+            .connects()
+            .iter()
+            .map(|(_, secrets)| secrets.0["password"].clone())
+            .collect();
+        assert_eq!(
+            passwords,
+            ["first-password".into(), "second-password".into()].into()
         );
     }
 

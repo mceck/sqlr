@@ -39,7 +39,7 @@ These targets rule out Electron, any webview, and the JVM. They are why the UI i
 
 ## 2. v1 feature set
 
-1. **Connection management:** saved connections organized in folders, moved between folders and reordered by drag and drop, SSH tunnels, TLS, secrets in the OS keychain, a "production" flag and a read-only mode.
+1. **Connection management:** saved connections organized in folders, moved between folders and reordered by drag and drop, SSH tunnels, TLS, secrets in an encrypted vault protected by the OS keychain, a "production" flag and a read-only mode.
 2. **Schema explorer:** a lazy tree of databases, schemas, tables, views, indexes, functions and so on (or the NoSQL equivalents).
 3. **Query editor:** syntax highlighting, schema-aware autocomplete, multiple tabs, run the current statement, the selection or the whole script.
 4. **Result grid:** virtualized, with sorting and filtering.
@@ -94,7 +94,7 @@ These targets rule out Electron, any webview, and the JVM. They are why the UI i
 - **TLS:** `rustls` only, no OpenSSL. Known limitation: TLS 1.0 and 1.1 servers are not supported, and the docs say so.
 - **SSH:** `russh`.
 - **Local storage:** `rusqlite` with SQLite compiled in.
-- **Secrets:** the `keyring` crate.
+- **Secrets:** an AES-256-GCM vault using `ring`; `keyring` protects its encryption key.
 - **Syntax:** a resumable per-line lexer (per dialect) for highlighting; `tree-sitter` for statement-scoped structure (autocomplete context, statement under the caret), parsed over the statement(s) around the caret and off the UI thread when the region exceeds 64 KB.
 - **Text buffer:** `ropey`.
 - **License:** MIT (`LICENSE.md`).
@@ -121,7 +121,7 @@ These targets rule out Electron, any webview, and the JVM. They are why the UI i
 | `sqlr-driver-redis` | Bundled driver (`redis-rs`). |
 | `sqlr-sidecar` | The sidecar protocol: the codec and the core-side `SidecarDriver` client. |
 | `sqlr-engine` | The tokio runtime, sessions and pools, query execution and cancellation, `ResultStore`, the catalog cache and installed-driver management. |
-| `sqlr-store` | Connections (TOML), secrets (keychain), and history, snippets, catalog cache and layout (SQLite). |
+| `sqlr-store` | Connections (TOML), secrets (encrypted vault with a keychain-protected key), and history, snippets, catalog cache and layout (SQLite). |
 | `sqlr-ui` | Reusable egui widgets: `QueryEditor`, `ResultGrid`, `SchemaTree`, `DocTree`, `JsonView`, `KeyBrowser`, `KeyValueView`, `ValuePanel`, `Palette`. |
 | `sqlr-app` | The binary: eframe shell, layout, wiring and settings. |
 
@@ -191,7 +191,7 @@ Each relational driver provides a `Dialect` with:
 
 ### 5.5 Connection form
 
-The manifest declares its fields: type, label, default, required, secret flag, and grouping into tabs such as Main, SSH, TLS and Advanced. The app generates the form from them, so a community driver gets a working form without writing UI code. Fields marked as secret are stored in the keychain, never in the TOML file.
+The manifest declares its fields: type, label, default, required, secret flag, and grouping into tabs such as Main, SSH, TLS and Advanced. The app generates the form from them, so a community driver gets a working form without writing UI code. Fields marked as secret are stored in the encrypted credential vault, never in the TOML file.
 
 ### 5.6 Per-database notes
 
@@ -450,7 +450,9 @@ All widgets take data in and return action values. None of them calls the engine
 ## 9. Persistence and security
 
 - **Connections:** stored as TOML in the user config directory, **without secrets**. They can be exported and imported for team sharing.
-- **Secrets:** passwords, SSH passphrases and tokens go in the OS keychain through `keyring` (macOS Keychain, Windows Credential Manager, Linux Secret Service). If Secret Service is unavailable, the fallback is an encrypted file unlocked by a master password.
+- **Secrets:** passwords, SSH passphrases and the MCP bearer token are stored in `secrets.vault` in the config directory. The file uses versioned AES-256-GCM authenticated encryption with a fresh random nonce for every write. A random 256-bit encryption key lives in the OS keychain through `keyring` (macOS Keychain, Windows Credential Manager, Linux Secret Service), scoped to the canonical config-directory path. The app shares one vault across the connection repository, engine, editor and MCP. Its first background operation reads the key; subsequent operations reuse it until shutdown, when the cached key is erased. The OS controls authorization dialogs; denial can be retried, but an unavailable keychain has no plaintext or master-password fallback. Moving the config directory requires its original keyring key; copying the encrypted file alone does not transfer credentials.
+- **Vault integrity and concurrency:** background operations hold an in-process mutex and an OS file lock, reload the current file, and write through a private temporary file followed by sync and atomic replacement. Plaintext working buffers are erased after use; secrets never enter `connections.toml`, exports, logs or `Debug` output. A corrupt vault or missing/invalid key fails without replacing the stored data or generating a replacement key for an existing vault.
+- **Credential migration:** old per-connection keychain entries and the old dedicated MCP token migrate lazily on first use. The encrypted value is persisted before deleting the old entry; pending cleanup survives interruption and is retried. Absence/deletion markers prevent stale legacy entries from restoring deleted secrets. Migration may still prompt for each old item once; after migration there is one master-key lookup per application session. Connection credentials are keyed by connection id and field, independently of the MCP token, so rotating the token never changes a connection password.
 - **SQLite (`sqlr-store`):** history, snippets, catalog cache and UI layout.
 - **SSH tunnels:** `russh` with password, key and agent authentication, plus one jump host.
 - **TLS:** `rustls` with system roots, optional custom CA, client certificates and a verify-mode setting.

@@ -364,7 +364,7 @@ impl PrefsWindow {
             });
             if self.mcp.token_present {
                 ui.label(
-                    egui::RichText::new("A bearer token is stored in the OS keychain.")
+                    egui::RichText::new("A bearer token is saved securely on this device.")
                         .small()
                         .weak(),
                 );

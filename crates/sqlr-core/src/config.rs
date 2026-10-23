@@ -19,7 +19,7 @@ pub struct ConnectionConfig {
     /// The connection profile's id; `None` means the built-in `development` profile.
     #[serde(default)]
     pub profile: Option<String>,
-    /// Secret fields are kept in the keychain; when `false` they are asked for on connect
+    /// Secret fields are kept in the encrypted vault; when `false` they are asked for on connect
     /// and kept in memory only.
     #[serde(default = "yes")]
     pub save_secrets: bool,

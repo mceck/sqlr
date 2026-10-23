@@ -24,7 +24,9 @@ impl<T: SecretStore + ?Sized> SecretStore for std::sync::Arc<T> {
     }
 }
 
-/// OS keychain: service `sqlr`, user `<conn_id>/<field>`.
+/// OS keychain backend: service `sqlr`, user `<conn_id>/<field>`. Used by the vault for
+/// its master key and migration of old per-connection entries; app consumers share a
+/// `VaultSecretStore` instead of accessing this backend directly.
 pub struct KeyringStore;
 
 impl KeyringStore {

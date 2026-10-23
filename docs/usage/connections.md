@@ -27,7 +27,7 @@ Some things worth knowing:
 
 - **Paste a URL.** Paste something like `postgresql://alice@db.example.com:5432/shop` into the URL field and the form fills itself. `mysql://...` and `sqlite:/path/to/file.db` work the same way.
 - **Passwords stay out of URLs.** If a URL contains a password, sqlr asks you to remove it and type the password in the Password field. This keeps passwords out of your clipboard history and your logs.
-- **Save password.** Turn it on to keep the password in your operating system's keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service). Turn it off and sqlr asks every time you connect.
+- **Save password.** Turn it on to keep the password in sqlr's encrypted credential vault, protected by your operating system's keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service). sqlr unlocks it on first use and shares that unlock across connections until you quit. Turn it off and sqlr asks every time you connect.
 - **Test.** Tries the connection and reports the server version and the round-trip time, so you know the details are right before you rely on them.
 - **Profile.** Pick Development, Test or Production. The profile sets the connection's color and how careful sqlr is with writes. See [Profiles, transactions and safety](profiles-and-transactions.md).
 
@@ -61,4 +61,6 @@ If a server limits the number of connections you can open, turn off **A session 
 
 ## Where your connections are stored
 
-Connections are saved in `connections.toml` in the config directory, without passwords. Because the file holds no secrets, you can share it with a teammate or keep it in version control. Passwords stay in the keychain on each machine. The location of every file sqlr uses is listed in [Settings and shortcuts](settings-and-shortcuts.md#where-things-are-stored).
+Connections are saved in `connections.toml` in the config directory, without passwords. Because the file holds no secrets, you can share it with a teammate or keep it in version control. Passwords stay in the encrypted `secrets.vault` on each machine; its encryption key stays in that machine's keychain. The key is tied to the config directory, so copying or moving the vault alone does not transfer credentials. The location of every file sqlr uses is listed in [Settings and shortcuts](settings-and-shortcuts.md#where-things-are-stored).
+
+Passwords saved by older versions migrate automatically when used. Your OS may still ask permission for each old keychain item during migration. sqlr saves the encrypted copy before removing the old item; afterward, connections share a single vault unlock per application session. A keychain denial or damaged vault is reported without replacing your saved credentials.

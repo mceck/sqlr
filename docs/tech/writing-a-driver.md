@@ -18,7 +18,7 @@ The skeleton answers `SELECT 1`. Fill in, in `src/lib.rs`:
 1. **The manifest**: the driver id (saved connections name it, so choose it once), a
    display name, the connection form (`FieldSpec`s: text, port, password, file, choice, …)
    and the capabilities you support (`transactions`, `server_cancel`, `schemas`, …). Fields
-   marked `secret` are kept in the OS keychain and arrive only in `connect`.
+   marked `secret` are kept in the encrypted credential vault (with an OS-keychain-protected key) and arrive only in `connect`.
 2. **`Driver::connect`**: open your database connection from `ConnectionConfig` and
    `Secrets`.
 3. **`Connection::ping`, `browse`, `cancel_handle`**: server info, the explorer tree

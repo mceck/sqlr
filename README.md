@@ -61,14 +61,14 @@ Start with [docs/tech/writing-a-driver.md](docs/tech/writing-a-driver.md) and [d
 | `sqlr-sidecar` | sidecar protocol, `SidecarDriver` client, `serve` loop |
 | `sqlr-registry` | driver-file installs, versions and a local-file review step (no UI) |
 | `sqlr-driver-sdk` | write a driver as a sidecar: re-exports the API, `run` |
-| `sqlr-store` | connections TOML, OS keychain secrets, settings |
+| `sqlr-store` | connections TOML, encrypted credential vault, settings |
 | `sqlr-ui` | egui widgets (grid, tree, forms) |
 | `sqlr-mcp` | loopback MCP server, tools and agent policy |
 | `sqlr-terminal` | PTY session, vt100 parser and terminal widget |
 | `sqlr-app` | binary: wires everything |
 | `sqlr-testkit` | `FakeDriver` for tests (dev-dependency) |
 
-Hard rules that keep it fast and safe: the UI thread never does I/O or blocks (all database and keychain work runs in the engine), connections use rustls only (no OpenSSL), passwords never reach files, logs or `Debug` output, and identifiers in generated SQL always go through `Dialect::quote_ident`.
+Hard rules that keep it fast and safe: the UI thread never does I/O or blocks (database, keychain and vault work runs on background workers), connections use rustls only (no OpenSSL), passwords never reach plaintext files, logs or `Debug` output, and identifiers in generated SQL always go through `Dialect::quote_ident`.
 
 ## Build and run
 
@@ -122,7 +122,7 @@ Editor performance budgets: `cargo run --release -p sqlr-ui --example editor_mea
 | Keymap | `keymap.toml` in the config directory |
 | Profiles | `profiles.toml` in the config directory |
 | Installed drivers | `drivers/<id>/<version>/` in the data directory |
-| Secrets (passwords) | the OS keychain, service `sqlr`, never in a file |
+| Secrets (passwords, SSH secrets, MCP token) | encrypted `secrets.vault` in the config directory; its encryption key lives in the OS keychain, service `sqlr` |
 | History, snippets | `sqlr.db` in the data directory |
 | Logs | `logs/sqlr.log.<date>` |
 

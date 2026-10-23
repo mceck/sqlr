@@ -19,12 +19,12 @@ either `sqlr-mcp` or `sqlr-app`.
 - MCP Streamable HTTP at `POST /mcp`; `rmcp` is pinned to `=3.7.0`, `axum` 0.8, no TLS.
 - The listener binds `127.0.0.1:<port>` (default 47821). There is no wildcard, IPv6
   wildcard or Unix socket option.
-- Disabled by default. Starting reads/generates the keychain token, binds the listener,
+- Disabled by default. Starting reads/generates the token in the shared encrypted credential vault, binds the listener,
   builds the session manager and router, publishes `mcp.json`, then reports Running.
 - Stop cancels in-flight calls, denies approvals, drops sessions (and their agent
   sessions/results), removes the discovery file, then reports Stopped. Application quit
   does the same.
-- Port changes restart the listener; token rotation replaces the keychain value and drops
+- Port changes restart the listener; token rotation replaces its encrypted vault value and drops
   all sessions while staying bound.
 - At most eight sessions. The manager rejects the ninth. An idle sweep closes sessions
   with no in-flight call for 30 minutes.

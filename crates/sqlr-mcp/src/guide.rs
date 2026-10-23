@@ -61,7 +61,8 @@ const SECURITY: &str = "\
   `localhost:<port>`, and an `Origin`, when present, must be the loopback URL. Everything
   else is rejected with 403.
 - Every request needs `Authorization: Bearer <token>`, including initialize. The token
-  lives in the OS keychain, never in TOML, the discovery file, logs or tool output.
+  lives in the shared encrypted credential vault, protected by an OS keychain key,
+  never in TOML, the discovery file, logs or tool output.
   Rotating it drops every session.
 - Only tools are exposed: no resources, prompts, sampling, elicitation or
   server-initiated requests.

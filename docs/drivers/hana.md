@@ -15,7 +15,7 @@ then **Install from file…** in the Driver Manager.
 |---|---|
 | Host, Port | `3<instance>15` for a tenant database, `3<instance>13` for SYSTEMDB (HANA Cloud: 443) |
 | Tenant database | asks the server to redirect to this tenant |
-| User, Password | the password lives in the OS keychain |
+| User, Password | the password lives in the encrypted credential vault, protected by the OS keychain |
 | Default schema | `SET SCHEMA` after connecting |
 | Use TLS | on by default; certificates are verified |
 | CA certificate (PEM) | a custom CA; converted to the DER files `hdbconnect` needs |

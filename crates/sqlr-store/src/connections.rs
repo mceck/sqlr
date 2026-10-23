@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use sqlr_core::{ConnectionConfig, DriverManifest, Secrets};
 
@@ -33,7 +34,7 @@ struct File {
 /// `SecretStore`.
 pub struct ConnectionRepo {
     path: PathBuf,
-    secrets: Box<dyn SecretStore>,
+    secrets: Arc<dyn SecretStore>,
 }
 
 impl ConnectionRepo {
@@ -41,8 +42,13 @@ impl ConnectionRepo {
         std::fs::create_dir_all(dir)?;
         Ok(Self {
             path: dir.join("connections.toml"),
-            secrets,
+            secrets: Arc::from(secrets),
         })
+    }
+
+    /// Shares the same unlocked store with background readers such as the engine and MCP.
+    pub fn secret_store(&self) -> Arc<dyn SecretStore> {
+        self.secrets.clone()
     }
 
     fn read(&self) -> Result<File, StoreError> {

@@ -1,5 +1,5 @@
-//! The MCP bearer token's storage. It is kept in the OS keychain under a dedicated
-//! service/account, never in TOML, the database, the discovery file or logs.
+//! The MCP bearer token's storage interface and legacy OS keychain backend. The app uses
+//! `VaultMcpTokenStore` to share its credential vault and migrate the old keychain item.
 
 use parking_lot::Mutex;
 

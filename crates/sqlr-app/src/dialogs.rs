@@ -672,7 +672,7 @@ impl ConnDialog {
                                 );
                                 ui.checkbox(
                                     &mut self.form.save_secrets,
-                                    "Save password in the system keychain",
+                                    "Save password securely on this device",
                                 )
                                 .on_hover_text(
                                     "Otherwise sqlr asks for the secrets when it connects",

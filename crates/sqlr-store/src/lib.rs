@@ -1,4 +1,4 @@
-//! Persistence for sqlr: connection configs (TOML), secrets (OS keychain) and settings.
+//! Persistence for sqlr: connection configs (TOML), encrypted secrets and settings.
 
 mod catalog;
 pub mod client_migration;
@@ -15,6 +15,7 @@ mod secrets;
 mod settings;
 mod snippets;
 mod tasks;
+mod vault;
 
 use std::path::{Path, PathBuf};
 
@@ -33,6 +34,7 @@ pub use settings::{
     SIDECAR_IDLE_MINUTES, Settings, TERMINAL_SCROLLBACK, UI_SCALES,
 };
 pub use tasks::{MAX_RUN_LOG_BYTES, RUNS_KEPT};
+pub use vault::{VaultMcpTokenStore, VaultSecretStore};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
