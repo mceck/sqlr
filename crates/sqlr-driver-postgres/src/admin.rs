@@ -6,7 +6,7 @@
 
 use sqlr_core::{
     Admin, AdminSupport, Dialect, DriverError, ErrorKind, Grant, LockInfo, ObjectKind, ObjectRef,
-    RoleDef, RoleField, ServerProperty, SessionInfo, TableRef, TableStats,
+    RoleDef, RoleField, ServerProperty, SessionInfo, TableRef, TableStats, grouped_grants,
 };
 use tokio_postgres::Client;
 
@@ -311,29 +311,6 @@ fn grant_target(d: &PgDialect, object: &ObjectRef) -> Option<String> {
     })
 }
 
-/// A privilege keyword: uppercase words only, so nothing else reaches the statement.
-fn privilege_word(privilege: &str) -> bool {
-    !privilege.is_empty()
-        && privilege
-            .chars()
-            .all(|c| c.is_ascii_uppercase() || c == ' ')
-}
-
-/// `grants` grouped by object, grantee and grant option, in order of first appearance.
-fn grouped(grants: &[Grant]) -> Vec<(&ObjectRef, &str, bool, Vec<&str>)> {
-    let mut out: Vec<(&ObjectRef, &str, bool, Vec<&str>)> = Vec::new();
-    for g in grants.iter().filter(|g| privilege_word(&g.privilege)) {
-        match out
-            .iter_mut()
-            .find(|(o, e, a, _)| **o == g.object && *e == g.grantee && *a == g.grantable)
-        {
-            Some((_, _, _, privileges)) => privileges.push(&g.privilege),
-            None => out.push((&g.object, &g.grantee, g.grantable, vec![&g.privilege])),
-        }
-    }
-    out
-}
-
 fn grant_ddl(d: &PgDialect, add: &[Grant], revoke: &[Grant]) -> Vec<String> {
     let grantee = |name: &str| {
         if name == "PUBLIC" {
@@ -357,7 +334,7 @@ fn grant_ddl(d: &PgDialect, add: &[Grant], revoke: &[Grant]) -> Vec<String> {
         .cloned()
         .collect();
     let mut out = Vec::new();
-    for (object, to, option, privileges) in grouped(&revoke) {
+    for (object, to, option, privileges) in grouped_grants(&revoke) {
         let Some(target) = grant_target(d, object) else {
             continue;
         };
@@ -368,7 +345,7 @@ fn grant_ddl(d: &PgDialect, add: &[Grant], revoke: &[Grant]) -> Vec<String> {
             grantee(to)
         ));
     }
-    for (object, to, option, privileges) in grouped(add) {
+    for (object, to, option, privileges) in grouped_grants(add) {
         let Some(target) = grant_target(d, object) else {
             continue;
         };

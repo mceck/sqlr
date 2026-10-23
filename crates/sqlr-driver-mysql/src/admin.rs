@@ -12,7 +12,8 @@ use mysql_async::Conn;
 use mysql_async::prelude::Queryable;
 use sqlr_core::{
     Admin, AdminSupport, Dialect, DriverError, ErrorKind, Grant, LockInfo, ObjectKind, ObjectRef,
-    RoleDef, RoleField, ServerProperty, SessionInfo, TableRef, TableStats, split_grantee,
+    RoleDef, RoleField, ServerProperty, SessionInfo, TableRef, TableStats, grouped_grants,
+    split_grantee,
 };
 
 use crate::catalog::{int, rows, string, text};
@@ -463,34 +464,11 @@ fn grant_target(d: &MyDialect, object: &ObjectRef) -> Option<String> {
     })
 }
 
-/// A privilege keyword: uppercase words only, so nothing else reaches the statement.
-fn privilege_word(privilege: &str) -> bool {
-    !privilege.is_empty()
-        && privilege
-            .chars()
-            .all(|c| c.is_ascii_uppercase() || c == ' ')
-}
-
-/// `grants` grouped by object, grantee and grant option, in order of first appearance.
-fn grouped(grants: &[Grant]) -> Vec<(&ObjectRef, &str, bool, Vec<&str>)> {
-    let mut out: Vec<(&ObjectRef, &str, bool, Vec<&str>)> = Vec::new();
-    for g in grants.iter().filter(|g| privilege_word(&g.privilege)) {
-        match out
-            .iter_mut()
-            .find(|(o, e, a, _)| **o == g.object && *e == g.grantee && *a == g.grantable)
-        {
-            Some((_, _, _, privileges)) => privileges.push(&g.privilege),
-            None => out.push((&g.object, &g.grantee, g.grantable, vec![&g.privilege])),
-        }
-    }
-    out
-}
-
 /// `GRANT` and `REVOKE` statements. MySQL's grant option belongs to an object, not to one
 /// privilege: revoking it for one privilege revokes it for every privilege on the object.
 fn grant_ddl(d: &MyDialect, add: &[Grant], revoke: &[Grant]) -> Vec<String> {
     let mut out = Vec::new();
-    let groups = grouped(revoke);
+    let groups = grouped_grants(revoke);
     for (object, to, option, privileges) in &groups {
         let Some(target) = grant_target(d, object) else {
             continue;
@@ -518,7 +496,7 @@ fn grant_ddl(d: &MyDialect, add: &[Grant], revoke: &[Grant]) -> Vec<String> {
             out.push(statement);
         }
     }
-    for (object, to, option, privileges) in grouped(add) {
+    for (object, to, option, privileges) in grouped_grants(add) {
         let Some(target) = grant_target(d, object) else {
             continue;
         };

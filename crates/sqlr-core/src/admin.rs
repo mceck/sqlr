@@ -106,6 +106,32 @@ pub struct Grant {
     pub grantable: bool,
 }
 
+/// A privilege as the server's catalog spells it: a non-empty run of uppercase words
+/// (`SELECT`, `REFERENCES`, `TRIGGER`). Rows that are not (a stray sentence, an empty
+/// field) are not privileges and are left out of the grouped statements.
+fn privilege_word(privilege: &str) -> bool {
+    !privilege.is_empty()
+        && privilege
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c == ' ')
+}
+
+/// `grants` grouped by object, grantee and grant option, in order of first appearance.
+/// The same grouping answers `GRANT` and `REVOKE` in every driver that lists privileges.
+pub fn grouped_grants(grants: &[Grant]) -> Vec<(&ObjectRef, &str, bool, Vec<&str>)> {
+    let mut out: Vec<(&ObjectRef, &str, bool, Vec<&str>)> = Vec::new();
+    for g in grants.iter().filter(|g| privilege_word(&g.privilege)) {
+        match out
+            .iter_mut()
+            .find(|(o, e, a, _)| **o == g.object && *e == g.grantee && *a == g.grantable)
+        {
+            Some((_, _, _, privileges)) => privileges.push(&g.privilege),
+            None => out.push((&g.object, &g.grantee, g.grantable, vec![&g.privilege])),
+        }
+    }
+    out
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SessionInfo {
     pub id: String,
@@ -295,6 +321,45 @@ mod tests {
             "previews show the mask"
         );
         assert_eq!(RoleDef::default().masked().password, None);
+    }
+
+    fn grant(object: &str, grantee: &str, privilege: &str, grantable: bool) -> Grant {
+        Grant {
+            grantee: grantee.into(),
+            object: ObjectRef::relation(
+                ObjectKind::Table,
+                &TableRef {
+                    database: None,
+                    schema: Some("public".into()),
+                    name: object.into(),
+                },
+            ),
+            privilege: privilege.into(),
+            grantable,
+        }
+    }
+
+    #[test]
+    fn grants_group_by_object_grantee_and_option() {
+        let grants = vec![
+            grant("a", "ann", "SELECT", false),
+            grant("a", "ann", "INSERT", false),
+            grant("a", "ann", "SELECT", true),
+            grant("b", "ann", "SELECT", false),
+            grant("a", "bob", "SELECT", false),
+            grant("a", "ann", "", false),
+            grant("a", "ann", "not a privilege", false),
+        ];
+        let grouped = grouped_grants(&grants);
+        assert_eq!(grouped.len(), 4);
+        assert_eq!(grouped[0].0.name, "a");
+        assert_eq!(grouped[0].1, "ann");
+        assert!(!grouped[0].2);
+        assert_eq!(grouped[0].3, ["SELECT", "INSERT"]);
+        assert!(grouped[1].2);
+        assert_eq!(grouped[1].3, ["SELECT"]);
+        assert_eq!(grouped[2].0.name, "b");
+        assert_eq!(grouped[3].1, "bob");
     }
 
     #[test]
