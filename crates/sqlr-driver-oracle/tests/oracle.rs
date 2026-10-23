@@ -198,6 +198,78 @@ async fn transactions_roll_back_and_commit() {
     drop_table(&conn, &name).await;
 }
 
+async fn transaction_ending_statement_restores_autocommit(ending: &str, initial_rows: &str) {
+    let conn = support::connect().await;
+    let other = support::connect().await;
+    let name = unique_name("SQLR_TX_END").to_uppercase();
+    run(&conn, &format!("CREATE TABLE {name} (id NUMBER(10))")).await;
+    run(&conn, "SET TRANSACTION READ WRITE").await;
+    run(&conn, &format!("INSERT INTO {name} VALUES (1)")).await;
+    run(&conn, ending).await;
+    assert_eq!(
+        query(&other, &format!("SELECT COUNT(*) FROM {name}")).await[0][0]
+            .display()
+            .as_ref(),
+        initial_rows,
+        "the ending statement must take effect on the server"
+    );
+    run(&conn, &format!("INSERT INTO {name} VALUES (2)")).await;
+    let rows = query(&other, &format!("SELECT id FROM {name} WHERE id = 2")).await;
+    drop_table(&conn, &name).await;
+    assert_eq!(rows.len(), 1, "{ending} must restore automatic commits");
+}
+
+#[tokio::test]
+async fn commit_work_restores_autocommit() {
+    sqlr_testkit::skip_container_tests!();
+    transaction_ending_statement_restores_autocommit("COMMIT WORK", "1").await;
+}
+
+#[tokio::test]
+async fn rollback_work_restores_autocommit() {
+    sqlr_testkit::skip_container_tests!();
+    transaction_ending_statement_restores_autocommit("ROLLBACK WORK", "0").await;
+}
+
+#[tokio::test]
+async fn commit_comment_restores_autocommit() {
+    sqlr_testkit::skip_container_tests!();
+    transaction_ending_statement_restores_autocommit("COMMIT COMMENT 'sqlr regression'", "1").await;
+}
+
+#[tokio::test]
+async fn failed_ddl_ends_the_transaction_before_following_automatic_writes() {
+    sqlr_testkit::skip_container_tests!();
+    let conn = support::connect().await;
+    let other = support::connect().await;
+    let name = unique_name("SQLR_FAILED_DDL").to_uppercase();
+    let create = format!("CREATE TABLE {name} (id NUMBER(10))");
+    run(&conn, &create).await;
+    run(&conn, "SET TRANSACTION READ WRITE").await;
+    run(&conn, &format!("INSERT INTO {name} VALUES (1)")).await;
+    assert!(conn.relational().unwrap().execute(&create).await.is_err());
+    assert_eq!(
+        query(&other, &format!("SELECT COUNT(*) FROM {name}")).await[0][0]
+            .display()
+            .as_ref(),
+        "1",
+        "Oracle commits before executing the failing DDL"
+    );
+    let error = conn
+        .relational()
+        .unwrap()
+        .execute(&format!("INSERT INTO {name} VALUES (2)"))
+        .await
+        .err();
+    let rows = query(&other, &format!("SELECT COUNT(*) FROM {name}")).await;
+    drop_table(&conn, &name).await;
+    assert!(
+        error.is_none(),
+        "the DDL already ended the transaction: {error:?}"
+    );
+    assert_eq!(rows[0][0].display().as_ref(), "2");
+}
+
 #[tokio::test]
 async fn explorer_catalog_and_describe() {
     sqlr_testkit::skip_container_tests!();
