@@ -20,12 +20,30 @@ WHERE o.owner = :1 AND o.object_type IN ('TABLE', 'VIEW') \
   AND NOT EXISTS (SELECT 1 FROM all_mviews m WHERE m.owner = o.owner AND m.mview_name = o.object_name) \
 ORDER BY o.object_name";
 
-const COLUMNS_SQL: &str = "\
-SELECT table_name, column_name, data_type, char_length, data_length, data_precision, \
-       data_scale, nullable, identity_column \
-FROM all_tab_cols \
-WHERE owner = :1 AND hidden_column = 'NO' \
-ORDER BY table_name, column_id";
+/// Whether the dictionary has `ALL_TAB_COLS.DATA_DEFAULT_VC` (the default as text: the
+/// older `DATA_DEFAULT` is a LONG, which comes back empty).
+const HAS_DEFAULT_VC_SQL: &str = "\
+SELECT COUNT(*) FROM all_tab_cols \
+WHERE owner = 'SYS' AND table_name = 'ALL_TAB_COLS' AND column_name = 'DATA_DEFAULT_VC'";
+
+fn columns_sql(default_vc: bool) -> String {
+    format!(
+        "SELECT c.table_name, c.column_name, c.data_type, c.char_length, c.data_length, \
+                c.data_precision, c.data_scale, c.nullable, c.identity_column, c.virtual_column, \
+                {}, \
+                (SELECT i.generation_type FROM all_tab_identity_cols i \
+                 WHERE i.owner = c.owner AND i.table_name = c.table_name \
+                   AND i.column_name = c.column_name) \
+         FROM all_tab_cols c \
+         WHERE c.owner = :1 AND c.hidden_column = 'NO' \
+         ORDER BY c.table_name, c.column_id",
+        if default_vc {
+            "c.data_default_vc"
+        } else {
+            "CAST(NULL AS VARCHAR2(1))"
+        }
+    )
+}
 
 const CONSTRAINTS_SQL: &str = "\
 SELECT c.table_name, c.constraint_name, c.constraint_type, cc.column_name, \
@@ -38,14 +56,62 @@ LEFT JOIN all_cons_columns rcc ON rcc.owner = rc.owner \
 WHERE c.owner = :1 AND c.constraint_type IN ('P', 'U', 'R', 'C') \
 ORDER BY c.table_name, c.constraint_name, cc.position";
 
-const INDEXES_SQL: &str = "\
-SELECT i.table_name, i.index_name, i.uniqueness, i.index_type, ic.column_name, ic.descend \
-FROM all_indexes i \
-JOIN all_ind_columns ic ON ic.index_owner = i.owner AND ic.index_name = i.index_name \
-WHERE i.owner = :1 AND i.table_owner = i.owner AND i.index_type NOT IN ('LOB', 'IOT - TOP') \
-  AND NOT EXISTS (SELECT 1 FROM all_constraints k WHERE k.owner = i.owner \
-                  AND k.index_name = i.index_name AND k.constraint_type IN ('P', 'U')) \
-ORDER BY i.table_name, i.index_name, ic.column_position";
+/// A function-based index (a descending column makes one) indexes a hidden virtual column
+/// named `SYS_NC…$`, whose default is the expression.
+fn indexes_sql(default_vc: bool) -> String {
+    let (select, join) = if default_vc {
+        (
+            "hc.data_default_vc",
+            "LEFT JOIN all_tab_cols hc ON hc.owner = i.table_owner \
+              AND hc.table_name = i.table_name AND hc.column_name = ic.column_name \
+              AND hc.hidden_column = 'YES' AND hc.virtual_column = 'YES'",
+        )
+    } else {
+        ("CAST(NULL AS VARCHAR2(1))", "")
+    };
+    format!(
+        "SELECT i.table_name, i.index_name, i.uniqueness, i.index_type, ic.column_name, \
+                ic.descend, {select} \
+         FROM all_indexes i \
+         JOIN all_ind_columns ic ON ic.index_owner = i.owner AND ic.index_name = i.index_name \
+         {join} \
+         WHERE i.owner = :1 AND i.table_owner = i.owner AND i.index_type NOT IN ('LOB', 'IOT - TOP') \
+           AND NOT EXISTS (SELECT 1 FROM all_constraints k WHERE k.owner = i.owner \
+                           AND k.index_name = i.index_name AND k.constraint_type IN ('P', 'U')) \
+         ORDER BY i.table_name, i.index_name, ic.column_position"
+    )
+}
+
+/// The key part of an index: a plain column name, or the expression in parentheses.
+fn index_column(name: &str, expression: Option<&str>) -> IndexColumn {
+    let Some(expression) = expression.map(str::trim).filter(|e| !e.is_empty()) else {
+        return IndexColumn::column(name);
+    };
+    // `"TOTAL"` is the column itself.
+    match expression
+        .strip_prefix('"')
+        .and_then(|e| e.strip_suffix('"'))
+        .filter(|e| !e.contains('"'))
+    {
+        Some(column) => IndexColumn::column(column),
+        None => IndexColumn {
+            expr: format!("({expression})"),
+            ..IndexColumn::default()
+        },
+    }
+}
+
+/// An index's type as the generator names it: a plain B-tree (even a function-based one,
+/// as a descending column makes it) has none.
+fn index_method(index_type: &str) -> Option<String> {
+    match index_type
+        .strip_prefix("FUNCTION-BASED ")
+        .unwrap_or(index_type)
+    {
+        "NORMAL" | "" => None,
+        other => Some(other.to_string()),
+    }
+}
 
 fn text(row: &Row, i: usize) -> String {
     row.get(i)
@@ -78,13 +144,39 @@ pub(crate) async fn load_schema(
     schema: &str,
 ) -> Result<SchemaSnapshot, DriverError> {
     let objects = query(conn, OBJECTS_SQL, &[schema]).await?;
+    let has_default_vc = query(conn, HAS_DEFAULT_VC_SQL, &[])
+        .await?
+        .rows
+        .first()
+        .and_then(|r| int(r, 0))
+        == Some(1);
     let mut columns: HashMap<String, Vec<ColumnDef>> = HashMap::new();
-    for r in &query(conn, COLUMNS_SQL, &[schema]).await?.rows {
+    for r in &query(conn, &columns_sql(has_default_vc), &[schema])
+        .await?
+        .rows
+    {
+        // `DEFAULT NULL` is no default.
+        let expression = opt(r, 10)
+            .map(|e| e.trim().to_string())
+            .filter(|e| !e.is_empty() && !e.eq_ignore_ascii_case("NULL"));
+        let identity = match opt(r, 11).as_deref() {
+            Some("ALWAYS") => Some(Identity::Always),
+            Some(_) => Some(Identity::ByDefault),
+            None => None,
+        };
+        let virtual_column = text(r, 9) == "YES";
         columns.entry(text(r, 0)).or_default().push(ColumnDef {
             name: text(r, 1),
             type_name: type_name(&text(r, 2), int(r, 3), int(r, 4), int(r, 5), int(r, 6)),
             nullable: text(r, 7) == "Y",
-            identity: (text(r, 8) == "YES").then_some(Identity::ByDefault),
+            // An identity's default is its sequence.
+            default: if identity.is_some() || virtual_column {
+                None
+            } else {
+                expression.clone()
+            },
+            generated: if virtual_column { expression } else { None },
+            identity,
             ..ColumnDef::default()
         });
     }
@@ -147,21 +239,24 @@ pub(crate) async fn load_schema(
     }
     let mut indexes: HashMap<String, Vec<IndexDef>> = HashMap::new();
     let mut last: Option<(String, String)> = None;
-    for r in &query(conn, INDEXES_SQL, &[schema]).await?.rows {
+    for r in &query(conn, &indexes_sql(has_default_vc), &[schema])
+        .await?
+        .rows
+    {
         let (table, name) = (text(r, 0), text(r, 1));
         let list = indexes.entry(table.clone()).or_default();
         if last.as_ref() != Some(&(table.clone(), name.clone())) {
             list.push(IndexDef {
                 name: name.clone(),
                 unique: text(r, 2) == "UNIQUE",
-                method: opt(r, 3),
+                method: index_method(&text(r, 3)),
                 ..IndexDef::default()
             });
         }
         if let Some(index) = list.last_mut() {
             index.columns.push(IndexColumn {
                 desc: text(r, 5) == "DESC",
-                ..IndexColumn::column(&text(r, 4))
+                ..index_column(&text(r, 4), opt(r, 6).as_deref())
             });
         }
         last = Some((table, name));

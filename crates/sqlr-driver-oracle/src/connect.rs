@@ -6,8 +6,8 @@ use std::time::Duration;
 use oracle_rs::{Config, Connection as OraConnection};
 use sqlr_core::{
     CancelHandle, Connection, ConnectionConfig, Dialect, Driver, DriverError, DriverManifest,
-    ErrorKind, Execution, Introspect, Node, NodePath, ObjectDef, ObjectRef, RelationalConn,
-    Secrets, ServerInfo, TableInfo, TableRef, Value,
+    ErrorKind, Execution, Introspect, Node, NodeKind, NodePath, ObjectDef, ObjectRef,
+    RelationalConn, Secrets, ServerInfo, TableInfo, TableRef, Value,
 };
 
 use crate::dialect::OracleDialect;
@@ -141,6 +141,34 @@ impl RelationalConn for OracleConnection {
 
     async fn catalog(&self, schema: &str) -> Result<sqlr_core::SchemaCatalog, DriverError> {
         catalog::catalog(&self.conn, schema).await
+    }
+
+    /// Paths are `[schema, folder, name]` and `[schema, "tables", table, "indexes", index]`.
+    fn object_ref(&self, node: &Node) -> Option<ObjectRef> {
+        let segs: Vec<&str> = node.path.segments().iter().map(String::as_str).collect();
+        let object = |kind, schema: &str, name: &str, parent: Option<&str>| ObjectRef {
+            kind,
+            database: None,
+            schema: Some(schema.to_string()),
+            name: name.to_string(),
+            parent: parent.map(String::from),
+            signature: None,
+        };
+        match (node.kind, segs.as_slice()) {
+            (NodeKind::Index, [schema, "tables", table, "indexes", index]) => Some(object(
+                sqlr_core::ObjectKind::Index,
+                schema,
+                index,
+                Some(table),
+            )),
+            (NodeKind::Table, [schema, "tables", name]) => {
+                Some(object(sqlr_core::ObjectKind::Table, schema, name, None))
+            }
+            (NodeKind::View, [schema, "views", name]) => {
+                Some(object(sqlr_core::ObjectKind::View, schema, name, None))
+            }
+            _ => None,
+        }
     }
 
     fn introspect(&self) -> Option<&dyn Introspect> {

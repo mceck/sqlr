@@ -3,6 +3,7 @@
 mod browse;
 mod catalog;
 mod connect;
+mod ddl_gen;
 mod describe;
 mod dialect;
 mod errors;

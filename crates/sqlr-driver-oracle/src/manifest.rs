@@ -1,6 +1,8 @@
 //! Static manifest of the Oracle driver.
 
-use sqlr_core::{Capabilities, DriverManifest, Family, FieldSpec, FieldType};
+use sqlr_core::{
+    Capabilities, DriverManifest, Family, FieldSpec, FieldType, ObjectEditing, ObjectKind,
+};
 
 fn field(
     key: &str,
@@ -19,6 +21,40 @@ fn field(
         default: default.map(String::from),
         required,
         group: group.into(),
+    }
+}
+
+/// Tables, views and indexes; DDL commits as it goes, so it is not atomic.
+fn editing() -> ObjectEditing {
+    use ObjectKind::*;
+    let creatable = vec![Table, View, Index];
+    ObjectEditing {
+        alter: vec![Table, View],
+        drop: creatable.clone(),
+        rename: creatable.clone(),
+        create: creatable,
+        transactional_ddl: false,
+        column_types: [
+            "NUMBER",
+            "NUMBER(10)",
+            "NUMBER(10,2)",
+            "FLOAT",
+            "BINARY_DOUBLE",
+            "VARCHAR2(255)",
+            "NVARCHAR2(255)",
+            "CHAR(10)",
+            "CLOB",
+            "BLOB",
+            "RAW(16)",
+            "DATE",
+            "TIMESTAMP",
+            "TIMESTAMP WITH TIME ZONE",
+        ]
+        .iter()
+        .map(|t| t.to_string())
+        .collect(),
+        comments: false,
+        column_order: false,
     }
 }
 
@@ -85,7 +121,7 @@ pub(crate) fn manifest() -> DriverManifest {
         dialect: "oracle".into(),
         url_schemes: vec!["oracle".into()],
         default_port: Some(1521),
-        editing: None,
+        editing: Some(editing()),
     }
 }
 

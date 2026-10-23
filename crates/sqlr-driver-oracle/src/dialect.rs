@@ -90,6 +90,10 @@ impl Dialect for OracleDialect {
         })
     }
 
+    fn ddl_gen(&self) -> Option<&dyn sqlr_core::DdlGen> {
+        Some(self)
+    }
+
     fn bool_literal(&self, value: bool) -> &'static str {
         if value { "1" } else { "0" }
     }
