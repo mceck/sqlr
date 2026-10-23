@@ -7,24 +7,9 @@ use std::path::Path;
 use sqlr_driver_sdk::{DriverError, ErrorKind};
 use tempfile::TempDir;
 
-const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
 fn base64_decode(text: &str) -> Option<Vec<u8>> {
-    let mut out = Vec::with_capacity(text.len() * 3 / 4);
-    let (mut acc, mut bits) = (0u32, 0);
-    for c in text
-        .bytes()
-        .filter(|c| !c.is_ascii_whitespace() && *c != b'=')
-    {
-        let v = ALPHABET.iter().position(|a| *a == c)? as u32;
-        acc = (acc << 6) | v;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((acc >> bits) as u8);
-        }
-    }
-    Some(out)
+    let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+    sqlr_driver_sdk::base64_decode(&compact).ok()
 }
 
 /// Every `CERTIFICATE` block of `pem`, DER-encoded.
@@ -99,6 +84,19 @@ mod tests {
         let kept = dir.path().to_path_buf();
         drop(dir);
         assert!(!kept.exists(), "the directory goes away with its owner");
+    }
+
+    #[test]
+    fn a_certificate_with_an_impossible_base64_length_is_refused() {
+        // Five base64 characters leave a 6-bit group with no byte to fill: no decoder may
+        // turn that into DER bytes silently.
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            file.path(),
+            "-----BEGIN CERTIFICATE-----\nAAAAA\n-----END CERTIFICATE-----\n",
+        )
+        .unwrap();
+        assert!(pem_to_der_dir(file.path()).is_err());
     }
 
     #[test]
