@@ -146,6 +146,55 @@ fn enabling_mcp_starts_the_listener_and_disabling_removes_the_discovery_file() {
 }
 
 #[test]
+fn the_toolbar_toggle_switches_agent_access() {
+    let dir = tempfile::tempdir().unwrap();
+    let port = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port()
+    };
+    let mut drivers = DriverRegistry::default();
+    drivers.register(FakeDriver::new(Default::default()));
+    let engine = Engine::new(drivers, Arc::new(|| {}));
+    let secrets = Arc::new(MemorySecretStore::default());
+    engine.set_secret_store(secrets.clone());
+    let repo = ConnectionRepo::open(dir.path(), Box::new(secrets)).unwrap();
+    let app = SqlrApp::new(
+        AppDeps {
+            engine,
+            repo,
+            settings: Settings {
+                agents_port: port,
+                ..Settings::default()
+            },
+            config_dir: dir.path().to_path_buf(),
+            data_dir: Some(dir.path().to_path_buf()),
+            startup_notice: None,
+            storage_warning: None,
+            mcp_token_store: Some(Arc::new(sqlr_store::MemoryMcpTokenStore::with_token(
+                "ui-test-token",
+            ))),
+        },
+        &egui::Context::default(),
+    );
+    let mut harness = Harness::builder()
+        .with_size((1200.0, 820.0))
+        .with_step_dt(0.01)
+        .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    harness.run_steps(3);
+    assert!(!harness.state().agents_enabled_for_tests());
+    assert!(harness.state().mcp_stopped_for_tests());
+
+    harness.get_by_label("Toggle agent access (MCP)").click();
+    harness.run_steps(3);
+    assert!(harness.state().agents_enabled_for_tests());
+
+    harness.get_by_label("Toggle agent access (MCP)").click();
+    harness.run_steps(3);
+    assert!(!harness.state().agents_enabled_for_tests());
+    assert!(harness.state().mcp_stopped_for_tests());
+}
+
+#[test]
 fn the_approval_dialog_shows_the_statement_and_escape_denies() {
     let dir = tempfile::tempdir().unwrap();
     let app = app(dir.path());

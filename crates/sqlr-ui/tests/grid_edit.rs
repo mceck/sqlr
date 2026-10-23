@@ -194,6 +194,77 @@ fn shift_arrow_extends_selection_and_copy_tsv() {
 }
 
 #[test]
+fn paste_one_cell_marks_it_pending() {
+    let mut h = harness_with(sequential(5), false, editable());
+    click(&mut h, "name 1");
+    h.event(Event::Paste("renamed".into()));
+    h.run_steps(2);
+    let edits = h.state().state.edits.as_ref().unwrap();
+    assert_eq!(edits.pending(), 1);
+    assert_eq!(
+        edits.value(&h.state().rows, 1, 1),
+        Some(Value::Text("renamed".into()))
+    );
+    h.get_by_label("renamed");
+}
+
+#[test]
+fn paste_a_block_into_a_multi_selection() {
+    let mut h = harness_with(sequential(5), false, editable());
+    click(&mut h, "0");
+    press(&mut h, Modifiers::SHIFT, Key::ArrowDown);
+    press(&mut h, Modifiers::SHIFT, Key::ArrowRight);
+    h.event(Event::Paste("10\tten\n11\televen".into()));
+    h.run_steps(2);
+    let rows = &h.state().rows;
+    let edits = h.state().state.edits.as_ref().unwrap();
+    assert_eq!(edits.pending(), 2);
+    assert_eq!(edits.value(rows, 0, 0), Some(Value::Int(10)));
+    assert_eq!(edits.value(rows, 0, 1), Some(Value::Text("ten".into())));
+    assert_eq!(edits.value(rows, 1, 0), Some(Value::Int(11)));
+    assert_eq!(edits.value(rows, 1, 1), Some(Value::Text("eleven".into())));
+}
+
+#[test]
+fn a_single_pasted_value_fills_the_selection() {
+    let mut h = harness_with(sequential(5), false, editable());
+    click(&mut h, "name 0");
+    press(&mut h, Modifiers::SHIFT, Key::ArrowDown);
+    h.event(Event::Paste("same".into()));
+    h.run_steps(2);
+    let rows = &h.state().rows;
+    let edits = h.state().state.edits.as_ref().unwrap();
+    assert_eq!(edits.pending(), 2);
+    assert_eq!(edits.value(rows, 0, 1), Some(Value::Text("same".into())));
+    assert_eq!(edits.value(rows, 1, 1), Some(Value::Text("same".into())));
+}
+
+#[test]
+fn paste_into_a_read_only_grid_reports() {
+    let mut h = harness(sequential(5));
+    click(&mut h, "0");
+    h.event(Event::Paste("x".into()));
+    h.run_steps(2);
+    assert!(h.state().actions.contains(&GridAction::PasteFailed(
+        "The result cannot be edited".into()
+    )));
+}
+
+#[test]
+fn an_invalid_paste_reports_and_changes_nothing() {
+    let mut h = harness_with(sequential(5), false, editable());
+    click(&mut h, "0");
+    h.event(Event::Paste("abc".into()));
+    h.run_steps(2);
+    assert_eq!(h.state().state.edits.as_ref().unwrap().pending(), 0);
+    assert!(
+        h.state()
+            .actions
+            .contains(&GridAction::PasteFailed("Not an integer".into()))
+    );
+}
+
+#[test]
 fn copy_as_markdown() {
     let mut h = harness(sequential(2));
     press(&mut h, Modifiers::NONE, Key::Escape);
@@ -348,6 +419,37 @@ fn delete_row_strikes_through() {
     menu(&mut h, "name 2", "Revert row");
     assert_eq!(h.state().state.edits.as_ref().unwrap().pending(), 0);
     assert_eq!(struck(&h, "name 2"), Some(false));
+}
+
+#[test]
+fn command_delete_marks_the_selected_rows_deleted() {
+    let mut h = harness_with(sequential(5), false, editable());
+    click(&mut h, "Row 2");
+    press(&mut h, Modifiers::COMMAND, Key::Backspace);
+    assert!(h.state().actions.contains(&GridAction::DeleteRows(vec![1])));
+    let edits = h.state().state.edits.as_ref().unwrap();
+    assert_eq!(edits.pending(), 1);
+    assert_eq!(struck(&h, "name 1"), Some(true));
+    assert_eq!(struck(&h, "name 2"), Some(false));
+}
+
+#[test]
+fn command_delete_marks_a_multi_row_selection_deleted() {
+    let mut h = harness_with(sequential(5), false, editable());
+    click(&mut h, "Row 1");
+    press(&mut h, Modifiers::SHIFT, Key::ArrowDown);
+    press(&mut h, Modifiers::SHIFT, Key::ArrowDown);
+    press(&mut h, Modifiers::COMMAND, Key::Backspace);
+    assert!(
+        h.state()
+            .actions
+            .contains(&GridAction::DeleteRows(vec![0, 1, 2]))
+    );
+    let edits = h.state().state.edits.as_ref().unwrap();
+    assert_eq!(edits.pending(), 3);
+    assert_eq!(struck(&h, "name 0"), Some(true));
+    assert_eq!(struck(&h, "name 2"), Some(true));
+    assert_eq!(struck(&h, "name 3"), Some(false));
 }
 
 #[test]

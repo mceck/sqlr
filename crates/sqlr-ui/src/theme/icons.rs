@@ -45,6 +45,8 @@ pub const DATA_SOURCE: &str = ph::DATABASE;
 pub const APPEARANCE: &str = ph::PALETTE;
 pub const QUERY: &str = ph::CODE;
 pub const CONNECTION: &str = ph::PLUGS_CONNECTED;
+/// Agent access (the MCP server).
+pub const MCP: &str = ph::ROBOT;
 // Status bar and outcomes.
 pub const DOT: &str = ph::CIRCLE;
 pub const ROWS: &str = ph::ROWS;

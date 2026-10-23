@@ -100,6 +100,7 @@ actions! {
     ShowTasks => ("show_tasks", "Show tasks", "Navigation", Global),
     Shortcuts => ("shortcuts", "Keyboard shortcuts", "Navigation", Global),
     SelectAll => ("select_all", "Select all", "Editor", Editor),
+    DeleteRows => ("delete_rows", "Delete selected rows", "Result grid", Editor),
 }
 
 /// The modifier keys of a chord. `cmd` is ⌘ on macOS and Ctrl elsewhere (egui's `command`);
@@ -322,6 +323,7 @@ const SQLR: Table = &[
     (A::Undo, &["Cmd+Z"]),
     (A::Redo, &["Cmd+Shift+Z", "Cmd+Y"]),
     (A::SelectAll, &["Cmd+A"]),
+    (A::DeleteRows, &["Cmd+Backspace", "Cmd+Delete"]),
 ];
 
 const VSCODE: Table = &[

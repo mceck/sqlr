@@ -15,7 +15,7 @@ Open Settings with ⌘, (or the sqlr menu). A search field at the top finds a se
 | Connections | A session per editor tab, connect timeout, read-only and confirmation switches |
 | Drivers | Extra properties for each driver, how long an idle driver process is kept |
 | Agents | Enable the loopback MCP server, port, status, endpoint, token rotation, Copy MCP config |
-| Terminal | Shell command, working directory, scrollback; changes apply on Restart |
+| Terminal | Shell command, working directory, font size, scrollback; the font size applies immediately, the rest on Restart |
 
 **Open settings folder** takes you to the files described below, in case you prefer to read or back them up directly.
 
@@ -88,6 +88,7 @@ Shortcuts below use the default keymap, with macOS keys. On Windows and Linux us
 | Complete | Ctrl+Space |
 | Undo, redo | ⌘Z, ⇧⌘Z or ⌘Y |
 | Indent, outdent | Tab, ⇧Tab |
+| Delete the selected rows in a result | ⌘⌫ |
 
 The full list of commands and their current keys is in **Help, Keyboard Shortcuts**. It always reflects your own changes.
 

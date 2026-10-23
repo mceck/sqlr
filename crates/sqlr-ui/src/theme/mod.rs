@@ -171,10 +171,10 @@ pub fn tool_dialog<R>(
     response.and_then(|response| response.inner)
 }
 
-/// The default height of a query editor above its results: about a third of the tab, so the
+/// The default height of a query editor above its results: about a fifth of the tab, so the
 /// result grid gets the larger share. Bounded so both panes stay usable on any window.
 pub fn editor_split_height(available: f32) -> f32 {
-    (available * 0.3).clamp(100.0, 220.0)
+    (available * 0.2).clamp(80.0, 180.0)
 }
 
 /// The custom title bar shared by the app's dialogs: an accent badge with `icon`, `title`,
@@ -314,6 +314,10 @@ mod tests {
     fn the_editor_starts_smaller_than_the_result_grid() {
         for available in [400.0, 700.0, 1000.0] {
             let editor = editor_split_height(available);
+            assert!(
+                editor <= available * 0.25,
+                "editor {editor} of {available}: the grid must get the larger share"
+            );
             assert!(
                 editor < available - editor,
                 "editor {editor} of {available}: the grid must get the larger share"

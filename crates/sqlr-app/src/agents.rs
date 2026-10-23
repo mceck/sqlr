@@ -871,6 +871,29 @@ impl SqlrApp {
     }
 
     #[doc(hidden)]
+    pub fn agents_enabled_for_tests(&self) -> bool {
+        self.settings.agents_enabled
+    }
+
+    /// Turns the MCP server on or off from the toolbar toggle and saves the setting in the
+    /// background (the server follows it on the next tick).
+    pub(crate) fn set_agents_enabled(&mut self, enabled: bool, ctx: &egui::Context) {
+        if self.settings.agents_enabled == enabled {
+            return;
+        }
+        self.settings.agents_enabled = enabled;
+        if let Err(error) = self.layered.set(
+            "agents.enabled",
+            Level::Global,
+            Some(SettingValue::Bool(enabled)),
+        ) {
+            self.notify(format!("Could not change agent access: {error}"));
+            return;
+        }
+        self.save_settings(ctx);
+    }
+
+    #[doc(hidden)]
     pub fn set_mcp_enabled_for_tests(&mut self, enabled: bool) {
         self.settings.agents_enabled = enabled;
     }

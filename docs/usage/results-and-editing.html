@@ -63,10 +63,11 @@ img{max-width:100%}
 <h3 id="selecting-and-copying">Selecting and copying</h3>
 <p>Click and drag to select a rectangle of cells, and move around with the arrow keys as in a spreadsheet. You can freeze columns so they stay in view while you scroll sideways.</p>
 <p><strong>Copy</strong> puts the selection on the clipboard as tab-separated text. <strong>Copy as</strong> offers CSV, JSON, SQL <code>INSERT</code> statements and Markdown, which is handy for pasting into a chat, a ticket or a README.</p>
+<p><strong>Paste</strong> (⌘V) writes tab-separated clipboard text back into an editable result. A single value fills every selected cell; a block of cells starts at the top-left corner of the selection.</p>
 <p>To save a whole result to a file, use <strong>Export result</strong> (see <a href="moving-data.html">Import, export, transfer and backup</a>).</p>
 <h2 id="editing-data">Editing data</h2>
 <p>When a result comes from a single table that has a primary key or a unique key, you can edit it right in the grid.</p>
-<ul><li><strong>Double-click</strong> a cell to change it.</li><li>Use <strong>Add row</strong>, <strong>Duplicate</strong> and <strong>Delete</strong> for whole rows.</li><li>Edited cells, new rows and deleted rows each get their own tint, so you can see at a glance what is pending.</li></ul>
+<ul><li><strong>Double-click</strong> a cell to change it.</li><li>Use <strong>Add row</strong>, <strong>Duplicate</strong> and <strong>Delete</strong> for whole rows.</li><li><strong>⌘⌫</strong> (⌘Delete) marks the selected rows deleted.</li><li>Edited cells, new rows and deleted rows each get their own tint, so you can see at a glance what is pending.</li></ul>
 <p>Nothing is sent to the database yet. Press <strong>Preview</strong> to read the <code>INSERT</code>, <code>UPDATE</code> and <code>DELETE</code> statements sqlr generated, then <strong>Apply</strong> to run them, or <strong>Discard</strong> to drop the changes.</p>
 <p>Apply runs the statements in a transaction. If one of them fails, the transaction is rolled back and nothing changes. If someone else changed a row you were editing in the meantime, sqlr notices and names the conflicting rows instead of silently overwriting their work.</p>
 <h3 id="which-results-are-editable">Which results are editable</h3>

@@ -380,6 +380,8 @@ All widgets take data in and return action values. None of them calls the engine
 - Column widths are measured on a sample and can be resized. Columns can be frozen.
 - Rectangular selection and spreadsheet-like keyboard navigation.
 - Copy as TSV, CSV, JSON, SQL `INSERT` or Markdown.
+- Paste tab-separated text into the selection (a single value fills it); ⌘⌫ marks the
+  selected rows deleted.
 - Long values are truncated, and the full value appears in the value panel. Special types get dedicated rendering.
 - Inline editing on double-click, with changeset highlighting.
 - Also serves as the Table view for documents. Columns are the union of top-level keys of the first N documents (N = page size).

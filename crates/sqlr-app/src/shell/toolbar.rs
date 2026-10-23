@@ -11,6 +11,7 @@ use sqlr_engine::SessionStatus;
 use sqlr_ui::theme::{self, Spacing, icons};
 use sqlr_ui::{ChipAction, ChipItem, ChipState, PaletteMode, connection_chip};
 
+use crate::agents::McpStatus;
 use crate::app::{
     CLOSE_TAB, COPY, CUT, NEW_TAB, PASTE, REDO, RUN, RUN_SCRIPT, SELECT_ALL, SETTINGS, SqlrApp,
     UNDO, tab_mut,
@@ -224,11 +225,11 @@ impl SqlrApp {
         let native = self.native_menu_installed();
         let button = icons::TOOLBAR_SIZE.x;
 
-        // The space the left part may use: the right part (four buttons and a divider) is
+        // The space the left part may use: the right part (five buttons and a divider) is
         // fixed. Then the groups are budgeted by priority: the chip at its narrowest, the
         // transaction controls, the full menus, and what is left widens the chip.
         let right_width =
-            4.0 * button + 5.0 * Spacing::XS + 1.0 + if operation_count > 0 { 140.0 } else { 0.0 };
+            5.0 * button + 6.0 * Spacing::XS + 1.0 + if operation_count > 0 { 140.0 } else { 0.0 };
         let gap = Spacing::S;
         let divider = 1.0 + gap;
         let menus_id = Id::new("toolbar_menus_width");
@@ -391,6 +392,37 @@ impl SqlrApp {
                     .clicked()
                 {
                     self.open_preferences(sqlr_core::Level::Global);
+                }
+                // The quick toggle for the loopback MCP server, next to the workspace toggles.
+                let mcp_on = self.settings.agents_enabled;
+                let mcp_color = match self.mcp.status {
+                    McpStatus::Running => Some(palette.success),
+                    McpStatus::Starting => Some(palette.warning),
+                    McpStatus::PortBusy | McpStatus::KeychainError | McpStatus::Error => {
+                        Some(palette.error)
+                    }
+                    McpStatus::Stopped => None,
+                };
+                let mcp_tip = if mcp_on {
+                    format!(
+                        "Agent access (MCP): {} · click to disable",
+                        self.mcp.status.label()
+                    )
+                } else {
+                    "Agent access (MCP): off · click to enable".to_string()
+                };
+                if icons::toolbar_button(
+                    ui,
+                    true,
+                    icons::MCP,
+                    mcp_color,
+                    mcp_on,
+                    "Toggle agent access (MCP)",
+                )
+                .on_hover_text(mcp_tip)
+                .clicked()
+                {
+                    self.set_agents_enabled(!mcp_on, ui.ctx());
                 }
                 if icons::toolbar_button(
                     ui,

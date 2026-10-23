@@ -29,6 +29,8 @@ Click and drag to select a rectangle of cells, and move around with the arrow ke
 
 **Copy** puts the selection on the clipboard as tab-separated text. **Copy as** offers CSV, JSON, SQL `INSERT` statements and Markdown, which is handy for pasting into a chat, a ticket or a README.
 
+**Paste** (⌘V) writes tab-separated clipboard text back into an editable result. A single value fills every selected cell; a block of cells starts at the top-left corner of the selection.
+
 To save a whole result to a file, use **Export result** (see [Import, export, transfer and backup](moving-data.md)).
 
 ## Editing data
@@ -37,6 +39,7 @@ When a result comes from a single table that has a primary key or a unique key, 
 
 - **Double-click** a cell to change it.
 - Use **Add row**, **Duplicate** and **Delete** for whole rows.
+- **⌘⌫** (⌘Delete) marks the selected rows deleted.
 - Edited cells, new rows and deleted rows each get their own tint, so you can see at a glance what is pending.
 
 Nothing is sent to the database yet. Press **Preview** to read the `INSERT`, `UPDATE` and `DELETE` statements sqlr generated, then **Apply** to run them, or **Discard** to drop the changes.

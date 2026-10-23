@@ -19,7 +19,8 @@ use std::sync::Arc;
 use egui::text::{CCursor, CCursorRange, LayoutJob};
 use egui::{Color32, Event, Key, Modifiers, Rect, RichText, Sense, Stroke, TextEdit, pos2, vec2};
 use sqlr_core::{
-    Cell, ColumnKind, ColumnMeta, DataFormats, Dialect, DisplayHint, RowBuffer, Value,
+    Cell, ColumnKind, ColumnMeta, CsvOptions, DataFormats, Dialect, DisplayHint, RowBuffer,
+    TextFormat, Value,
 };
 
 pub use doc_table::{DocTableState, doc_table};
@@ -138,6 +139,8 @@ pub enum GridAction {
         row: usize,
         col: usize,
     },
+    /// A paste was refused; the caller shows the reason.
+    PasteFailed(String),
     SetCell {
         row: usize,
         col: usize,
@@ -286,6 +289,23 @@ impl GridState {
         self.selection = selection;
         self.sync_selected();
         changed
+    }
+
+    /// Marks every selected row deleted, newest first so inserted rows can go too.
+    fn delete_selected(&mut self) {
+        let selected = self.selected_rows();
+        if selected.is_empty() {
+            return;
+        }
+        let Some(edits) = &mut self.edits else {
+            return;
+        };
+        let mut doomed = selected.clone();
+        doomed.sort_unstable_by(|a, b| b.cmp(a));
+        for &row in &doomed {
+            edits.delete(row);
+        }
+        self.actions.push(GridAction::DeleteRows(selected));
     }
 
     fn sync_selected(&mut self) {
@@ -779,7 +799,7 @@ fn keyboard(
     });
     let page = state.last_visible_rows.len().max(1) as isize;
     let keymap = crate::keymap::ui_keymap(ui.ctx());
-    let (step, extend, all, edit, copy) = ui.input_mut(|i| {
+    let (step, extend, all, edit, copy, paste, delete) = ui.input_mut(|i| {
         let mut step = None;
         let mut extend = false;
         let keys = [
@@ -803,7 +823,15 @@ fn keyboard(
         let all = keymap.consume(i, sqlr_core::ActionId::SelectAll);
         let edit = i.consume_key(Modifiers::NONE, Key::Enter);
         let copy = i.events.iter().any(|e| matches!(e, Event::Copy));
-        (step, extend, all, edit, copy)
+        let paste = i.events.iter().find_map(|e| match e {
+            Event::Paste(text) => Some(text.clone()),
+            _ => None,
+        });
+        if paste.is_some() {
+            i.events.retain(|e| !matches!(e, Event::Paste(_)));
+        }
+        let delete = keymap.consume(i, sqlr_core::ActionId::DeleteRows);
+        (step, extend, all, edit, copy, paste, delete)
     });
     let mut changed = false;
     if all {
@@ -840,6 +868,12 @@ fn keyboard(
     }
     if copy && state.selected.is_some() {
         copy_selection(ui.ctx(), state, input, CopyFormat::Tsv);
+    }
+    if let Some(text) = paste {
+        paste_text(state, input, &text);
+    }
+    if delete {
+        state.delete_selected();
     }
     changed
 }
@@ -883,6 +917,89 @@ fn copy_selection(
         values,
     );
     ctx.copy_text(text);
+}
+
+/// Parses the clipboard as TSV and writes it into the edit buffer. A single value fills the
+/// selection; a block starts at its top-left corner. Nothing is written when a value does
+/// not parse for its column.
+fn paste_text(state: &mut GridState, input: &GridInput<'_>, text: &str) {
+    let Some(edits) = state.edits.as_ref() else {
+        state.actions.push(GridAction::PasteFailed(
+            "The result cannot be edited".into(),
+        ));
+        return;
+    };
+    if state.selected.is_none() {
+        return;
+    }
+    let options = CsvOptions {
+        header: false,
+        ..CsvOptions::tsv()
+    };
+    let rows = match sqlr_core::decode(&TextFormat::Csv(options), text) {
+        Ok((_, rows)) => rows,
+        Err(error) => {
+            state.actions.push(GridAction::PasteFailed(error));
+            return;
+        }
+    };
+    if rows.is_empty() {
+        return;
+    }
+    let columns = input.rows.columns();
+    let view_rows = state.view_rows();
+    let start_row = *state.selection.rows().start();
+    let start_col = *state.selection.cols().start();
+    let fill = rows.len() == 1 && rows[0].len() == 1;
+    let mut trial = edits.clone();
+    let mut changes = Vec::new();
+    let mut error = None;
+    let mut apply = |row: usize, col: usize, value: Value| -> Result<(), String> {
+        let source = view_rows.get(row).copied().ok_or("No such row")?;
+        let meta = columns.get(col).ok_or("No such column")?;
+        let value = match value {
+            Value::Text(text) => parse_input(meta, &text)?,
+            other => other,
+        };
+        trial.set(input.rows, source, col, value.clone())?;
+        changes.push((source, col, value));
+        Ok(())
+    };
+    if fill {
+        'rows: for row in state.selection.rows() {
+            for col in state.selection.cols() {
+                if let Err(e) = apply(row, col, rows[0][0].clone()) {
+                    error = Some(e);
+                    break 'rows;
+                }
+            }
+        }
+    } else {
+        'rows: for (dr, values) in rows.iter().enumerate() {
+            let row = start_row + dr;
+            if row >= view_rows.len() {
+                break;
+            }
+            for (dc, value) in values.iter().enumerate() {
+                let col = start_col + dc;
+                if col >= columns.len() {
+                    break;
+                }
+                if let Err(e) = apply(row, col, value.clone()) {
+                    error = Some(e);
+                    break 'rows;
+                }
+            }
+        }
+    }
+    if let Some(error) = error {
+        state.actions.push(GridAction::PasteFailed(error));
+        return;
+    }
+    state.edits = Some(trial);
+    for (row, col, value) in changes {
+        state.actions.push(GridAction::SetCell { row, col, value });
+    }
 }
 
 /// Opens the inline editor on a view cell, or asks for the value panel when the value is
@@ -1276,17 +1393,7 @@ fn apply_menu(ui: &egui::Ui, state: &mut GridState, input: &GridInput<'_>, choic
                 state.actions.push(GridAction::AddRow);
             }
         }
-        MenuChoice::Delete => {
-            if let Some(edits) = &mut state.edits {
-                // Inserted rows go away, so the later ones first.
-                let mut doomed = selected.clone();
-                doomed.sort_unstable_by(|a, b| b.cmp(a));
-                for &r in &doomed {
-                    edits.delete(r);
-                }
-                state.actions.push(GridAction::DeleteRows(selected));
-            }
-        }
+        MenuChoice::Delete => state.delete_selected(),
         MenuChoice::Revert => {
             if let Some(edits) = &mut state.edits {
                 let mut undone = selected.clone();

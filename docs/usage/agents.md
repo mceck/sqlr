@@ -35,7 +35,7 @@ to **None**. The agent cannot change exposure.
 
 ## Enable MCP and connect a client
 
-1. Open **Settings → Agents**.
+1. Open **Settings → Agents**, or use the agent-access icon in the toolbar.
 2. Turn on **Enable agent access (MCP)**. The server starts on `127.0.0.1`, port `47821`
    by default, and the status shows the endpoint and active session count.
 3. Press **Copy MCP config** and paste it into your client's MCP configuration. It
@@ -94,9 +94,10 @@ toggle it.
   elsewhere; paste is `Cmd+V` / `Ctrl+Shift+V`; `Ctrl+C` is always the interrupt.
 - **Restart**, **Clear**, **Kill** and the exit code are in the header. **Kill** terminates
   the process group; quitting sqlr kills it too.
-- Shell command, working directory and scrollback live in **Settings → Terminal** and
-  apply on Restart. The shell command is never shown to agents and never logged; do not
-  embed credentials in it.
+- Shell command, working directory, font size and scrollback live in
+  **Settings → Terminal**. The font size applies immediately; the other changes apply on
+  Restart. The shell command is never shown to agents and never logged; do not embed
+  credentials in it.
 - No MCP token is put in the terminal environment and no agent is started automatically.
   Mouse reporting and clickable links are not implemented.
 

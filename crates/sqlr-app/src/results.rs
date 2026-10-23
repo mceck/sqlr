@@ -403,6 +403,7 @@ impl SqlrApp {
                 self.show_value_panel = true;
             }
             GridAction::OpenValue { .. } => self.show_value_panel = true,
+            GridAction::PasteFailed(message) => self.notify_as(ToastKind::Error, message),
             GridAction::Sort(_)
             | GridAction::SetCell { .. }
             | GridAction::AddRow
