@@ -106,6 +106,23 @@ impl Shared {
             DriverError::new(ErrorKind::Unsupported, "this connection does not run SQL")
         })?;
         let dialect = rel.dialect();
+        let mut default_column = changeset.key_columns.first().cloned();
+        if default_column.is_none()
+            && changeset.changes.iter().any(|c| {
+                matches!(c, sqlr_core::Change::Insert { values } if values.is_empty())
+            })
+        {
+            match rel.describe(&changeset.table).await {
+                Ok(info) => {
+                    default_column = info.columns.into_iter().find(|c| !c.generated).map(|c| c.name);
+                }
+                Err(e) if e.kind == ErrorKind::Unsupported => {}
+                Err(e) => {
+                    self.on_error(key, io, &e);
+                    return Err(e);
+                }
+            }
+        }
         let start = match mode {
             Mode::Own | Mode::Opens => dialect.begin_sql().to_string(),
             Mode::Joins => dialect.savepoint_sql(SAVEPOINT),
@@ -130,7 +147,7 @@ impl Shared {
             self.undo(key, io, &conn, mode, &e).await;
             return Err(e);
         }
-        let statements = match changeset.statements(dialect) {
+        let statements = match changeset.statements_with_default_column(dialect, default_column.as_deref()) {
             Ok(statements) => statements,
             Err(e) => {
                 let e = DriverError::new(ErrorKind::Other, e);

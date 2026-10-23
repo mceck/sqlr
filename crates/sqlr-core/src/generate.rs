@@ -137,7 +137,15 @@ pub fn generate_sql(
             format!("SELECT {cols}\nFROM {name};")
         }
         SqlTemplate::Insert if rel.writable.is_empty() => {
-            format!("{};", d.insert_defaults_sql(&name))
+            let column = match def {
+                ObjectDef::Table(t) => t.columns.iter().find(|c| c.generated.is_none()),
+                _ => None,
+            };
+            let sql = match column {
+                Some(column) => d.insert_defaults_with_column_sql(&name, &column.name),
+                None => d.insert_defaults_sql(&name),
+            };
+            format!("{sql};")
         }
         SqlTemplate::Insert => {
             let values: Vec<String> = rel.writable.iter().map(|c| value(c)).collect();

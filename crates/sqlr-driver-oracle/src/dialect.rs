@@ -40,6 +40,13 @@ impl Dialect for OracleDialect {
         format!(":{index}")
     }
 
+    fn insert_defaults_with_column_sql(&self, table: &str, column: &str) -> String {
+        format!(
+            "INSERT INTO {table} ({}) VALUES (DEFAULT)",
+            self.quote_ident(column)
+        )
+    }
+
     /// Oracle starts a transaction with `SET TRANSACTION`; DML also starts one implicitly.
     fn begin_sql(&self) -> &'static str {
         "SET TRANSACTION READ WRITE"

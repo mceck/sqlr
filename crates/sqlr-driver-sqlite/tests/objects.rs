@@ -164,6 +164,28 @@ fn obj(kind: ObjectKind, name: &str) -> ObjectRef {
     ObjectRef::relation(kind, &t(name))
 }
 
+#[tokio::test]
+async fn parenthesized_index_column_remains_an_identifier_when_rebuilt() {
+    let env = Env::new(
+        "CREATE TABLE awkward (\"(1)\" INTEGER);\n\
+         INSERT INTO awkward VALUES (1), (2);\n\
+         CREATE UNIQUE INDEX awkward_key ON awkward (\"(1)\")",
+    )
+    .await;
+    let before = env.table("awkward").await;
+    let mut after = before.clone();
+    after.columns[0].type_name = "BIGINT".into();
+    // Rebuilding must recreate the UNIQUE index on the real column. Interpreting
+    // its name as the constant expression (1) rejects the two distinct values.
+    env.alter(&before, &after).await;
+    assert_eq!(
+        env.query("SELECT \"(1)\" FROM awkward ORDER BY \"(1)\"").await,
+        vec![vec![Value::Int(1)], vec![Value::Int(2)]]
+    );
+    let restored = env.table("awkward").await;
+    assert_eq!(restored.indexes, before.indexes);
+}
+
 fn col(name: &str, ty: &str, nullable: bool) -> ColumnDef {
     ColumnDef {
         name: name.into(),
@@ -273,11 +295,13 @@ async fn round_trip_every_creatable_kind() {
         [
             IndexColumn {
                 expr: "(lower(name))".into(),
+                expression: true,
                 desc: false,
                 prefix: None
             },
             IndexColumn {
                 expr: "qty".into(),
+                expression: false,
                 desc: true,
                 prefix: None
             },

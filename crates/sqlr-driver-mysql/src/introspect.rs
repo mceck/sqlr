@@ -153,7 +153,9 @@ fn default_expression(
             },
         );
     }
-    if raw.starts_with("b'") || NUMERIC_TYPES.contains(&data_type) && raw.parse::<f64>().is_ok() {
+    if (data_type == "bit" && raw.starts_with("b'"))
+        || NUMERIC_TYPES.contains(&data_type) && raw.parse::<f64>().is_ok()
+    {
         return Some(raw);
     }
     Some(MyDialect::default().string_literal(&raw))
@@ -268,11 +270,13 @@ pub(crate) fn push_index_row(out: &mut Vec<RawIndex>, r: &Row) {
     let column = match text(r, 2) {
         Some(column) => IndexColumn {
             expr: column,
+            expression: false,
             desc: string(r, 4) == "D",
             prefix: int(r, 3).and_then(|n| u32::try_from(n).ok()),
         },
         None => IndexColumn {
             expr: format!("({})", string(r, 6)),
+            expression: true,
             desc: string(r, 4) == "D",
             prefix: None,
         },

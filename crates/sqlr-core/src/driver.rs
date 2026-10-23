@@ -298,6 +298,12 @@ pub trait Dialect: Send + Sync {
         format!("INSERT INTO {table} DEFAULT VALUES")
     }
 
+    /// A row of defaults when a raw column name is known. Some servers (Oracle)
+    /// require an explicit column with a DEFAULT value instead of DEFAULT VALUES.
+    fn insert_defaults_with_column_sql(&self, table: &str, _column: &str) -> String {
+        self.insert_defaults_sql(table)
+    }
+
     /// `insert` (a plain `INSERT INTO … VALUES (…)` this dialect wrote) turned into an
     /// insert-or-update by the `key` columns, updating the `update` columns on a conflict
     /// (none: keep the existing row). `None` when the dialect cannot.

@@ -625,6 +625,7 @@ pub(crate) fn parse_index(sql: &str) -> Result<IndexDef, DriverError> {
         }
         columns.push(IndexColumn {
             expr,
+            expression: !single,
             desc,
             prefix: None,
         });

@@ -549,6 +549,24 @@ mod tests {
     use super::*;
     use crate::schema::{FkAction, IndexColumn, TriggerDef};
 
+    #[test]
+    fn column_renames_do_not_rewrite_index_expressions_with_the_same_text() {
+        let index = IndexDef {
+            columns: vec![
+                IndexColumn::column("(1)"),
+                IndexColumn {
+                    expr: "(1)".into(),
+                    expression: true,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let renamed = renamed_index(&index, &[("(1)", "new_name")].into());
+        assert_eq!(renamed.columns[0].expr, "new_name");
+        assert_eq!(renamed.columns[1].expr, "(1)");
+    }
+
     fn t(name: &str) -> TableRef {
         TableRef {
             database: None,

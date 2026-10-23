@@ -7,8 +7,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use sqlr_core::{
-    Connection, Driver, ErrorKind, Execution, NodeKind, NodePath, RowStream, Secrets, TableRef,
-    Value,
+    Change, Changeset, Connection, Driver, ErrorKind, Execution, NodeKind, NodePath, ObjectKind,
+    ObjectRef, RowStream, Secrets, SqlTemplate, TableRef, Value, generate_sql,
 };
 use sqlr_driver_oracle::OracleDriver;
 use sqlr_testkit::{service, unique_name};
@@ -423,4 +423,74 @@ async fn a_statement_commits_on_its_own() {
         "the insert is still uncommitted in auto-commit mode"
     );
     drop_table(&conn, &name).await;
+}
+
+#[tokio::test]
+async fn an_empty_changeset_insert_uses_identity_and_column_defaults() {
+    sqlr_testkit::skip_container_tests!();
+    let conn = support::connect().await;
+    let other = support::connect().await;
+    let name = unique_name("SQLR_INSERT_DEFAULTS").to_uppercase();
+    run(
+        &conn,
+        &format!(
+            "CREATE TABLE {name} (\"ID quoted\" NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY, \
+             note VARCHAR2(30) DEFAULT 'default note')"
+        ),
+    )
+    .await;
+    let changes = Changeset {
+        table: table(&name),
+        key_columns: vec!["ID quoted".into()],
+        changes: vec![Change::Insert { values: Vec::new() }],
+    };
+    let statements = changes
+        .statements(conn.relational().unwrap().dialect())
+        .unwrap();
+    let result = conn
+        .relational()
+        .unwrap()
+        .execute_with(&statements[0].sql, &statements[0].params)
+        .await;
+    let rows = query(&other, &format!("SELECT \"ID quoted\", note FROM {name}")).await;
+    drop_table(&conn, &name).await;
+    match result {
+        Ok(Execution::Affected(1)) => {}
+        Ok(_) => panic!("the default insert must affect one row"),
+        Err(error) => panic!("{}: {error:?}", statements[0].sql),
+    }
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0][0].display().as_ref(), "1");
+    assert_eq!(rows[0][1], Value::Text("default note".into()));
+}
+
+#[tokio::test]
+async fn an_identity_only_insert_template_uses_identity_defaults() {
+    sqlr_testkit::skip_container_tests!();
+    let conn = support::connect().await;
+    let other = support::connect().await;
+    let name = unique_name("SQLR_TEMPLATE_DEFAULTS").to_uppercase();
+    run(
+        &conn,
+        &format!("CREATE TABLE {name} (id NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY)"),
+    )
+    .await;
+    let rel = conn.relational().unwrap();
+    let object = rel
+        .introspect()
+        .unwrap()
+        .load_object(&ObjectRef::relation(ObjectKind::Table, &table(&name)))
+        .await
+        .unwrap();
+    let sql = generate_sql(SqlTemplate::Insert, &object, rel.dialect()).unwrap();
+    let result = rel.execute(&sql).await;
+    let rows = query(&other, &format!("SELECT id FROM {name}")).await;
+    drop_table(&conn, &name).await;
+    match result {
+        Ok(Execution::Affected(1)) => {}
+        Ok(_) => panic!("the default template must insert one row"),
+        Err(error) => panic!("{sql}: {error:?}"),
+    }
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0][0].display().as_ref(), "1");
 }

@@ -129,11 +129,13 @@ pub struct ColumnDef {
     pub on_update: Option<String>,
 }
 
-/// One key part of an index. `expr` is a column name, or an expression written as is when
-/// it is wrapped in parentheses (`(lower(name))`).
+/// One key part of an index. Column names and SQL expressions remain distinct even
+/// when a real column name happens to be wrapped in parentheses.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct IndexColumn {
     pub expr: String,
+    /// Whether `expr` is SQL rather than a column name that must be quoted.
+    pub expression: bool,
     pub desc: bool,
     /// Prefix length of a MySQL key part (`name(10)`).
     pub prefix: Option<u32>,
@@ -149,7 +151,7 @@ impl IndexColumn {
 
     /// True when `expr` is an expression rather than a column name.
     pub fn is_expression(&self) -> bool {
-        self.expr.starts_with('(') && self.expr.ends_with(')')
+        self.expression
     }
 }
 
@@ -573,10 +575,12 @@ mod tests {
         assert!(
             IndexColumn {
                 expr: "(lower(x))".into(),
+                expression: true,
                 ..Default::default()
             }
             .is_expression()
         );
         assert!(!IndexColumn::column("x").is_expression());
+        assert!(!IndexColumn::column("(1)").is_expression());
     }
 }

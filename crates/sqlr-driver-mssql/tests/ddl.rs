@@ -92,6 +92,26 @@ fn copy_of(t: &TableDef) -> TableDef {
 }
 
 #[tokio::test]
+async fn indexes_on_parenthesized_column_names_round_trip() {
+    sqlr_testkit::skip_container_tests!();
+    let (_lock, conn) = server().await;
+    let column_name = "(id)); DROP TABLE shop.victim;-- )";
+    let quoted = MsDialect.quote_ident(column_name);
+    run(&*conn, &[
+        "CREATE SCHEMA shop".into(),
+        "CREATE TABLE shop.victim (id int)".into(),
+        format!("CREATE TABLE shop.original ({quoted} int)"),
+        format!("CREATE INDEX ix_original ON shop.original ({quoted})"),
+    ]).await;
+    let original = table(&*conn, "original").await;
+    let statements = MsDialect.ddl(&[SchemaChange::Create(ObjectDef::Table(copy_of(&original)))]).unwrap();
+    run(&*conn, &statements).await;
+    let copied = table(&*conn, "original_copy").await;
+    assert_eq!(copied.indexes[0].columns[0].expr, column_name);
+    assert_eq!(table(&*conn, "victim").await.columns[0].name, "id");
+}
+
+#[tokio::test]
 async fn created_tables_and_views_read_back_as_they_were() {
     sqlr_testkit::skip_container_tests!();
     let (_c, conn) = server().await;

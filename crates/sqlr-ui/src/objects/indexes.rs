@@ -121,12 +121,17 @@ pub(super) fn index_form(
     let mut remove = None;
     for (k, part) in index.columns.iter_mut().enumerate() {
         ui.horizontal(|ui| {
-            crate::text_menu::text_edit(
+            let response = crate::text_menu::text_edit(
                 ui,
                 TextEdit::singleline(&mut part.expr)
                     .desired_width(200.0)
                     .font(theme::monospace(ui.ctx())),
             );
+            if response.changed() {
+                part.expression = !columns.contains(&part.expr)
+                    && part.expr.starts_with('(')
+                    && part.expr.ends_with(')');
+            }
             ComboBox::from_id_salt((id, "key", k))
                 .selected_text("column")
                 .width(90.0)
@@ -134,6 +139,7 @@ pub(super) fn index_form(
                     for c in columns {
                         if ui.selectable_label(part.expr == *c, c).clicked() {
                             part.expr = c.clone();
+                            part.expression = false;
                         }
                     }
                 });

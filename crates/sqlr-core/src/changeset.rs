@@ -113,13 +113,23 @@ impl Changeset {
     /// An error when the changeset names no key columns, or a row key whose length is not
     /// theirs.
     pub fn statements(&self, dialect: &dyn Dialect) -> Result<Vec<DmlStatement>, String> {
+        self.statements_with_default_column(dialect, self.key_columns.first().map(String::as_str))
+    }
+
+    /// As [`Self::statements`], using a known writable column for default-only inserts.
+    /// The column is a raw name, independently of the row key.
+    pub fn statements_with_default_column(
+        &self,
+        dialect: &dyn Dialect,
+        default_column: Option<&str>,
+    ) -> Result<Vec<DmlStatement>, String> {
         self.check_keys()?;
         Ok(self
             .plan()
             .iter()
             .map(|p| {
                 let mut values = Values::Bound(dialect, Vec::new());
-                let sql = self.write(dialect, p, &mut values);
+                let sql = self.write(dialect, p, &mut values, default_column);
                 DmlStatement {
                     sql,
                     params: values.into_params(),
@@ -137,7 +147,12 @@ impl Changeset {
         let mut out = String::new();
         for p in self.plan() {
             let mut values = Values::Literal(dialect);
-            out.push_str(&self.write(dialect, &p, &mut values));
+            out.push_str(&self.write(
+                dialect,
+                &p,
+                &mut values,
+                self.key_columns.first().map(String::as_str),
+            ));
             out.push_str(";\n");
         }
         Ok(out)
@@ -208,6 +223,7 @@ impl Changeset {
         dialect: &dyn Dialect,
         planned: &Planned<'_>,
         values: &mut Values<'_>,
+        default_column: Option<&str>,
     ) -> String {
         let table = dialect.qualified(&self.table);
         match planned {
@@ -220,7 +236,10 @@ impl Changeset {
                 let filter = self.key_filter(dialect, row.key, values);
                 format!("UPDATE {table} SET {} WHERE {filter}", set.join(", "))
             }
-            Planned::Insert([], _) => dialect.insert_defaults_sql(&table),
+            Planned::Insert([], _) => match default_column {
+                Some(column) => dialect.insert_defaults_with_column_sql(&table, column),
+                None => dialect.insert_defaults_sql(&table),
+            },
             Planned::Insert(columns, _) => {
                 let names: Vec<String> = columns
                     .iter()

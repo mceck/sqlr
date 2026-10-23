@@ -357,6 +357,7 @@ pub(crate) fn index_from_row(r: &tokio_postgres::Row) -> IndexDef {
         .take(key_count)
         .enumerate()
         .map(|(k, (part, attnum))| IndexColumn {
+            expression: *attnum == 0,
             expr: if *attnum == 0 {
                 format!("({part})")
             } else {

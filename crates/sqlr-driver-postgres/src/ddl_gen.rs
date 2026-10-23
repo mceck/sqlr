@@ -754,6 +754,7 @@ mod tests {
                 IndexColumn::column("x y"),
                 IndexColumn {
                     expr: "(lower(\"x y\"))".into(),
+                    expression: true,
                     desc: true,
                     prefix: None,
                 },

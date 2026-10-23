@@ -651,6 +651,7 @@ mod tests {
             name: "i".into(),
             columns: vec![IndexColumn {
                 expr: "x y".into(),
+                expression: false,
                 desc: true,
                 prefix: Some(4),
             }],

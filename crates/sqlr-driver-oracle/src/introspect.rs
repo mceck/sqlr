@@ -96,6 +96,7 @@ fn index_column(name: &str, expression: Option<&str>) -> IndexColumn {
         Some(column) => IndexColumn::column(column),
         None => IndexColumn {
             expr: format!("({expression})"),
+            expression: true,
             ..IndexColumn::default()
         },
     }
