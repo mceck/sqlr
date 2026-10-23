@@ -186,6 +186,10 @@ impl Dialect for MsDialect {
         ))
     }
 
+    fn ddl_gen(&self) -> Option<&dyn sqlr_core::DdlGen> {
+        Some(self)
+    }
+
     fn bytes_literal(&self, bytes: &[u8]) -> String {
         format!("0x{}", &sqlr_core::hex_bytes(bytes)[2..])
     }

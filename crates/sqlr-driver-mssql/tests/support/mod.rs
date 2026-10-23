@@ -72,6 +72,9 @@ BEGIN
     SELECT @sql += N'DROP TABLE ' + QUOTENAME(OBJECT_SCHEMA_NAME(object_id)) + N'.' +
         QUOTENAME(name) + N';'
     FROM sys.tables WHERE OBJECT_SCHEMA_NAME(object_id) = 'shop';
+    SELECT @sql += N'DROP SEQUENCE ' + QUOTENAME(OBJECT_SCHEMA_NAME(object_id)) + N'.' +
+        QUOTENAME(name) + N';'
+    FROM sys.sequences WHERE OBJECT_SCHEMA_NAME(object_id) = 'shop';
     EXEC sp_executesql @sql;
     DROP SCHEMA shop;
 END

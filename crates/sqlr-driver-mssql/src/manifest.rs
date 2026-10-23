@@ -1,6 +1,8 @@
 //! Static manifest of the SQL Server driver.
 
-use sqlr_core::{Capabilities, DriverManifest, Family, FieldSpec, FieldType};
+use sqlr_core::{
+    Capabilities, DriverManifest, Family, FieldSpec, FieldType, ObjectEditing, ObjectKind,
+};
 
 fn field(
     key: &str,
@@ -34,6 +36,46 @@ fn encryption_choices() -> FieldType {
         .map(|(v, l)| (v.to_string(), l.to_string()))
         .collect(),
     )
+}
+
+fn editing() -> ObjectEditing {
+    use ObjectKind::*;
+    let creatable = vec![Schema, Table, View, Index];
+    ObjectEditing {
+        alter: vec![Table, View],
+        drop: creatable.clone(),
+        rename: vec![Table, View, Index],
+        create: creatable,
+        transactional_ddl: true,
+        column_types: [
+            "int",
+            "bigint",
+            "smallint",
+            "tinyint",
+            "bit",
+            "decimal(18,2)",
+            "float",
+            "real",
+            "money",
+            "nvarchar(255)",
+            "nvarchar(max)",
+            "varchar(255)",
+            "varchar(max)",
+            "char(10)",
+            "date",
+            "datetime2",
+            "datetimeoffset",
+            "time",
+            "uniqueidentifier",
+            "varbinary(max)",
+            "xml",
+        ]
+        .iter()
+        .map(|t| t.to_string())
+        .collect(),
+        comments: false,
+        column_order: false,
+    }
 }
 
 pub(crate) fn manifest() -> DriverManifest {
@@ -107,7 +149,7 @@ pub(crate) fn manifest() -> DriverManifest {
         dialect: "sqlserver".into(),
         url_schemes: vec!["sqlserver".into(), "mssql".into()],
         default_port: Some(1433),
-        editing: None,
+        editing: Some(editing()),
     }
 }
 

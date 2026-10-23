@@ -68,6 +68,27 @@ JOIN sys.schemas s ON s.schema_id = o.schema_id \
 WHERE s.name = @P1 \
 ORDER BY o.name, k.name";
 
+/// The query of a view from its stored `CREATE VIEW name [(columns)] [WITH …] AS query`.
+fn view_query(definition: &str) -> String {
+    let syntax = crate::syntax::tsql_syntax();
+    let mut tokens = Vec::new();
+    syntax.lex(definition, sqlr_core::LexState::Normal, &mut tokens);
+    let mut depth = 0usize;
+    for t in &tokens {
+        match (&t.kind, &definition[t.start..t.end]) {
+            (sqlr_core::TokenKind::Punct, "(") => depth += 1,
+            (sqlr_core::TokenKind::Punct, ")") => depth = depth.saturating_sub(1),
+            (sqlr_core::TokenKind::Keyword, word)
+                if depth == 0 && word.eq_ignore_ascii_case("AS") =>
+            {
+                return definition[t.end..].trim().to_string();
+            }
+            _ => {}
+        }
+    }
+    definition.trim().to_string()
+}
+
 fn text(row: &Row, i: usize) -> String {
     row.get::<&str, _>(i).unwrap_or_default().to_string()
 }
@@ -236,7 +257,7 @@ pub(crate) async fn load_schema(
         if text(r, 1) == "V" {
             defs.push(ObjectDef::View(ViewDef {
                 view: table_ref(schema, &name),
-                query: text(r, 2),
+                query: view_query(&text(r, 2)),
                 materialized: false,
                 columns: cols.into_iter().map(|c| c.name).collect(),
                 comment: None,
