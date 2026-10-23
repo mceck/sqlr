@@ -50,6 +50,14 @@ pub(crate) async fn query(
     conn.query(sql, &values).await.map_err(map_error)
 }
 
+/// A dictionary number (a length, a precision): the server may send a NUMBER as text.
+pub(crate) fn int(row: &oracle_rs::Row, index: usize) -> Option<i64> {
+    let value = row.get(index)?;
+    value
+        .as_i64()
+        .or_else(|| value.as_str().and_then(|s| s.trim().parse().ok()))
+}
+
 fn text(row: &oracle_rs::Row, index: usize) -> Option<String> {
     row.get(index)
         .and_then(OracleValue::as_str)
@@ -297,10 +305,10 @@ pub(crate) async fn column_defs(
                 name,
                 type_name: type_name(
                     &data_type,
-                    row.get_i64(2),
-                    row.get_i64(3),
-                    row.get_i64(4),
-                    row.get_i64(5),
+                    int(row, 2),
+                    int(row, 3),
+                    int(row, 4),
+                    int(row, 5),
                 ),
                 nullable: text(row, 6).as_deref() == Some("Y"),
                 generated,

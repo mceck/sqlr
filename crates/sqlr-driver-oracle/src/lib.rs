@@ -7,6 +7,7 @@ mod describe;
 mod dialect;
 mod errors;
 mod execute;
+mod introspect;
 mod manifest;
 mod syntax;
 mod types;

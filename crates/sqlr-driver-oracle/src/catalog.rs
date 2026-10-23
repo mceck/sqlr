@@ -3,7 +3,7 @@
 use oracle_rs::Connection;
 use sqlr_core::{CatalogColumn, CatalogRelation, DriverError, RelationKind, SchemaCatalog};
 
-use crate::browse::{query, type_name};
+use crate::browse::{int, query, type_name};
 
 const CATALOG_SQL: &str = "\
 SELECT c.table_name, \
@@ -48,10 +48,10 @@ pub(crate) async fn catalog(conn: &Connection, schema: &str) -> Result<SchemaCat
                 name: column.to_string(),
                 type_name: type_name(
                     data_type,
-                    row.get_i64(4),
-                    row.get_i64(5),
-                    row.get_i64(6),
-                    row.get_i64(7),
+                    int(row, 4),
+                    int(row, 5),
+                    int(row, 6),
+                    int(row, 7),
                 ),
             });
         }

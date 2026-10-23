@@ -6,12 +6,12 @@ use std::time::Duration;
 use oracle_rs::{Config, Connection as OraConnection};
 use sqlr_core::{
     CancelHandle, Connection, ConnectionConfig, Dialect, Driver, DriverError, DriverManifest,
-    ErrorKind, Execution, Node, NodePath, RelationalConn, Secrets, ServerInfo, TableInfo, TableRef,
-    Value,
+    ErrorKind, Execution, Introspect, Node, NodePath, ObjectDef, ObjectRef, RelationalConn,
+    Secrets, ServerInfo, TableInfo, TableRef, Value,
 };
 
 use crate::dialect::OracleDialect;
-use crate::{browse, catalog, describe, execute, manifest, map_error};
+use crate::{browse, catalog, describe, execute, introspect, manifest, map_error};
 
 pub struct OracleDriver {
     manifest: DriverManifest,
@@ -141,6 +141,36 @@ impl RelationalConn for OracleConnection {
 
     async fn catalog(&self, schema: &str) -> Result<sqlr_core::SchemaCatalog, DriverError> {
         catalog::catalog(&self.conn, schema).await
+    }
+
+    fn introspect(&self) -> Option<&dyn Introspect> {
+        Some(self)
+    }
+}
+
+#[async_trait::async_trait]
+impl Introspect for OracleConnection {
+    async fn load_object(&self, object: &ObjectRef) -> Result<ObjectDef, DriverError> {
+        introspect::load_object(&self.conn, object).await
+    }
+
+    async fn list_roles(&self) -> Result<Vec<String>, DriverError> {
+        introspect::roles(&self.conn).await
+    }
+
+    /// The connection's own database (pluggable database) only.
+    async fn load_schema(
+        &self,
+        database: Option<&str>,
+        schema: &str,
+    ) -> Result<sqlr_core::SchemaSnapshot, DriverError> {
+        if database.is_some_and(|d| d != self.service) {
+            return Err(DriverError::new(
+                ErrorKind::Unsupported,
+                "multiple databases are not supported",
+            ));
+        }
+        introspect::load_schema(&self.conn, schema).await
     }
 }
 
