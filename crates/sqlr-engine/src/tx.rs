@@ -81,6 +81,8 @@ pub(crate) const FAILED_COMMIT_NOTE: &str = "The failed transaction was rolled b
 /// A statement as the transaction state machine sees it.
 pub(crate) struct Stmt {
     pub class: StatementClass,
+    /// COMMIT/ROLLBACK AND CHAIN immediately starts the next transaction.
+    chain: bool,
     /// It changes the schema or privileges ([`SqlSyntax::is_schema_change`]): the statements
     /// a server with `ddl_commits` commits an open transaction before.
     pub schema_change: bool,
@@ -88,8 +90,28 @@ pub(crate) struct Stmt {
 
 impl Stmt {
     pub(crate) fn of(syntax: &SqlSyntax, sql: &str) -> Self {
+        let class = syntax.classify(sql);
+        let mut tokens = Vec::new();
+        syntax.lex(sql, sqlr_core::LexState::Normal, &mut tokens);
+        let significant: Vec<_> = tokens
+            .iter()
+            .take_while(|t| t.kind != sqlr_core::TokenKind::Semicolon)
+            .filter(|t| t.kind != sqlr_core::TokenKind::Comment)
+            .collect();
+        let chain = matches!(
+            class,
+            StatementClass::Transaction(TxVerb::Commit | TxVerb::Rollback)
+        ) && significant.windows(2).any(|pair| {
+            pair.iter().zip(["AND", "CHAIN"]).all(|(token, word)| {
+                matches!(
+                    token.kind,
+                    sqlr_core::TokenKind::Keyword | sqlr_core::TokenKind::Ident
+                ) && sql[token.start..token.end].eq_ignore_ascii_case(word)
+            })
+        });
         Self {
-            class: syntax.classify(sql),
+            class,
+            chain,
             schema_change: syntax.is_schema_change(sql),
         }
     }
@@ -201,6 +223,9 @@ impl TxState {
             StatementClass::Transaction(TxVerb::Commit) => {
                 let phase = self.phase.clone();
                 self.close(now_ms);
+                if stmt.chain {
+                    self.open(now_ms);
+                }
                 match phase {
                     TxPhase::Idle => None,
                     TxPhase::Open => {
@@ -215,6 +240,9 @@ impl TxState {
             StatementClass::Transaction(TxVerb::Rollback) => {
                 let was_open = self.is_open();
                 self.close(now_ms);
+                if stmt.chain {
+                    self.open(now_ms);
+                }
                 was_open.then(|| RunMessage::new(MessageLevel::Info, "Transaction rolled back"))
             }
             StatementClass::Transaction(TxVerb::Savepoint(name)) => {
@@ -506,6 +534,27 @@ mod tests {
         assert_eq!(note.text, "The failed transaction was rolled back");
         assert_eq!(note.level, MessageLevel::Warning);
         assert_eq!(pg.phase, TxPhase::Idle);
+    }
+
+    #[test]
+    fn chained_endings_start_a_fresh_transaction_unless_no_chain_is_requested() {
+        for sql in ["COMMIT AND CHAIN", "ROLLBACK WORK AND /* note */ CHAIN"] {
+            let mut tx = TxState::new(CommitMode::Auto, false, 0);
+            tx.open(0);
+            tx.wrote = true;
+            tx.savepoints.push("old".into());
+            tx.after_success(&class(sql), TxRules::default(), 10);
+            assert_eq!(tx.phase, TxPhase::Open, "{sql}");
+            assert_eq!(tx.since_ms, Some(10));
+            assert!(!tx.wrote);
+            assert!(tx.savepoints.is_empty());
+        }
+        for sql in ["COMMIT AND NO CHAIN", "ROLLBACK /* AND CHAIN */"] {
+            let mut tx = TxState::new(CommitMode::Auto, false, 0);
+            tx.open(0);
+            tx.after_success(&class(sql), TxRules::default(), 10);
+            assert_eq!(tx.phase, TxPhase::Idle, "{sql}");
+        }
     }
 
     #[test]

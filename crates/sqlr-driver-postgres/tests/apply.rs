@@ -97,6 +97,31 @@ fn origin_table(engine: &Engine, q: QueryId) -> TableRef {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn chained_transaction_stays_open_and_can_be_rolled_back_from_the_engine() {
+    sqlr_testkit::skip_container_tests!();
+    let (_server, cfg, sec) = pg().await;
+    let engine = engine(cfg, sec).await;
+    run(&engine, "CREATE TABLE chained (id int)").await;
+    for ending in ["COMMIT AND CHAIN", "ROLLBACK AND CHAIN"] {
+        run(&engine, "BEGIN").await;
+        run(&engine, "SAVEPOINT before_chain").await;
+        run(&engine, ending).await;
+        let tx = engine.transaction(&tab()).unwrap();
+        assert_eq!(tx.phase, sqlr_engine::TxPhase::Open, "{ending}");
+        assert!(tx.savepoints.is_empty());
+        assert_eq!(tx.statements, 0);
+        run(&engine, "INSERT INTO chained VALUES (1)").await;
+        assert!(engine.transaction(&tab()).unwrap().wrote);
+        engine.rollback(&tab());
+        until("rollback of the chained transaction", || {
+            engine.transaction(&tab()).unwrap().phase == sqlr_engine::TxPhase::Idle
+        })
+        .await;
+        assert!(rows(&engine, "SELECT * FROM chained").await.is_empty());
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn apply_changeset_end_to_end() {
     sqlr_testkit::skip_container_tests!();
     let (_c, cfg, sec) = pg().await;
