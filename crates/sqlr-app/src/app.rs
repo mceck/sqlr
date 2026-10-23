@@ -220,6 +220,7 @@ pub struct SqlrApp {
     /// Redis connections the user just connected: their browser opens once they are up.
     pub(crate) pending_redis: std::collections::HashSet<String>,
     pub(crate) profiles_dialog: Option<ProfilesDialog>,
+    pub(crate) client_migration: Option<crate::client_migration::MigrationDialog>,
     /// Asks for the secrets of a connection that does not save them.
     pub(crate) secret_prompt: Option<SecretPrompt>,
     /// Secrets entered for connections that do not save them, kept for the app's lifetime.
@@ -349,6 +350,7 @@ impl SqlrApp {
             quit_now: false,
             pending_redis: std::collections::HashSet::new(),
             profiles_dialog: None,
+            client_migration: None,
             secret_prompt: None,
             entered_secrets: HashMap::new(),
             objects: Default::default(),
@@ -513,6 +515,7 @@ impl SqlrApp {
         self.changes_dialog_ui(ui.ctx());
         self.copy_confirm_ui(ui.ctx());
         self.transfer_ui(ui.ctx());
+        self.client_migration_ui(ui.ctx());
         self.transfer_wizard_ui(ui.ctx());
         self.poll_tasks();
         self.compare_ui(ui.ctx());
@@ -1252,6 +1255,18 @@ impl SqlrApp {
 
     fn store_reply(&mut self, reply: StoreReply) {
         match reply {
+            StoreReply::ClientMigration {
+                id,
+                result,
+                listing,
+            } => {
+                if let Some(listing) = listing {
+                    self.apply_listing(listing);
+                }
+                if let Some(dialog) = &mut self.client_migration {
+                    dialog.receive(&id, result, &self.connections, self.engine.drivers());
+                }
+            }
             StoreReply::Listed(listing) => self.apply_listing(listing),
             StoreReply::FolderCreated {
                 name,

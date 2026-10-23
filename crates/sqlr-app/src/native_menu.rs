@@ -80,6 +80,8 @@ impl NativeMenu {
         let close_tab = MenuItem::new("Close tab", true, cmd(Code::KeyW));
         let new_connection = MenuItem::new("New connection", true, None);
         let profiles = MenuItem::new("Connection profiles…", true, None);
+        let import_connections = MenuItem::new("Import…", true, None);
+        let export_connections = MenuItem::new("Export…", true, None);
         let file = Submenu::with_items(
             "File",
             true,
@@ -89,6 +91,9 @@ impl NativeMenu {
                 &PredefinedMenuItem::separator(),
                 &new_connection,
                 &profiles,
+                &PredefinedMenuItem::separator(),
+                &import_connections,
+                &export_connections,
             ],
         )?;
 
@@ -173,6 +178,14 @@ impl NativeMenu {
             (close_tab.id().clone(), AppCommand::CloseTab),
             (new_connection.id().clone(), AppCommand::NewConnection),
             (profiles.id().clone(), AppCommand::Profiles),
+            (
+                import_connections.id().clone(),
+                AppCommand::ImportConnections,
+            ),
+            (
+                export_connections.id().clone(),
+                AppCommand::ExportConnections,
+            ),
             (undo.id().clone(), AppCommand::Undo),
             (redo.id().clone(), AppCommand::Redo),
             (cut.id().clone(), AppCommand::Cut),

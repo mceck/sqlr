@@ -21,6 +21,7 @@ USAGE = [
     ("usage/README.md", "Start here"),
     ("usage/getting-started.md", "Getting started"),
     ("usage/connections.md", "Connections"),
+    ("usage/migrating-connections.md", "Import and export connections"),
     ("usage/explorer-and-objects.md", "Explorer and object editors"),
     ("usage/sql-editor.md", "The SQL editor"),
     ("usage/results-and-editing.md", "Results and data editing"),

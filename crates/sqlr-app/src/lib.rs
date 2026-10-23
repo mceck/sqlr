@@ -7,6 +7,7 @@ mod admin;
 mod app;
 mod catalog_source;
 pub mod cli;
+mod client_migration;
 mod compare_dialog;
 mod confirm;
 mod database_tools;

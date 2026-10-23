@@ -82,6 +82,10 @@ impl SqlrApp {
             ui.separator();
             command_item(ui, self, "New connection", None, AppCommand::NewConnection);
             command_item(ui, self, "Connection profiles…", None, AppCommand::Profiles);
+            ui.separator();
+            command_item(ui, self, "Import…", None, AppCommand::ImportConnections);
+            command_item(ui, self, "Export…", None, AppCommand::ExportConnections);
+            ui.separator();
             command_item(ui, self, "Settings…", Some(SETTINGS), AppCommand::Settings);
             ui.separator();
             command_item(ui, self, "Operations", None, AppCommand::ShowOperations);

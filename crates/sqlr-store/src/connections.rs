@@ -76,6 +76,52 @@ impl ConnectionRepo {
         Ok(self.read()?.connection)
     }
 
+    /// Adds portable definitions in one atomic write. Existing connections and keychain
+    /// entries are untouched; duplicates are checked again against current disk state.
+    /// The caller supplies fresh ids. Names are made unique within their folders.
+    pub fn import_connections(&self, incoming: &[ConnectionConfig]) -> Result<usize, StoreError> {
+        let mut file = self.read()?;
+        let mut count = 0;
+        for cfg in incoming {
+            let mut cfg = crate::client_migration::portable(cfg.clone());
+            if file
+                .connection
+                .iter()
+                .any(|c| crate::client_migration::same_connection(c, &cfg))
+            {
+                continue;
+            }
+            if cfg.id.is_empty() || file.connection.iter().any(|c| c.id == cfg.id) {
+                return Err(StoreError::Invalid(
+                    "An imported connection needs a fresh identifier".into(),
+                ));
+            }
+            cfg.group = normalize_group(cfg.group.as_deref());
+            let name = if cfg.name.trim().is_empty() {
+                "Imported connection".to_string()
+            } else {
+                cfg.name.trim().to_string()
+            };
+            cfg.name = name.clone();
+            let mut suffix = 2;
+            while file
+                .connection
+                .iter()
+                .any(|c| c.group == cfg.group && c.name == cfg.name)
+            {
+                cfg.name = format!("{name} ({suffix})");
+                suffix += 1;
+            }
+            file.connection.push(cfg);
+            count += 1;
+        }
+        if count > 0 {
+            materialize_folders(&mut file);
+            self.write(file)?;
+        }
+        Ok(count)
+    }
+
     /// Folder paths in display order, including every ancestor and any folder named by a
     /// connection's `group` that the file does not list yet.
     pub fn folders(&self) -> Result<Vec<String>, StoreError> {

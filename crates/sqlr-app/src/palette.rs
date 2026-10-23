@@ -53,6 +53,8 @@ pub enum AppCommand {
     NewTab,
     CloseTab,
     NewConnection,
+    ImportConnections,
+    ExportConnections,
     Settings,
     DriverManager,
     Quit,
@@ -361,6 +363,8 @@ impl SqlrApp {
                 let mut commands = vec![
                     command("New query tab", "⌘T", AppCommand::NewTab),
                     command("New connection", "", AppCommand::NewConnection),
+                    command("Import connections…", "", AppCommand::ImportConnections),
+                    command("Export connections…", "", AppCommand::ExportConnections),
                     command("Settings…", "", AppCommand::Settings),
                     command("Driver Manager…", "", AppCommand::DriverManager),
                     command("Run statement", "⌘↵", AppCommand::Run),
@@ -547,6 +551,8 @@ impl SqlrApp {
                 }
             }
             AppCommand::NewConnection => self.open_new_connection(),
+            AppCommand::ImportConnections => self.open_client_import(),
+            AppCommand::ExportConnections => self.open_client_export(),
             AppCommand::DriverManager => self.open_driver_manager(),
             AppCommand::TransferData => self.open_transfer_wizard(None),
             AppCommand::ShowOperations => self.show_operations = true,

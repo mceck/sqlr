@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Move connections between SQL clients · sqlr</title>
+<style>
+:root{--bg:#0b0e14;--bg-soft:#10151f;--panel:#141b27;--line:#243049;--text:#e8edf5;--muted:#9aa7bd;--dim:#6b7a93;--accent:#4fd1a5;--accent-soft:rgba(79,209,165,.14);--blue:#6ea8fe;--mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,monospace;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.7 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+.topbar{position:sticky;top:0;z-index:10;background:rgba(11,14,20,.88);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.topbar .in{max-width:1180px;margin:0 auto;padding:0 24px;height:56px;display:flex;align-items:center;gap:18px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;color:var(--text)}
+.brand img{width:26px;height:26px;border-radius:6px}.brand:hover{text-decoration:none}
+.topbar .back{margin-left:auto}.topbar .back,.topbar .gh{font-size:14px;color:var(--muted)}.topbar a:hover{color:var(--text)}
+.layout{max-width:1180px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:230px minmax(0,1fr);gap:48px}
+aside{position:sticky;top:56px;align-self:start;height:calc(100vh - 56px);overflow:auto;padding:28px 0;font-size:14.5px}
+aside h4{margin:18px 0 6px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+aside h4:first-child{margin-top:0}
+aside a{display:block;padding:5px 10px;border-radius:8px;color:var(--muted)}
+aside a:hover{color:var(--text);background:var(--panel);text-decoration:none}
+aside a.on{color:var(--accent);background:var(--accent-soft)}
+main{padding:36px 0 80px;max-width:780px}
+h1{font-size:36px;letter-spacing:-.02em;margin:0 0 18px;line-height:1.2}
+h2{font-size:25px;letter-spacing:-.01em;margin:44px 0 10px;padding-top:26px;border-top:1px solid var(--line)}
+h3{font-size:19px;margin:30px 0 8px}h4{font-size:16px;margin:22px 0 6px}
+p{margin:0 0 14px;color:#cfd8e6}li{color:#cfd8e6}
+ul,ol{margin:0 0 16px;padding-left:24px}li{margin:4px 0}li>ul,li>ol{margin:4px 0 0}
+code{font-family:var(--mono);font-size:.88em;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:var(--blue)}
+pre{background:var(--bg-soft);border:1px solid var(--line);border-radius:12px;padding:14px 16px;overflow-x:auto;line-height:1.55;margin:0 0 18px}
+pre code{background:none;border:0;padding:0;color:var(--text);font-size:13.5px}
+blockquote{margin:0 0 16px;padding:2px 16px;border-left:3px solid var(--accent);background:var(--panel);border-radius:0 10px 10px 0}
+table{width:100%;border-collapse:collapse;margin:0 0 20px;font-size:14.5px;display:block;overflow-x:auto}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-size:12.5px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+td{color:#cfd8e6}
+hr{border:0;border-top:1px solid var(--line);margin:30px 0}
+img{max-width:100%}
+@media(max-width:820px){.layout{grid-template-columns:1fr;gap:0}aside{position:static;height:auto;padding:18px 0 0;border-bottom:1px solid var(--line)}h1{font-size:29px}}
+</style>
+</head>
+<body>
+<div class="topbar"><div class="in">
+<a class="brand" href="../index.html"><img src="../media/icon.png" alt="">sqlr</a>
+<a class="back" href="../index.html#docs">All documentation</a>
+<a class="gh" href="https://github.com/mceck/sqlr">GitHub</a>
+</div></div>
+<div class="layout">
+<aside><h4>Using sqlr</h4><a class="" href="../usage/README.html">Start here</a><a class="" href="../usage/getting-started.html">Getting started</a><a class="" href="../usage/connections.html">Connections</a><a class="on" href="../usage/migrating-connections.html">Import and export connections</a><a class="" href="../usage/explorer-and-objects.html">Explorer and object editors</a><a class="" href="../usage/sql-editor.html">The SQL editor</a><a class="" href="../usage/results-and-editing.html">Results and data editing</a><a class="" href="../usage/profiles-and-transactions.html">Profiles and transactions</a><a class="" href="../usage/moving-data.html">Import, export, transfer</a><a class="" href="../usage/schema-tools.html">Schema tools</a><a class="" href="../usage/administration.html">Administration</a><a class="" href="../usage/nosql.html">Document and key-value</a><a class="" href="../usage/drivers.html">Drivers</a><a class="" href="../usage/settings-and-shortcuts.html">Settings and shortcuts</a><h4>Project</h4><a href="https://github.com/mceck/sqlr">Source on GitHub</a></aside>
+<main>
+<h1 id="move-connections-between-sql-clients">Move connections between SQL clients</h1>
+<p>Open <strong>File → Import…</strong> to bring saved connections into sqlr. The dialog searches the standard DBeaver, DataGrip and TablePlus locations in the background and selects new connections automatically. Review the preview and click <strong>Import</strong>. Nothing connects to a database during this operation.</p>
+<p>You can also drop a connection file onto the dialog, choose <strong>Choose file…</strong>, or use <strong>Paste from clipboard</strong>. File and clipboard formats are recognized automatically. For DataGrip, use <strong>Copy Data Source</strong> and paste its XML directly into sqlr.</p>
+<p>Existing connections are skipped by endpoint, database and user, including duplicates from several detected clients. Name collisions receive a numeric suffix. Imports save all selected connections together and leave existing definitions and credentials intact.</p>
+<h2 id="supported-sources">Supported sources</h2>
+<table><thead><tr><th>Client</th><th>Source</th></tr></thead><tbody><tr><td>DBeaver</td><td><code>&lt;workspace&gt;/&lt;project&gt;/.dbeaver/data-sources.json</code></td></tr><tr><td>DataGrip / JetBrains</td><td><code>.idea/dataSources.xml</code> or Copy Data Source XML; the sibling <code>dataSources.local.xml</code> is read when available</td></tr><tr><td>TablePlus</td><td><code>Connections.plist</code> (binary or XML), JSON connection arrays, or a text file with connection URLs</td></tr><tr><td>pgAdmin</td><td><code>servers.json</code> from Tools → Import/Export Servers</td></tr><tr><td>sqlr</td><td>A connection backup created by File → Export…</td></tr></tbody></table>
+<p>The preview includes folders, supported TLS and SSH settings, and recognized environment profiles where the source provides them. Missing drivers can be installed when connecting. Read the migration notes for skipped connections and settings that require attention. Client-specific preferences, startup scripts and custom profile definitions are not migrated.</p>
+<p>Passwords, tokens and private key contents are never copied. Enter credentials when connecting in the destination client. Local certificate and private key paths may need adjustment on another machine. sqlr agent access is always off for imported connections. Unsupported network handlers, read-only policies and ambiguous TablePlus TLS modes are reported and skipped rather than silently discarded. Encrypted <code>.tableplusconnection</code> archives are not supported; choose TablePlus's local connection list or connection URLs. Passwords embedded in URLs are discarded automatically.</p>
+<h2 id="export">Export</h2>
+<p>Open <strong>File → Export…</strong>, choose the destination client, select connections and click <strong>Export</strong>. Connections that the selected format cannot represent are unavailable. The completion screen explains how to load the file in the destination client.</p>
+<table><thead><tr><th>Destination</th><th>Output and next step</th></tr></thead><tbody><tr><td>sqlr</td><td>JSON backup of portable connection settings; use File → Import… to restore</td></tr><tr><td>DBeaver</td><td>Additional <code>data-sources-sqlr.json</code>; place in the project's <code>.dbeaver</code> directory and restart DBeaver</td></tr><tr><td>DataGrip / JetBrains</td><td>XML; copy its contents and use New → Import from Clipboard</td></tr><tr><td>TablePlus</td><td>One connection URL per line; use Import from URL for each connection</td></tr><tr><td>pgAdmin</td><td>PostgreSQL server JSON; use Tools → Import/Export Servers</td></tr></tbody></table>
+<p>DataGrip and TablePlus URL exports currently support PostgreSQL, MySQL, SQLite and SQL Server connections without SSH. DBeaver also supports Oracle; pgAdmin supports PostgreSQL. Choose sqlr for other drivers or to retain the portable SSH settings.</p>
+<p>Format references: <a href="https://dbeaver.com/docs/dbeaver/Data-Sources-Json-Reference/">DBeaver connection files</a>, <a href="https://www.jetbrains.com/help/datagrip/managing-data-sources.html">JetBrains data source sharing</a>, <a href="https://docs.tableplus.com/gui-tools/manage-connections">TablePlus connections</a>, <a href="https://www.pgadmin.org/docs/pgadmin4/latest/import_export_servers.html">pgAdmin server definitions</a>.</p>
+</main>
+</div>
+</body>
+</html>
