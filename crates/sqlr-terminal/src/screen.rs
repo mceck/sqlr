@@ -93,6 +93,8 @@ pub struct ScreenSnapshot {
     /// How the application asked for mouse reports; `None` means the terminal keeps the mouse.
     pub mouse_mode: MouseProtocolMode,
     pub mouse_encoding: MouseProtocolEncoding,
+    /// The kitty keyboard protocol flags the application pushed.
+    pub kitty_flags: u16,
     pub scrollback_len: usize,
     pub scrollback_offset: usize,
 }
@@ -153,6 +155,7 @@ fn ordered(a: (u16, u16), b: (u16, u16)) -> ((u16, u16), (u16, u16)) {
 /// The parser plus its lock: the reader thread feeds it and the UI snapshots it.
 pub struct Emulator {
     parser: Mutex<vt100::Parser>,
+    kitty: Mutex<KittyKeyboard>,
     bell: std::sync::atomic::AtomicBool,
 }
 
@@ -160,6 +163,7 @@ impl Emulator {
     pub fn new(rows: u16, cols: u16, scrollback: usize) -> Self {
         Self {
             parser: Mutex::new(vt100::Parser::new(nz(rows), nz(cols), scrollback)),
+            kitty: Mutex::new(KittyKeyboard::default()),
             bell: std::sync::atomic::AtomicBool::new(false),
         }
     }
@@ -169,6 +173,12 @@ impl Emulator {
             self.bell.store(true, std::sync::atomic::Ordering::Relaxed);
         }
         self.parser.lock().unwrap().process(bytes);
+        self.kitty.lock().unwrap().feed(bytes);
+    }
+
+    /// Replies the application asked for while it fed bytes (the kitty keyboard query).
+    pub fn take_responses(&self) -> Vec<u8> {
+        self.kitty.lock().unwrap().take_responses()
     }
 
     /// Takes the visual bell raised since the last call.
@@ -198,10 +208,113 @@ impl Emulator {
         let screen = parser.screen_mut();
         let previous = screen.scrollback();
         screen.set_scrollback(scrollback_offset);
-        let snapshot = read_screen(screen);
+        let mut snapshot = read_screen(screen);
         screen.set_scrollback(previous);
+        snapshot.kitty_flags = self.kitty.lock().unwrap().flags;
         snapshot
     }
+}
+
+/// The kitty keyboard protocol: the flags an application pushes and the terminal's reply
+/// to its support query (`CSI ? u`).
+#[derive(Debug, Default)]
+struct KittyKeyboard {
+    scan: Scan,
+    flags: u16,
+    stack: Vec<u16>,
+    responses: Vec<u8>,
+}
+
+#[derive(Debug, Default)]
+enum Scan {
+    #[default]
+    Ground,
+    Escape,
+    Csi(Vec<u8>),
+}
+
+impl KittyKeyboard {
+    fn feed(&mut self, bytes: &[u8]) {
+        for &byte in bytes {
+            match &mut self.scan {
+                Scan::Ground => {
+                    if byte == 0x1b {
+                        self.scan = Scan::Escape;
+                    }
+                }
+                Scan::Escape => {
+                    self.scan = if byte == b'[' {
+                        Scan::Csi(Vec::new())
+                    } else if byte == 0x1b {
+                        Scan::Escape
+                    } else {
+                        Scan::Ground
+                    };
+                }
+                Scan::Csi(body) => {
+                    if (0x40..=0x7e).contains(&byte) {
+                        let body = std::mem::take(body);
+                        self.sequence(&body, byte);
+                        self.scan = Scan::Ground;
+                    } else if body.len() < 32 {
+                        body.push(byte);
+                    } else {
+                        self.scan = Scan::Ground;
+                    }
+                }
+            }
+        }
+    }
+
+    fn take_responses(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.responses)
+    }
+
+    fn sequence(&mut self, body: &[u8], final_byte: u8) {
+        if final_byte != b'u' {
+            return;
+        }
+        match body.split_first() {
+            Some((b'?', [])) => {
+                // The support query: answer with the current flags; the reply itself tells
+                // the application the protocol is supported.
+                self.responses
+                    .extend_from_slice(format!("\x1b[?{}u", self.flags).as_bytes());
+            }
+            Some((b'>', rest)) => {
+                let flags = parse_flags(rest);
+                self.stack.push(self.flags);
+                if self.stack.len() > 16 {
+                    self.stack.remove(0);
+                }
+                self.flags = flags;
+            }
+            Some((b'<', rest)) => {
+                let count = parse_flags(rest).max(1);
+                for _ in 0..count {
+                    self.flags = self.stack.pop().unwrap_or(0);
+                }
+            }
+            Some((b'=', rest)) => {
+                let mut parts = rest.split(|b| *b == b';');
+                let flags = parse_flags(parts.next().unwrap_or_default());
+                let mode = parse_flags(parts.next().unwrap_or_default()).max(1);
+                self.flags = match mode {
+                    2 => self.flags | flags,
+                    3 => self.flags & !flags,
+                    _ => flags,
+                };
+            }
+            _ => {}
+        }
+    }
+}
+
+fn parse_flags(bytes: &[u8]) -> u16 {
+    std::str::from_utf8(bytes)
+        .ok()
+        .and_then(|text| text.parse().ok())
+        .unwrap_or(0)
 }
 
 fn nz(value: u16) -> NonZeroU16 {
@@ -242,6 +355,7 @@ fn read_screen(screen: &vt100::Screen) -> ScreenSnapshot {
         application_cursor: screen.application_cursor(),
         mouse_mode: screen.mouse_protocol_mode(),
         mouse_encoding: screen.mouse_protocol_encoding(),
+        kitty_flags: 0,
         scrollback_len: screen.scrollback_len(),
         scrollback_offset: screen.scrollback(),
     }
@@ -345,6 +459,33 @@ mod tests {
         let s = em.snapshot(0);
         assert_eq!(s.mouse_mode, MouseProtocolMode::None);
         assert_eq!(s.mouse_encoding, MouseProtocolEncoding::Default);
+    }
+
+    #[test]
+    fn kitty_keyboard_queries_are_answered_and_flags_pushed() {
+        let em = emulator();
+        assert_eq!(em.snapshot(0).kitty_flags, 0);
+        em.feed(b"\x1b[?u");
+        assert_eq!(em.take_responses(), b"\x1b[?0u".to_vec());
+        em.feed(b"\x1b[>5u");
+        assert_eq!(em.snapshot(0).kitty_flags, 5);
+        em.feed(b"\x1b[?u");
+        assert_eq!(em.take_responses(), b"\x1b[?5u".to_vec());
+        em.feed(b"\x1b[<u");
+        assert_eq!(em.snapshot(0).kitty_flags, 0);
+        // `CSI = flags ; mode u`: mode 2 adds, mode 3 removes.
+        em.feed(b"\x1b[=7;2u");
+        assert_eq!(em.snapshot(0).kitty_flags, 7);
+        em.feed(b"\x1b[=2;3u");
+        assert_eq!(em.snapshot(0).kitty_flags, 5);
+    }
+
+    #[test]
+    fn kitty_sequences_can_arrive_in_pieces() {
+        let em = emulator();
+        em.feed(b"\x1b[>");
+        em.feed(b"5u");
+        assert_eq!(em.snapshot(0).kitty_flags, 5);
     }
 
     #[test]

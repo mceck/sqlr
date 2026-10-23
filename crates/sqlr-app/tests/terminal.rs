@@ -148,6 +148,83 @@ fn terminal_keys_do_not_move_the_ui_focus() {
 }
 
 #[test]
+fn the_kitty_keyboard_query_is_answered() {
+    let dir = tempfile::tempdir().unwrap();
+    // The application asks for the kitty keyboard protocol, then prints the reply as hex.
+    let shell = "printf '\\033[?u'; stty raw -echo; head -c 5 | od -An -tx1; stty sane";
+    let app = app_with_shell(dir.path(), shell);
+    let mut harness = Harness::builder()
+        .with_size((1100.0, 760.0))
+        .with_step_dt(0.01)
+        .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    harness.run_steps(3);
+    harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Backtick);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        harness.step();
+        let text = harness.state().terminal_text_for_tests();
+        // ESC [ ? 0 u : the current flags, and proof the reply reached the application.
+        let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        if compact.contains("1b5b3f3075") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the kitty query got no answer: {text:?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn a_pushed_kitty_mode_reaches_the_application() {
+    let dir = tempfile::tempdir().unwrap();
+    // The application enables the disambiguating flags and announces it, then reads one
+    // key event and prints it as hex.
+    let shell = "printf '\\033[>5u'; printf 'kitty-ready'; stty raw -echo; head -c 7 | od -An -tx1; stty sane";
+    let app = app_with_shell(dir.path(), shell);
+    let mut harness = Harness::builder()
+        .with_size((1100.0, 760.0))
+        .with_step_dt(0.01)
+        .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    harness.run_steps(3);
+    harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Backtick);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        harness.step();
+        if harness
+            .state()
+            .terminal_text_for_tests()
+            .contains("kitty-ready")
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the kitty mode was never announced"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    assert!(harness.state().terminal_focused_for_tests());
+    harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::A);
+    loop {
+        harness.step();
+        let text = harness.state().terminal_text_for_tests();
+        // ESC [ 9 7 ; 5 u : Ctrl+A as CSI u rather than the legacy 0x01.
+        let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        if compact.contains("1b5b39373b3575") {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the application received no kitty key event: {text:?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
 fn the_wheel_reaches_an_application_that_enables_mouse_reports() {
     let dir = tempfile::tempdir().unwrap();
     // Read enough reports to also collect the wheel ones: egui smooths the wheel over a

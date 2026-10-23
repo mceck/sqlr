@@ -213,10 +213,16 @@ pub(crate) fn encode_events(
     events: &[egui::Event],
     application_cursor: bool,
     bracketed_paste: bool,
+    kitty_flags: u16,
     mac: bool,
 ) -> EncodedInput {
     let mut out = EncodedInput::default();
     let mut alt = false;
+    // A key encoded as CSI u must not also send the text it produced (winit sends both for
+    // Alt chords).
+    let mut skip_text = false;
+    // Only the enhancements we implement: disambiguate and alternate keys.
+    let kitty = kitty_flags & (KITTY_DISAMBIGUATE | KITTY_ALTERNATE);
     for event in events {
         match event {
             egui::Event::Key {
@@ -226,10 +232,23 @@ pub(crate) fn encode_events(
                 ..
             } => {
                 alt = false;
+                skip_text = false;
                 if *key == Key::Copy || (is_copy(*modifiers, mac) && *key == Key::C) {
                     out.copy = true;
                 } else if *key == Key::Paste || (is_paste(*modifiers, mac) && *key == Key::V) {
                     // egui turns the platform paste into Event::Paste below.
+                } else if kitty != 0 {
+                    // The application asked for unambiguous key events: Cmd (super), Alt
+                    // chords and the functional keys go out as CSI u.
+                    if let Some(bytes) = encode_kitty_key(*key, *modifiers, kitty, mac) {
+                        skip_text = is_text_key(*key);
+                        out.bytes.extend(bytes);
+                    } else if !is_text_key(*key) {
+                        // Enter, Tab and Backspace keep their legacy bytes.
+                        if let Some(bytes) = encode_key(*key, *modifiers, application_cursor, mac) {
+                            out.bytes.extend(bytes);
+                        }
+                    }
                 } else if is_text_key(*key) && !modifiers.ctrl && !modifiers.command {
                     // The character itself arrives as Event::Text; decide the Alt prefix now.
                     alt = modifiers.alt;
@@ -238,6 +257,10 @@ pub(crate) fn encode_events(
                 }
             }
             egui::Event::Text(text) => {
+                if skip_text {
+                    skip_text = false;
+                    continue;
+                }
                 if alt {
                     out.bytes.push(0x1b);
                     alt = false;
@@ -267,6 +290,103 @@ pub fn encode_paste(text: &str, bracketed: bool) -> Vec<u8> {
     } else {
         text.into_bytes()
     }
+}
+
+const KITTY_DISAMBIGUATE: u16 = 0b0001;
+const KITTY_ALTERNATE: u16 = 0b0100;
+
+/// The unambiguous key encoding the kitty keyboard protocol enables. `None` when the key
+/// still goes out as text or as its legacy bytes.
+pub(crate) fn encode_kitty_key(
+    key: Key,
+    modifiers: Modifiers,
+    flags: u16,
+    mac: bool,
+) -> Option<Vec<u8>> {
+    let bits = u8::from(modifiers.shift)
+        + u8::from(modifiers.alt) * 2
+        + u8::from(modifiers.ctrl) * 4
+        + u8::from(mac && modifiers.command) * 8;
+    // Shift alone still produces text; Alt, Ctrl and Cmd are unambiguous chords.
+    let chorded = bits & 0b1110 != 0;
+    match key {
+        // Escape is never legacy while disambiguating.
+        Key::Escape => return Some(csi_u(27, bits, None)),
+        // Enter, Tab and Backspace keep their legacy bytes while unmodified, so `reset`
+        // still works when an application crashes; modified chords are unambiguous.
+        Key::Enter | Key::Tab | Key::Backspace => {
+            if bits == 0 {
+                return None;
+            }
+            let code = match key {
+                Key::Enter => 13,
+                Key::Tab => 9,
+                Key::Backspace => 127,
+                _ => unreachable!(),
+            };
+            return Some(csi_u(code, bits, None));
+        }
+        _ => {}
+    }
+    if let Some((number, final_byte)) = functional_key(key) {
+        return Some(csi_functional(number, bits, final_byte));
+    }
+    if is_text_key(key) && chorded {
+        let base = u32::from(key_char(key, false)?);
+        let shifted = if flags & KITTY_ALTERNATE != 0 && modifiers.shift {
+            key_char(key, true)
+        } else {
+            None
+        };
+        return Some(csi_u(base, bits, shifted));
+    }
+    None
+}
+
+/// `CSI unicode-key-code[:shifted]; modifiers u`.
+fn csi_u(code: u32, bits: u8, shifted: Option<char>) -> Vec<u8> {
+    let mut out = format!("\x1b[{code}");
+    if let Some(shifted) = shifted {
+        out.push(':');
+        out.push_str(&u32::from(shifted).to_string());
+    }
+    out.push(';');
+    out.push_str(&(u16::from(bits) + 1).to_string());
+    out.push('u');
+    out.into_bytes()
+}
+
+/// The legacy functional form with an explicit modifier: `CSI number; modifiers final`.
+fn csi_functional(number: u8, bits: u8, final_byte: char) -> Vec<u8> {
+    format!("\x1b[{number};{}{final_byte}", u16::from(bits) + 1).into_bytes()
+}
+
+fn functional_key(key: Key) -> Option<(u8, char)> {
+    Some(match key {
+        Key::ArrowUp => (1, 'A'),
+        Key::ArrowDown => (1, 'B'),
+        Key::ArrowRight => (1, 'C'),
+        Key::ArrowLeft => (1, 'D'),
+        Key::Home => (1, 'H'),
+        Key::End => (1, 'F'),
+        Key::F1 => (1, 'P'),
+        Key::F2 => (1, 'Q'),
+        Key::F3 => (1, 'R'),
+        Key::F4 => (1, 'S'),
+        Key::Insert => (2, '~'),
+        Key::Delete => (3, '~'),
+        Key::PageUp => (5, '~'),
+        Key::PageDown => (6, '~'),
+        Key::F5 => (15, '~'),
+        Key::F6 => (17, '~'),
+        Key::F7 => (18, '~'),
+        Key::F8 => (19, '~'),
+        Key::F9 => (20, '~'),
+        Key::F10 => (21, '~'),
+        Key::F11 => (23, '~'),
+        Key::F12 => (24, '~'),
+        _ => return None,
+    })
 }
 
 /// A mouse action for an application that enabled mouse tracking.
@@ -443,12 +563,12 @@ mod tests {
         // The integration sends the key press and, right after it, the text it produced.
         let events = [key(Key::A, m()), egui::Event::Text("a".into())];
         assert_eq!(
-            encode_events(&events, false, false, false).bytes,
+            encode_events(&events, false, false, 0, false).bytes,
             b"a".to_vec()
         );
         let events = [key(Key::A, Modifiers::SHIFT), egui::Event::Text("A".into())];
         assert_eq!(
-            encode_events(&events, false, false, false).bytes,
+            encode_events(&events, false, false, 0, false).bytes,
             b"A".to_vec()
         );
     }
@@ -456,15 +576,15 @@ mod tests {
     #[test]
     fn special_and_control_keys_still_encode() {
         assert_eq!(
-            encode_events(&[key(Key::Enter, m())], false, false, false).bytes,
+            encode_events(&[key(Key::Enter, m())], false, false, 0, false).bytes,
             b"\r".to_vec()
         );
         assert_eq!(
-            encode_events(&[key(Key::ArrowUp, m())], false, false, false).bytes,
+            encode_events(&[key(Key::ArrowUp, m())], false, false, 0, false).bytes,
             b"\x1b[A".to_vec()
         );
         assert_eq!(
-            encode_events(&[key(Key::C, Modifiers::CTRL)], false, false, false).bytes,
+            encode_events(&[key(Key::C, Modifiers::CTRL)], false, false, 0, false).bytes,
             vec![0x03]
         );
     }
@@ -473,17 +593,17 @@ mod tests {
     fn alt_text_keeps_the_escape_prefix() {
         let events = [key(Key::A, Modifiers::ALT), egui::Event::Text("a".into())];
         assert_eq!(
-            encode_events(&events, false, false, false).bytes,
+            encode_events(&events, false, false, 0, false).bytes,
             b"\x1ba".to_vec()
         );
     }
 
     #[test]
     fn copy_and_paste_events_reach_the_panel() {
-        let copy = encode_events(&[egui::Event::Copy], false, false, true);
+        let copy = encode_events(&[egui::Event::Copy], false, false, 0, true);
         assert!(copy.copy);
         assert!(copy.bytes.is_empty());
-        let paste = encode_events(&[egui::Event::Paste("a\nb".into())], false, true, true);
+        let paste = encode_events(&[egui::Event::Paste("a\nb".into())], false, true, 0, true);
         assert_eq!(paste.bytes, b"\x1b[200~a\rb\x1b[201~".to_vec());
     }
 
@@ -560,6 +680,67 @@ mod tests {
         )
         .unwrap();
         assert_eq!(bytes, "\x1b[M!\u{e8}\"".as_bytes().to_vec());
+    }
+
+    #[test]
+    fn kitty_disambiguation_sends_super_and_modified_keys_as_csi_u() {
+        // Cmd+A on macOS: what opencode's `super+a` keybind needs.
+        assert_eq!(
+            encode_kitty_key(Key::A, Modifiers::COMMAND, 5, true),
+            Some(b"\x1b[97;9u".to_vec())
+        );
+        // Alternate reporting adds the shifted key for Cmd+Shift+A.
+        assert_eq!(
+            encode_kitty_key(Key::A, Modifiers::COMMAND.plus(Modifiers::SHIFT), 5, true),
+            Some(b"\x1b[97:65;10u".to_vec())
+        );
+        // Ctrl+I is no longer indistinguishable from Tab.
+        assert_eq!(
+            encode_kitty_key(Key::I, Modifiers::CTRL, 1, false),
+            Some(b"\x1b[105;5u".to_vec())
+        );
+        // Functional keys carry an explicit modifier.
+        assert_eq!(
+            encode_kitty_key(Key::ArrowUp, Modifiers::NONE, 1, false),
+            Some(b"\x1b[1;1A".to_vec())
+        );
+        assert_eq!(
+            encode_kitty_key(Key::ArrowUp, Modifiers::COMMAND, 1, true),
+            Some(b"\x1b[1;9A".to_vec())
+        );
+        assert_eq!(
+            encode_kitty_key(Key::Escape, Modifiers::NONE, 1, false),
+            Some(b"\x1b[27;1u".to_vec())
+        );
+        assert_eq!(
+            encode_kitty_key(Key::Tab, Modifiers::SHIFT, 5, true),
+            Some(b"\x1b[9;2u".to_vec())
+        );
+        // Plain text and the reset-friendly keys keep their legacy path.
+        assert_eq!(encode_kitty_key(Key::A, Modifiers::SHIFT, 5, true), None);
+        assert_eq!(encode_kitty_key(Key::Enter, Modifiers::NONE, 5, true), None);
+    }
+
+    #[test]
+    fn kitty_mode_keeps_plain_text_and_legacy_enter() {
+        let events = [
+            key(Key::A, Modifiers::COMMAND),
+            egui::Event::Text("a".into()),
+        ];
+        assert_eq!(
+            encode_events(&events, false, false, 5, true).bytes,
+            b"\x1b[97;9u".to_vec()
+        );
+        // Alt chords are CSI u too, so the text winit produced for them is dropped.
+        let events = [key(Key::A, Modifiers::ALT), egui::Event::Text("a".into())];
+        assert_eq!(
+            encode_events(&events, false, false, 5, true).bytes,
+            b"\x1b[97;3u".to_vec()
+        );
+        let events = [key(Key::A, m()), egui::Event::Text("a".into())];
+        assert_eq!(encode_events(&events, false, false, 5, true).bytes, b"a");
+        let events = [key(Key::Enter, m())];
+        assert_eq!(encode_events(&events, false, false, 5, true).bytes, b"\r");
     }
 
     #[test]

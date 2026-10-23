@@ -649,6 +649,7 @@ impl TerminalPanel {
                     &i.events,
                     snapshot.application_cursor,
                     snapshot.bracketed_paste,
+                    snapshot.kitty_flags,
                     mac,
                 )
             });

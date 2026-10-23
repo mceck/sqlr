@@ -67,7 +67,7 @@ impl Default for SessionConfig {
 
 pub struct TerminalSession {
     emulator: Arc<Emulator>,
-    writer: Mutex<Box<dyn Write + Send>>,
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
     resize_fn: Box<dyn Fn(u16, u16) + Send + Sync>,
     kill_fn: Box<dyn Fn() + Send + Sync>,
     status: Arc<Mutex<TerminalStatus>>,
@@ -98,7 +98,7 @@ impl TerminalSession {
                 *status.lock() = TerminalStatus::Failed { message };
                 return Self {
                     emulator,
-                    writer: Mutex::new(Box::new(std::io::sink())),
+                    writer: Arc::new(Mutex::new(Box::new(std::io::sink()))),
                     resize_fn: Box::new(|_, _| {}),
                     kill_fn: Box::new(|| {}),
                     status,
@@ -111,9 +111,13 @@ impl TerminalSession {
         };
         *status.lock() = TerminalStatus::Running { pid: parts.pid };
         let killed = Arc::new(AtomicBool::new(false));
+        // The reader thread also writes the replies the application asked for (for example
+        // the kitty keyboard query), so the writer is shared.
+        let writer = Arc::new(Mutex::new(parts.writer));
 
         let reader_emulator = emulator.clone();
         let reader_repaint = repaint.clone();
+        let reader_writer = writer.clone();
         let reader = std::thread::Builder::new()
             .name("sqlr-terminal-reader".into())
             .spawn(move || {
@@ -124,6 +128,12 @@ impl TerminalSession {
                         Ok(0) => break,
                         Ok(n) => {
                             reader_emulator.feed(&buffer[..n]);
+                            let responses = reader_emulator.take_responses();
+                            if !responses.is_empty() {
+                                let mut writer = reader_writer.lock();
+                                let _ = writer.write_all(&responses);
+                                let _ = writer.flush();
+                            }
                             reader_repaint();
                         }
                         Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
@@ -151,7 +161,7 @@ impl TerminalSession {
             .ok();
         Self {
             emulator,
-            writer: Mutex::new(parts.writer),
+            writer,
             resize_fn: parts.resize,
             kill_fn: parts.kill,
             status,
