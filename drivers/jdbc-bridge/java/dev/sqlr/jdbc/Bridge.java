@@ -15,6 +15,7 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
@@ -287,6 +288,28 @@ final class Bridge {
 
     @SuppressWarnings("unchecked")
     private Object execute(Session s, long conn, String sql, List<Object> params) throws SQLException, Failure {
+        if (params == null || params.isEmpty()) {
+            String command = sql.trim();
+            if (command.endsWith(";")) command = command.substring(0, command.length() - 1).trim();
+            // BEGIN is not SQL on every JDBC database (for example Derby and Oracle).
+            // End our explicit transactions by restoring the normal autocommit mode.
+            switch (command.toUpperCase(Locale.ROOT)) {
+                case "BEGIN":
+                    s.conn.setAutoCommit(false);
+                    return MsgPack.variant("Affected", 0L);
+                case "COMMIT":
+                    if (s.conn.getAutoCommit()) break;
+                    s.conn.commit();
+                    s.conn.setAutoCommit(true);
+                    return MsgPack.variant("Affected", 0L);
+                case "ROLLBACK":
+                    if (s.conn.getAutoCommit()) break;
+                    s.conn.rollback();
+                    s.conn.setAutoCommit(true);
+                    return MsgPack.variant("Affected", 0L);
+                default: break;
+            }
+        }
         Statement st;
         boolean hasResult;
         if (params == null) {

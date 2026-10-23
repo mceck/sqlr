@@ -1,6 +1,7 @@
-//! The JDBC bridge against H2 (`com.h2database:h2:2.3.232`, downloaded once into
-//! `target/jdbc-test-jars/` and checked against its sha256). Tests that need Java, a
-//! built bridge or the jar print why they are skipped.
+//! The JDBC bridge against H2 (`com.h2database:h2:2.3.232`) and embedded Derby
+//! (`org.apache.derby:derby:10.16.1.1`). Jars are downloaded once into
+//! `target/jdbc-test-jars/` and checked against their sha256. Tests that need Java,
+//! a built bridge or a jar print why they are skipped.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -39,25 +40,31 @@ fn have_java() -> bool {
 
 /// The H2 jar, downloaded on first use; `None` (with the reason printed) when offline.
 fn h2_jar() -> Option<PathBuf> {
+    test_jar("h2-2.3.232.jar", H2_URL, H2_SHA256)
+}
+
+fn test_jar(name: &str, url: &str, sha256: &str) -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let target = exe.ancestors().nth(3)?; // …/target
     let dir = target.join("jdbc-test-jars");
-    let jar = dir.join("h2-2.3.232.jar");
-    let valid = |p: &Path| std::fs::read(p).is_ok_and(|b| hex(&Sha256::digest(&b)) == H2_SHA256);
+    let jar = dir.join(name);
+    let valid = |p: &Path| std::fs::read(p).is_ok_and(|b| hex(&Sha256::digest(&b)) == sha256);
     if valid(&jar) {
         return Some(jar);
     }
     std::fs::create_dir_all(&dir).ok()?;
-    let part = dir.join("h2.part");
+    let part = dir.join(format!("{name}.part"));
     let ok = Command::new("curl")
         .args(["-fsSL", "--max-time", "120", "-o"])
         .arg(&part)
-        .arg(H2_URL)
+        .arg(url)
         .status()
         .is_ok_and(|s| s.success());
     if !ok || !valid(&part) {
         let _ = std::fs::remove_file(&part);
-        eprintln!("skipped: cannot download H2 (offline, or the file does not match its sha256)");
+        eprintln!(
+            "skipped: cannot download {name} (offline, or the file does not match its sha256)"
+        );
         return None;
     }
     std::fs::rename(&part, &jar).ok()?;
@@ -339,6 +346,103 @@ async fn jdbc_bound_parameters_and_affected_rows() {
     // SQL errors keep their kind.
     let e = rel.execute("SELEKT 1").await.err().unwrap();
     assert_eq!(e.kind, sqlr_driver_sdk::ErrorKind::Syntax, "{e:?}");
+}
+
+#[tokio::test]
+async fn generic_jdbc_transactions_work_without_vendor_begin_sql() {
+    if !have_java() || env!("SQLR_JDBC_BRIDGE_JAR").is_empty() {
+        eprintln!("skipped: Derby needs Java 17+ and a built JDBC bridge");
+        return;
+    }
+    let Some(derby) = test_jar(
+        "derby-10.16.1.1.jar",
+        "https://repo1.maven.org/maven2/org/apache/derby/derby/10.16.1.1/derby-10.16.1.1.jar",
+        "ede804cb04e871d7c52d2414e952ab939f9ef243abb7bd0ce7dbeb6e1e28bd0b",
+    ) else {
+        return;
+    };
+    let Some(shared) = test_jar(
+        "derbyshared-10.16.1.1.jar",
+        "https://repo1.maven.org/maven2/org/apache/derby/derbyshared/10.16.1.1/derbyshared-10.16.1.1.jar",
+        "27d4be683a45f6c15940167277ce39bb7e26b9f6dc0bc05efbcf813cac5d2b8f",
+    ) else {
+        return;
+    };
+    let work = tempfile::tempdir().unwrap();
+    let mut launch = spec("jdbc", None);
+    launch.env.push((
+        "SQLR_JDBC_CLASSPATH".into(),
+        std::env::join_paths([derby, shared])
+            .unwrap()
+            .to_string_lossy()
+            .into_owned(),
+    ));
+    launch.env.push((
+        "JAVA_TOOL_OPTIONS".into(),
+        format!(
+            "-Dderby.stream.error.file={}/derby.log",
+            work.path().display()
+        ),
+    ));
+    let (driver, _) = SidecarDriver::probe(launch).await.unwrap();
+    let cfg = config(
+        "jdbc",
+        &[
+            ("jdbc_url", "jdbc:derby:memory:transactions;create=true"),
+            (
+                "driver_class",
+                "org.apache.derby.iapi.jdbc.AutoloadedDriver",
+            ),
+        ],
+    );
+    let writer = driver.connect(&cfg, &Secrets::default()).await.unwrap();
+    let observer = driver.connect(&cfg, &Secrets::default()).await.unwrap();
+    let rel = writer.relational().unwrap();
+    rel.execute("CREATE TABLE tx (id INT)").await.unwrap();
+    rel.execute(rel.dialect().begin_sql()).await.unwrap();
+    rel.execute_with("INSERT INTO tx VALUES (?)", &[Value::Int(1)])
+        .await
+        .unwrap();
+    rel.execute("ROLLBACK").await.unwrap();
+    rel.execute_with("INSERT INTO tx VALUES (?)", &[Value::Int(0)])
+        .await
+        .unwrap();
+    let Execution::Rows(mut rows) = observer
+        .relational()
+        .unwrap()
+        .execute("SELECT id FROM tx")
+        .await
+        .unwrap()
+    else {
+        panic!("rows expected");
+    };
+    let chunk = rows.next_chunk(10).await.unwrap().unwrap();
+    assert_eq!(chunk.len(), 1);
+    assert_eq!(chunk.cell(0, 0), Cell::Int(0));
+    rows.close().await.unwrap();
+    rel.execute(rel.dialect().begin_sql()).await.unwrap();
+    rel.execute_with("INSERT INTO tx VALUES (?)", &[Value::Int(2)])
+        .await
+        .unwrap();
+    rel.execute("COMMIT").await.unwrap();
+    rel.execute_with("INSERT INTO tx VALUES (?)", &[Value::Int(3)])
+        .await
+        .unwrap();
+    let Execution::Rows(mut rows) = observer
+        .relational()
+        .unwrap()
+        .execute("SELECT id FROM tx ORDER BY id")
+        .await
+        .unwrap()
+    else {
+        panic!("rows expected");
+    };
+    let chunk = rows.next_chunk(10).await.unwrap().unwrap();
+    assert_eq!(chunk.len(), 3);
+    assert_eq!(chunk.cell(0, 0), Cell::Int(0));
+    assert_eq!(chunk.cell(1, 0), Cell::Int(2));
+    assert_eq!(chunk.cell(2, 0), Cell::Int(3));
+    rows.close().await.unwrap();
 }
 
 #[tokio::test]
