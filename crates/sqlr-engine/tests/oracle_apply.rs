@@ -163,3 +163,20 @@ fn typed_set_transaction_can_be_committed_with_the_toolbar() {
         "toolbar COMMIT must persist the row"
     );
 }
+
+#[test]
+fn oracle_reusing_a_savepoint_name_moves_the_target_forward() {
+    sqlr_testkit::skip_container_tests!();
+    let _lock = sqlr_testkit::TestLock::acquire("oracle");
+    let engine = engine();
+    let key = SessionKey::meta("o");
+    for sql in ["SET TRANSACTION READ WRITE", "SAVEPOINT a", "SAVEPOINT b", "SAVEPOINT a"] {
+        run(&engine, &key, sql);
+    }
+    let savepoints = engine.transaction(&key).unwrap().savepoints;
+    run(&engine, &key, "ROLLBACK TO SAVEPOINT b");
+    let after_rollback = engine.transaction(&key).unwrap().savepoints;
+    run(&engine, &key, "ROLLBACK");
+    assert_eq!(savepoints, ["b", "a"]);
+    assert_eq!(after_rollback, ["b"]);
+}

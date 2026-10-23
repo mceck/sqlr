@@ -272,3 +272,70 @@ async fn ddl_commit_failure_rolls_back_before_reusing_the_session() {
     );
     run(&engine, "ROLLBACK").await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn duplicate_savepoints_keep_the_older_target_after_releasing_the_newer_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = engine(config(&dir.path().join("t.db")), Secrets::default()).await;
+    for sql in [
+        "CREATE TABLE items (id INTEGER)",
+        "BEGIN",
+        "SAVEPOINT a",
+        "INSERT INTO items VALUES (1)",
+        "SAVEPOINT a",
+        "INSERT INTO items VALUES (2)",
+        "SAVEPOINT b",
+    ] {
+        run(&engine, sql).await;
+    }
+    engine.rollback_to(&tab(), "a".into());
+    assert_eq!(rows(&engine, "SELECT id FROM items").await, vec![vec![Value::Int(1)]]);
+    let before_release = engine.transaction(&tab()).unwrap().savepoints;
+    run(&engine, "RELEASE SAVEPOINT a").await;
+    let after_release = engine.transaction(&tab()).unwrap().savepoints;
+    engine.rollback_to(&tab(), "a".into());
+    assert!(rows(&engine, "SELECT id FROM items").await.is_empty());
+    run(&engine, "ROLLBACK").await;
+    assert_eq!(before_release, ["a", "a"]);
+    assert_eq!(after_release, ["a"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_top_level_savepoint_enables_toolbar_rollback_in_auto_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = engine(config(&dir.path().join("t.db")), Secrets::default()).await;
+    run(&engine, "CREATE TABLE items (id INTEGER)").await;
+    run(&engine, "SAVEPOINT outermost").await;
+    run(&engine, "INSERT INTO items VALUES (1)").await;
+    let phase = engine.transaction(&tab()).unwrap().phase;
+    engine.rollback(&tab());
+    let remaining = rows(&engine, "SELECT id FROM items").await;
+    // Explicit cleanup also works when the toolbar command was incorrectly skipped.
+    if !remaining.is_empty() {
+        run(&engine, "ROLLBACK").await;
+    }
+    assert_eq!(phase, sqlr_engine::TxPhase::Open);
+    assert!(remaining.is_empty(), "toolbar rollback left the inserted row: {remaining:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn releasing_the_outermost_savepoint_commits_its_transaction() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("t.db");
+    let engine = engine(config(&path), Secrets::default()).await;
+    for sql in [
+        "CREATE TABLE items (id INTEGER)",
+        "SAVEPOINT outermost",
+        "INSERT INTO items VALUES (1)",
+        "SAVEPOINT inner",
+        "RELEASE SAVEPOINT inner",
+    ] {
+        run(&engine, sql).await;
+    }
+    let after_inner = engine.transaction(&tab()).unwrap().phase;
+    run(&engine, "RELEASE SAVEPOINT outermost").await;
+    assert_eq!(after_inner, sqlr_engine::TxPhase::Open);
+    assert_eq!(engine.transaction(&tab()).unwrap().phase, sqlr_engine::TxPhase::Idle);
+    let observer = rusqlite::Connection::open(path).unwrap();
+    assert_eq!(observer.query_row("SELECT id FROM items", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+}

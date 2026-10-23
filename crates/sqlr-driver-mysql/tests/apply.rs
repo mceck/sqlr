@@ -15,6 +15,11 @@ use support::{Server, start};
 
 mod mysql84 {
     #[tokio::test(flavor = "multi_thread")]
+    async fn reused_savepoint_names_replace_the_old_target() {
+        sqlr_testkit::skip_container_tests!();
+        super::reused_savepoint_names_replace_the_old_target(super::Server::MySql).await
+    }
+    #[tokio::test(flavor = "multi_thread")]
     async fn apply_changeset_end_to_end() {
         sqlr_testkit::skip_container_tests!();
         super::apply_changeset_end_to_end(super::Server::MySql).await
@@ -28,6 +33,11 @@ mod mysql84 {
 }
 
 mod mariadb114 {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn reused_savepoint_names_replace_the_old_target() {
+        sqlr_testkit::skip_container_tests!();
+        super::reused_savepoint_names_replace_the_old_target(super::Server::MariaDb).await
+    }
     #[tokio::test(flavor = "multi_thread")]
     async fn apply_changeset_end_to_end() {
         sqlr_testkit::skip_container_tests!();
@@ -108,6 +118,22 @@ async fn apply(engine: &Engine, changeset: Changeset) -> JobOutcome {
     })
     .await;
     engine.job(job).unwrap().outcome.unwrap()
+}
+
+async fn reused_savepoint_names_replace_the_old_target(server: Server) {
+    let (_server, cfg, sec) = start(server).await;
+    let engine = engine(cfg, sec).await;
+    for sql in ["START TRANSACTION", "SAVEPOINT a", "SAVEPOINT b", "SAVEPOINT a"] {
+        run(&engine, sql).await;
+    }
+    let before_release = engine.transaction(&tab()).unwrap().savepoints;
+    run(&engine, "RELEASE SAVEPOINT a").await;
+    let after_release = engine.transaction(&tab()).unwrap().savepoints;
+    // The older, differently named savepoint still exists on the server.
+    run(&engine, "ROLLBACK TO SAVEPOINT b").await;
+    run(&engine, "ROLLBACK").await;
+    assert_eq!(before_release, ["b", "a"]);
+    assert_eq!(after_release, ["b"]);
 }
 
 /// The table the result's first column was read from.
