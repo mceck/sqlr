@@ -53,8 +53,13 @@ pub struct Settings {
     pub terminal_cwd: String,
     /// Lines the terminal keeps in its scrollback, within [`TERMINAL_SCROLLBACK`].
     pub terminal_scrollback: usize,
+    /// The terminal's monospace font size, within [`TERMINAL_FONT_SIZES`].
+    pub terminal_font_size: f32,
 }
 
+/// The terminal font sizes the settings accept, in points.
+pub const TERMINAL_FONT_SIZES: std::ops::RangeInclusive<f32> = 10.0..=24.0;
+const DEFAULT_TERMINAL_FONT_SIZE: f32 = 12.0;
 /// The terminal scrollback sizes the settings accept, in lines.
 pub const TERMINAL_SCROLLBACK: std::ops::RangeInclusive<usize> = 100..=10_000;
 pub const MCP_PORTS: std::ops::RangeInclusive<u16> = 1024..=65535;
@@ -79,6 +84,7 @@ impl Default for Settings {
             terminal_shell: String::new(),
             terminal_cwd: String::new(),
             terminal_scrollback: 2000,
+            terminal_font_size: DEFAULT_TERMINAL_FONT_SIZE,
         }
     }
 }
@@ -110,6 +116,7 @@ impl Settings {
             terminal_cwd: get("terminal.cwd").as_str().to_string(),
             terminal_scrollback: (get("terminal.scrollback").as_i64() as usize)
                 .clamp(*TERMINAL_SCROLLBACK.start(), *TERMINAL_SCROLLBACK.end()),
+            terminal_font_size: get("terminal.font_size").as_f64() as f32,
         }
     }
 
@@ -167,6 +174,10 @@ impl Settings {
                 "terminal.scrollback",
                 SettingValue::Int(self.terminal_scrollback as i64),
             ),
+            (
+                "terminal.font_size",
+                SettingValue::Float(f64::from(self.terminal_font_size)),
+            ),
         ];
         for (id, value) in values {
             // Every field is in range here (the dialog clamps); a value that is not is
@@ -197,6 +208,13 @@ mod tests {
     fn load_with(text: &str) -> Settings {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("settings.toml"), text).unwrap();
+        Settings::load(dir.path()).unwrap()
+    }
+
+    fn load_values_with(text: &str) -> Settings {
+        let dir = tempfile::tempdir().unwrap();
+        let file = format!("version = 2\n[values]\n{text}");
+        std::fs::write(dir.path().join("settings.toml"), file).unwrap();
         Settings::load(dir.path()).unwrap()
     }
 
@@ -248,6 +266,16 @@ mod tests {
         assert!(old.line_numbers);
         assert!(!old.soft_wrap);
         assert_eq!(old.row_cap, 100_000);
+        assert_eq!(old.terminal_font_size, 12.0);
+
+        assert_eq!(
+            load_values_with("\"terminal.font_size\" = 5.0\n").terminal_font_size,
+            *TERMINAL_FONT_SIZES.start()
+        );
+        assert_eq!(
+            load_values_with("\"terminal.font_size\" = 99.0\n").terminal_font_size,
+            *TERMINAL_FONT_SIZES.end()
+        );
 
         assert_eq!(load_with("ui_scale = 5\n").ui_scale, *UI_SCALES.end());
         assert_eq!(load_with("ui_scale = 0.1\n").ui_scale, *UI_SCALES.start());
@@ -275,6 +303,7 @@ mod tests {
             terminal_shell: "zsh -l".into(),
             terminal_cwd: "/tmp".into(),
             terminal_scrollback: 5000,
+            terminal_font_size: 18.0,
             ..Settings::default()
         };
         settings.save(dir.path()).unwrap();

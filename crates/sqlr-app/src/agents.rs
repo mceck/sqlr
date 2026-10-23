@@ -1133,7 +1133,7 @@ impl SqlrApp {
             cursor: palette.accent,
             selection: palette.selection,
             ansi,
-            font_size: self.settings.mono_font_size,
+            font_size: self.settings.terminal_font_size,
         };
         self.terminal.set_config(sqlr_terminal::SessionConfig {
             shell: self.settings.terminal_shell.clone(),

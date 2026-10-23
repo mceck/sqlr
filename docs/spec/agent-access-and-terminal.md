@@ -262,12 +262,13 @@ New settings:
 | `agents.port` | int, 1024–65535 | `47821` | global only | Changing restarts the server |
 | `terminal.shell` | text | empty | global only | Empty means automatic; human-only, unreadable and unwritable by agents |
 | `terminal.cwd` | text | empty | global only | Empty means the user's home directory |
+| `terminal.font_size` | float, 10–24 | `12` | global only | Terminal text size in points |
 | `terminal.scrollback` | int, 100–10000 | `2000` | global only | Lines retained by the terminal |
 
 `agents.*` settings are readable by agents but never writable. `terminal.shell` is neither
-readable nor writable by agents. `terminal.cwd` and `terminal.scrollback` are readable and
-writable, subject to normal setting validation. None of these keys is exposed at profile
-or connection level.
+readable nor writable by agents. `terminal.cwd`, `terminal.font_size` and
+`terminal.scrollback` are readable and writable, subject to normal setting validation.
+None of these keys is exposed at profile or connection level.
 
 The MCP token has no setting row. Its lifecycle is an explicit Settings action. The
 Settings UI shows whether a token exists and confirms rotations; it does not store a token
@@ -626,9 +627,9 @@ available egui terminal crates do not support the pinned egui version.
   quoting work. The working directory defaults to the user's home directory.
 - Environment: inherit the application environment, set `TERM=xterm-256color` and
   `COLORTERM=truecolor`, and do not inject MCP tokens or agent-specific variables.
-- Terminal settings are global: shell command, working directory and scrollback. Changes
-  apply to the next Restart; the running session is not killed implicitly. Settings show
-  that behaviour.
+- Terminal settings are global: shell command, working directory, font size and
+  scrollback. Changes apply to the next Restart; the running session is not killed
+  implicitly. Settings show that behaviour. The font size applies immediately.
 - Rendering: only visible rows and the active scrollback window are painted. Cells are
   batched by style; the font is the app's monospace font and the ANSI palette is derived
   from the active theme. Support bold, dim, italic, underline, reverse video, 16-colour,
@@ -654,9 +655,10 @@ available egui terminal crates do not support the pinned egui version.
 - Security boundary: the terminal is human-only. No MCP tool can read it, write to it,
   start or stop it. The agent launched inside is an ordinary external MCP client and is
   subject to the same exposure, approvals and logging as any other client.
-- `terminal.shell` is human-only and unreadable through MCP. `terminal.cwd` and
-  `terminal.scrollback` are normal settings, readable and writable by agents. The shell
-  command is never included in `config_list`, logs, diagnostics or error messages.
+- `terminal.shell` is human-only and unreadable through MCP. `terminal.cwd`,
+  `terminal.font_size` and `terminal.scrollback` are normal settings, readable and
+  writable by agents. The shell command is never included in `config_list`, logs,
+  diagnostics or error messages.
 
 ### Application integration and threading
 
@@ -702,8 +704,9 @@ The UI is intentionally small and integrated rather than a new workspace.
 
 **Settings → Terminal**
 
-- Shell command, working directory (text plus a folder picker) and scrollback.
-- A note that changes apply on Restart.
+- Shell command, working directory (text plus a folder picker), font size and scrollback.
+- A note that shell, directory and scrollback changes apply on Restart; the font size
+  applies immediately.
 - A note that the shell command is not visible to agents and is never logged, and that it
   is stored like any other setting, so credentials should not be embedded in it; use the
   shell's own mechanisms instead.

@@ -305,7 +305,8 @@ The terminal is a real PTY with a login shell, opened with `Ctrl+Backtick` on ev
 platform and resized at the bottom of the workspace. It keeps running when hidden.\n\
 \n\
 It is human-only: no MCP tool can read, write, start or stop it. `terminal.shell` is not\n\
-readable through MCP; `terminal.cwd` and `terminal.scrollback` are ordinary settings.\n\
+readable through MCP; `terminal.cwd`, `terminal.font_size` and `terminal.scrollback` are\n\
+ordinary settings.\n\
 Output and the shell command are never logged, and no MCP token is placed in its\n\
 environment.\n\n\
 **Copy MCP config** in the terminal header copies the client configuration (including\n\

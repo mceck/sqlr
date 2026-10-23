@@ -31,7 +31,7 @@ pub use profiles::ProfileRepo;
 pub use secrets::{KeyringStore, MemorySecretStore, SecretStore};
 pub use settings::{
     CONNECT_TIMEOUTS_S, DEFAULT_MCP_PORT, MCP_PORTS, MONO_FONT_SIZES, PAGE_SIZES,
-    SIDECAR_IDLE_MINUTES, Settings, TERMINAL_SCROLLBACK, UI_SCALES,
+    SIDECAR_IDLE_MINUTES, Settings, TERMINAL_FONT_SIZES, TERMINAL_SCROLLBACK, UI_SCALES,
 };
 pub use tasks::{MAX_RUN_LOG_BYTES, RUNS_KEPT};
 pub use vault::{VaultMcpTokenStore, VaultSecretStore};

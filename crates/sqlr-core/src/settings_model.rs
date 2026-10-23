@@ -799,6 +799,20 @@ fn build_defs() -> Vec<SettingDef> {
             GlobalOnly,
         ),
         def(
+            "terminal.font_size",
+            "Terminal",
+            "Font size",
+            "The terminal's monospace size, in points.",
+            &["mono", "text", "points", "zoom"],
+            K::Float {
+                min: 10.0,
+                max: 24.0,
+                step: 1.0,
+            },
+            V::Float(12.0),
+            GlobalOnly,
+        ),
+        def(
             "terminal.scrollback",
             "Terminal",
             "Scrollback lines",
@@ -983,13 +997,17 @@ mod tests {
             let def = setting_def(id).unwrap();
             assert!(def.agent_readable && !def.agent_writable, "{id}");
         }
-        for id in ["terminal.cwd", "terminal.scrollback"] {
+        for id in ["terminal.cwd", "terminal.font_size", "terminal.scrollback"] {
             let def = setting_def(id).unwrap();
             assert!(def.agent_readable && def.agent_writable, "{id}");
         }
         assert_eq!(
             setting_def("agents.port").unwrap().default,
             SettingValue::Int(47821)
+        );
+        assert_eq!(
+            setting_def("terminal.font_size").unwrap().default,
+            SettingValue::Float(12.0)
         );
         assert_eq!(
             setting_def("terminal.scrollback").unwrap().default,
