@@ -195,6 +195,68 @@ fn key_char(key: Key, shift: bool) -> Option<char> {
     }
 }
 
+/// The PTY input one frame of egui events produces.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct EncodedInput {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) copy: bool,
+}
+
+/// Turns a frame of egui events into PTY bytes.
+///
+/// A printable key arrives twice: as [`egui::Event::Key`] and as the [`egui::Event::Text`] it
+/// produced. Only the text is sent, which also follows the keyboard layout and dead keys;
+/// encoding the key as well would send every character twice.
+pub(crate) fn encode_events(
+    events: &[egui::Event],
+    application_cursor: bool,
+    bracketed_paste: bool,
+    mac: bool,
+) -> EncodedInput {
+    let mut out = EncodedInput::default();
+    let mut alt = false;
+    for event in events {
+        match event {
+            egui::Event::Key {
+                key,
+                modifiers,
+                pressed: true,
+                ..
+            } => {
+                alt = false;
+                if *key == Key::Copy || (is_copy(*modifiers, mac) && *key == Key::C) {
+                    out.copy = true;
+                } else if *key == Key::Paste || (is_paste(*modifiers, mac) && *key == Key::V) {
+                    // egui turns the platform paste into Event::Paste below.
+                } else if is_text_key(*key) && !modifiers.ctrl && !modifiers.command {
+                    // The character itself arrives as Event::Text; decide the Alt prefix now.
+                    alt = modifiers.alt;
+                } else if let Some(bytes) = encode_key(*key, *modifiers, application_cursor, mac) {
+                    out.bytes.extend(bytes);
+                }
+            }
+            egui::Event::Text(text) => {
+                if alt {
+                    out.bytes.push(0x1b);
+                    alt = false;
+                }
+                out.bytes.extend_from_slice(text.as_bytes());
+            }
+            egui::Event::Paste(text) => {
+                out.bytes.extend(encode_paste(text, bracketed_paste));
+            }
+            egui::Event::Copy => out.copy = true,
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Keys that produce their character through [`egui::Event::Text`].
+fn is_text_key(key: Key) -> bool {
+    key_char(key, false).is_some()
+}
+
 /// Pasted text, bracketed when the application asked for it.
 pub fn encode_paste(text: &str, bracketed: bool) -> Vec<u8> {
     let text = text.replace("\r\n", "\n").replace('\n', "\r");
@@ -286,6 +348,65 @@ mod tests {
         );
         // The application shortcuts are not shell input.
         assert_eq!(encode_key(Key::C, Modifiers::COMMAND, false, true), None);
+    }
+
+    fn key(key: Key, modifiers: Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    #[test]
+    fn a_typed_character_is_sent_once() {
+        // The integration sends the key press and, right after it, the text it produced.
+        let events = [key(Key::A, m()), egui::Event::Text("a".into())];
+        assert_eq!(
+            encode_events(&events, false, false, false).bytes,
+            b"a".to_vec()
+        );
+        let events = [key(Key::A, Modifiers::SHIFT), egui::Event::Text("A".into())];
+        assert_eq!(
+            encode_events(&events, false, false, false).bytes,
+            b"A".to_vec()
+        );
+    }
+
+    #[test]
+    fn special_and_control_keys_still_encode() {
+        assert_eq!(
+            encode_events(&[key(Key::Enter, m())], false, false, false).bytes,
+            b"\r".to_vec()
+        );
+        assert_eq!(
+            encode_events(&[key(Key::ArrowUp, m())], false, false, false).bytes,
+            b"\x1b[A".to_vec()
+        );
+        assert_eq!(
+            encode_events(&[key(Key::C, Modifiers::CTRL)], false, false, false).bytes,
+            vec![0x03]
+        );
+    }
+
+    #[test]
+    fn alt_text_keeps_the_escape_prefix() {
+        let events = [key(Key::A, Modifiers::ALT), egui::Event::Text("a".into())];
+        assert_eq!(
+            encode_events(&events, false, false, false).bytes,
+            b"\x1ba".to_vec()
+        );
+    }
+
+    #[test]
+    fn copy_and_paste_events_reach_the_panel() {
+        let copy = encode_events(&[egui::Event::Copy], false, false, true);
+        assert!(copy.copy);
+        assert!(copy.bytes.is_empty());
+        let paste = encode_events(&[egui::Event::Paste("a\nb".into())], false, true, true);
+        assert_eq!(paste.bytes, b"\x1b[200~a\rb\x1b[201~".to_vec());
     }
 
     #[test]

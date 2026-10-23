@@ -3,11 +3,9 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use egui::{
-    Align2, Color32, CornerRadius, FontFamily, FontId, Key, Rect, Sense, Stroke, pos2, vec2,
-};
+use egui::{Align2, Color32, CornerRadius, FontFamily, FontId, Rect, Sense, Stroke, pos2, vec2};
 
-use crate::input::{encode_key, encode_paste, is_copy, is_paste};
+use crate::input::encode_events;
 use crate::screen::{CellView, ScreenSnapshot, TermColor};
 use crate::session::{SessionConfig, TerminalSession, TerminalStatus};
 
@@ -561,43 +559,20 @@ impl TerminalPanel {
 
         let mac = ui.ctx().os() == egui::os::OperatingSystem::Mac;
         if self.focused {
-            let mut input = Vec::new();
-            let mut copy = false;
-            ui.input(|i| {
-                for event in &i.events {
-                    match event {
-                        egui::Event::Key {
-                            key,
-                            modifiers,
-                            pressed: true,
-                            ..
-                        } => {
-                            if *key == Key::Copy || (is_copy(*modifiers, mac) && *key == Key::C) {
-                                copy = true;
-                            } else if *key == Key::Paste
-                                || (is_paste(*modifiers, mac) && *key == Key::V)
-                            {
-                                // egui turns the platform paste into Event::Paste below.
-                            } else if let Some(bytes) =
-                                encode_key(*key, *modifiers, snapshot.application_cursor, mac)
-                            {
-                                input.extend(bytes);
-                            }
-                        }
-                        egui::Event::Text(text) => input.extend_from_slice(text.as_bytes()),
-                        egui::Event::Paste(text) => {
-                            input.extend(encode_paste(text, snapshot.bracketed_paste));
-                        }
-                        _ => {}
-                    }
-                }
+            let encoded = ui.input(|i| {
+                encode_events(
+                    &i.events,
+                    snapshot.application_cursor,
+                    snapshot.bracketed_paste,
+                    mac,
+                )
             });
-            if copy {
+            if encoded.copy {
                 self.copy(ui.ctx(), snapshot);
             }
-            if !input.is_empty() {
+            if !encoded.bytes.is_empty() {
                 if let Some(session) = &self.session {
-                    session.write(&input);
+                    session.write(&encoded.bytes);
                 }
                 self.scroll = 0;
             }
