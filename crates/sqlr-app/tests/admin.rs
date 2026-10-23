@@ -662,7 +662,10 @@ fn panels_follow_the_drivers_support() {
     // ⌘K lists the panels of the active tab's connection.
     let (mut h, _driver, _dir) = harness(full_admin());
     connect(&mut h);
-    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
+    h.key_press_modifiers(
+        egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+        egui::Key::P,
+    );
     h.run_steps(2);
     h.event(egui::Event::Text("sessions and".into()));
     wait_for_label(&mut h, "Sessions and locks: fake-conn");

@@ -278,23 +278,18 @@ fn welcome_card_opens_the_dialog_on_its_driver() {
 fn settings_open_the_databases_matrix() {
     let dir = tempfile::tempdir().unwrap();
     let mut h = harness(dir.path());
-    h.key_press_modifiers(Modifiers::COMMAND, Key::Comma);
-    h.run_steps(3);
-    // The settings page (the explorer's pane tab has the same name).
-    h.get_all_by_label("Connections").last().unwrap().click();
-    h.run_steps(3);
-    h.get_by_label("Databases…").click();
+    h.state_mut().open_databases_matrix_for_tests();
     h.run_steps(30);
     assert!(
-        h.query_all_by_label("Installable").count() > 1,
-        "the JDBC databases install from the registry"
+        h.query_all_by_label("Needs driver file").count() > 1,
+        "the JDBC databases install from a local file"
     );
     assert!(h.query_all_by_label("Planned (later)").count() >= 1);
     // This build has no Redis, MongoDB or Elasticsearch driver: their entries say so.
     assert!(h.query_all_by_label("Driver missing").count() > 1);
     h.get_by_label("Close").click();
     h.run_steps(3);
-    assert!(h.query_all_by_label("Installable").next().is_none());
+    assert!(h.query_all_by_label("Needs driver file").next().is_none());
 }
 
 #[test]

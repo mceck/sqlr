@@ -10,7 +10,7 @@ sqlr is an open-source, universal database client for relational and NoSQL datab
 
 - One native app for relational, document and key-value databases.
 - Measurable lightness (see §1.3). These are hard requirements, not aspirations.
-- A modular driver system. Adding a database means writing a driver without changing the app. Drivers that do not ship with the app can be downloaded on demand from a registry.
+- A modular driver system. Adding a database means writing a driver without changing the app. Drivers that do not ship with the app install from a local driver file.
 - Open source and community-extensible.
 
 ### 1.2 Non-goals
@@ -47,7 +47,7 @@ These targets rule out Electron, any webview, and the JVM. They are why the UI i
 6. **Native NoSQL viewers:** table, tree and JSON views for documents (MongoDB, Elasticsearch), and a typed key browser for Redis.
 7. **Export/import:** CSV, JSON, SQL.
 8. **Query history and saved snippets.**
-9. **Command palette:** ⌘P "open object" and ⌘K "run command".
+9. **Command palette:** ⌘P "open object" and ⌘⇧P "run command".
 
 ### Additional product features
 
@@ -81,8 +81,10 @@ These targets rule out Electron, any webview, and the JVM. They are why the UI i
 | MongoDB | Document | Bundled |
 | Elasticsearch | Document (+ tabular query) | Bundled |
 | Redis | Key-value | Bundled |
-| SAP HANA | Relational | Downloadable (sidecar) |
-| Any database with a JDBC driver (SQL Server, Oracle, Db2, ClickHouse, Snowflake, DuckDB, H2, …) | Relational | Downloadable (JDBC bridge sidecar, needs Java 17+) |
+| SQL Server | Relational | Bundled (`tiberius`) |
+| Oracle | Relational | Bundled (`oracle-rs`, no OCI) |
+| SAP HANA | Relational | Install from a file (sidecar) |
+| Any database with a JDBC driver (Db2, ClickHouse, Snowflake, DuckDB, H2, …) | Relational | Install from a file (JDBC bridge sidecar, needs Java 17+) |
 
 ## 3. Technology choices
 
@@ -118,7 +120,7 @@ These targets rule out Electron, any webview, and the JVM. They are why the UI i
 | `sqlr-driver-elastic` | Bundled driver (REST via `reqwest`). |
 | `sqlr-driver-redis` | Bundled driver (`redis-rs`). |
 | `sqlr-sidecar` | The sidecar protocol: the codec and the core-side `SidecarDriver` client. |
-| `sqlr-engine` | The tokio runtime, sessions and pools, query execution and cancellation, `ResultStore`, the catalog cache and the driver registry client. |
+| `sqlr-engine` | The tokio runtime, sessions and pools, query execution and cancellation, `ResultStore`, the catalog cache and installed-driver management. |
 | `sqlr-store` | Connections (TOML), secrets (keychain), and history, snippets, catalog cache and layout (SQLite). |
 | `sqlr-ui` | Reusable egui widgets: `QueryEditor`, `ResultGrid`, `SchemaTree`, `DocTree`, `JsonView`, `KeyBrowser`, `KeyValueView`, `ValuePanel`, `Palette`. |
 | `sqlr-app` | The binary: eframe shell, layout, wiring and settings. |
@@ -208,7 +210,7 @@ The manifest declares its fields: type, label, default, required, secret flag, a
 
   `SAP/go-hdb` in a Go sidecar remains the fallback if `hdbconnect` maintenance stalls.
 
-## 6. Modular drivers: sidecars, SDK, registry
+## 6. Modular drivers: sidecars, SDK, local driver files
 
 ### 6.1 Why sidecars
 
@@ -237,19 +239,23 @@ IPC cost is negligible: binary columnar chunks over pipes run at hundreds of MB/
   - **as a sidecar binary**, through a 3-line `main.rs` that calls `serve`.
 - Drivers in other languages implement the documented protocol. The spec lives at `docs/driver-protocol.md`.
 - `cargo generate` template: `sqlr-driver-template`.
-- **Conformance suite (`sqlr-driver-tests`):** a reusable test harness that runs against a real database in Docker. It checks connect, ping, browse, execute and streaming, `fetch_more`, cancellation, the type round-trip matrix and editing. Any driver that passes it is eligible for the registry.
+- **Conformance suite (`sqlr-driver-tests`):** a reusable test harness that runs against a real database in Docker. It checks connect, ping, browse, execute and streaming, `fetch_more`, cancellation, the type round-trip matrix and editing. Any driver that passes it can be packaged as a local driver file.
 
-### 6.4 Registry and Driver Manager
+### 6.4 Driver Manager and local driver files
 
-- **Registry:** a JSON index in a public GitHub repository (`sqlr-drivers`). Each entry contains:
-  - `id`, `version`, `min_protocol` and `family`;
-  - a description and homepage;
-  - per-platform artifacts (macOS arm64/x64, Windows x64/arm64, Linux x64/arm64) with URL, sha256 and an ed25519 (minisign) signature.
-- **Driver Manager UI:** search, install, update and remove drivers. When a user creates a connection for a database whose driver is not installed, the app offers a one-click install.
-- **Install location:** `<user data dir>/drivers/<id>/<version>/`, with a `driver.toml` manifest and the executable. Several versions can coexist, so rolling back is instant.
-- **Trust:**
-  - Drivers from the official registry must verify against the project's signing key.
-  - Third-party drivers can be installed manually from a file, but only after an explicit warning.
+- **Install source:** only a local driver archive the user picks. sqlr does not browse or fetch
+  a remote index, so there is no background update check and no remote code install.
+- **Driver Manager UI:** search, install from a file, roll back between installed versions,
+  remove versions or a driver, and restart a sidecar. When a user creates a connection for a
+  database whose driver is not installed, the app opens the manager and points at
+  **Install from file…**.
+- **Install location:** `<user data dir>/drivers/<id>/<version>/`, with a `driver.toml`
+  manifest and the executable. Several versions can coexist, so rolling back is instant.
+- **Review:** an archive is inspected first; the user sees its id, version, size and SHA-256,
+  and is told that the driver runs with their rights and receives connection passwords.
+  Nothing is installed or started before an explicit confirmation.
+- **Trust:** a file is never signed or verified by sqlr on the user's behalf. The review step
+  is the trust boundary; install only archives from a source you trust.
 
 ## 7. Data flow
 
@@ -397,7 +403,7 @@ All widgets take data in and return action values. None of them calls the engine
 
 **`Palette`**
 - ⌘P "open object" does fuzzy search over the catalog cache across all connections.
-- ⌘K "run command" covers app actions, history search and new connection.
+- ⌘⇧P "run command" covers app actions, history search and new connection.
 
 ### 8.3 Other app features
 
@@ -406,7 +412,7 @@ All widgets take data in and return action values. None of them calls the engine
 - **Export:** CSV, JSON or SQL `INSERT`s, from a result or from a whole table or collection. Export streams and is cancellable.
 - **Import:** CSV and JSON into a table or collection, with column mapping. SQL files open in the editor and run as scripts.
 - **Themes:** curated light and dark themes, a configurable monospace font, and fully remappable shortcuts.
-- **Operations monitor:** a dockable Operations panel, opened from the toolbar activity indicator or ⌘K, lists every in-flight client operation — connect attempts, explorer/catalog reads, queries, fetches, scripts and background jobs — with its kind, connection, target, elapsed time, progress and state. Each cancellable entry has **Cancel**, and **Cancel all** asks once. Cancelling a connect drops the attempt and tears down any SSH tunnel or sidecar start it owned, so the row ends *Cancelled* instead of waiting for the timeout. Finished operations stay listed for a configurable time and then disappear; their outcome is still reported by the toast or result tab that owned them. The panel is client-side only: server sessions and locks remain in §8.4.
+- **Operations monitor:** a dockable Operations panel, opened from the toolbar activity indicator or ⌘⇧P, lists every in-flight client operation — connect attempts, explorer/catalog reads, queries, fetches, scripts and background jobs — with its kind, connection, target, elapsed time, progress and state. Each cancellable entry has **Cancel**, and **Cancel all** asks once. Cancelling a connect drops the attempt and tears down any SSH tunnel or sidecar start it owned, so the row ends *Cancelled* instead of waiting for the timeout. Finished operations stay listed for a configurable time and then disappear; their outcome is still reported by the toast or result tab that owned them. The panel is client-side only: server sessions and locks remain in §8.4.
 
 ### 8.4 Object editors and administration
 

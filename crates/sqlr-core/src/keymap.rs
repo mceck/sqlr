@@ -509,7 +509,7 @@ mod tests {
 
         // Off macOS, ⌘ and Control are one key; on macOS they are two.
         let mut keymap = Keymap::preset("sqlr").unwrap();
-        keymap.bind(ActionId::Commit, Chord::parse("Ctrl+K").unwrap());
+        keymap.bind(ActionId::Commit, Chord::parse("Ctrl+Shift+P").unwrap());
         assert_eq!(keymap.conflicts(true), vec![]);
         assert_eq!(keymap.conflicts(false).len(), 1);
 

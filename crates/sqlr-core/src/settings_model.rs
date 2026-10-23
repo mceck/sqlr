@@ -823,16 +823,6 @@ fn build_defs() -> Vec<SettingDef> {
             All,
         ),
         def(
-            "drivers.registry_url",
-            "Drivers",
-            "Driver registry URL",
-            "The index the driver manager reads (https:// or file://); empty means the default.",
-            &["registry", "mirror", "index", "sidecar"],
-            K::Text,
-            text(""),
-            GlobalOnly,
-        ),
-        def(
             "drivers.sidecar_idle_minutes",
             "Drivers",
             "Sidecar idle time (min)",

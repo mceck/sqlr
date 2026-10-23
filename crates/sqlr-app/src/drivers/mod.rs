@@ -1,6 +1,6 @@
-//! The Driver Manager and the install prompts: the window that lists,
-//! installs, updates and removes drivers, the review step of an install from a file, and
-//! the "Install" a missing driver offers wherever it is needed.
+//! The Driver Manager and the install prompts: the window that lists and removes drivers
+//! installed from local files, the review step of a file install, and the "Install from
+//! file…" a missing driver offers wherever it is needed.
 
 mod install_prompt;
 mod manager;
@@ -36,13 +36,11 @@ impl ManualPick {
     }
 }
 
-/// An install the user asked for before the registry index was loaded: it starts when the
-/// index arrives and, when it came from the new-connection catalog, continues into the
-/// connection form.
+/// An install the user asked for: it opens the file picker once and, when it came from the
+/// new-connection catalog, continues into the connection form.
 pub(crate) struct PendingInstall {
     pub driver: String,
     pub known: Option<&'static str>,
-    pub started: bool,
 }
 
 #[derive(Default)]

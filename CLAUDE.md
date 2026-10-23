@@ -12,7 +12,7 @@ sqlr is a lightweight, universal database client in native Rust + egui. No webvi
 | `sqlr-driver-*` | one driver per database (`tokio-postgres`, …) | `sqlr-core` |
 | `sqlr-engine` | tokio runtime off the UI thread: sessions, explorer/catalog cache, results, history, installed sidecar drivers | `sqlr-core`, `sqlr-store`, `sqlr-registry`, `sqlr-sidecar` |
 | `sqlr-sidecar` | sidecar protocol, `SidecarDriver` client, `serve` loop | `sqlr-core` |
-| `sqlr-registry` | signed driver registry, installs, versions (no UI) | `sqlr-core`, `sqlr-sidecar` |
+| `sqlr-registry` | driver-file installs, versions and review (no UI) | `sqlr-core`, `sqlr-sidecar` |
 | `sqlr-driver-sdk` | write a driver as a sidecar: re-exports the API, `run` | `sqlr-core`, `sqlr-sidecar` |
 | `sqlr-driver-tests` | conformance suite for drivers (dev-dependency only) | `sqlr-core` |
 | `sqlr-store` | connections TOML, OS keychain secrets, settings | `sqlr-core` |

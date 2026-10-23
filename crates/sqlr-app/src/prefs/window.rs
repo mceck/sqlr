@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use egui::{Align, ComboBox, Frame, Id, Layout, Margin, RichText, Stroke, vec2};
+use egui::{Align, ComboBox, Frame, Id, Layout, Margin, Stroke, vec2};
 use sqlr_core::{Level, SECTIONS, SettingDef, search_settings, setting_defs};
 use sqlr_store::LayeredSettings;
 use sqlr_ui::theme::{self, Spacing, icons};
@@ -323,7 +323,7 @@ impl PrefsWindow {
                 ui.horizontal(|ui| {
                     if ui
                         .button("Drivers…")
-                        .on_hover_text("Install, update and remove drivers")
+                        .on_hover_text("Install drivers from local files, and remove them")
                         .clicked()
                     {
                         self.open_drivers = true;
@@ -336,12 +336,6 @@ impl PrefsWindow {
                         self.open_databases = true;
                     }
                 });
-                ui.add_space(Spacing::S);
-                ui.label(
-                    RichText::new("The registry URL applies after a restart.")
-                        .small()
-                        .weak(),
-                );
             }
             _ => {}
         }

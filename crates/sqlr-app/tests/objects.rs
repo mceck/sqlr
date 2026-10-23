@@ -590,14 +590,20 @@ fn command_palette_creates_and_edits_objects() {
     // "Edit object…" opens the selected explorer node.
     h.get_by_label("orders").click();
     h.run_steps(2);
-    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
+    h.key_press_modifiers(
+        egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+        egui::Key::P,
+    );
     h.run_steps(2);
     h.event(egui::Event::Text("edit object".into()));
     h.run_steps(2);
     h.key_press(egui::Key::Enter);
     step_until(&mut h, "the editor", |h| h.query(field("total")).is_some());
     // "New table…" creates on the active tab's connection.
-    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
+    h.key_press_modifiers(
+        egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+        egui::Key::P,
+    );
     h.run_steps(2);
     h.event(egui::Event::Text("new table".into()));
     h.run_steps(2);

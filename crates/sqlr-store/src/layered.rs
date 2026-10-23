@@ -256,7 +256,6 @@ fn read_global(table: &toml::Table) -> Values {
         ("ui_scale", "appearance.ui_scale"),
         ("line_numbers", "editor.line_numbers"),
         ("soft_wrap", "editor.soft_wrap"),
-        ("registry_url", "drivers.registry_url"),
         ("sidecar_idle_minutes", "drivers.sidecar_idle_minutes"),
     ];
     for (old, new) in OLD {
@@ -272,11 +271,6 @@ fn read_global(table: &toml::Table) -> Values {
             && let Some(s) = json.as_str()
         {
             json = s.to_lowercase().into();
-        }
-        if *old == "registry_url"
-            && let Some(s) = json.as_str()
-        {
-            json = s.trim().into();
         }
         if let Some(v) = def.from_json(&json) {
             out.insert((*new).to_string(), v);

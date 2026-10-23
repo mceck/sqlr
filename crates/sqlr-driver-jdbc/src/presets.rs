@@ -1,9 +1,9 @@
-//! The databases the bridge knows by name: JDBC class, URL shape, form, SQL quirks. Maven
-//! coordinates of their jars live in the signed registry index, not here.
+//! The databases the bridge knows by name: JDBC class, URL shape, form, SQL quirks. The
+//! jars arrive with a driver file or are picked in the connection form.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Preset {
-    /// The driver id, as the registry and saved connections name it.
+    /// The driver id, as the bridge and saved connections name it.
     pub id: &'static str,
     pub name: &'static str,
     /// The JDBC driver class; empty for the generic bridge, which asks for it.
@@ -145,8 +145,8 @@ mod tests {
     }
 
     #[test]
-    fn registry_ids_match_the_known_databases() {
-        // The ids the catalog (sqlr-core/known.rs) offers for install.
+    fn preset_ids_cover_the_jdbc_catalog() {
+        // The ids the JDBC entries of the catalog (sqlr-core/known.rs) use.
         for id in [
             "jdbc",
             "jdbc-sqlserver",

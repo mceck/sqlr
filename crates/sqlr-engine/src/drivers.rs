@@ -1,6 +1,6 @@
-//! Drivers that do not ship with the app: the registry index, installs,
-//! updates and rollbacks, manual installs, and the sidecars registered from the install
-//! directory at startup and after every change, with no restart.
+//! Drivers that do not ship with the app: installs, version rollbacks and manual installs
+//! from a local driver file, and the sidecars registered from the install directory at
+//! startup and after every change, with no restart.
 //!
 //! Every method returns immediately; a job runs on the engine runtime and the UI reads the
 //! state each frame. Nothing is fetched until a caller asks (spec §1.2: no background
@@ -13,10 +13,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use parking_lot::Mutex;
-use sqlr_registry::{
-    DEFAULT_INDEX_URL, InstalledDriver, ManualInspection, REGISTRY_PUBLIC_KEY, Registry,
-    RegistryEntry,
-};
+use sqlr_registry::{InstalledDriver, ManualInspection, Registry};
 use sqlr_sidecar::{SidecarDriver, SidecarSpec};
 
 use crate::engine::{Command, Engine, Shared};
@@ -27,16 +24,6 @@ use crate::registry::DriverRegistry;
 pub enum DriverJobState {
     Running { done: u64, total: Option<u64> },
     Done,
-    Failed(String),
-}
-
-/// The registry index as last fetched.
-#[derive(Clone, Debug, PartialEq)]
-pub enum IndexState {
-    /// Not fetched yet: nothing is fetched until the Driver Manager asks.
-    Idle,
-    Loading,
-    Ready(Arc<Vec<RegistryEntry>>),
     Failed(String),
 }
 
@@ -53,7 +40,6 @@ pub enum ManualState {
 struct Hub {
     registry: Option<Arc<Registry>>,
     idle: Duration,
-    index: IndexState,
     installed: Vec<InstalledDriver>,
     jobs: BTreeMap<String, DriverJobState>,
     manual: ManualState,
@@ -74,7 +60,6 @@ impl DriverHub {
             inner: Mutex::new(Hub {
                 registry: None,
                 idle: Duration::from_secs(300),
-                index: IndexState::Idle,
                 installed: Vec::new(),
                 jobs: BTreeMap::new(),
                 manual: ManualState::None,
@@ -141,47 +126,13 @@ impl DriverHub {
     }
 }
 
-fn progress_to(shared: &Arc<Shared>, id: &str) -> impl Fn(u64, Option<u64>) + Send + Sync + use<> {
-    let shared = shared.clone();
-    let id = id.to_string();
-    move |done, total| {
-        shared
-            .drivers_hub
-            .inner
-            .lock()
-            .jobs
-            .insert(id.clone(), DriverJobState::Running { done, total });
-        shared.repaint();
-    }
-}
-
 impl Engine {
-    /// Points the engine at the install directory and the registry, and registers the
-    /// drivers installed there (on the runtime: the UI thread never reads the disk).
-    /// `index_url` empty means the default registry; `idle_minutes` is how long a sidecar
-    /// outlives its last connection.
-    pub fn configure_drivers(&self, data_dir: &Path, index_url: &str, idle_minutes: u32) {
-        self.configure_drivers_with_key(data_dir, index_url, idle_minutes, REGISTRY_PUBLIC_KEY);
-    }
-
-    /// [`Engine::configure_drivers`] with another registry key (tests sign their own index).
-    pub fn configure_drivers_with_key(
-        &self,
-        data_dir: &Path,
-        index_url: &str,
-        idle_minutes: u32,
-        public_key: &str,
-    ) {
-        let url = if index_url.trim().is_empty() {
-            DEFAULT_INDEX_URL
-        } else {
-            index_url.trim()
-        };
-        let registry = Arc::new(Registry::new(
-            data_dir.to_path_buf(),
-            url.to_string(),
-            public_key,
-        ));
+    /// Points the engine at the install directory and registers the drivers installed
+    /// there (on the runtime: the UI thread never reads the disk). `idle_minutes` is how
+    /// long a sidecar outlives its last connection. Non-bundled drivers install only from
+    /// a local file, so there is no index to fetch.
+    pub fn configure_drivers(&self, data_dir: &Path, idle_minutes: u32) {
+        let registry = Arc::new(Registry::new(data_dir.to_path_buf(), String::new(), ""));
         {
             let mut hub = self.shared.drivers_hub.inner.lock();
             hub.registry = Some(registry.clone());
@@ -214,13 +165,9 @@ impl Engine {
         self.shared.drivers_hub.loaded.load(Ordering::Acquire)
     }
 
-    /// Changes whenever the installed drivers, the index, a job or a manual install did.
+    /// Changes whenever the installed drivers, a job or a manual install did.
     pub fn drivers_revision(&self) -> u64 {
         self.shared.drivers_hub.revision.load(Ordering::Acquire)
-    }
-
-    pub fn driver_index(&self) -> IndexState {
-        self.shared.drivers_hub.inner.lock().index.clone()
     }
 
     pub fn installed_drivers(&self) -> Vec<InstalledDriver> {
@@ -238,55 +185,6 @@ impl Engine {
 
     pub fn manual_install(&self) -> ManualState {
         self.shared.drivers_hub.inner.lock().manual.clone()
-    }
-
-    /// Fetches the registry index (the Driver Manager's Refresh).
-    pub fn refresh_driver_index(&self) {
-        let Some(registry) = self.shared.drivers_hub.registry() else {
-            return;
-        };
-        self.shared.drivers_hub.inner.lock().index = IndexState::Loading;
-        let shared = self.shared.clone();
-        self.shared.send(Command::Spawn(Box::pin(async move {
-            let state = match registry.fetch_index().await {
-                Ok(entries) => IndexState::Ready(Arc::new(entries)),
-                Err(e) => IndexState::Failed(e.to_string()),
-            };
-            shared.drivers_hub.inner.lock().index = state;
-            shared.drivers_hub.bump(&shared);
-        })));
-        self.shared.repaint();
-    }
-
-    /// Installs (or updates to) the version the index lists for `id`.
-    pub fn install_driver(&self, id: &str) {
-        let hub = &self.shared.drivers_hub;
-        let (Some(registry), IndexState::Ready(index)) = (hub.registry(), self.driver_index())
-        else {
-            self.fail_job(id, "the registry index is not loaded");
-            return;
-        };
-        let Some(entry) = index.iter().find(|e| e.id == id).cloned() else {
-            self.fail_job(id, "the registry does not list this driver");
-            return;
-        };
-        hub.inner.lock().jobs.insert(
-            id.to_string(),
-            DriverJobState::Running {
-                done: 0,
-                total: None,
-            },
-        );
-        let (shared, id) = (self.shared.clone(), id.to_string());
-        self.shared.send(Command::Spawn(Box::pin(async move {
-            let result = registry.install(&entry, progress_to(&shared, &id)).await;
-            let state = match result {
-                Ok(_) => DriverJobState::Done,
-                Err(e) => DriverJobState::Failed(e.to_string()),
-            };
-            finish_job(&shared, &registry, &id, state).await;
-        })));
-        self.shared.repaint();
     }
 
     /// Makes `version` of `id` the active one (rollback).
@@ -398,16 +296,6 @@ impl Engine {
             hub.jobs.remove(id);
         }
         drop(hub);
-        self.shared.drivers_hub.bump(&self.shared);
-    }
-
-    fn fail_job(&self, id: &str, message: &str) {
-        self.shared
-            .drivers_hub
-            .inner
-            .lock()
-            .jobs
-            .insert(id.to_string(), DriverJobState::Failed(message.to_string()));
         self.shared.drivers_hub.bump(&self.shared);
     }
 }

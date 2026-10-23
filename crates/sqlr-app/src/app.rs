@@ -14,7 +14,9 @@ use sqlr_core::{
 };
 use sqlr_driver_elastic::ElasticDriver;
 use sqlr_driver_mongo::MongoDriver;
+use sqlr_driver_mssql::SqlServerDriver;
 use sqlr_driver_mysql::MysqlDriver;
+use sqlr_driver_oracle::OracleDriver;
 use sqlr_driver_postgres::PostgresDriver;
 use sqlr_driver_redis::RedisDriver;
 use sqlr_driver_sqlite::SqliteDriver;
@@ -106,6 +108,8 @@ pub fn production_deps_in(
     let mut drivers = DriverRegistry::default();
     drivers.register(PostgresDriver::new());
     drivers.register(MysqlDriver::new());
+    drivers.register(SqlServerDriver::new());
+    drivers.register(OracleDriver::new());
     drivers.register(SqliteDriver::new());
     drivers.register(MongoDriver::new());
     drivers.register(ElasticDriver::new());
@@ -114,7 +118,7 @@ pub fn production_deps_in(
     let (db, startup_notice) = open_db_or_memory(db_path.as_deref());
     let engine = Engine::with_db(drivers, repaint, db);
     if let Some(data) = &data_dir {
-        engine.configure_drivers(data, &settings.registry_url, settings.sidecar_idle_minutes);
+        engine.configure_drivers(data, settings.sidecar_idle_minutes);
     }
     engine.set_secret_store(Arc::new(KeyringStore));
     if let Some(data) = &data_dir {
@@ -551,15 +555,10 @@ impl SqlrApp {
         self.open_known_connection(id);
     }
 
-    /// Where the driver registry's index stands: `idle`, `loading`, `ready` or `failed`.
+    /// Opens the read-only databases matrix (the settings page's "Databases…").
     #[doc(hidden)]
-    pub fn driver_index_status(&self) -> &'static str {
-        match self.engine.driver_index() {
-            sqlr_engine::IndexState::Idle => "idle",
-            sqlr_engine::IndexState::Loading => "loading",
-            sqlr_engine::IndexState::Ready(_) => "ready",
-            sqlr_engine::IndexState::Failed(_) => "failed",
-        }
+    pub fn open_databases_matrix_for_tests(&mut self) {
+        self.databases_dialog = Some(crate::databases_dialog::DatabasesDialog::matrix());
     }
 
     /// Every tab's server database, in dock order.

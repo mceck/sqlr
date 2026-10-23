@@ -23,10 +23,10 @@ when you connect).
 | `jdbc-duckdb` | DuckDB | file |
 | `jdbc-h2` | H2 | file or `mem:` URL part, user, password |
 
-The registry entry of each carries the Maven coordinates (group, artifact, version, sha256) of its
-JDBC jar; the Driver Manager downloads them into the driver's `jars/` directory and refuses a jar
-whose sha256 differs from the signed index. Generic JDBC takes any jar you have: pick it in the
-form (or list more, separated by `;`).
+Each preset names the JDBC class and URL shape. The JDBC jar is not downloaded: package it
+with the driver (see below) or pick a jar in the connection form. Generic JDBC takes any jar
+you have (or list more, separated by `;`). SQL Server and Oracle are now native drivers and no
+longer need the bridge.
 
 ## Install from a file
 

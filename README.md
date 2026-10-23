@@ -8,7 +8,7 @@ A universal database client: native Rust, egui, no webview. One app for relation
 ## What it does
 
 - **Edit data in the grid**: double-click a cell, add/duplicate/delete rows, changes tinted until **Preview** (the generated SQL), **Apply** or **Discard**; concurrent changes are detected and named.
-- **SQL editor built for big scripts**: only visible lines are laid out; a 10 MB file scrolls and takes typing in well under a frame. Statement coloring, autocomplete, find/replace, multi-caret editing, SQL formatting (⌥⌘L), a command palette (⌘K) over commands, snippets and history.
+- **SQL editor built for big scripts**: only visible lines are laid out; a 10 MB file scrolls and takes typing in well under a frame. Statement coloring, autocomplete, find/replace, multi-caret editing, SQL formatting (⌥⌘L), a command palette (⌘⇧P) over commands, snippets and history.
 - **Profiles and commit modes** per connection: Development / Test / Production, each with its color, commit mode (**Auto**, **Manual**, **Smart**), read-only flag and confirmation rules for writes and destructive statements.
 - **Object editors**: tables, views, indexes, sequences, functions, triggers, schemas and databases open in tabs with sub-tabs; edits stay pending until **Apply**, with a **Preview DDL** first. Create, rename (F2), drop, truncate, generate SQL, copy DDL.
 - **Export and import**: CSV, TSV, JSON, JSON Lines, SQL `INSERT`, Markdown with column mapping, batching in one transaction, and bad rows reported by line.
@@ -27,12 +27,14 @@ A universal database client: native Rust, egui, no webview. One app for relation
 |---|---|---|
 | PostgreSQL (and compatible servers) | `tokio-postgres` | TLS (`disable` … `verify-full`, rustls), SSH tunnel |
 | MySQL 8 / MariaDB 11 | `mysql_async` | TLS (rustls), SSH tunnel |
+| SQL Server 2016+ | `tiberius` (rustls) | native TDS, SQL and Windows-less authentication, SSH tunnel |
+| Oracle 12c+ | `oracle-rs` (pure Rust) | no Oracle Instant Client or OCI, TLS, SSH tunnel |
 | SQLite 3 | `rusqlite` (bundled) | files, read-only open |
 | MongoDB | `mongodb` (rustls) | [Mongo shell subset](docs/mongo-shell-subset.md), TLS, SSH tunnel |
 | Elasticsearch 7.17 / 8.x | `reqwest` (rustls) | Kibana-console requests, ES\|QL and SQL, SSH tunnel |
 | Redis (standalone) | `redis` (rustls) | key browser, console, TLS, SSH tunnel |
-| SAP HANA | `hdbconnect_async` sidecar (installable) | TLS with a custom CA [docs/drivers/hana.md](docs/drivers/hana.md) |
-| SQL Server, Oracle, Db2, ClickHouse, Snowflake, DuckDB, H2, any JDBC | JDBC bridge sidecar (installable, Java 17+) | [docs/drivers/jdbc.md](docs/drivers/jdbc.md) |
+| SAP HANA | `hdbconnect_async` sidecar (install from a file) | TLS with a custom CA [docs/drivers/hana.md](docs/drivers/hana.md) |
+| Db2, ClickHouse, Snowflake, DuckDB, H2, any JDBC | JDBC bridge sidecar (install from a file, Java 17+) | [docs/drivers/jdbc.md](docs/drivers/jdbc.md) |
 
 A connection can be pasted as a URL (`postgresql://user@host:5432/db`, `sqlite:/path`, …); a password inside a URL is refused.
 
@@ -43,7 +45,7 @@ Drivers run as separate processes against a fixed protocol a crash takes down on
 1. Generate a skeleton from `templates/sqlr-driver-template`.
 2. Implement the driver with [`sqlr-driver-sdk`](crates/sqlr-driver-sdk) and launch it with `run(MyDriver)`.
 3. Check it with the conformance suite in `crates/sqlr-driver-tests`.
-4. Ship it via the Driver Manager (Settings → Drivers…): install, update, rollback, remove with sha256 checks and minisign signatures. **Install from file…** is available now; the registry is not yet published.
+4. Package it with `scripts/package-driver.sh` and install it through **Settings → Drivers… → Install from file…**. The Driver Manager keeps every version, so rollback and removal need no restart; a file is the only install source.
 
 Start with [docs/writing-a-driver.md](docs/writing-a-driver.md) and [docs/driver-protocol.md](docs/driver-protocol.md).
 
@@ -52,10 +54,10 @@ Start with [docs/writing-a-driver.md](docs/writing-a-driver.md) and [docs/driver
 | Crate | Role |
 |---|---|
 | `sqlr-core` | domain types, columnar chunks, driver traits |
-| `sqlr-driver-*` | one driver per database (PostgreSQL, MySQL, SQLite, Mongo, Elasticsearch, Redis, JDBC) |
+| `sqlr-driver-*` | one driver per database (PostgreSQL, MySQL, SQL Server, Oracle, SQLite, Mongo, Elasticsearch, Redis, JDBC) |
 | `sqlr-engine` | tokio runtime off the UI thread: sessions, catalog cache, results, history, sidecar drivers |
 | `sqlr-sidecar` | sidecar protocol, `SidecarDriver` client, `serve` loop |
-| `sqlr-registry` | signed driver registry, installs, versions (no UI) |
+| `sqlr-registry` | driver-file installs, versions and a local-file review step (no UI) |
 | `sqlr-driver-sdk` | write a driver as a sidecar: re-exports the API, `run` |
 | `sqlr-store` | connections TOML, OS keychain secrets, settings |
 | `sqlr-ui` | egui widgets (grid, tree, forms) |
@@ -79,7 +81,7 @@ cargo run --release -p sqlr-app
 cargo test --workspace
 ```
 
-PostgreSQL, MySQL, MariaDB, MongoDB, Elasticsearch and Redis integration tests use testcontainers. On Docker Desktop for macOS:
+PostgreSQL, MySQL, MariaDB, MongoDB, Elasticsearch and Redis integration tests use testcontainers. SQL Server and Oracle are not yet in the live test matrix. On Docker Desktop for macOS:
 
 ```sh
 DOCKER_HOST=unix://$HOME/.docker/run/docker.sock cargo test --workspace

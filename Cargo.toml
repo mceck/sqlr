@@ -20,6 +20,9 @@ egui-phosphor = "0.14.0"
 memory-stats = "1"
 tokio = "1"
 tokio-postgres = "0.7"
+tokio-util = { version = "0.7", features = ["compat"] }
+tiberius = { version = "0.13", default-features = false, features = ["rustls", "tds80"] }
+oracle-rs = "0.1.7"
 async-trait = "0.1"
 parking_lot = "0.12"
 toml = "1"

@@ -40,8 +40,6 @@ pub struct Settings {
     pub soft_wrap: bool,
     /// "Fetch all" stops at this many rows; 0 means no cap.
     pub row_cap: usize,
-    /// The driver registry's index URL (`https://…` or `file://…`); empty means the default.
-    pub registry_url: String,
     /// Minutes a sidecar driver keeps running after its last connection closes, within
     /// [`SIDECAR_IDLE_MINUTES`].
     pub sidecar_idle_minutes: u32,
@@ -60,7 +58,6 @@ impl Default for Settings {
             line_numbers: true,
             soft_wrap: false,
             row_cap: 100_000,
-            registry_url: String::new(),
             sidecar_idle_minutes: 5,
         }
     }
@@ -86,7 +83,6 @@ impl Settings {
             line_numbers: get("editor.line_numbers").as_bool(),
             soft_wrap: get("editor.soft_wrap").as_bool(),
             row_cap: get("grid.row_cap").as_i64() as usize,
-            registry_url: get("drivers.registry_url").as_str().trim().to_string(),
             sidecar_idle_minutes: get("drivers.sidecar_idle_minutes").as_i64() as u32,
         }
     }
@@ -124,10 +120,6 @@ impl Settings {
             ("editor.line_numbers", SettingValue::Bool(self.line_numbers)),
             ("editor.soft_wrap", SettingValue::Bool(self.soft_wrap)),
             ("grid.row_cap", SettingValue::Int(self.row_cap as i64)),
-            (
-                "drivers.registry_url",
-                SettingValue::Text(self.registry_url.trim().to_string()),
-            ),
             (
                 "drivers.sidecar_idle_minutes",
                 SettingValue::Int(i64::from(self.sidecar_idle_minutes)),
@@ -195,12 +187,8 @@ mod tests {
     #[test]
     fn driver_settings_default_and_clamp() {
         let old = load_with("page_size = 200\n");
-        assert_eq!(old.registry_url, "");
         assert_eq!(old.sidecar_idle_minutes, 5);
-        let odd = load_with(
-            "registry_url = \"  file:///mirror/index.json \"\nsidecar_idle_minutes = 0\n",
-        );
-        assert_eq!(odd.registry_url, "file:///mirror/index.json");
+        let odd = load_with("sidecar_idle_minutes = 0\n");
         assert_eq!(odd.sidecar_idle_minutes, 1);
         assert_eq!(
             load_with("sidecar_idle_minutes = 99999\n").sidecar_idle_minutes,

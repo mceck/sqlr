@@ -1,14 +1,13 @@
 //! Installed sidecar drivers join the engine without a restart.
 
-use std::io::Cursor;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use sqlr_core::{ConnectionConfig, ConnectionProfile, Secrets};
-use sqlr_engine::{DriverJobState, DriverRegistry, Engine, IndexState, QueryStatus, SessionStatus};
-use sqlr_registry::{Registry, platform_key, sha256_hex};
+use sqlr_engine::{DriverJobState, DriverRegistry, Engine, QueryStatus, SessionStatus};
+use sqlr_registry::Registry;
 
 #[allow(dead_code)]
 mod support;
@@ -104,7 +103,7 @@ fn installed_sidecar_registered_at_startup() {
 
     let engine = engine();
     assert!(engine.drivers().get("echo").is_none());
-    engine.configure_drivers(data.path(), "", 5);
+    engine.configure_drivers(data.path(), 5);
     assert!(wait_until(TIMEOUT, || engine.drivers_loaded()));
     assert!(engine.drivers().get("echo").is_some());
     assert!(engine.manifests().iter().any(|m| m.name == "Echo"));
@@ -113,113 +112,13 @@ fn installed_sidecar_registered_at_startup() {
     connect_echo(&engine);
 }
 
-/// A signed `file://` mirror holding `echo` at each of `versions` (the newest listed).
-fn mirror(dir: &std::path::Path, versions: &[&str]) -> (String, String) {
-    let pair = minisign::KeyPair::generate_unencrypted_keypair().unwrap();
-    let sign = |data: &[u8]| {
-        minisign::sign(
-            Some(&pair.pk),
-            &pair.sk,
-            Cursor::new(data),
-            Some("test"),
-            None,
-        )
-        .unwrap()
-        .into_string()
-    };
-    let version = versions.last().unwrap();
-    let bytes = archive(version);
-    let artifact = dir.join(format!("echo-{version}.tar.gz"));
-    std::fs::write(&artifact, &bytes).unwrap();
-    let index = serde_json::json!({ "format": 1, "drivers": [{
-        "id": "echo", "name": "Echo", "version": version, "min_protocol": "1.0.0",
-        "family": "relational", "description": "", "homepage": "", "license": "MIT",
-        "artifacts": { platform_key(): {
-            "url": format!("file://{}", artifact.display()),
-            "sha256": sha256_hex(&bytes), "signature": sign(&bytes),
-        }},
-    }]})
-    .to_string();
-    std::fs::write(dir.join("index.json"), &index).unwrap();
-    std::fs::write(dir.join("index.json.minisig"), sign(index.as_bytes())).unwrap();
-    (
-        format!("file://{}", dir.join("index.json").display()),
-        pair.pk.to_box().unwrap().into_string(),
-    )
-}
-
-#[test]
-fn install_registers_without_restart() {
-    let data = tempfile::tempdir().unwrap();
-    let mirror_dir = tempfile::tempdir().unwrap();
-    let (url, key) = mirror(mirror_dir.path(), &["1.0.0"]);
-    let engine = engine();
-    engine.configure_drivers_with_key(data.path(), &url, 5, &key);
-    assert!(wait_until(TIMEOUT, || engine.drivers_loaded()));
-    assert_eq!(
-        engine.driver_index(),
-        IndexState::Idle,
-        "nothing fetched until asked"
-    );
-    assert!(engine.drivers().get("echo").is_none());
-
-    engine.refresh_driver_index();
-    assert!(wait_until(TIMEOUT, || matches!(
-        engine.driver_index(),
-        IndexState::Ready(_)
-    )));
-    engine.install_driver("echo");
-    assert!(
-        wait_until(Duration::from_secs(20), || {
-            engine
-                .driver_jobs()
-                .iter()
-                .any(|(id, s)| id == "echo" && *s == DriverJobState::Done)
-        }),
-        "{:?}",
-        engine.driver_jobs()
-    );
-    assert!(
-        engine.drivers().get("echo").is_some(),
-        "registered with no restart"
-    );
-    connect_echo(&engine);
-
-    // Removing it takes it out of the engine again.
-    engine.remove_driver("echo", None);
-    assert!(wait_until(TIMEOUT, || engine
-        .drivers()
-        .get("echo")
-        .is_none()));
-    assert!(engine.installed_drivers().is_empty());
-}
-
-#[test]
-fn a_bad_index_fails_the_refresh_not_the_engine() {
-    let data = tempfile::tempdir().unwrap();
-    let engine = engine();
-    engine.configure_drivers(data.path(), "file:///no/such/index.json", 5);
-    engine.refresh_driver_index();
-    assert!(wait_until(TIMEOUT, || matches!(
-        engine.driver_index(),
-        IndexState::Failed(_)
-    )));
-    engine.install_driver("echo");
-    assert!(
-        engine
-            .driver_jobs()
-            .iter()
-            .any(|(_, s)| matches!(s, DriverJobState::Failed(_)))
-    );
-}
-
 #[test]
 fn manual_install_waits_for_confirmation() {
     let data = tempfile::tempdir().unwrap();
     let file = data.path().join("echo.tar.gz");
     std::fs::write(&file, archive("0.2.0")).unwrap();
     let engine = engine();
-    engine.configure_drivers(data.path(), "", 5);
+    engine.configure_drivers(data.path(), 5);
     engine.inspect_manual_install(file);
     assert!(wait_until(TIMEOUT, || matches!(
         engine.manual_install(),
@@ -251,7 +150,7 @@ fn within<T: Send + 'static>(what: &str, f: impl FnOnce() -> T + Send + 'static)
 fn a_job_while_another_driver_stays_installed_does_not_deadlock() {
     let data = tempfile::tempdir().unwrap();
     let engine = Arc::new(engine());
-    engine.configure_drivers(data.path(), "", 5);
+    engine.configure_drivers(data.path(), 5);
     // Two versions of the same driver stay installed.
     for version in ["1.0.0", "1.1.0"] {
         let file = data.path().join(format!("echo-{version}.tar.gz"));

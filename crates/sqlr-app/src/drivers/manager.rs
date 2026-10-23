@@ -3,11 +3,10 @@
 use std::collections::HashSet;
 
 use egui::{Id, RichText};
-use sqlr_engine::{DriverJobState, IndexState, ManualState, is_newer};
+use sqlr_engine::{DriverJobState, ManualState};
 use sqlr_ui::theme::{self, Spacing};
 use sqlr_ui::{
-    DriverJobView, DriverManagerAction, DriverManagerState, DriverRow, IndexStatus, ToastKind,
-    driver_manager,
+    DriverJobView, DriverManagerAction, DriverManagerState, DriverRow, ToastKind, driver_manager,
 };
 
 use super::ManualPick;
@@ -15,17 +14,14 @@ use crate::app::SqlrApp;
 use crate::dialogs::{Confirm, confirm_delete};
 
 impl SqlrApp {
-    /// Opens the Driver Manager; the registry is contacted now, not before.
+    /// Opens the Driver Manager. Non-bundled drivers install only from a local file.
     pub(crate) fn open_driver_manager(&mut self) {
         self.drivers_ui
             .manager
             .get_or_insert_with(DriverManagerState::default);
-        if matches!(self.engine.driver_index(), IndexState::Idle) {
-            self.engine.refresh_driver_index();
-        }
     }
 
-    /// The list: installed drivers, the registry's, and the ones that ship with sqlr.
+    /// The list: the drivers installed from files and the ones that ship with sqlr.
     fn driver_rows(&self) -> Vec<DriverRow> {
         let installed = self.engine.installed_drivers();
         let jobs = self.engine.driver_jobs();
@@ -41,14 +37,9 @@ impl SqlrApp {
                     DriverJobState::Failed(m) => DriverJobView::Failed(m.clone()),
                 })
         };
-        let index = match self.engine.driver_index() {
-            IndexState::Ready(entries) => entries,
-            _ => Default::default(),
-        };
         let mut rows = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
         for driver in &installed {
-            let entry = index.iter().find(|e| e.id == driver.id);
             seen.insert(driver.id.clone());
             rows.push(DriverRow {
                 id: driver.id.clone(),
@@ -58,32 +49,10 @@ impl SqlrApp {
                 installed: driver.versions.clone(),
                 active: Some(driver.active.clone()),
                 manual: driver.manual,
-                available: entry.map(|e| e.version.clone()),
-                update_available: entry.is_some_and(|e| is_newer(&e.version, &driver.active)),
-                description: entry.map(|e| e.description.clone()).unwrap_or_default(),
-                homepage: entry.map(|e| e.homepage.clone()).unwrap_or_default(),
-                license: entry.map(|e| e.license.clone()).unwrap_or_default(),
+                description: String::new(),
+                homepage: String::new(),
+                license: String::new(),
                 job: job_of(&driver.id),
-            });
-        }
-        let listed = seen.clone();
-        for entry in index.iter().filter(|e| !listed.contains(&e.id)) {
-            seen.insert(entry.id.clone());
-            rows.push(DriverRow {
-                id: entry.id.clone(),
-                name: entry.name.clone(),
-                family: entry.family.clone(),
-                builtin: false,
-                installed: Vec::new(),
-                active: None,
-                manual: false,
-                // Only a driver with a build for this platform can be installed.
-                available: entry.artifact.as_ref().map(|_| entry.version.clone()),
-                update_available: false,
-                description: entry.description.clone(),
-                homepage: entry.homepage.clone(),
-                license: entry.license.clone(),
-                job: job_of(&entry.id),
             });
         }
         for manifest in self.engine.manifests() {
@@ -98,8 +67,6 @@ impl SqlrApp {
                 installed: Vec::new(),
                 active: None,
                 manual: false,
-                available: None,
-                update_available: false,
                 description: String::new(),
                 homepage: String::new(),
                 license: String::new(),
@@ -122,8 +89,12 @@ impl SqlrApp {
             && let Some(chosen) = pick.poll()
         {
             self.drivers_ui.pick = None;
-            if let Some(path) = chosen {
-                self.engine.inspect_manual_install(path);
+            match chosen {
+                Some(path) => self.engine.inspect_manual_install(path),
+                None => {
+                    // Dismissing the file dialog cancels the install that opened it.
+                    self.drivers_ui.pending = None;
+                }
             }
         }
     }
@@ -133,19 +104,13 @@ impl SqlrApp {
             return;
         };
         let rows = self.driver_rows();
-        let status = match self.engine.driver_index() {
-            IndexState::Idle => IndexStatus::Idle,
-            IndexState::Loading => IndexStatus::Loading,
-            IndexState::Ready(_) => IndexStatus::Ready,
-            IndexState::Failed(e) => IndexStatus::Failed(e),
-        };
         let mut action = None;
         let mut close = false;
         let response = egui::Modal::new(Id::new("driver_manager")).show(ctx, |ui| {
             ui.set_width(780.0);
             ui.label(RichText::new("Drivers").font(theme::semibold(ui.ctx(), 15.0)));
             ui.add_space(Spacing::S);
-            action = driver_manager(ui, &mut state, &rows, &status);
+            action = driver_manager(ui, &mut state, &rows);
             ui.add_space(Spacing::M);
             if ui.button("Close").clicked() {
                 close = true;
@@ -159,10 +124,6 @@ impl SqlrApp {
         }
         match action {
             None => {}
-            Some(DriverManagerAction::Refresh) => self.engine.refresh_driver_index(),
-            Some(DriverManagerAction::Install(id) | DriverManagerAction::Update(id)) => {
-                self.engine.install_driver(&id);
-            }
             Some(DriverManagerAction::Activate { id, version }) => {
                 self.engine.activate_driver(&id, &version);
             }
@@ -196,6 +157,7 @@ impl SqlrApp {
             ManualState::None | ManualState::Inspecting => {}
             ManualState::Failed(message) => {
                 self.engine.cancel_manual_install();
+                self.drivers_ui.pending = None;
                 self.notify_as(
                     ToastKind::Error,
                     format!("Cannot install the driver: {message}"),
@@ -213,10 +175,10 @@ impl SqlrApp {
                     let palette = theme::palette(ui.ctx());
                     ui.label(
                         RichText::new(
-                            "This driver was not checked by the sqlr registry. It is a program \
-                             that will run on this computer with your rights and will receive \
-                             the passwords of the connections that use it. Install it only if \
-                             you trust where it came from.",
+                            "This driver was not checked by sqlr. It is a program that will \
+                             run on this computer with your rights and will receive the \
+                             passwords of the connections that use it. Install it only if you \
+                             trust where it came from.",
                         )
                         .color(palette.warning),
                     );
@@ -240,7 +202,10 @@ impl SqlrApp {
                 });
                 match decision {
                     Some(true) => self.engine.confirm_manual_install(),
-                    Some(false) => self.engine.cancel_manual_install(),
+                    Some(false) => {
+                        self.drivers_ui.pending = None;
+                        self.engine.cancel_manual_install();
+                    }
                     None => {}
                 }
             }

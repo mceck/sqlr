@@ -322,7 +322,7 @@ fn palette_opens_collections_and_creates_indexes() {
     // ⌘K offers "New index" on the collection selected in the explorer.
     h.get_by_label("users").click();
     h.run_steps(2);
-    h.key_press_modifiers(Modifiers::COMMAND, egui::Key::K);
+    h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, egui::Key::P);
     h.run_steps(2);
     h.event(egui::Event::Text("new index".into()));
     h.run_steps(2);

@@ -496,7 +496,7 @@ fn palette_opens_object() {
 fn command_palette_runs_command() {
     let dir = tempfile::tempdir().unwrap();
     let mut h = harness(&dir);
-    press(&mut h, Modifiers::COMMAND, Key::K);
+    press(&mut h, Modifiers::COMMAND | Modifiers::SHIFT, Key::P);
     type_text(&mut h, "new query");
     press(&mut h, Modifiers::NONE, Key::Enter);
     assert_eq!(h.state().tab_titles(), ["Query 1", "Query 2"]);
@@ -1547,7 +1547,7 @@ fn esc_closes_the_palette_before_stopping() {
     let dir = tempfile::tempdir().unwrap();
     let (mut h, _) = blocking_harness(&dir);
     start_blocking_run(&mut h);
-    press(&mut h, Modifiers::COMMAND, Key::K);
+    press(&mut h, Modifiers::COMMAND | Modifiers::SHIFT, Key::P);
     h.run_steps(5);
     assert!(h.state().palette_open(), "⌘K opens the palette");
     esc_leaves_run(&mut h, "the palette was open");
@@ -2160,19 +2160,14 @@ fn settings_open_folder_spawns_opener() {
 
 // ----- Drivers that are not installed -----
 
-/// A harness whose saved connection names a driver nobody installed, with the registry
-/// pointed at a mirror that does not exist.
-fn harness_missing_driver(
-    dir: &tempfile::TempDir,
-    registry_url: &str,
-) -> Harness<'static, SqlrApp> {
+/// A harness whose saved connection names a driver nobody installed.
+fn harness_missing_driver(dir: &tempfile::TempDir) -> Harness<'static, SqlrApp> {
     let (deps, _driver) = deps_with(dir.path(), FakeScript::default());
     let mut cfg = deps.repo.list().unwrap().remove(0);
     cfg.driver = "ghost".into();
     cfg.name = "ghost-conn".into();
     deps.repo.save(&cfg, &Secrets::default()).unwrap();
-    deps.engine
-        .configure_drivers(&dir.path().join("data"), registry_url, 5);
+    deps.engine.configure_drivers(&dir.path().join("data"), 5);
     let app = SqlrApp::new(deps, &egui::Context::default());
     let mut h = Harness::builder()
         .with_size((1400.0, 900.0))
@@ -2185,27 +2180,28 @@ fn harness_missing_driver(
 #[test]
 fn missing_driver_offers_install() {
     let dir = tempfile::tempdir().unwrap();
-    let mut h = harness_missing_driver(&dir, "file:///no/such/registry/index.json");
+    let mut h = harness_missing_driver(&dir);
     // The connection stays in the tree, with the reason and the way out; it does not vanish
     // or crash, and it does not look like a connection that failed.
     wait_for_label(&mut h, "ghost-conn");
     wait_for_label(&mut h, "Driver ghost is not installed");
     h.get_by_label("driver missing");
-    h.get_by_label("Install").click();
-    // The registry cannot be reached: the user is told, and the app carries on.
-    step_until(&mut h, "the registry error", |h| {
+    h.get_by_label("Install…").click();
+    // The Driver Manager opens, where the driver installs from a local file.
+    step_until(&mut h, "the file-install guidance", |h| {
         h.state()
             .toast_texts()
             .iter()
-            .any(|t| t.contains("Cannot reach the registry"))
+            .any(|t| t.contains("Install the ghost driver from a file"))
     });
+    h.get_by_label("Install from file…");
     h.get_by_label("ghost-conn");
 }
 
 #[test]
 fn connecting_a_connection_without_its_driver_offers_the_install() {
     let dir = tempfile::tempdir().unwrap();
-    let mut h = harness_missing_driver(&dir, "file:///no/such/registry/index.json");
+    let mut h = harness_missing_driver(&dir);
     wait_for_label(&mut h, "Driver ghost is not installed");
     h.get_by_label("ghost-conn").click_secondary();
     h.run_steps(2);
@@ -2214,31 +2210,23 @@ fn connecting_a_connection_without_its_driver_offers_the_install() {
         h.state()
             .toast_texts()
             .iter()
-            .any(|t| t.contains("Installing the ghost driver"))
+            .any(|t| t.contains("Install the ghost driver from a file"))
     });
 }
 
 #[test]
-fn driver_manager_opens_from_the_palette_and_contacts_the_registry_then() {
+fn driver_manager_opens_from_the_palette_and_lists_bundled_drivers() {
     let dir = tempfile::tempdir().unwrap();
-    let mut h = harness_missing_driver(&dir, "file:///no/such/registry/index.json");
+    let mut h = harness_missing_driver(&dir);
     wait_for_label(&mut h, "Driver ghost is not installed");
-    assert_eq!(
-        h.state().driver_index_status(),
-        "idle",
-        "nothing is fetched before the manager is opened"
-    );
-    press(&mut h, Modifiers::COMMAND, Key::K);
+    press(&mut h, Modifiers::COMMAND | Modifiers::SHIFT, Key::P);
     h.run_steps(2);
     h.get_by_label("Command palette")
         .type_text("driver manager");
     h.run_steps(3);
     press(&mut h, Modifiers::NONE, Key::Enter);
     wait_for_label(&mut h, "Search drivers");
-    step_until(&mut h, "the registry attempt", |h| {
-        h.state().driver_index_status() == "failed"
-    });
-    // Built-in drivers are listed even though the registry failed.
+    // Bundled drivers are listed, and the only way to add another is a local file.
     h.get_all_by_label("Fake").next().unwrap();
     h.get_by_label("Install from file…");
 }
@@ -2274,8 +2262,7 @@ fn hana_connection_form_from_manifest() {
     );
 
     let (deps, _driver) = deps_with(dir.path(), FakeScript::default());
-    deps.engine
-        .configure_drivers(&dir.path().join("data"), "file:///no/registry.json", 5);
+    deps.engine.configure_drivers(&dir.path().join("data"), 5);
     deps.engine.inspect_manual_install(archive);
     let deadline = Instant::now() + Duration::from_secs(10);
     while !matches!(
@@ -2380,8 +2367,7 @@ fn a_sidecar_connection_gets_its_dialect_once_connected() {
     let mut cfg = deps.repo.list().unwrap().remove(0);
     cfg.driver = "echo".into();
     deps.repo.save(&cfg, &Secrets::default()).unwrap();
-    deps.engine
-        .configure_drivers(&dir.path().join("data"), "file:///no/registry.json", 5);
+    deps.engine.configure_drivers(&dir.path().join("data"), 5);
     deps.engine.inspect_manual_install(archive);
     let deadline = Instant::now() + Duration::from_secs(20);
     while !matches!(

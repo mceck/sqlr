@@ -950,7 +950,11 @@ fn render_row(
                     ui.set_max_width(budget);
                     ui.add(egui::Label::new(RichText::new(text).color(palette.warning)).truncate());
                 });
-                if ui.small_button("Install").clicked() {
+                if ui
+                    .small_button("Install…")
+                    .on_hover_text("Install the driver from a local file")
+                    .clicked()
+                {
                     actions.push(TreeAction::InstallDriver(conn.driver.to_string()));
                 }
                 if ui.small_button("Edit").clicked() {

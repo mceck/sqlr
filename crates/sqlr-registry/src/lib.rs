@@ -1,6 +1,6 @@
-//! The driver registry (spec §6.4): a signed index of drivers, downloads checked against
-//! their sha256 and minisign signature, the install layout on disk, versions and rollback,
-//! and manual installs from a file. Engine side: no UI, no global state.
+//! Driver files: the install layout on disk, versions, rollback and manual installs from
+//! a local file. The signed-index and download code remains for tests and local mirrors;
+//! the app never contacts a registry and offers no online install.
 //!
 //! Layout: `<data dir>/drivers/<id>/<version>/{driver.toml, manifest.json, <executable>, …}`
 //! and `<data dir>/drivers/<id>/active`, which names the version in use. Nothing is fetched
@@ -61,7 +61,3 @@ impl From<std::io::Error> for RegistryError {
 /// was discarded; the maintainers replace it with their own public key (see
 /// `tools/sign-index`) when they publish the first index.
 pub const REGISTRY_PUBLIC_KEY: &str = "RWQRI4ohhT8/D7wkEhQknI8svAH6C/cOvTroHgMLG++lY2UgfZm8bFnX";
-
-/// Where the default registry index lives (a setting overrides it).
-pub const DEFAULT_INDEX_URL: &str =
-    "https://raw.githubusercontent.com/sqlr-dev/sqlr-drivers/main/index.json";

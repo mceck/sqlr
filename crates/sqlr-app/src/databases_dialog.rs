@@ -34,7 +34,7 @@ fn group_of(db: &KnownDatabase) -> &'static str {
     match db.status {
         KnownStatus::Bundled { .. } => "Bundled",
         KnownStatus::Compatible { .. } => "Compatible",
-        KnownStatus::Installable { .. } => "Installable",
+        KnownStatus::Installable { .. } => "From file",
         KnownStatus::Planned { .. } => "Planned",
     }
 }
@@ -128,7 +128,7 @@ fn catalog_list(
 ) -> Option<&'static str> {
     let palette = theme::palette(ui.ctx());
     let mut picked = None;
-    for group in ["Bundled", "Compatible", "Installable", "Planned"] {
+    for group in ["Bundled", "Compatible", "From file", "Planned"] {
         let entries: Vec<&KnownDatabase> = known_databases()
             .iter()
             .filter(|db| group_of(db) == group && matches(db, filter))
@@ -199,7 +199,7 @@ fn catalog_row(ui: &mut egui::Ui, db: &KnownDatabase, usable: bool, installable:
     let note = if usable || db.driver().is_none() {
         db.notes
     } else if installable {
-        "Click to install its driver"
+        "Click to choose its driver file"
     } else {
         "Its driver is not part of this build"
     };
@@ -238,7 +238,9 @@ fn matrix(ui: &mut egui::Ui, filter: &str, drivers: &HashSet<String>) {
                     KnownStatus::Installable { driver } if drivers.contains(driver) => {
                         ("Installed driver".to_string(), palette.success)
                     }
-                    KnownStatus::Installable { .. } => ("Installable".to_string(), palette.accent),
+                    KnownStatus::Installable { .. } => {
+                        ("Needs driver file".to_string(), palette.accent)
+                    }
                     KnownStatus::Planned { note } => {
                         (format!("Planned ({note})"), palette.text_muted)
                     }
@@ -323,6 +325,8 @@ mod tests {
         let drivers: Vec<std::sync::Arc<dyn Driver>> = vec![
             sqlr_driver_postgres::PostgresDriver::new(),
             sqlr_driver_mysql::MysqlDriver::new(),
+            sqlr_driver_mssql::SqlServerDriver::new(),
+            sqlr_driver_oracle::OracleDriver::new(),
             sqlr_driver_sqlite::SqliteDriver::new(),
             sqlr_driver_mongo::MongoDriver::new(),
             sqlr_driver_elastic::ElasticDriver::new(),

@@ -1,7 +1,7 @@
 # SAP HANA
 
-A downloadable driver (a sidecar built on `hdbconnect_async`, spec §5.6). Install it from the
-Driver Manager (Settings → Drivers…) or, until a registry is published, from a file:
+A bundled sidecar crate built on `hdbconnect_async` (spec §5.6), installed from a local
+driver file through the Driver Manager (Settings → Drivers…):
 
 ```sh
 scripts/package-driver.sh hana hana.tar.gz      # builds it in release mode and packs it

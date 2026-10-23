@@ -39,13 +39,12 @@ fn settings_migration_matrix() {
         ),
         (
             "M3b: editor, zoom, cap and drivers",
-            "theme = \"Dark\"\nui_scale = 1.25\nline_numbers = false\nsoft_wrap = true\nrow_cap = 0\nregistry_url = \"  file:///mirror/index.json \"\nsidecar_idle_minutes = 20\n",
+            "theme = \"Dark\"\nui_scale = 1.25\nline_numbers = false\nsoft_wrap = true\nrow_cap = 0\nsidecar_idle_minutes = 20\n",
             Box::new(|s| {
                 assert_eq!(s.theme, ThemePref::Dark);
                 assert_eq!(s.ui_scale, 1.25);
                 assert!(!s.line_numbers && s.soft_wrap);
                 assert_eq!(s.row_cap, 0);
-                assert_eq!(s.registry_url, "file:///mirror/index.json");
                 assert_eq!(s.sidecar_idle_minutes, 20);
             }),
         ),

@@ -1,5 +1,5 @@
-//! The Driver Manager (spec §6.4): installed, available and built-in drivers in a
-//! searchable list, with the selected driver's details, versions and actions on the right.
+//! The Driver Manager: the bundled drivers and the ones installed from a local file,
+//! in a searchable list with the selected driver's versions and actions on the right.
 //! Pure view: the app builds the rows from the engine and applies the returned action.
 
 use egui::{RichText, vec2};
@@ -27,23 +27,10 @@ pub struct DriverRow {
     pub active: Option<String>,
     /// The active version was installed from a file.
     pub manual: bool,
-    /// The registry's version, when it lists the driver.
-    pub available: Option<String>,
-    pub update_available: bool,
     pub description: String,
     pub homepage: String,
     pub license: String,
     pub job: Option<DriverJobView>,
-}
-
-/// The registry index as the manager shows it.
-#[derive(Clone, Debug, PartialEq)]
-pub enum IndexStatus {
-    /// Not contacted: nothing is fetched until the user presses Refresh or Install.
-    Idle,
-    Loading,
-    Ready,
-    Failed(String),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -54,9 +41,6 @@ pub struct DriverManagerState {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum DriverManagerAction {
-    Refresh,
-    Install(String),
-    Update(String),
     Activate {
         id: String,
         version: String,
@@ -81,13 +65,7 @@ fn matches(row: &DriverRow, search: &str) -> bool {
 }
 
 fn group(row: &DriverRow) -> &'static str {
-    if row.builtin {
-        "Built in"
-    } else if row.active.is_some() {
-        "Installed"
-    } else {
-        "Available"
-    }
+    if row.builtin { "Built in" } else { "Installed" }
 }
 
 /// Draws the manager; returns what the user asked for this frame.
@@ -95,7 +73,6 @@ pub fn driver_manager(
     ui: &mut egui::Ui,
     state: &mut DriverManagerState,
     rows: &[DriverRow],
-    index: &IndexStatus,
 ) -> Option<DriverManagerAction> {
     let palette = theme::palette(ui.ctx());
     let mut action = None;
@@ -113,27 +90,16 @@ pub fn driver_manager(
             if ui.button("Install from file…").clicked() {
                 action = Some(DriverManagerAction::InstallFromFile);
             }
-            if ui.button("Refresh").clicked() {
-                action = Some(DriverManagerAction::Refresh);
-            }
         });
     });
-    let status = match index {
-        IndexStatus::Idle => Some((
-            "The registry has not been contacted yet".to_string(),
-            palette.text_muted,
-        )),
-        IndexStatus::Loading => Some(("Contacting the registry…".to_string(), palette.text_muted)),
-        IndexStatus::Failed(e) => {
-            Some((format!("Could not load the registry: {e}"), palette.error))
-        }
-        IndexStatus::Ready => None,
-    };
-    if let Some((text, color)) = status {
-        ui.add_space(Spacing::XS);
-        ui.add(egui::Label::new(RichText::new(&text).color(color)).truncate())
-            .on_hover_text(text);
-    }
+    ui.add_space(Spacing::XS);
+    ui.label(
+        RichText::new(
+            "Bundled drivers ship with sqlr. Other drivers install only from a local file.",
+        )
+        .small()
+        .color(palette.text_muted),
+    );
     ui.add_space(Spacing::S);
     ui.separator();
 
@@ -159,7 +125,7 @@ pub fn driver_manager(
                 .max_height(height)
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    for heading in ["Installed", "Available", "Built in"] {
+                    for heading in ["Installed", "Built in"] {
                         let group_rows: Vec<_> =
                             filtered.iter().filter(|r| group(r) == heading).collect();
                         if group_rows.is_empty() {
@@ -173,14 +139,9 @@ pub fn driver_manager(
                         );
                         for row in group_rows {
                             let selected = state.selected.as_deref() == Some(&row.id);
-                            ui.horizontal(|ui| {
-                                if ui.selectable_label(selected, &row.name).clicked() {
-                                    state.selected = Some(row.id.clone());
-                                }
-                                if row.update_available {
-                                    ui.label(RichText::new("update").color(palette.accent));
-                                }
-                            });
+                            if ui.selectable_label(selected, &row.name).clicked() {
+                                state.selected = Some(row.id.clone());
+                            }
                         }
                     }
                 });
@@ -235,7 +196,7 @@ fn details(ui: &mut egui::Ui, row: &DriverRow) -> Option<DriverManagerAction> {
 
     if row.builtin {
         ui.label(RichText::new("Built in").color(palette.success));
-        theme::hint(ui, "This driver ships with sqlr.");
+        theme::hint(ui, "This driver ships with sqlr and needs no install.");
         return None;
     }
 
@@ -259,27 +220,23 @@ fn details(ui: &mut egui::Ui, row: &DriverRow) -> Option<DriverManagerAction> {
         Some(DriverJobView::Done) | None => {}
     }
 
-    if let Some(active) = &row.active {
-        let source = if row.manual {
-            " (installed from a file)"
-        } else {
-            ""
-        };
-        ui.label(RichText::new(format!("Active version {active}{source}")).color(palette.success));
-    }
-    match (&row.available, row.update_available, row.active.is_some()) {
-        (Some(version), true, true) => {
-            if ui.button(format!("Update to {version}")).clicked() {
-                action = Some(DriverManagerAction::Update(row.id.clone()));
-            }
+    match &row.active {
+        Some(active) => {
+            let source = if row.manual {
+                " (installed from a file)"
+            } else {
+                ""
+            };
+            ui.label(
+                RichText::new(format!("Active version {active}{source}")).color(palette.success),
+            );
         }
-        (Some(version), _, false) => {
-            theme::hint(ui, &format!("Version {version} is available."));
-            if ui.add(theme::primary_button(ui.ctx(), "Install")).clicked() {
-                action = Some(DriverManagerAction::Install(row.id.clone()));
-            }
+        None => {
+            theme::hint(
+                ui,
+                "Not installed. Use “Install from file…” to add this driver.",
+            );
         }
-        _ => {}
     }
 
     if !row.installed.is_empty() {

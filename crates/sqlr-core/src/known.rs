@@ -15,8 +15,8 @@ pub enum KnownStatus {
         driver: &'static str,
         preset: &'static [(&'static str, &'static str)],
     },
-    /// A driver that does not ship with sqlr and installs from the registry (`driver` is
-    /// the driver id; the Driver Manager and the new-connection catalog offer "Install").
+    /// A driver that does not ship with sqlr and installs only from a local driver file
+    /// (`driver` is the driver id; the Driver Manager offers "Install from file…").
     Installable { driver: &'static str },
     /// Not reachable yet; `note` describes its support status.
     Planned { note: &'static str },
@@ -52,7 +52,7 @@ impl KnownDatabase {
     }
 }
 
-const JDBC: &str = "installable, through the JDBC bridge";
+const JDBC: &str = "JDBC bridge; install the driver from a local file";
 
 const fn bundled(
     id: &'static str,
@@ -150,6 +150,22 @@ static KNOWN: &[KnownDatabase] = &[
         "mysql",
         Some(3306),
         "TCP server, through the MySQL driver",
+    ),
+    bundled(
+        "sqlserver",
+        "SQL Server",
+        Relational,
+        "sqlserver",
+        Some(1433),
+        "TCP server, native TDS driver",
+    ),
+    bundled(
+        "oracle",
+        "Oracle",
+        Relational,
+        "oracle",
+        Some(1521),
+        "TCP server, pure-Rust Oracle driver",
     ),
     bundled("sqlite", "SQLite", Relational, "sqlite", None, "File"),
     bundled(
@@ -269,17 +285,9 @@ static KNOWN: &[KnownDatabase] = &[
         "SAP HANA",
         "hana",
         Some(30015),
-        "installable driver (hdbconnect)",
+        "install from a file (hdbconnect sidecar)",
     ),
     installable("jdbc", "Generic JDBC", "jdbc", None, JDBC),
-    installable(
-        "sqlserver",
-        "SQL Server",
-        "jdbc-sqlserver",
-        Some(1433),
-        JDBC,
-    ),
-    installable("oracle", "Oracle", "jdbc-oracle", Some(1521), JDBC),
     installable("db2", "Db2", "jdbc-db2", Some(50000), JDBC),
     installable(
         "clickhouse",
@@ -312,10 +320,12 @@ mod tests {
     use super::*;
 
     /// The driver ids sqlr ships.
-    const DRIVERS: [&str; 6] = [
+    const DRIVERS: [&str; 8] = [
         "postgres",
         "mysql",
         "sqlite",
+        "sqlserver",
+        "oracle",
         "mongodb",
         "elasticsearch",
         "redis",
@@ -346,7 +356,7 @@ mod tests {
                     1
                 }
                 KnownStatus::Installable { driver } => {
-                    // Installable ids are registry ids: plain names, never a bundled one.
+                    // Installable ids are driver-file ids: plain names, never a bundled one.
                     assert!(!DRIVERS.contains(&driver), "{}: {driver}", db.id);
                     assert!(
                         driver

@@ -51,7 +51,7 @@ pub use datagen::{datagen_table, generator_label};
 pub use diff_tree::{DiffRow, DiffRowKind, diff_rows, diff_tree, text_diff};
 pub use doc_tree::{DocAction, DocTreeState, doc_tree};
 pub use driver_manager::{
-    DriverJobView, DriverManagerAction, DriverManagerState, DriverRow, IndexStatus, driver_manager,
+    DriverJobView, DriverManagerAction, DriverManagerState, DriverRow, driver_manager,
 };
 pub use editor::{
     CARET_PLACEHOLDER, CHECKPOINT_BYTES, CONTEXT_CLIP_BYTES, Candidates, Caret, CaretContext,

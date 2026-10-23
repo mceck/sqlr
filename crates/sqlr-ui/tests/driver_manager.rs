@@ -2,14 +2,11 @@ use egui::vec2;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use sqlr_ui::theme::{self, Palette};
-use sqlr_ui::{
-    DriverJobView, DriverManagerAction, DriverManagerState, DriverRow, IndexStatus, driver_manager,
-};
+use sqlr_ui::{DriverJobView, DriverManagerAction, DriverManagerState, DriverRow, driver_manager};
 
 struct App {
     state: DriverManagerState,
     rows: Vec<DriverRow>,
-    index: IndexStatus,
     actions: Vec<DriverManagerAction>,
     height: f32,
 }
@@ -23,8 +20,6 @@ fn row(id: &str, name: &str) -> DriverRow {
         installed: Vec::new(),
         active: None,
         manual: false,
-        available: None,
-        update_available: false,
         description: format!("{name} driver"),
         homepage: String::new(),
         license: "MIT".into(),
@@ -41,25 +36,20 @@ fn rows() -> Vec<DriverRow> {
         DriverRow {
             installed: vec!["1.0.0".into(), "1.1.0".into()],
             active: Some("1.1.0".into()),
-            available: Some("1.2.0".into()),
-            update_available: true,
+            manual: true,
             ..row("hana", "SAP HANA")
-        },
-        DriverRow {
-            available: Some("0.4.0".into()),
-            ..row("jdbc-h2", "H2 (JDBC)")
         },
     ]
 }
 
-fn harness(rows: Vec<DriverRow>, index: IndexStatus) -> Harness<'static, App> {
+fn harness(rows: Vec<DriverRow>) -> Harness<'static, App> {
     let mut h = Harness::builder()
         .with_size(vec2(900.0, 560.0))
         .with_step_dt(0.01)
         .build_ui_state(
             |ui, app: &mut App| {
                 theme::apply(ui.ctx(), &Palette::dark(), 13.0);
-                if let Some(a) = driver_manager(ui, &mut app.state, &app.rows, &app.index) {
+                if let Some(a) = driver_manager(ui, &mut app.state, &app.rows) {
                     app.actions.push(a);
                 }
                 app.height = ui.min_rect().height();
@@ -67,7 +57,6 @@ fn harness(rows: Vec<DriverRow>, index: IndexStatus) -> Harness<'static, App> {
             App {
                 state: DriverManagerState::default(),
                 rows,
-                index,
                 actions: Vec::new(),
                 height: 0.0,
             },
@@ -92,27 +81,20 @@ fn click(h: &mut Harness<'static, App>, label: &str) -> DriverManagerAction {
 }
 
 #[test]
-fn driver_manager_lists_and_installs() {
-    let mut h = harness(rows(), IndexStatus::Ready);
-    for name in ["SQLite", "SAP HANA", "H2 (JDBC)"] {
+fn driver_manager_lists_bundled_and_installed_drivers() {
+    let h = harness(rows());
+    for name in ["SQLite", "SAP HANA"] {
         h.get_all_by_label(name).next().expect(name);
     }
-    // Choosing an available driver shows it with an Install button.
-    select(&mut h, "H2 (JDBC)");
-    assert_eq!(
-        click(&mut h, "Install"),
-        DriverManagerAction::Install("jdbc-h2".into())
-    );
+    // There is no online catalog: the only install action is a local file.
+    assert!(h.query_by_label("Install").is_none());
+    assert!(h.query_by_label("Update to 1.1.0").is_none());
 }
 
 #[test]
-fn updates_rollback_and_remove() {
-    let mut h = harness(rows(), IndexStatus::Ready);
+fn versions_can_be_activated_and_removed() {
+    let mut h = harness(rows());
     select(&mut h, "SAP HANA");
-    assert_eq!(
-        click(&mut h, "Update to 1.2.0"),
-        DriverManagerAction::Update("hana".into())
-    );
     // The older version can be activated (rollback) or removed; the active one cannot.
     assert_eq!(
         click(&mut h, "Activate 1.0.0"),
@@ -140,77 +122,66 @@ fn updates_rollback_and_remove() {
 
 #[test]
 fn built_in_drivers_cannot_be_removed() {
-    let mut h = harness(rows(), IndexStatus::Ready);
+    let mut h = harness(rows());
     select(&mut h, "SQLite");
     h.get_all_by_label("Built in").next().unwrap();
     assert!(h.query_by_label("Remove driver").is_none());
-    assert!(h.query_by_label("Install").is_none());
+    assert!(h.query_by_label("Install from file…").is_some());
 }
 
 #[test]
 fn search_filters_the_list() {
-    let mut h = harness(rows(), IndexStatus::Ready);
+    let mut h = harness(rows());
     h.get_by_label("Search drivers").click();
     h.get_by_label("Search drivers").type_text("hana");
     h.run_steps(3);
     assert!(h.query_all_by_label("SAP HANA").next().is_some());
     assert!(h.query_all_by_label("SQLite").next().is_none());
-    assert!(h.query_all_by_label("H2 (JDBC)").next().is_none());
 }
 
 #[test]
-fn toolbar_actions() {
-    let mut h = harness(rows(), IndexStatus::Idle);
-    assert_eq!(click(&mut h, "Refresh"), DriverManagerAction::Refresh);
+fn toolbar_offers_only_a_file_install() {
+    let mut h = harness(rows());
     assert_eq!(
         click(&mut h, "Install from file…"),
         DriverManagerAction::InstallFromFile
     );
-    h.get_by_label("The registry has not been contacted yet");
-}
-
-#[test]
-fn registry_failure_is_shown_and_installed_drivers_stay() {
-    let h = harness(rows(), IndexStatus::Failed("no route to host".into()));
-    h.get_by_label("Could not load the registry: no route to host");
-    h.get_all_by_label("SAP HANA").next().unwrap();
+    h.get_by_label("Bundled drivers ship with sqlr. Other drivers install only from a local file.");
+    assert!(h.query_by_label("Refresh").is_none());
 }
 
 #[test]
 fn a_running_install_shows_progress_and_a_failed_one_its_message() {
     let mut running = rows();
-    running[2].job = Some(DriverJobView::Running {
+    running[1].job = Some(DriverJobView::Running {
         done: 512,
         total: Some(1024),
     });
-    let mut h = harness(running, IndexStatus::Ready);
-    select(&mut h, "H2 (JDBC)");
+    let mut h = harness(running);
+    select(&mut h, "SAP HANA");
     h.get_by_label("Installing… 50%");
-    assert!(h.query_by_label("Install").is_none(), "no second install");
 
     let mut failed = rows();
-    failed[2].job = Some(DriverJobView::Failed("sha256 mismatch".into()));
-    let mut h = harness(failed, IndexStatus::Ready);
-    select(&mut h, "H2 (JDBC)");
+    failed[1].job = Some(DriverJobView::Failed("sha256 mismatch".into()));
+    let mut h = harness(failed);
+    select(&mut h, "SAP HANA");
     h.get_by_label("Install failed: sha256 mismatch");
     assert_eq!(
         click(&mut h, "Dismiss"),
-        DriverManagerAction::ClearJob("jdbc-h2".into())
+        DriverManagerAction::ClearJob("hana".into())
     );
 }
 
 #[test]
 fn an_installed_driver_can_be_restarted() {
-    let mut h = harness(rows(), IndexStatus::Ready);
+    let mut h = harness(rows());
     select(&mut h, "SAP HANA");
     assert_eq!(
         click(&mut h, "Restart driver"),
         DriverManagerAction::Restart("hana".into())
     );
-    // Built-in and merely available drivers run no separate process.
+    // Built-in drivers run no separate process.
     select(&mut h, "SQLite");
-    assert!(h.query_by_label("Restart driver").is_none());
-    select(&mut h, "H2 (JDBC)");
     assert!(h.query_by_label("Restart driver").is_none());
 }
 
@@ -227,14 +198,13 @@ fn the_manager_does_not_grow_with_the_window() {
                     egui::Frame::NONE.show(ui, |ui| {
                         // A dialog gives its content unbounded room below.
                         ui.set_max_height(f32::INFINITY);
-                        driver_manager(ui, &mut app.state, &app.rows, &app.index);
+                        driver_manager(ui, &mut app.state, &app.rows);
                     });
                     app.height = ui.min_rect().height();
                 },
                 App {
                     state: DriverManagerState::default(),
                     rows: rows(),
-                    index: IndexStatus::Ready,
                     actions: Vec::new(),
                     height: 0.0,
                 },
@@ -250,7 +220,7 @@ fn the_manager_does_not_grow_with_the_window() {
 
 #[test]
 fn the_list_stacks_and_the_details_have_room() {
-    let mut h = harness(rows(), IndexStatus::Failed("no route to host".into()));
+    let mut h = harness(rows());
     select(&mut h, "SAP HANA");
     let rect = |label: &str, nth: usize| {
         h.get_all_by_label(label)
@@ -260,7 +230,6 @@ fn the_list_stacks_and_the_details_have_room() {
     };
     // The list is a column: each driver sits below the previous one.
     assert!(rect("SQLite", 0).top() > rect("SAP HANA", 0).bottom() - 1.0);
-    assert!(rect("H2 (JDBC)", 0).top() > rect("SAP HANA", 0).top());
     // The details sit to the right of the list and are wide enough to read: a title is one
     // line, not one letter per line.
     let title = rect("SAP HANA", 1);

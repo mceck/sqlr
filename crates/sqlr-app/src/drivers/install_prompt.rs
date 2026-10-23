@@ -1,32 +1,29 @@
-//! "Install" wherever a driver is missing: the new-connection catalog, a saved connection
-//! from another machine, the tree's inline row.
+//! "Install from file…" wherever a driver is missing: the new-connection catalog, a saved
+//! connection from another machine, the tree's inline row.
 
-use sqlr_engine::{DriverJobState, IndexState};
+use sqlr_engine::DriverJobState;
 use sqlr_ui::ToastKind;
 
 use super::PendingInstall;
 use crate::app::SqlrApp;
 
 impl SqlrApp {
-    /// Installs `driver` from the registry (loading the index first if needed). With
-    /// `known` set, the new-connection form for that database opens once it is installed.
+    /// Asks for the local driver file. With `known` set, the new-connection form for that
+    /// database opens once the driver is installed.
     pub(crate) fn request_driver_install(&mut self, driver: &str, known: Option<&'static str>) {
         if self.drivers_ui.pending.is_some() {
             self.notify_as(ToastKind::Info, "Another driver is installing".to_string());
             return;
         }
-        if matches!(
-            self.engine.driver_index(),
-            IndexState::Idle | IndexState::Failed(_)
-        ) {
-            self.engine.refresh_driver_index();
-        }
         self.drivers_ui.pending = Some(PendingInstall {
             driver: driver.to_string(),
             known,
-            started: false,
         });
-        self.notify_as(ToastKind::Info, format!("Installing the {driver} driver…"));
+        self.open_driver_manager();
+        self.notify_as(
+            ToastKind::Info,
+            format!("Install the {driver} driver from a file: Drivers… → Install from file…"),
+        );
     }
 
     /// A sidecar driver's dialect is known only after its first connection: give it to the
@@ -65,52 +62,27 @@ impl SqlrApp {
         let Some(pending) = &self.drivers_ui.pending else {
             return;
         };
-        let (driver, known, started) = (pending.driver.clone(), pending.known, pending.started);
-        let job = self
-            .engine
-            .driver_jobs()
-            .into_iter()
+        let (driver, known) = (pending.driver.clone(), pending.known);
+        let jobs = self.engine.driver_jobs();
+        let job = jobs
+            .iter()
             .find(|(id, _)| *id == driver)
             .map(|(_, state)| state);
-        if !started {
-            match self.engine.driver_index() {
-                IndexState::Ready(_) => {
-                    self.engine.install_driver(&driver);
-                    if let Some(p) = &mut self.drivers_ui.pending {
-                        p.started = true;
-                    }
-                }
-                IndexState::Failed(e) => {
-                    self.drivers_ui.pending = None;
-                    self.notify_as(
-                        ToastKind::Error,
-                        format!(
-                            "Cannot reach the registry: {e}. No driver registry is published yet: \
-                             install the driver from a file (Settings → Drivers… → Install from file…)."
-                        ),
-                    );
-                }
-                IndexState::Idle | IndexState::Loading => {}
+        if self.engine.drivers().get(&driver).is_some() {
+            self.drivers_ui.pending = None;
+            self.engine.clear_driver_job(&driver);
+            self.notify_as(ToastKind::Success, format!("Installed the {driver} driver"));
+            if let Some(known) = known {
+                self.open_known_connection(known);
             }
             return;
         }
-        match job {
-            Some(DriverJobState::Done) => {
-                self.drivers_ui.pending = None;
-                self.engine.clear_driver_job(&driver);
-                self.notify_as(ToastKind::Success, format!("Installed the {driver} driver"));
-                if let Some(known) = known {
-                    self.open_known_connection(known);
-                }
-            }
-            Some(DriverJobState::Failed(message)) => {
-                self.drivers_ui.pending = None;
-                self.notify_as(
-                    ToastKind::Error,
-                    format!("Could not install the {driver} driver: {message}"),
-                );
-            }
-            Some(DriverJobState::Running { .. }) | None => {}
+        if let Some(DriverJobState::Failed(message)) = job {
+            self.drivers_ui.pending = None;
+            self.notify_as(
+                ToastKind::Error,
+                format!("Could not install the {driver} driver: {message}"),
+            );
         }
     }
 }

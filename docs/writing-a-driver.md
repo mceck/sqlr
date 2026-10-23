@@ -66,6 +66,6 @@ then through `SidecarDriver` to check the protocol layer.
 
 ## Install
 
-`cargo build --release`, then in sqlr: Settings → Drivers… → *Install from file…*. Drivers
-published in the registry install from the Driver Manager with a signature check; a file
-you pick yourself asks for explicit confirmation and shows its checksum first.
+`cargo build --release`, package it with `scripts/package-driver.sh`, then in sqlr:
+Settings → Drivers… → *Install from file…*. A driver file is the only install source; sqlr
+shows its id, version and SHA-256 and asks for explicit confirmation before running it.
