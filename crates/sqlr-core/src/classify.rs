@@ -334,6 +334,8 @@ impl SqlSyntax {
             "PRAGMA" => classify_pragma(toks),
             "WITH" => self.classify_with(toks),
             "INSERT" | "REPLACE" | "MERGE" | "CALL" | "UPSERT" | "LOAD" => Write,
+            // `COPY … TO PROGRAM` runs a shell command on the server.
+            "COPY" if at_depth("PROGRAM") => Destructive("COPY TO PROGRAM".into()),
             "COPY" if at_depth("FROM") => Write,
             "COPY" => Read,
             "UPDATE" | "DELETE" if at_depth("WHERE") => Write,
@@ -514,6 +516,14 @@ mod tests {
             ),
             ("call p(1)", Write),
             ("copy t from stdin", Write),
+            (
+                "copy t to program 'touch /tmp/pwned'",
+                destructive("COPY TO PROGRAM"),
+            ),
+            (
+                "copy (select 1) to program 'id'",
+                destructive("COPY TO PROGRAM"),
+            ),
             ("explain analyze delete from t", Write),
             ("explain (analyze, buffers) update t set a = 1", Write),
             ("select * into t2 from t", Write),
