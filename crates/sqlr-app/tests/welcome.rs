@@ -26,6 +26,10 @@ fn harness(dir: &Path) -> Harness<'static, SqlrApp> {
 }
 
 fn harness_themed(dir: &Path, theme: ThemePref) -> Harness<'static, SqlrApp> {
+    harness_with_drivers(dir, theme, false)
+}
+
+fn harness_with_drivers(dir: &Path, theme: ThemePref, all: bool) -> Harness<'static, SqlrApp> {
     let mut drivers = DriverRegistry::default();
     drivers.register(FakeDriver::new(FakeScript {
         rows: 3,
@@ -34,6 +38,13 @@ fn harness_themed(dir: &Path, theme: ThemePref) -> Harness<'static, SqlrApp> {
     drivers.register(SqliteDriver::new());
     drivers.register(sqlr_driver_mysql::MysqlDriver::new());
     drivers.register(PostgresDriver::new());
+    if all {
+        drivers.register(sqlr_driver_mongo::MongoDriver::new());
+        drivers.register(sqlr_driver_elastic::ElasticDriver::new());
+        drivers.register(sqlr_driver_redis::RedisDriver::new());
+        drivers.register(sqlr_driver_mssql::SqlServerDriver::new());
+        drivers.register(sqlr_driver_oracle::OracleDriver::new());
+    }
     let engine = Engine::new(drivers, Arc::new(|| {}));
     // The data directory exists in the app (`sqlr.db` lives there); a file in its place
     // (one test) stays a file.
@@ -270,7 +281,10 @@ fn compatible_preset_fills_form() {
     h.get_by_label("SQL Server").click();
     h.run_steps(3);
     assert!(h.state().conn_dialog_form().is_none());
-    h.get_by_label("CockroachDB").click();
+    h.get_all_by_label("CockroachDB")
+        .find(|node| node.rect().height() < 40.0)
+        .expect("the catalog's CockroachDB row")
+        .click();
     h.run_steps(3);
     assert!(
         h.query_by_label("SQL Server").is_none(),
@@ -334,7 +348,7 @@ fn the_connection_dialog_opens_the_catalog() {
 }
 
 /// Renders `docs/media/screenshots/welcome-{dark,light}.png`:
-/// `cargo test -p sqlr-app --test welcome welcome_screenshots -- --ignored`.
+/// `cargo test -p sqlr-app --test integration welcome::welcome_screenshots -- --ignored`.
 #[test]
 #[ignore = "writes screenshots; needs a wgpu adapter"]
 fn welcome_screenshots() {
@@ -342,7 +356,7 @@ fn welcome_screenshots() {
     std::fs::create_dir_all(&out).unwrap();
     for (name, pref) in [("dark", ThemePref::Dark), ("light", ThemePref::Light)] {
         let dir = tempfile::tempdir().unwrap();
-        let mut h = harness_themed(dir.path(), pref);
+        let mut h = harness_with_drivers(dir.path(), pref, true);
         sqlr_ui::theme::install_fonts(&h.ctx, &[]);
         h.get_by_label("Expand fake-conn").click();
         step_until(&mut h, "the recent entry", |h| {
@@ -353,4 +367,76 @@ fn welcome_screenshots() {
         let image = h.render().expect("render");
         image.save(out.join(format!("welcome-{name}.png"))).unwrap();
     }
+}
+
+#[test]
+fn welcome_oracle_card_opens_its_native_driver() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness_with_drivers(dir.path(), ThemePref::Dark, true);
+    h.get_by_label("Oracle").click();
+    h.run_steps(3);
+    let (driver, values, _) = h.state().conn_dialog_form().expect("the connection dialog");
+    assert_eq!(driver, "oracle");
+    assert_eq!(values["port"], "1521");
+}
+
+#[test]
+fn welcome_shows_native_and_installable_databases_in_two_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let h = harness_with_drivers(dir.path(), ThemePref::Dark, true);
+    let labels = [
+        "PostgreSQL",
+        "MySQL",
+        "SQLite",
+        "MongoDB",
+        "Redis",
+        "SQL Server",
+        "Oracle",
+        "ClickHouse",
+    ];
+    let first_row = h.get_by_label(labels[0]).rect();
+    let second_row = h.get_by_label(labels[4]).rect();
+    assert!(second_row.top() > first_row.top());
+    for (index, label) in labels.iter().enumerate() {
+        let rect = h.get_by_label(label).rect();
+        let expected = if index < 4 {
+            first_row.top()
+        } else {
+            second_row.top()
+        };
+        assert!((rect.top() - expected).abs() < 1.0, "{label}: {rect:?}");
+        assert!(
+            rect.right() < 1400.0,
+            "{label} extends beyond the viewport: {rect:?}"
+        );
+    }
+}
+
+#[test]
+fn value_sidebar_starts_closed_and_can_be_opened() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(dir.path());
+    assert!(h.query_by_label("No cell selected").is_none());
+    h.get_by_label("Toggle value panel").click();
+    h.run_steps(3);
+    h.get_by_label("No cell selected");
+    h.get_by_label("Toggle value panel").click();
+    h.run_steps(3);
+    assert!(h.query_by_label("No cell selected").is_none());
+}
+
+#[test]
+fn welcome_clickhouse_card_offers_driver_installation() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(dir.path());
+    h.get_by_label("ClickHouse").click();
+    h.run_steps(3);
+    h.get_by_label("Install from file…");
+    assert!(h.state().conn_dialog_form().is_none());
+    assert!(
+        h.state()
+            .toast_texts()
+            .iter()
+            .any(|text| text.contains("jdbc-clickhouse"))
+    );
 }

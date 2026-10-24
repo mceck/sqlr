@@ -49,12 +49,12 @@ pub enum WelcomeAction {
 }
 
 /// The widest the welcome column gets.
-const COLUMN: f32 = 760.0;
-const CARD_HEIGHT: f32 = 64.0;
+const COLUMN: f32 = 940.0;
+const CARD_HEIGHT: f32 = 96.0;
 const CARD_GAP: f32 = 10.0;
 /// Cards narrower than this wrap onto another row.
-const CARD_MIN: f32 = 150.0;
-const RECENT_ROW: f32 = 30.0;
+const CARD_MIN: f32 = 114.0;
+const RECENT_ROW: f32 = 56.0;
 
 /// Shows the welcome screen; returns what the user picked.
 pub fn welcome(
@@ -68,75 +68,204 @@ pub fn welcome(
         .id_salt("welcome")
         .auto_shrink(false)
         .show(ui, |ui| {
-            let width = (ui.available_width() - 2.0 * Spacing::XL).clamp(120.0, COLUMN);
-            let side = ((ui.available_width() - width) / 2.0).max(0.0);
-            ui.add_space(48.0);
+            let available = ui.available_width();
+            let margin = if available < 600.0 { 16.0 } else { 36.0 };
+            let width = (available - 2.0 * margin).clamp(1.0, COLUMN);
+            let side = ((available - width) / 2.0).max(0.0);
+            ui.add_space(if available < 600.0 { 24.0 } else { 48.0 });
             ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
                 ui.add_space(side);
                 ui.vertical(|ui| {
                     ui.set_width(width);
+                    ui.spacing_mut().item_spacing.x = Spacing::M;
                     header(ui, width);
-                    ui.add_space(28.0);
-                    section(ui, "CREATE A CONNECTION");
+                    ui.add_space(32.0);
+                    if connection_header(ui, width) {
+                        action = Some(WelcomeAction::NewConnection(None));
+                    }
+                    ui.add_space(16.0);
                     if let Some(a) = card_grid(ui, cards, width) {
                         action = Some(a);
                     }
-                    ui.add_space(Spacing::XL);
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing.x = Spacing::M;
-                        if ui
-                            .add(theme::primary_button(ui.ctx(), "Open demo database"))
-                            .clicked()
-                        {
-                            action = Some(WelcomeAction::OpenDemo);
-                        }
-                        if ui.button("New connection…").clicked() {
-                            action = Some(WelcomeAction::NewConnection(None));
-                        }
-                        if ui.link("Import connections…").clicked() {
-                            action = Some(WelcomeAction::ImportConnections);
+                    ui.add_space(6.0);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.link("More databases…").clicked() {
+                            action = Some(WelcomeAction::MoreDatabases);
                         }
                     });
+                    ui.add_space(24.0);
+                    if let Some(a) = quick_start(ui, width) {
+                        action = Some(a);
+                    }
                     ui.add_space(28.0);
-                    section(ui, "RECENT");
-                    if recent.is_empty() {
-                        ui.label(
-                            RichText::new("No recent connections yet").color(palette.text_muted),
-                        );
-                    }
-                    for item in recent {
-                        if recent_row(ui, item, width) {
-                            action = Some(WelcomeAction::OpenRecent(item.id.clone()));
-                        }
-                    }
-                    ui.add_space(Spacing::XL);
+                    section(ui, "Recent connections", "Pick up where you left off.");
+                    ui.add_space(12.0);
+                    egui::Frame::new()
+                        .fill(palette.bg_raised)
+                        .stroke(Stroke::new(1.0, palette.border))
+                        .corner_radius(12)
+                        .inner_margin(8)
+                        .show(ui, |ui| {
+                            ui.set_width((width - 18.0).max(1.0));
+                            if recent.is_empty() {
+                                ui.add_space(12.0);
+                                ui.vertical_centered(|ui| {
+                                    ui.label(
+                                        RichText::new("No recent connections yet")
+                                            .color(palette.text_muted),
+                                    );
+                                    ui.label(
+                                        RichText::new(
+                                            "Your connections will appear here after you connect.",
+                                        )
+                                        .size(11.5)
+                                        .color(palette.text_muted),
+                                    );
+                                });
+                                ui.add_space(12.0);
+                            }
+                            for item in recent {
+                                if recent_row(ui, item, ui.available_width()) {
+                                    action = Some(WelcomeAction::OpenRecent(item.id.clone()));
+                                }
+                            }
+                        });
+                    ui.add_space(32.0);
                 });
             });
         });
     action
 }
 
-/// The mark, the name and the tagline, centered on the column.
+fn connection_header(ui: &mut egui::Ui, width: f32) -> bool {
+    let button = theme::primary_button(ui.ctx(), "New connection…");
+    if width < 480.0 {
+        section(
+            ui,
+            "Create a connection",
+            "Choose a database to get started.",
+        );
+        ui.add_space(8.0);
+        ui.add_sized(vec2(136.0, 32.0), button).clicked()
+    } else {
+        ui.horizontal(|ui| {
+            section(
+                ui,
+                "Create a connection",
+                "Choose a database to get started.",
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.add_sized(vec2(136.0, 32.0), button).clicked()
+            })
+            .inner
+        })
+        .inner
+    }
+}
+
+/// A compact brand header that leaves the connection choices in focus.
 fn header(ui: &mut egui::Ui, width: f32) {
     let palette = theme::palette(ui.ctx());
-    let (row, _) = ui.allocate_exact_size(vec2(width, 46.0), Sense::hover());
-    let mark = Rect::from_center_size(row.center(), vec2(46.0, 46.0));
-    let icon = app_icon_texture(ui.ctx());
-    ui.painter().image(
-        icon,
-        mark,
-        Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-        Color32::WHITE,
-    );
-    ui.add_space(Spacing::L);
-    ui.vertical_centered(|ui| {
-        ui.label(
-            RichText::new("sqlr")
-                .font(theme::semibold(ui.ctx(), 27.0))
-                .color(palette.text),
+    ui.horizontal(|ui| {
+        let (mark, _) = ui.allocate_exact_size(vec2(60.0, 60.0), Sense::hover());
+        ui.painter().image(
+            app_icon_texture(ui.ctx()),
+            mark,
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            Color32::WHITE,
         );
-        ui.label(RichText::new("A fast, native database client").color(palette.text_muted));
+        ui.add_space(12.0);
+        ui.vertical(|ui| {
+            ui.label(
+                RichText::new("sqlr")
+                    .font(theme::semibold(ui.ctx(), 32.0))
+                    .color(palette.text),
+            );
+            ui.label(
+                RichText::new("A fast, native database client")
+                    .size(13.0)
+                    .color(palette.text_muted),
+            );
+        });
     });
+    ui.add_space(20.0);
+    let (line, _) = ui.allocate_exact_size(vec2(width, 1.0), Sense::hover());
+    ui.painter().hline(
+        line.x_range(),
+        line.center().y,
+        Stroke::new(1.0, palette.border),
+    );
+}
+
+/// Two quiet entry points for exploring sqlr and bringing over an existing workspace.
+fn quick_start(ui: &mut egui::Ui, width: f32) -> Option<WelcomeAction> {
+    let palette = theme::palette(ui.ctx());
+    let mut action = None;
+    let columns = if width >= 600.0 { 2 } else { 1 };
+    let card_width = (width - 12.0 * (columns - 1) as f32) / columns as f32;
+    let mut tile = |ui: &mut egui::Ui, demo: bool| {
+        egui::Frame::new()
+            .fill(if demo {
+                palette.bg_editor.lerp_to_gamma(palette.accent, 0.06)
+            } else {
+                palette.bg_subtle
+            })
+            .stroke(Stroke::new(
+                1.0,
+                if demo {
+                    palette.bg_editor.lerp_to_gamma(palette.accent, 0.22)
+                } else {
+                    palette.border
+                },
+            ))
+            .corner_radius(12)
+            .inner_margin(18)
+            .show(ui, |ui| {
+                ui.vertical(|ui| {
+                    ui.set_width((card_width - 38.0).max(1.0));
+                    ui.label(
+                        RichText::new(if demo {
+                            "Just exploring?"
+                        } else {
+                            "Make yourself at home"
+                        })
+                        .font(theme::semibold(ui.ctx(), 14.0))
+                        .color(palette.text),
+                    );
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(if demo {
+                            "Try sqlr with a ready-to-query sample database."
+                        } else {
+                            "Bring your saved connections from another client."
+                        })
+                        .size(12.0)
+                        .color(palette.text_muted),
+                    );
+                    ui.add_space(10.0);
+                    if demo {
+                        if ui.button("Open demo database").clicked() {
+                            action = Some(WelcomeAction::OpenDemo);
+                        }
+                    } else if ui.button("Import connections…").clicked() {
+                        action = Some(WelcomeAction::ImportConnections);
+                    }
+                });
+            });
+    };
+    if columns == 2 {
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing.x = 12.0;
+            tile(ui, true);
+            tile(ui, false);
+        });
+    } else {
+        tile(ui, true);
+        ui.add_space(12.0);
+        tile(ui, false);
+    }
+    action
 }
 
 fn app_icon_texture(ctx: &egui::Context) -> egui::TextureId {
@@ -157,14 +286,16 @@ fn app_icon_texture(ctx: &egui::Context) -> egui::TextureId {
     texture
 }
 
-fn section(ui: &mut egui::Ui, title: &str) {
+fn section(ui: &mut egui::Ui, title: &str, subtitle: &str) {
     let palette = theme::palette(ui.ctx());
-    ui.label(
-        RichText::new(title)
-            .font(theme::semibold(ui.ctx(), 10.5))
-            .color(palette.text_muted),
-    );
-    ui.add_space(Spacing::M);
+    ui.vertical(|ui| {
+        ui.label(
+            RichText::new(title)
+                .font(theme::semibold(ui.ctx(), 19.0))
+                .color(palette.text),
+        );
+        ui.label(RichText::new(subtitle).size(12.0).color(palette.text_muted));
+    });
 }
 
 /// `text` on one line, cut with an ellipsis to `width`.
@@ -174,35 +305,24 @@ fn one_line(ui: &egui::Ui, text: &str, font: FontId, color: Color32, width: f32)
     ui.painter().layout_job(job)
 }
 
-/// The driver cards and "More databases…", as many per row as fit.
+/// Two balanced rows on desktop; wrap to more rows when the window gets narrow.
 fn card_grid(ui: &mut egui::Ui, cards: &[DriverCard], width: f32) -> Option<WelcomeAction> {
-    let more = DriverCard {
-        id: String::new(),
-        name: "More databases…".into(),
-        detail: "Compatible and planned".into(),
-        icon: "database",
-    };
-    let all: Vec<&DriverCard> = cards.iter().chain(std::iter::once(&more)).collect();
-    let per_row = ((width + CARD_GAP) / (CARD_MIN + CARD_GAP))
-        .floor()
-        .clamp(1.0, all.len() as f32) as usize;
+    let target = cards.len().div_ceil(2).clamp(1, 4);
+    let per_row = (((width + CARD_GAP) / (CARD_MIN + CARD_GAP)).floor() as usize).clamp(1, target);
     let card_width = (width - CARD_GAP * (per_row as f32 - 1.0)) / per_row as f32;
     let mut action = None;
-    for chunk in all.chunks(per_row) {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = CARD_GAP;
-            for card in chunk {
-                if card_ui(ui, card, card_width) {
-                    action = Some(if card.id.is_empty() {
-                        WelcomeAction::MoreDatabases
-                    } else {
-                        WelcomeAction::NewConnection(Some(card.id.clone()))
-                    });
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing = vec2(CARD_GAP, CARD_GAP);
+        for chunk in cards.chunks(per_row) {
+            ui.horizontal(|ui| {
+                for card in chunk {
+                    if card_ui(ui, card, card_width) {
+                        action = Some(WelcomeAction::NewConnection(Some(card.id.clone())));
+                    }
                 }
-            }
-        });
-        ui.add_space(CARD_GAP);
-    }
+            });
+        }
+    });
     action
 }
 
@@ -212,31 +332,29 @@ fn card_ui(ui: &mut egui::Ui, card: &DriverCard, width: f32) -> bool {
     let (rect, response) = ui.allocate_exact_size(vec2(width, CARD_HEIGHT), Sense::click());
     let name = card.name.clone();
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, name.clone()));
-    let fill = if response.hovered() {
-        palette.hover
+    let highlighted = response.hovered() || response.has_focus();
+    let fill = if highlighted {
+        palette.bg_raised.lerp_to_gamma(palette.accent, 0.08)
     } else {
         palette.bg_raised
     };
-    let stroke = if response.hovered() {
-        palette.accent
-    } else {
-        palette.border
-    };
-    let painter = ui.painter();
-    painter.rect(
+    ui.painter().rect(
         rect,
-        CornerRadius::same(Spacing::RADIUS_M),
+        CornerRadius::same(10),
         fill,
-        Stroke::new(1.0, stroke),
+        Stroke::new(
+            1.0,
+            if highlighted {
+                palette.accent
+            } else {
+                palette.border
+            },
+        ),
         StrokeKind::Inside,
     );
-    let icon = Rect::from_min_size(
-        pos2(rect.left() + Spacing::L, rect.center().y - 10.0),
-        vec2(20.0, 20.0),
-    );
+    let icon = Rect::from_min_size(rect.min + vec2(14.0, 12.0), vec2(26.0, 26.0));
     icons::paint_database_at(ui, icon, card.icon);
-    let text_left = icon.right() + Spacing::M;
-    let text_width = rect.right() - Spacing::M - text_left;
+    let text_width = width - 28.0;
     let title = one_line(
         ui,
         &card.name,
@@ -247,19 +365,16 @@ fn card_ui(ui: &mut egui::Ui, card: &DriverCard, width: f32) -> bool {
     let detail = one_line(
         ui,
         &card.detail,
-        FontId::proportional(11.5),
+        FontId::proportional(10.5),
         palette.text_muted,
         text_width,
     );
-    let top = rect.center().y - (title.size().y + detail.size().y + Spacing::XS) / 2.0;
     ui.painter()
-        .galley(pos2(text_left, top), title.clone(), palette.text);
-    ui.painter().galley(
-        pos2(text_left, top + title.size().y + Spacing::XS),
-        detail,
-        palette.text_muted,
-    );
+        .galley(rect.min + vec2(14.0, 48.0), title, palette.text);
+    ui.painter()
+        .galley(rect.min + vec2(14.0, 70.0), detail, palette.text_muted);
     response
+        .on_hover_text(format!("{} · {}", card.name, card.detail))
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
 }
@@ -291,41 +406,34 @@ fn recent_row(ui: &mut egui::Ui, item: &RecentItem, width: f32) -> bool {
         &item.when,
         FontId::proportional(11.5),
         palette.text_muted,
-        120.0,
+        width * 0.25,
     );
-    let when_left = rect.right() - Spacing::M - when.size().x;
+    let when_left = rect.right() - 14.0 - when.size().x;
     ui.painter().galley(
         pos2(when_left, y - when.size().y / 2.0),
         when,
         palette.text_muted,
     );
     let left = dot.x + Spacing::L;
-    let room = (when_left - Spacing::L - left).max(0.0);
+    let room = (when_left - Spacing::L - left).max(1.0);
     let title = one_line(
         ui,
         &item.name,
-        FontId::proportional(13.0),
+        theme::semibold(ui.ctx(), 13.0),
         palette.text,
-        room * 0.55,
+        room,
     );
-    ui.painter().galley(
-        pos2(left, y - title.size().y / 2.0),
-        title.clone(),
-        palette.text,
-    );
-    let detail_left = left + title.size().x + Spacing::M;
     let detail = one_line(
         ui,
         &item.detail,
         FontId::proportional(11.5),
         palette.text_muted,
-        (when_left - Spacing::L - detail_left).max(0.0),
+        room,
     );
-    ui.painter().galley(
-        pos2(detail_left, y - detail.size().y / 2.0),
-        detail,
-        palette.text_muted,
-    );
+    ui.painter()
+        .galley(pos2(left, rect.top() + 9.0), title, palette.text);
+    ui.painter()
+        .galley(pos2(left, rect.top() + 30.0), detail, palette.text_muted);
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     let response = if item.name.chars().count() > 40 {
         response.on_hover_text(&item.name)

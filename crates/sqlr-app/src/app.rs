@@ -369,7 +369,7 @@ impl SqlrApp {
             tree: TreeState::default(),
             dock: DockState::new(Vec::new()),
             next_tab: 0,
-            show_value_panel: true,
+            show_value_panel: false,
             show_history: false,
             show_operations: false,
             cancel_all_operations: false,

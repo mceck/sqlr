@@ -372,6 +372,13 @@ fn document_results_have_one_inspector_and_respect_the_value_panel_toggle() {
     let inspectors = || egui_kittest::kittest::By::new().label("No cell selected");
     assert_eq!(
         h.query_all(inspectors()).count(),
+        0,
+        "The inspector starts closed"
+    );
+    h.get_by_label("Toggle value panel").click();
+    h.run_steps(5);
+    assert_eq!(
+        h.query_all(inspectors()).count(),
         1,
         "Document results need one inspector"
     );

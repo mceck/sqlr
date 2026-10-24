@@ -3,7 +3,7 @@
 //! the dialog, and its recent list connects a connection in a new editor tab.
 
 use egui::Color32;
-use sqlr_core::known_database;
+use sqlr_core::{Family, KnownStatus, known_database};
 use sqlr_ui::{DriverCard, RecentItem, WelcomeAction, welcome};
 
 use crate::app::SqlrApp;
@@ -11,11 +11,16 @@ use crate::app::SqlrApp;
 /// Recent connections listed.
 const RECENT_SHOWN: usize = 8;
 
-/// The welcome cards: `(known database id, card name, detail)`.
-const CARDS: [(&str, &str, &str); 3] = [
-    ("postgresql", "PostgreSQL", "TCP server"),
-    ("mysql", "MySQL / MariaDB", "TCP server"),
-    ("sqlite", "SQLite", "File"),
+/// A compact selection of native and installable databases for the two-row grid.
+const CARDS: [&str; 8] = [
+    "postgresql",
+    "mysql",
+    "sqlite",
+    "mongodb",
+    "redis",
+    "sqlserver",
+    "oracle",
+    "clickhouse",
 ];
 
 /// How long ago `at_ms` was, from `now_ms`: "just now", "5 min ago", "3 h ago",
@@ -40,18 +45,41 @@ fn now_ms() -> i64 {
 }
 
 impl SqlrApp {
-    /// The welcome screen's cards for the drivers this build has.
+    /// Available drivers and databases whose driver can be installed from the card.
     fn welcome_cards(&self) -> Vec<DriverCard> {
         CARDS
             .iter()
-            .filter_map(|(id, name, detail)| {
-                let driver = known_database(id)?.driver()?;
-                self.engine.drivers().get(driver)?;
+            .filter_map(|id| {
+                let database = known_database(id)?;
+                let driver = database.driver()?;
+                let installed = self.engine.drivers().get(driver).is_some();
+                if !installed && !matches!(database.status, KnownStatus::Installable { .. }) {
+                    return None;
+                }
+                let detail = match database.status {
+                    KnownStatus::Installable { .. } if installed => "Installed driver",
+                    KnownStatus::Installable { .. } => "Install driver",
+                    KnownStatus::Compatible {
+                        driver: "postgres", ..
+                    } => "Via PostgreSQL",
+                    KnownStatus::Compatible { .. } => "Via MySQL",
+                    _ if database.id == "sqlite" => "Local file",
+                    _ => match database.family {
+                        Family::Relational => "Native · SQL",
+                        Family::Document if database.id == "elasticsearch" => "Search engine",
+                        Family::Document => "Documents",
+                        Family::KeyValue => "Key-value store",
+                    },
+                };
                 Some(DriverCard {
                     id: id.to_string(),
-                    name: name.to_string(),
+                    name: database.name.to_string(),
                     detail: detail.to_string(),
-                    icon: driver,
+                    icon: if matches!(database.status, KnownStatus::Compatible { .. }) {
+                        database.id
+                    } else {
+                        driver
+                    },
                 })
             })
             .collect()

@@ -13,8 +13,18 @@ struct App {
 fn cards() -> Vec<DriverCard> {
     [
         ("postgresql", "PostgreSQL", "TCP server", "postgres"),
-        ("mysql", "MySQL / MariaDB", "TCP server", "mysql"),
-        ("sqlite", "SQLite", "File", "sqlite"),
+        ("mysql", "MySQL", "Native · SQL", "mysql"),
+        ("sqlite", "SQLite", "Local file", "sqlite"),
+        ("mongodb", "MongoDB", "Document database", "mongodb"),
+        ("redis", "Redis", "Key-value store", "redis"),
+        ("sqlserver", "SQL Server", "Native · SQL", "sqlserver"),
+        ("oracle", "Oracle", "Native · SQL", "oracle"),
+        (
+            "clickhouse",
+            "ClickHouse",
+            "Install driver",
+            "jdbc-clickhouse",
+        ),
     ]
     .iter()
     .map(|(id, name, detail, icon)| DriverCard {
@@ -50,6 +60,8 @@ fn harness(recent: Vec<RecentItem>, size: egui::Vec2) -> Harness<'static, App> {
 
 fn click(h: &mut Harness<'static, App>, label: &str) -> WelcomeAction {
     h.state_mut().actions.clear();
+    h.get_by_label(label).scroll_to_me();
+    h.run_steps(10);
     h.get_by_label(label).click();
     h.run_steps(2);
     let actions = &h.state().actions;
@@ -110,7 +122,7 @@ fn welcome_without_recent_and_in_a_small_window() {
     let mut h = harness(Vec::new(), vec2(520.0, 420.0));
     h.get_by_label("No recent connections yet");
     // Every card stays inside the window.
-    for label in ["PostgreSQL", "MySQL / MariaDB", "SQLite", "More databases…"] {
+    for label in ["PostgreSQL", "MySQL", "SQLite", "More databases…"] {
         let rect = h.get_by_label(label).rect();
         assert!(rect.right() <= 520.5, "{label}: {rect:?}");
     }
@@ -118,4 +130,47 @@ fn welcome_without_recent_and_in_a_small_window() {
         click(&mut h, "SQLite"),
         WelcomeAction::NewConnection(Some("sqlite".into()))
     );
+}
+
+#[test]
+fn database_grid_has_two_balanced_rows_on_desktop() {
+    let h = harness(Vec::new(), vec2(1100.0, 900.0));
+    let rects: Vec<_> = cards()
+        .iter()
+        .map(|card| h.get_by_label(&card.name).rect())
+        .collect();
+    let top = rects[0].top();
+    let bottom = rects[4].top();
+    assert!(bottom > top);
+    for (index, rect) in rects.iter().enumerate() {
+        let expected = if index < 4 { top } else { bottom };
+        assert!((rect.top() - expected).abs() < 1.0, "{index}: {rect:?}");
+        assert!(rect.left() >= 0.0 && rect.right() <= 1100.0);
+    }
+}
+
+#[test]
+fn installable_database_card_keeps_its_database_id() {
+    let mut h = harness(Vec::new(), vec2(1100.0, 900.0));
+    assert_eq!(
+        click(&mut h, "ClickHouse"),
+        WelcomeAction::NewConnection(Some("clickhouse".into()))
+    );
+}
+
+#[test]
+fn welcome_actions_stay_within_a_narrow_viewport() {
+    let h = harness(Vec::new(), vec2(360.0, 700.0));
+    for label in [
+        "New connection…",
+        "PostgreSQL",
+        "More databases…",
+        "Import connections…",
+    ] {
+        let rect = h.get_by_label(label).rect();
+        assert!(
+            rect.left() >= 0.0 && rect.right() <= 360.0,
+            "{label}: {rect:?}"
+        );
+    }
 }
