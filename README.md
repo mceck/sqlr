@@ -84,6 +84,7 @@ cargo run --release -p sqlr-app
 ```sh
 scripts/package-macos.sh
 open dist/sqlr.app
+make install-fast # build in release mode without optimizations and install to /Applications
 ```
 
 The script builds the release binary and wraps it in `dist/sqlr.app` with `docs/media/icon.png` as the app icon, then ad-hoc signs the bundle. Double-clicking it launches sqlr as a normal app, with its own Dock icon and no terminal window; drag it to `/Applications` to install. `--bin target/release/sqlr` bundles an existing binary instead of rebuilding. Distributing the app to other Macs needs a Developer ID signature and notarization (`--sign "Developer ID Application: …"`).

@@ -1,6 +1,6 @@
 
 
-.PHONY: test test-docker test-fast test-services test-services-docker test-services-reset test-services-reset-docker check-nextest macos install coverage coverage-fast coverage-open
+.PHONY: test test-docker test-fast test-services test-services-docker test-services-reset test-services-reset-docker check-nextest macos install install-fast coverage coverage-fast coverage-open
 
 $(shell mkdir -p dist)
 
@@ -75,6 +75,12 @@ macos:
 
 install: macos
 	cp -R dist/sqlr.app /Applications/
+
+# Keep release behavior while favoring compilation speed over runtime performance.
+install-fast: export CARGO_PROFILE_RELEASE_OPT_LEVEL = 0
+install-fast: export CARGO_PROFILE_RELEASE_LTO = false
+install-fast: export CARGO_PROFILE_RELEASE_CODEGEN_UNITS = 256
+install-fast: install
 
 clean:
 	rm -rf dist && rm -rf target
