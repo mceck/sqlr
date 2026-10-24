@@ -164,7 +164,7 @@ fn args(list: &[&str]) -> Vec<Vec<u8>> {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn scan_never_uses_keys() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("REDIS");
     let server = start().await;
     let mut con = raw(&server).await;
     for i in 0..300 {
@@ -207,7 +207,7 @@ async fn scan_never_uses_keys() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn scan_groups_and_types() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("REDIS");
     let server = start().await;
     let mut con = raw(&server).await;
     run(&mut con, &["SET", "user:1:name", "ann"]).await;
@@ -307,7 +307,7 @@ async fn load_all(kv: &dyn KeyValueConn, key: &str, count: usize) -> (KvPage, us
 
 #[tokio::test(flavor = "multi_thread")]
 async fn values_every_type_paged() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("REDIS");
     let server = start().await;
     let mut con = raw(&server).await;
     let mut pipe = redis::pipe();
@@ -412,7 +412,7 @@ async fn values_every_type_paged() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn huge_values_paged() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("REDIS");
     const FIELDS: usize = 5_000_000;
     let server = start().await;
     let mut con = raw(&server).await;
@@ -455,7 +455,7 @@ async fn huge_values_paged() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn edits_every_type() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("REDIS");
     let server = start().await;
     let conn = connect(&server, &[]).await;
     let kv = kv(&conn);
@@ -605,7 +605,7 @@ async fn edits_every_type() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ttl_and_persist() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("REDIS");
     let server = start().await;
     let conn = connect(&server, &[]).await;
     let kv = kv(&conn);
@@ -642,7 +642,7 @@ async fn ttl_and_persist() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn console_resp_types_and_multi_exec() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("REDIS");
     let server = start().await;
     let conn = connect(&server, &[]).await;
     let kv = kv(&conn);
@@ -740,7 +740,7 @@ async fn console_resp_types_and_multi_exec() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn read_only_refuses_writes() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("REDIS");
     let server = start().await;
     let mut con = raw(&server).await;
     run(&mut con, &["SET", "k", "v"]).await;
@@ -812,7 +812,7 @@ async fn read_only_refuses_writes() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn tls_and_acl_auth() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("REDIS_TLS");
     let server = start_tls().await;
     let port = server.port;
     let ca_path = sqlr_testkit::ca_path();
@@ -831,7 +831,13 @@ async fn tls_and_acl_auth() {
         .expect("TLS with the CA and the ACL user");
     let info = conn.ping().await.unwrap();
     assert_eq!(info.product, "Redis");
-    assert!(info.version.starts_with('7'), "{info:?}");
+    let major: u32 = info
+        .version
+        .split('.')
+        .next()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0);
+    assert!(major >= 7, "{info:?}");
     let kv = kv(&conn);
     kv.edit(0, b"k", KvEdit::SetString(b"v".to_vec()))
         .await
@@ -883,7 +889,7 @@ async fn tls_and_acl_auth() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn scan_resumes_after_reconnect() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("REDIS");
     let server = start().await;
     let mut con = raw(&server).await;
     let mut pipe = redis::pipe();
@@ -979,7 +985,7 @@ fn is_cluster_refusal(e: &DriverError) -> bool {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn cluster_refused() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("REDIS");
     let driver = RedisDriver::new();
     let port = fake_cluster(true).await;
     let e = driver
@@ -1001,7 +1007,7 @@ async fn cluster_refused() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn create_never_overwrites_an_existing_key() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("REDIS");
     let server = start().await;
     let conn = connect(&server, &[]).await;
     let kv = kv(&conn);
@@ -1057,7 +1063,7 @@ async fn create_never_overwrites_an_existing_key() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn list_remove_checks_the_index_and_the_value() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("REDIS");
     let server = start().await;
     let mut con = raw(&server).await;
     run(&mut con, &["RPUSH", "l", "x", "a", "x"]).await;

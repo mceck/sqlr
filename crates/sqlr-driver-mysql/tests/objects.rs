@@ -18,14 +18,14 @@ macro_rules! suite {
         mod mysql84 {
             $(#[tokio::test(flavor = "multi_thread")]
             async fn $name() {
-                sqlr_testkit::skip_container_tests!();
+                sqlr_testkit::skip_container_tests!("MYSQL");
                 super::$name(super::Server::MySql).await
             })*
         }
         mod mariadb114 {
             $(#[tokio::test(flavor = "multi_thread")]
             async fn $name() {
-                sqlr_testkit::skip_container_tests!();
+                sqlr_testkit::skip_container_tests!("MARIADB");
                 super::$name(super::Server::MariaDb).await
             })*
         }

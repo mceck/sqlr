@@ -51,6 +51,8 @@ done
 if [ "$FAST" -eq 1 ]; then
     export SQLR_SKIP_CONTAINER_TESTS=1
 else
+    # Coverage must exercise every driver, including Docker-only ones.
+    export SQLR_TEST_SERVICES=docker SQLR_TEST_BACKEND=docker
     scripts/test-services.sh up
     # Stop the databases however the tests end.
     trap 'scripts/test-services.sh down' EXIT INT TERM

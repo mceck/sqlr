@@ -98,7 +98,7 @@ fn origin_table(engine: &Engine, q: QueryId) -> TableRef {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn chained_transaction_stays_open_and_can_be_rolled_back_from_the_engine() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let (_server, cfg, sec) = pg().await;
     let engine = engine(cfg, sec).await;
     run(&engine, "CREATE TABLE chained (id int)").await;
@@ -123,7 +123,7 @@ async fn chained_transaction_stays_open_and_can_be_rolled_back_from_the_engine()
 
 #[tokio::test(flavor = "multi_thread")]
 async fn apply_changeset_end_to_end() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let (_c, cfg, sec) = pg().await;
     let engine = engine(cfg, sec).await;
     run(
@@ -240,7 +240,7 @@ async fn apply_changeset_end_to_end() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn apply_refuses_a_table_renamed_by_another_session() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let (_c, cfg, sec) = pg().await;
     let other = PostgresDriver::new().connect(&cfg, &sec).await.unwrap();
     let engine = engine(cfg, sec).await;

@@ -18,7 +18,7 @@ async fn first_value(rel: &dyn sqlr_core::RelationalConn, sql: &str) -> Value {
 
 #[tokio::test]
 async fn pg_explain_json_parsed() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let (_c, cfg, sec) = pg().await;
     let conn = PostgresDriver::new().connect(&cfg, &sec).await.unwrap();
     let rel = conn.relational().unwrap();
@@ -59,7 +59,7 @@ async fn pg_explain_json_parsed() {
 
 #[tokio::test]
 async fn explain_analyze_update_rolls_back() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let (_c, cfg, sec) = pg().await;
     let conn = PostgresDriver::new().connect(&cfg, &sec).await.unwrap();
     let rel = conn.relational().unwrap();

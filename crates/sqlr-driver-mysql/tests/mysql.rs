@@ -18,14 +18,14 @@ macro_rules! suite {
         mod mysql84 {
             $(#[tokio::test(flavor = "multi_thread")]
             async fn $name() {
-                sqlr_testkit::skip_container_tests!();
+                sqlr_testkit::skip_container_tests!("MYSQL");
                 super::$name(super::Server::MySql).await
             })*
         }
         mod mariadb114 {
             $(#[tokio::test(flavor = "multi_thread")]
             async fn $name() {
-                sqlr_testkit::skip_container_tests!();
+                sqlr_testkit::skip_container_tests!("MARIADB");
                 super::$name(super::Server::MariaDb).await
             })*
         }
@@ -171,7 +171,7 @@ async fn connect_and_ping(server: Server) {
 
 #[tokio::test]
 async fn unreachable_host_is_connection_error() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("MYSQL");
     let err = MysqlDriver::new()
         .connect(&config("127.0.0.1", 1), &secrets("x"))
         .await
@@ -990,7 +990,7 @@ async fn exported_literals_read_back_in_any_sql_mode(server: Server) {
 
 #[tokio::test]
 async fn mysql_sql_mode_applied() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("MYSQL");
     let (_container, mut cfg, secrets) = start(Server::MySql).await;
     cfg.values
         .insert("property.sql_mode".into(), "ANSI_QUOTES".into());

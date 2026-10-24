@@ -129,7 +129,7 @@ fn text(v: &Value) -> String {
 
 #[test]
 fn cross_dialect_matrix() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let rt = tokio::runtime::Runtime::new().unwrap();
     let _guard = rt.enter();
     let servers = rt.block_on(start());

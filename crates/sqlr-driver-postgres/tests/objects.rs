@@ -162,7 +162,7 @@ const OBJECTS: &str = r#"
 /// definition, for every kind the manifest says it can create.
 #[tokio::test]
 async fn round_trip_every_creatable_kind() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let env = Env::new(OBJECTS).await;
     let shop = unique_name("shop");
     env.raw
@@ -258,7 +258,7 @@ async fn round_trip_every_creatable_kind() {
 
 #[tokio::test]
 async fn ddl_awkward_names_per_dialect() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let env = Env::new(r#"CREATE SCHEMA "Sch ""q"" ü""#).await;
     let schema = "Sch \"q\" ü";
     let parent_ref = t(schema, "Párent 'p'");
@@ -343,7 +343,7 @@ async fn ddl_awkward_names_per_dialect() {
 
 #[tokio::test]
 async fn alter_column_type_nullability_default() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let env =
         Env::new("CREATE TABLE t (id int PRIMARY KEY, a text, b int NOT NULL, c int DEFAULT 7)")
             .await;
@@ -374,7 +374,7 @@ async fn alter_column_type_nullability_default() {
 
 #[tokio::test]
 async fn add_drop_fk_check_unique_index() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let env = Env::new(
         "CREATE TABLE p (id int PRIMARY KEY);
          CREATE TABLE c (id int PRIMARY KEY, p_id int, qty int, code text)",
@@ -426,7 +426,7 @@ async fn add_drop_fk_check_unique_index() {
 
 #[tokio::test]
 async fn rename_table_column_index() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let env = Env::new(
         "CREATE TABLE t (id int PRIMARY KEY, a int);
          CREATE INDEX t_a ON t (a)",
@@ -446,7 +446,7 @@ async fn rename_table_column_index() {
 
 #[tokio::test]
 async fn comments_round_trip() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let env = Env::new(
         "CREATE TABLE t (id int, a int);
          COMMENT ON COLUMN t.a IS 'old';
@@ -500,7 +500,7 @@ async fn comments_round_trip() {
 
 #[tokio::test]
 async fn drop_cascade() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let env = Env::new(
         "CREATE TABLE t (id int);
          CREATE VIEW v AS SELECT id FROM t",
@@ -533,7 +533,7 @@ async fn drop_cascade() {
 
 #[tokio::test]
 async fn pg_partitions_listed() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let env = Env::new(
         "CREATE TABLE m (id int NOT NULL, at date NOT NULL) PARTITION BY RANGE (at);
          CREATE TABLE m_2024 PARTITION OF m FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
@@ -575,7 +575,7 @@ async fn pg_partitions_listed() {
 
 #[tokio::test]
 async fn pg_identity_and_generated_columns() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let env = Env::new(
         "CREATE TABLE g (
              a int GENERATED ALWAYS AS IDENTITY,
@@ -607,7 +607,7 @@ async fn pg_identity_and_generated_columns() {
 
 #[tokio::test]
 async fn functions_procedures_triggers_round_trip() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let env = Env::new(OBJECTS).await;
     let trigger_ref = ObjectRef::child(ObjectKind::Trigger, &t("app", "orders"), "orders_touch");
     let trigger = match env.load(&trigger_ref).await {
@@ -718,7 +718,7 @@ async fn functions_procedures_triggers_round_trip() {
 /// Constructs the model cannot express are kept as the server prints them, never lost.
 #[tokio::test]
 async fn table_ddl_keeps_what_the_model_cannot_express() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let env = Env::new(
         "CREATE TABLE p (id int PRIMARY KEY);
          CREATE TABLE t (
@@ -778,7 +778,7 @@ async fn table_ddl_keeps_what_the_model_cannot_express() {
 /// it loads, renames, takes comments and drops.
 #[tokio::test]
 async fn routine_with_defaults_is_named_by_identity_arguments() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let env = Env::new(
         "CREATE FUNCTION public.f(a int, b text DEFAULT 'x') RETURNS int LANGUAGE sql
              AS 'SELECT a';",
@@ -821,7 +821,7 @@ async fn routine_with_defaults_is_named_by_identity_arguments() {
 /// Replacing a materialized view (drop and create) creates its indexes again.
 #[tokio::test]
 async fn replacing_a_materialized_view_keeps_its_indexes() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let env = Env::new(
         "CREATE TABLE t (id int PRIMARY KEY, n int);
          CREATE MATERIALIZED VIEW m AS SELECT id, n FROM t;
@@ -860,7 +860,7 @@ async fn replacing_a_materialized_view_keeps_its_indexes() {
 /// parentheses their names and argument types hold.
 #[tokio::test]
 async fn function_and_procedure_nodes_map_to_their_objects() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let env = Env::new(
         r#"CREATE FUNCTION public."we(ird" (a numeric(10,2)) RETURNS int LANGUAGE sql AS 'SELECT 1';
            CREATE PROCEDURE public.p (x int) LANGUAGE sql AS 'SELECT 1';"#,
@@ -908,7 +908,7 @@ async fn function_and_procedure_nodes_map_to_their_objects() {
 
 #[tokio::test]
 async fn ddl_of_another_database_object() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let other = unique_name("other");
     let env = Env::new(&format!(r#"CREATE DATABASE "{other}""#)).await;
     raw(&env.cfg, &env.sec, &other)
@@ -939,7 +939,7 @@ async fn ddl_of_another_database_object() {
 
 #[tokio::test]
 async fn truncate_cascade_empties_referencing_tables() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let env = Env::new(
         "CREATE TABLE parent (id int PRIMARY KEY);
          CREATE TABLE child (id int PRIMARY KEY, parent int REFERENCES parent (id));

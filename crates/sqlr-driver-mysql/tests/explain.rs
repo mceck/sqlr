@@ -44,12 +44,12 @@ async fn explain_on(server: Server) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn mysql84_explain_tree_parsed() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("MYSQL");
     explain_on(Server::MySql).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn mariadb114_explain_json_parsed() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("MARIADB");
     explain_on(Server::MariaDb).await;
 }

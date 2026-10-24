@@ -59,29 +59,43 @@ EOF
     chmod 644 "$dir"/*.key "$dir"/*.crt
 }
 
-case "${1:-up}" in
-    up)
+# Native processes are the default: Docker stays available with SQLR_TEST_SERVICES=docker
+# (what `make test-docker` sets).
+case "${SQLR_TEST_SERVICES:-local}" in
+    local)
         certificates
-        compose up -d --wait --wait-timeout 600
+        exec scripts/test-services-local.sh "${1:-up}"
         ;;
-    up-core)
-        certificates
-        compose up -d --wait --wait-timeout 180 postgres postgres-global mysql mariadb \
-            mysql-global mariadb-global mysql-notls mariadb-notls
-        ;;
-    down)
-        compose down
-        ;;
-    reset)
-        certificates
-        compose down -v
-        compose up -d --wait --wait-timeout 600
-        ;;
-    logs)
-        compose logs -f
+    docker)
+        case "${1:-up}" in
+            up)
+                certificates
+                compose up -d --wait --wait-timeout 600
+                ;;
+            up-core)
+                certificates
+                compose up -d --wait --wait-timeout 180 postgres postgres-global mysql mariadb \
+                    mysql-global mariadb-global mysql-notls mariadb-notls
+                ;;
+            down)
+                compose down
+                ;;
+            reset)
+                certificates
+                compose down -v
+                compose up -d --wait --wait-timeout 600
+                ;;
+            logs)
+                compose logs -f
+                ;;
+            *)
+                echo "usage: $0 {up|up-core|down|reset|logs}" >&2
+                exit 2
+                ;;
+        esac
         ;;
     *)
-        echo "usage: $0 {up|up-core|down|reset|logs}" >&2
+        echo "SQLR_TEST_SERVICES must be 'local' or 'docker', not '$SQLR_TEST_SERVICES'" >&2
         exit 2
         ;;
 esac

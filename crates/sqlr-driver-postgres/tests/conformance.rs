@@ -8,7 +8,7 @@ use sqlr_driver_tests::{Target, TypeCase, relational_suite};
 
 #[tokio::test]
 async fn postgres_passes_the_conformance_suite() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let (_container, cfg, secrets) = support::pg().await;
     let mut target = Target::new(
         "postgres",

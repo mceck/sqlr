@@ -124,7 +124,7 @@ macro_rules! eventually {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn roles_list_and_create_alter_drop() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let env = Env::new("CREATE ROLE reader NOLOGIN;").await;
     let admin = env.admin();
     let support = admin.supports();
@@ -216,7 +216,7 @@ async fn roles_list_and_create_alter_drop() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn grants_round_trip() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let env = Env::new(
         "CREATE SCHEMA shop; CREATE TABLE shop.\"Order Lines\" (id int); \
          CREATE SEQUENCE shop.seq; \
@@ -276,7 +276,7 @@ async fn grants_round_trip() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn sessions_include_own_marked() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let env = Env::new("SELECT 1").await;
     let admin = env.admin();
     let own_ids = admin.session_ids();
@@ -303,7 +303,7 @@ async fn sessions_include_own_marked() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn other_database_connections_are_own() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let env = Env::new("CREATE DATABASE other").await;
     let mut cfg = env.cfg.clone();
     cfg.values
@@ -331,7 +331,7 @@ async fn other_database_connections_are_own() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn cancel_and_terminate_other_session() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let env = Env::new("SELECT 1").await;
     let admin = env.admin();
     let other = Arc::new(raw(&env.cfg, &env.sec).await);
@@ -402,7 +402,7 @@ async fn cancel_and_terminate_other_session() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn locks_show_blocking_chain() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let env =
         Env::new("CREATE TABLE t (id int PRIMARY KEY, v int); INSERT INTO t VALUES (1, 0);").await;
     let admin = env.admin();
@@ -448,7 +448,7 @@ async fn locks_show_blocking_chain() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn properties_and_sizes() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let env = Env::new("CREATE DATABASE other").await;
     let admin = env.admin();
     let properties = admin.properties().await.unwrap();
@@ -476,7 +476,7 @@ async fn properties_and_sizes() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn table_stats() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let env = Env::new(
         "CREATE SCHEMA shop; \
          CREATE TABLE shop.orders (id int PRIMARY KEY, note text); \

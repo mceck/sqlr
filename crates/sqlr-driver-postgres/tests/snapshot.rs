@@ -76,7 +76,7 @@ fn by_ref(snapshot: &SchemaSnapshot) -> Vec<ObjectRef> {
 
 #[tokio::test]
 async fn snapshot_round_trip_equals_load_object() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let env = Env::new(SETUP).await;
     let snap = env.snapshot("a").await;
     assert_eq!(snap.engine, "postgres");
@@ -112,7 +112,7 @@ async fn snapshot_round_trip_equals_load_object() {
 
 #[tokio::test]
 async fn compare_then_apply_script_converges() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let env = Env::new(SETUP).await;
     let rel = env.conn.relational().unwrap();
     let generator = rel.dialect().ddl_gen().unwrap();
@@ -151,7 +151,7 @@ async fn compare_then_apply_script_converges() {
 
 #[tokio::test]
 async fn normalized_ddl_not_a_difference() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     // The same schema, created with other whitespace and type spellings.
     let env = Env::new(
         "CREATE SCHEMA a; CREATE SCHEMA b;
@@ -177,7 +177,7 @@ async fn normalized_ddl_not_a_difference() {
 
 #[tokio::test]
 async fn schemas_on_the_search_path_compare_by_qualified_names() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     // `public` is on the search path: its views and serial defaults print unqualified.
     let env = Env::new(
         "CREATE SCHEMA staging;
@@ -199,7 +199,7 @@ async fn schemas_on_the_search_path_compare_by_qualified_names() {
 
 #[tokio::test]
 async fn serial_tables_script_runs_and_converges() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     // The target has a serial table the source lacks (its sequence goes with it), and the
     // source has an identity table the target lacks (its sequence is named by the server).
     let env = Env::new(

@@ -16,18 +16,18 @@ use support::{Server, start};
 mod mysql84 {
     #[tokio::test(flavor = "multi_thread")]
     async fn reused_savepoint_names_replace_the_old_target() {
-        sqlr_testkit::skip_container_tests!();
+        sqlr_testkit::skip_container_tests!("MYSQL");
         super::reused_savepoint_names_replace_the_old_target(super::Server::MySql).await
     }
     #[tokio::test(flavor = "multi_thread")]
     async fn apply_changeset_end_to_end() {
-        sqlr_testkit::skip_container_tests!();
+        sqlr_testkit::skip_container_tests!("MYSQL");
         super::apply_changeset_end_to_end(super::Server::MySql).await
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn update_to_the_current_value_succeeds() {
-        sqlr_testkit::skip_container_tests!();
+        sqlr_testkit::skip_container_tests!("MYSQL");
         super::update_to_the_current_value_succeeds(super::Server::MySql).await
     }
 }
@@ -35,18 +35,18 @@ mod mysql84 {
 mod mariadb114 {
     #[tokio::test(flavor = "multi_thread")]
     async fn reused_savepoint_names_replace_the_old_target() {
-        sqlr_testkit::skip_container_tests!();
+        sqlr_testkit::skip_container_tests!("MARIADB");
         super::reused_savepoint_names_replace_the_old_target(super::Server::MariaDb).await
     }
     #[tokio::test(flavor = "multi_thread")]
     async fn apply_changeset_end_to_end() {
-        sqlr_testkit::skip_container_tests!();
+        sqlr_testkit::skip_container_tests!("MARIADB");
         super::apply_changeset_end_to_end(super::Server::MariaDb).await
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn update_to_the_current_value_succeeds() {
-        sqlr_testkit::skip_container_tests!();
+        sqlr_testkit::skip_container_tests!("MARIADB");
         super::update_to_the_current_value_succeeds(super::Server::MariaDb).await
     }
 }

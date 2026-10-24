@@ -7,11 +7,55 @@ mod kv;
 pub use doc::{FakeDocDriver, FakeDocScript};
 pub use kv::{FakeKvDriver, FakeKvScript};
 
+/// Where the integration tests find their database servers.
+///
+/// `local` runs the servers as native processes started by `scripts/test-services.sh`
+/// (`initdb`, `mysqld`, `redis-server`); `docker` starts them with
+/// `docker-compose.test.yml`. The default is `local`, so a checkout without Docker still
+/// runs the Postgres, MySQL and Redis suites.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Backend {
+    Local,
+    Docker,
+}
+
+/// The backend selected by `SQLR_TEST_BACKEND` (`local` when unset).
+pub fn backend() -> Backend {
+    static BACKEND: std::sync::OnceLock<Backend> = std::sync::OnceLock::new();
+    *BACKEND.get_or_init(|| match std::env::var("SQLR_TEST_BACKEND").as_deref() {
+        Ok("docker") => Backend::Docker,
+        Ok("local") | Ok("") | Err(_) => Backend::Local,
+        Ok(other) => panic!("SQLR_TEST_BACKEND must be `local` or `docker`, not `{other}`"),
+    })
+}
+
 /// Whether container-backed tests should return early because the environment asks for a
 /// Docker-free run (`SQLR_SKIP_CONTAINER_TESTS=1`).
 pub fn skip_container_tests() -> bool {
     static SKIP: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *SKIP.get_or_init(|| std::env::var("SQLR_SKIP_CONTAINER_TESTS").is_ok_and(|value| value == "1"))
+}
+
+/// Whether the named service can run in this environment.
+///
+/// In the local backend only Postgres, MySQL and Redis have native services. MariaDB is
+/// available when `SQLR_TEST_MARIADB` points at a server; every other service needs the
+/// Docker backend. In the Docker backend every service is available (compose starts them).
+pub fn service_available(name: &str) -> bool {
+    if skip_container_tests() {
+        return false;
+    }
+    match backend() {
+        Backend::Docker => true,
+        Backend::Local => match name {
+            "POSTGRES" | "POSTGRES_GLOBAL" | "MYSQL" | "MYSQL_GLOBAL" | "MYSQL_NOTLS" | "REDIS"
+            | "REDIS_TLS" => true,
+            "MARIADB" | "MARIADB_GLOBAL" | "MARIADB_NOTLS" => {
+                std::env::var("SQLR_TEST_MARIADB").is_ok()
+            }
+            _ => false,
+        },
+    }
 }
 
 /// The `host:port` of a fixed test service (`SQLR_TEST_POSTGRES`, `SQLR_TEST_MYSQL`, …).
@@ -115,14 +159,21 @@ pub fn unique_name(prefix: &str) -> String {
     format!("{prefix}_{run}_{}", NEXT.fetch_add(1, Ordering::Relaxed))
 }
 
-/// Returns early from a test when [`skip_container_tests`] is true.
+/// Returns early from a container-backed test when the service cannot run.
 ///
-/// Container-backed tests call this first, so one environment variable disables every
-/// Docker-dependent test without repeating the check.
+/// With no argument the test needs Docker: it returns early in every non-Docker backend,
+/// or when `SQLR_SKIP_CONTAINER_TESTS=1`. With a service name (`"POSTGRES"`, `"MYSQL"`,
+/// `"REDIS"`, …) the test runs whenever [`service_available`] says the service can run,
+/// which in the default local backend means the three native servers.
 #[macro_export]
 macro_rules! skip_container_tests {
     () => {
-        if $crate::skip_container_tests() {
+        if $crate::skip_container_tests() || $crate::backend() == $crate::Backend::Local {
+            return;
+        }
+    };
+    ($service:expr) => {
+        if !$crate::service_available($service) {
             return;
         }
     };

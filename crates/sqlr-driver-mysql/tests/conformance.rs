@@ -49,12 +49,12 @@ async fn suite(server: Server) {
 
 #[tokio::test]
 async fn mysql_passes_the_conformance_suite() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("MYSQL");
     suite(Server::MySql).await;
 }
 
 #[tokio::test]
 async fn mariadb_passes_the_conformance_suite() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("MARIADB");
     suite(Server::MariaDb).await;
 }

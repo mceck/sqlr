@@ -64,12 +64,12 @@ async fn string_defaults_with_bit_prefix_round_trip(server: Server) {
 
 #[tokio::test]
 async fn mysql_string_defaults_with_bit_prefix_round_trip() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("MYSQL");
     string_defaults_with_bit_prefix_round_trip(Server::MySql).await;
 }
 
 #[tokio::test]
 async fn mariadb_string_defaults_with_bit_prefix_round_trip() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("MARIADB");
     string_defaults_with_bit_prefix_round_trip(Server::MariaDb).await;
 }

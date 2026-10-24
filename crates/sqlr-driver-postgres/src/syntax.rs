@@ -5,9 +5,9 @@ use std::sync::{Arc, LazyLock};
 use sqlr_core::{DOUBLE_QUOTE_IDENTS, SqlSyntax};
 
 // Generated from `SELECT upper(word), catcode FROM pg_get_keywords() ORDER BY 1`: the union of
-// PostgreSQL 17.11 (the pinned `postgres:17-alpine` test image) and 11.22, so words
-// dropped since 11 stay known. The `pg_*_are_known` tests check both lists against the pinned
-// server.
+// PostgreSQL 18.6 (the local test server), 17.11 (the `postgres:17-alpine` Docker image) and
+// 11.22, so words dropped since 11 stay known. The `pg_*_are_known` tests check both lists
+// against the pinned server.
 /// Every keyword, sorted.
 pub const PG_KEYWORDS: &[&str] = &[
     "ABORT",
@@ -138,6 +138,7 @@ pub const PG_KEYWORDS: &[&str] = &[
     "ENCODING",
     "ENCRYPTED",
     "END",
+    "ENFORCED",
     "ENUM",
     "ERROR",
     "ESCAPE",
@@ -292,6 +293,7 @@ pub const PG_KEYWORDS: &[&str] = &[
     "NULLS",
     "NUMERIC",
     "OBJECT",
+    "OBJECTS",
     "OF",
     "OFF",
     "OFFSET",
@@ -323,6 +325,7 @@ pub const PG_KEYWORDS: &[&str] = &[
     "PASSING",
     "PASSWORD",
     "PATH",
+    "PERIOD",
     "PLACING",
     "PLAN",
     "PLANS",
@@ -474,6 +477,7 @@ pub const PG_KEYWORDS: &[&str] = &[
     "VERBOSE",
     "VERSION",
     "VIEW",
+    "VIRTUAL",
     "VIEWS",
     "VOLATILE",
     "WHEN",

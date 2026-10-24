@@ -24,7 +24,7 @@ async fn connect() -> (
 
 #[tokio::test]
 async fn catalog_lists_relations_and_columns() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let (_c, conn, admin) = connect().await;
     admin
         .batch_execute(
@@ -53,7 +53,7 @@ async fn catalog_lists_relations_and_columns() {
 
 #[tokio::test]
 async fn catalog_of_missing_schema_is_empty() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let (_c, conn, _admin) = connect().await;
     let cat = conn.relational().unwrap().catalog("nope").await.unwrap();
     assert!(cat.relations.is_empty());
@@ -61,7 +61,7 @@ async fn catalog_of_missing_schema_is_empty() {
 
 #[tokio::test]
 async fn pg_reserved_keywords_are_known() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("POSTGRES");
     let (_c, _conn, admin) = connect().await;
     let rows = admin
         .query(

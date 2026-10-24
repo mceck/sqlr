@@ -151,18 +151,18 @@ async fn converges(server: Server) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn mysql84_snapshot_round_trip_equals_load_object() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("MYSQL");
     round_trip(Server::MySql).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn mysql84_compare_then_apply_script_converges() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("MYSQL");
     converges(Server::MySql).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
 async fn mariadb114_compare_then_apply_script_converges() {
-    sqlr_testkit::skip_container_tests!();
+    sqlr_testkit::skip_container_tests!("MARIADB");
     converges(Server::MariaDb).await;
 }
