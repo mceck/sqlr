@@ -80,6 +80,10 @@ fn welcome_actions() {
     h.get_by_label("A fast, native database client");
     assert_eq!(click(&mut h, "Open demo database"), WelcomeAction::OpenDemo);
     assert_eq!(
+        click(&mut h, "Import connections…"),
+        WelcomeAction::ImportConnections
+    );
+    assert_eq!(
         click(&mut h, "Production orders"),
         WelcomeAction::OpenRecent("c1".into())
     );

@@ -129,10 +129,39 @@ pub fn encode(
     format: ClientFormat,
     connections: &[ConnectionConfig],
 ) -> Result<ExportDocument, String> {
+    encode_inner(format, connections, None)
+}
+
+pub fn encode_with_credentials(
+    format: ClientFormat,
+    connections: &[ConnectionConfig],
+    credentials: &std::collections::BTreeMap<String, sqlr_core::Secrets>,
+) -> Result<ExportDocument, String> {
+    if !format.supports_credentials() {
+        return Err("This export format does not support credentials.".into());
+    }
+    encode_inner(format, connections, Some(credentials))
+}
+
+fn encode_inner(
+    format: ClientFormat,
+    connections: &[ConnectionConfig],
+    credentials: Option<&std::collections::BTreeMap<String, sqlr_core::Secrets>>,
+) -> Result<ExportDocument, String> {
+    if matches!(format, ClientFormat::Beekeeper | ClientFormat::Tabularis) {
+        return super::native_clients::encode(format, connections, credentials);
+    }
     if connections.is_empty() {
         return Err("Select at least one connection.".into());
     }
     let mut warnings = Vec::new();
+    if credentials.is_some() {
+        warnings.push("This export contains plaintext credentials. Store it securely.".into());
+        if format == ClientFormat::TablePlus {
+            warnings
+                .push("Only database passwords are supported by TablePlus connection URLs.".into());
+        }
+    }
     let mut configs = Vec::new();
     for c in connections {
         if format == ClientFormat::PgAdmin && c.driver != "postgres" {
@@ -170,7 +199,18 @@ pub fn encode(
         warnings.push("Client-specific preferences and custom sqlr profile definitions are not exported. Review the target client's connection settings.".into());
     }
     let value = match format {
-        ClientFormat::Sqlr => Some(json!({"sqlr_version":1,"connections":configs})),
+        ClientFormat::Sqlr => {
+            let mut value = json!({"sqlr_version":1,"connections":configs});
+            if let Some(credentials) = credentials {
+                let values: std::collections::BTreeMap<_, _> = configs
+                    .iter()
+                    .filter_map(|c| credentials.get(&c.id).map(|s| (&c.id, &s.0)))
+                    .collect();
+                value["sqlr_version"] = json!(2);
+                value["credentials"] = json!(values);
+            }
+            Some(value)
+        }
         ClientFormat::Dbeaver => {
             let mut map = serde_json::Map::new();
             for (i, c) in configs.iter().enumerate() {
@@ -312,10 +352,24 @@ pub fn encode(
     } else {
         let mut s = String::new();
         for c in &configs {
-            s.push_str(&connection_url(c, true)?);
+            let mut raw = connection_url(c, true)?;
+            if let Some(password) = credentials
+                .and_then(|all| all.get(&c.id))
+                .and_then(|s| s.0.get("password"))
+            {
+                let mut url = url::Url::parse(&raw).map_err(|_| "Invalid connection URL.")?;
+                url.set_password(Some(password))
+                    .map_err(|_| "Cannot export a password for this connection URL.")?;
+                raw = url.to_string();
+            }
+            s.push_str(&raw);
             s.push('\n');
         }
         s
     };
-    Ok(ExportDocument { contents, warnings })
+    Ok(ExportDocument {
+        contents,
+        warnings,
+        files: vec![],
+    })
 }

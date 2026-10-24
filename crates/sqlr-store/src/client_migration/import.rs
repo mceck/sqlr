@@ -84,6 +84,19 @@ pub fn detect(bytes: &[u8]) -> Result<ClientFormat, String> {
     if s.starts_with('{') || s.starts_with('[') {
         let v: Value =
             serde_json::from_str(s).map_err(|_| "Invalid connection JSON file.".to_string())?;
+        if v.get("encrypted").is_some() || v.get("ciphertext").is_some() {
+            return Err("Encrypted connection backups are not supported. Export plaintext JSON from Tabularis first.".into());
+        }
+        if v["connections"].is_array()
+            && (v.get("version").is_some() || v.get("groups").is_some())
+            && v.get("sqlr_version").is_none()
+        {
+            return Ok(ClientFormat::Tabularis);
+        }
+        let first = v.as_array().and_then(|a| a.first()).unwrap_or(&v);
+        if first.get("connectionType").is_some() || first.get("connection_type").is_some() {
+            return Ok(ClientFormat::Beekeeper);
+        }
         if v.get("Servers").is_some() {
             return Ok(ClientFormat::PgAdmin);
         }
@@ -105,6 +118,9 @@ pub fn detect(bytes: &[u8]) -> Result<ClientFormat, String> {
 
 pub fn decode(format: ClientFormat, bytes: &[u8]) -> Result<ImportBatch, String> {
     let mut batch = match format {
+        ClientFormat::Beekeeper | ClientFormat::Tabularis => {
+            super::native_clients::decode(format, bytes)
+        }
         ClientFormat::Datagrip => datagrip(bytes),
         ClientFormat::TablePlus => tableplus(bytes),
         _ => {
@@ -112,14 +128,28 @@ pub fn decode(format: ClientFormat, bytes: &[u8]) -> Result<ImportBatch, String>
                 .map_err(|_| "Invalid connection JSON file.".to_string())?;
             match format {
                 ClientFormat::Sqlr => {
-                    if v["sqlr_version"] != 1 {
+                    if v["sqlr_version"] != 1 && v["sqlr_version"] != 2 {
                         return Err("Unsupported sqlr backup version.".into());
                     }
                     let connections: Vec<ConnectionConfig> =
                         serde_json::from_value(v["connections"].clone())
                             .map_err(|_| "Invalid sqlr connection definitions.".to_string())?;
+                    let mut credentials = std::collections::BTreeMap::new();
+                    let mut configs = Vec::new();
+                    for (index, c) in connections.into_iter().enumerate() {
+                        let mut cfg = portable(c);
+                        if let Some(value) = v["credentials"].get(&cfg.id) {
+                            let fields: std::collections::BTreeMap<String, String> =
+                                serde_json::from_value(value.clone())
+                                    .map_err(|_| "Invalid backup credentials.".to_string())?;
+                            credentials.insert(index, sqlr_core::Secrets(fields));
+                        }
+                        cfg.id.clear();
+                        configs.push(cfg);
+                    }
                     Ok(ImportBatch {
-                        connections: connections.into_iter().map(portable).collect(),
+                        connections: configs,
+                        credentials,
                         warnings: vec![],
                     })
                 }

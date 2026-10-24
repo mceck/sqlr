@@ -41,6 +41,8 @@ pub enum WelcomeAction {
     NewConnection(Option<String>),
     /// Open the catalog of known databases.
     MoreDatabases,
+    /// Open connection migration from another client or backup.
+    ImportConnections,
     OpenDemo,
     /// Connect this connection and open an editor tab on it.
     OpenRecent(String),
@@ -80,7 +82,7 @@ pub fn welcome(
                         action = Some(a);
                     }
                     ui.add_space(Spacing::XL);
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         ui.spacing_mut().item_spacing.x = Spacing::M;
                         if ui
                             .add(theme::primary_button(ui.ctx(), "Open demo database"))
@@ -90,6 +92,9 @@ pub fn welcome(
                         }
                         if ui.button("New connection…").clicked() {
                             action = Some(WelcomeAction::NewConnection(None));
+                        }
+                        if ui.link("Import connections…").clicked() {
+                            action = Some(WelcomeAction::ImportConnections);
                         }
                     });
                     ui.add_space(28.0);

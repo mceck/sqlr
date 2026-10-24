@@ -13,11 +13,12 @@ pub(crate) enum MigrationRequest {
     Discover,
     Read(std::path::PathBuf),
     Clipboard(String),
-    Import(Vec<ConnectionConfig>),
+    Import(Vec<(ConnectionConfig, Secrets)>),
     Export {
         path: std::path::PathBuf,
         format: ClientFormat,
         connections: Vec<ConnectionConfig>,
+        secret_fields: Option<std::collections::BTreeMap<String, Vec<String>>>,
     },
 }
 
@@ -432,6 +433,10 @@ fn migrate(repo: &ConnectionRepo, request: MigrationRequest) -> Result<Migration
             for source in &sources {
                 match client_migration::read_source(&source.path) {
                     Ok((_, mut batch)) => {
+                        let offset = combined.connections.len();
+                        combined
+                            .credentials
+                            .extend(batch.credentials.into_iter().map(|(i, s)| (i + offset, s)));
                         combined.connections.append(&mut batch.connections);
                         combined.warnings.append(&mut batch.warnings);
                     }
@@ -458,18 +463,48 @@ fn migrate(repo: &ConnectionRepo, request: MigrationRequest) -> Result<Migration
             Ok(MigrationResult::Loaded { format, batch })
         }
         MigrationRequest::Import(mut connections) => {
-            for c in &mut connections {
+            for (c, _) in &mut connections {
                 c.id = uuid::Uuid::new_v4().to_string();
             }
-            let count = repo.import_connections(&connections).map_err(store_error)?;
+            let configs: Vec<_> = connections.iter().map(|(c, _)| c.clone()).collect();
+            let count = repo.import_connections(&configs).map_err(store_error)?;
+            let saved = repo.list().map_err(store_error)?;
+            for (c, secrets) in connections {
+                if !secrets.0.is_empty()
+                    && let Some(mut cfg) = saved.iter().find(|saved| saved.id == c.id).cloned()
+                {
+                    cfg.save_secrets = true;
+                    repo.save(&cfg, &secrets).map_err(store_error)?;
+                }
+            }
             Ok(MigrationResult::Imported(count))
         }
         MigrationRequest::Export {
             path,
             format,
             connections,
+            secret_fields,
         } => {
-            let warnings = client_migration::save_export(&path, format, &connections)?;
+            let warnings = if let Some(fields) = secret_fields {
+                let mut credentials = std::collections::BTreeMap::new();
+                for c in &connections {
+                    let mut secrets = Secrets::default();
+                    let keys = fields.get(&c.id).ok_or("Cannot export credentials without the connection's driver manifest. Install the driver first.")?;
+                    for key in keys.iter().filter(|_| c.save_secrets) {
+                        if let Some(value) =
+                            repo.secret_store().get(&c.id, key).map_err(store_error)?
+                        {
+                            secrets.0.insert(key.clone(), value);
+                        }
+                    }
+                    credentials.insert(c.id.clone(), secrets);
+                }
+                let doc =
+                    client_migration::encode_with_credentials(format, &connections, &credentials)?;
+                client_migration::save_document(&path, doc)?
+            } else {
+                client_migration::save_export(&path, format, &connections)?
+            };
             Ok(MigrationResult::Exported { path, warnings })
         }
     }
@@ -538,6 +573,101 @@ mod tests {
 
     fn manifest() -> DriverManifest {
         FakeDriver::new(Default::default()).manifest().clone()
+    }
+
+    #[test]
+    fn credential_export_and_import_keep_secrets_out_of_connection_files() {
+        let source_dir = tempfile::tempdir().unwrap();
+        let source = repo(source_dir.path());
+        let mut c = config("source", "Sales");
+        c.driver = "postgres".into();
+        c.values.insert("host".into(), "db.example".into());
+        let secrets = Secrets(
+            [
+                ("password".into(), "database-secret".into()),
+                ("ssh_password".into(), "tunnel-secret".into()),
+            ]
+            .into(),
+        );
+        source.save(&c, &secrets).unwrap();
+        let path = source_dir.path().join("export.json");
+        migrate(
+            &source,
+            MigrationRequest::Export {
+                path: path.clone(),
+                format: ClientFormat::Sqlr,
+                connections: vec![c.clone()],
+                secret_fields: None,
+            },
+        )
+        .unwrap();
+        assert!(
+            !std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("database-secret")
+        );
+        migrate(
+            &source,
+            MigrationRequest::Export {
+                path: path.clone(),
+                format: ClientFormat::Sqlr,
+                connections: vec![c.clone()],
+                secret_fields: Some(
+                    [(c.id.clone(), vec!["password".into(), "ssh_password".into()])].into(),
+                ),
+            },
+        )
+        .unwrap();
+        let (_, batch) = client_migration::read_source(&path).unwrap();
+        assert!(batch.connections[0].id.is_empty());
+        let destination_dir = tempfile::tempdir().unwrap();
+        let destination = repo(destination_dir.path());
+        let entries = batch
+            .connections
+            .into_iter()
+            .enumerate()
+            .map(|(i, cfg)| (cfg, batch.credentials[&i].clone()))
+            .collect();
+        migrate(&destination, MigrationRequest::Import(entries)).unwrap();
+        let saved = destination.list().unwrap();
+        assert!(saved[0].save_secrets);
+        assert_eq!(
+            destination
+                .secret_store()
+                .get(&saved[0].id, "password")
+                .unwrap()
+                .as_deref(),
+            Some("database-secret")
+        );
+        assert_eq!(
+            destination
+                .secret_store()
+                .get(&saved[0].id, "ssh_password")
+                .unwrap()
+                .as_deref(),
+            Some("tunnel-secret")
+        );
+        let toml =
+            std::fs::read_to_string(destination_dir.path().join("connections.toml")).unwrap();
+        assert!(!toml.contains("database-secret"));
+        assert!(!toml.contains("tunnel-secret"));
+        migrate(
+            &destination,
+            MigrationRequest::Import(vec![(
+                c,
+                Secrets([("password".into(), "replacement".into())].into()),
+            )]),
+        )
+        .unwrap();
+        assert_eq!(destination.list().unwrap().len(), 1);
+        assert_eq!(
+            destination
+                .secret_store()
+                .get(&saved[0].id, "password")
+                .unwrap()
+                .as_deref(),
+            Some("database-secret")
+        );
     }
 
     #[test]

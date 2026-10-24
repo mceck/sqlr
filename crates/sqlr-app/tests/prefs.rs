@@ -53,6 +53,9 @@ fn app(dir: &Path) -> Harness<'static, SqlrApp> {
         .with_size((1400.0, 900.0))
         .with_step_dt(0.01)
         .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    // Editor scenarios explicitly open their initial query; startup shows the homepage.
+    h.run_steps(2);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
     h.run_steps(3);
     h
 }

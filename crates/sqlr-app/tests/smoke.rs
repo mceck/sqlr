@@ -122,6 +122,9 @@ fn harness_with_script(
         .with_size((1400.0, 900.0))
         .with_step_dt(0.01)
         .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    // Editor scenarios explicitly open their initial query; startup shows the homepage.
+    h.run_steps(2);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
     h.run_steps(2);
     (h, driver)
 }
@@ -144,6 +147,9 @@ fn harness_with_profile(
         .with_size((1400.0, 900.0))
         .with_step_dt(0.01)
         .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    // Editor scenarios explicitly open their initial query; startup shows the homepage.
+    h.run_steps(2);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
     h.run_steps(2);
     (h, driver)
 }
@@ -323,6 +329,9 @@ fn connection_menu_duplicates_it_with_its_stored_secrets() {
         .with_size((1400.0, 900.0))
         .with_step_dt(0.01)
         .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    // Editor scenarios explicitly open their initial query; startup shows the homepage.
+    h.run_steps(2);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
     h.run_steps(2);
 
     // The store thread saves the copy.
@@ -610,6 +619,9 @@ fn startup_notice_shows_as_a_toast() {
     let mut h = Harness::builder()
         .with_size((1400.0, 900.0))
         .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    // Editor scenarios explicitly open their initial query; startup shows the homepage.
+    h.run_steps(2);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
     h.run_steps(2);
     h.get_by_label("History and snippets will not be saved: locked");
 }
@@ -655,6 +667,9 @@ fn storage_warning_outlives_the_startup_notice() {
         .with_size((1400.0, 900.0))
         .with_step_dt(0.01)
         .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    // Editor scenarios explicitly open their initial query; startup shows the homepage.
+    h.run_steps(2);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
     h.run_steps(2);
     h.get_by_label(reason);
     h.get_by_label("Not saved");
@@ -806,6 +821,9 @@ fn unsaved_password_is_asked_on_connect() {
         .with_size((1400.0, 900.0))
         .with_step_dt(0.01)
         .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    // Editor scenarios explicitly open their initial query; startup shows the homepage.
+    h.run_steps(2);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
     h.run_steps(2);
     h.get_by_label("Expand fake-conn").click();
     // A mistyped password fails the connect and is asked for again.
@@ -1182,6 +1200,9 @@ fn import_asks_first_when_the_profile_confirms_writes() {
         .with_size((1400.0, 900.0))
         .with_step_dt(0.01)
         .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    // Editor scenarios explicitly open their initial query; startup shows the homepage.
+    h.run_steps(2);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
     h.run_steps(2);
     let path = dir.path().join("in.csv");
     std::fs::write(&path, "id,total\n7,70\n8,80\n").unwrap();
@@ -1251,6 +1272,9 @@ fn render_config_screens(out: &std::path::Path, theme: ThemePref, suffix: &str) 
         .with_size((1400.0, 900.0))
         .with_step_dt(0.01)
         .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    // Editor scenarios explicitly open their initial query; startup shows the homepage.
+    h.run_steps(2);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
     sqlr_ui::theme::install_fonts(&h.ctx, &[]);
     h.run_steps(2);
 
@@ -1312,6 +1336,9 @@ fn screenshots() {
             .with_size((1400.0, 860.0))
             .with_step_dt(0.01)
             .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+        // Editor scenarios explicitly open their initial query; startup shows the homepage.
+        h.run_steps(2);
+        h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
         sqlr_ui::theme::install_fonts(&h.ctx, &[]);
         h.run_steps(2);
         open_orders(&mut h);
@@ -1347,6 +1374,9 @@ fn editing_screenshots() {
             .with_size((1400.0, 860.0))
             .with_step_dt(0.01)
             .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+        // Editor scenarios explicitly open their initial query; startup shows the homepage.
+        h.run_steps(2);
+        h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
         sqlr_ui::theme::install_fonts(&h.ctx, &[]);
         h.run_steps(2);
         open_orders(&mut h);
@@ -1378,6 +1408,9 @@ fn shell_screenshots() {
             .with_size((1400.0, 860.0))
             .with_step_dt(0.01)
             .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+        // Editor scenarios explicitly open their initial query; startup shows the homepage.
+        h.run_steps(2);
+        h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
         sqlr_ui::theme::install_fonts(&h.ctx, &[]);
         h.run_steps(2);
         open_orders(&mut h);
@@ -1855,6 +1888,9 @@ fn chrome_fits_small_window() {
         .with_size((800.0, 600.0))
         .with_step_dt(0.01)
         .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    // Editor scenarios explicitly open their initial query; startup shows the homepage.
+    h.run_steps(2);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
     h.run_steps(5);
     assert_eq!(h.ctx.zoom_factor(), 1.5);
     let window = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
@@ -1949,6 +1985,9 @@ fn folded_transaction_controls_still_switch_the_commit_mode() {
         .with_size((800.0, 600.0))
         .with_step_dt(0.01)
         .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    // Editor scenarios explicitly open their initial query; startup shows the homepage.
+    h.run_steps(2);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
     h.run_steps(5);
     h.get_by_label("Toggle value panel").click();
     h.run_steps(2);
@@ -1983,6 +2022,9 @@ fn chip_selects_another_connection_for_the_tab() {
         .with_size((1400.0, 900.0))
         .with_step_dt(0.01)
         .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    // Editor scenarios explicitly open their initial query; startup shows the homepage.
+    h.run_steps(2);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
     h.run_steps(2);
     open_orders(&mut h);
     let chip = h
@@ -2111,6 +2153,9 @@ fn explorer_screenshots() {
             .with_size((1400.0, 860.0))
             .with_step_dt(0.01)
             .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+        // Editor scenarios explicitly open their initial query; startup shows the homepage.
+        h.run_steps(2);
+        h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
         sqlr_ui::theme::install_fonts(&h.ctx, &[]);
         h.run_steps(2);
         expand_to_orders(&mut h);
@@ -2161,6 +2206,9 @@ fn history_open_restores_database() {
         .with_size((1400.0, 900.0))
         .with_step_dt(0.01)
         .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    // Editor scenarios explicitly open their initial query; startup shows the homepage.
+    h.run_steps(2);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
     h.run_steps(2);
     open_history(&mut h);
     wait_for_label(&mut h, "select 42");
@@ -2185,6 +2233,9 @@ fn history_open_missing_connection() {
         .with_size((1400.0, 900.0))
         .with_step_dt(0.01)
         .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    // Editor scenarios explicitly open their initial query; startup shows the homepage.
+    h.run_steps(2);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
     h.run_steps(2);
     open_history(&mut h);
     wait_for_label(&mut h, "select 7");
@@ -2210,6 +2261,9 @@ fn history_clear_asks_first() {
         .with_size((1400.0, 900.0))
         .with_step_dt(0.01)
         .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    // Editor scenarios explicitly open their initial query; startup shows the homepage.
+    h.run_steps(2);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
     h.run_steps(2);
     open_history(&mut h);
     wait_for_label(&mut h, "select 42");
@@ -2269,6 +2323,9 @@ fn settings_open_folder_spawns_opener() {
         .with_size((1400.0, 900.0))
         .with_step_dt(0.01)
         .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    // Editor scenarios explicitly open their initial query; startup shows the homepage.
+    h.run_steps(2);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
     h.run_steps(2);
     press(&mut h, Modifiers::COMMAND, Key::Comma);
     h.run_steps(2);
@@ -2292,6 +2349,9 @@ fn harness_missing_driver(dir: &tempfile::TempDir) -> Harness<'static, SqlrApp> 
         .with_size((1400.0, 900.0))
         .with_step_dt(0.01)
         .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    // Editor scenarios explicitly open their initial query; startup shows the homepage.
+    h.run_steps(2);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
     h.run_steps(2);
     h
 }
@@ -2398,6 +2458,9 @@ fn hana_connection_form_from_manifest() {
         .with_size((1400.0, 900.0))
         .with_step_dt(0.01)
         .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    // Editor scenarios explicitly open their initial query; startup shows the homepage.
+    h.run_steps(2);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
     h.run_steps(3);
     h.state_mut().open_known_connection_for_tests("sap-hana");
     h.run_steps(5);
@@ -2487,6 +2550,9 @@ fn a_sidecar_connection_gets_its_dialect_once_connected() {
         .with_size((1400.0, 900.0))
         .with_step_dt(0.01)
         .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    // Editor scenarios explicitly open their initial query; startup shows the homepage.
+    h.run_steps(2);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
     h.run_steps(3);
     assert!(
         !h.state().has_dialect("c1"),

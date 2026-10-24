@@ -353,3 +353,228 @@ fn sqlite_file_paths_and_ipv6_hosts_round_trip_through_portable_urls() {
         assert_eq!(b.connections[0].values["host"], "::1", "{format:?}");
     }
 }
+
+#[test]
+fn credentials_are_exported_only_for_supported_formats_with_explicit_opt_in() {
+    use sqlr_core::Secrets;
+    use sqlr_store::client_migration::encode_with_credentials;
+    let c = pg();
+    let secrets = [(
+        c.id.clone(),
+        Secrets(
+            [
+                ("password".into(), "p@ss:/?#&".into()),
+                ("ssh_password".into(), "tunnel-secret".into()),
+            ]
+            .into(),
+        ),
+    )]
+    .into();
+    let doc =
+        encode_with_credentials(ClientFormat::Sqlr, std::slice::from_ref(&c), &secrets).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&doc.contents).unwrap();
+    assert_eq!(json["credentials"][&c.id]["password"], "p@ss:/?#&");
+    assert_eq!(json["credentials"][&c.id]["ssh_password"], "tunnel-secret");
+    let doc = encode_with_credentials(ClientFormat::TablePlus, std::slice::from_ref(&c), &secrets)
+        .unwrap();
+    let url = url::Url::parse(doc.contents.trim()).unwrap();
+    assert_eq!(url.password(), Some("p%40ss%3A%2F%3F%23&"));
+    assert!(!doc.contents.contains("tunnel-secret"));
+    assert!(
+        !encode(ClientFormat::Sqlr, std::slice::from_ref(&c))
+            .unwrap()
+            .contents
+            .contains("p@ss")
+    );
+    for format in [
+        ClientFormat::PgAdmin,
+        ClientFormat::Dbeaver,
+        ClientFormat::Datagrip,
+    ] {
+        assert!(encode_with_credentials(format, std::slice::from_ref(&c), &secrets).is_err());
+    }
+}
+
+#[test]
+fn tabularis_and_beekeeper_exports_preserve_credentials_only_when_requested() {
+    use sqlr_core::Secrets;
+    use sqlr_store::client_migration::encode_with_credentials;
+    for format in [ClientFormat::Tabularis, ClientFormat::Beekeeper] {
+        let c = pg();
+        let secrets = [(
+            c.id.clone(),
+            Secrets(
+                [
+                    ("password".into(), "db-secret".into()),
+                    ("ssh_password".into(), "ssh-secret".into()),
+                ]
+                .into(),
+            ),
+        )]
+        .into();
+        let plain = encode(format, std::slice::from_ref(&c)).unwrap();
+        assert_eq!(
+            sqlr_store::client_migration::detect(plain.contents.as_bytes()).unwrap(),
+            format
+        );
+        assert!(!plain.contents.contains("db-secret"));
+        let doc = encode_with_credentials(format, &[c], &secrets).unwrap();
+        let batch = decode(format, doc.contents.as_bytes()).unwrap();
+        assert_eq!(batch.connections[0].values["host"], "db.example.com");
+        assert_eq!(batch.connections[0].values["ssl_mode"], "verify-full");
+        assert_eq!(batch.credentials[&0].0["password"], "db-secret");
+        assert_eq!(batch.connections[0].agent_access, AgentAccess::None);
+        assert!(!batch.connections[0].values.contains_key("password"));
+    }
+}
+
+#[test]
+fn tabularis_import_resolves_nested_groups_and_linked_ssh() {
+    let bytes = br#"{"version":1,"groups":[{"id":"root","name":"Team"},{"id":"child","name":"Production","parent_id":"root"}],"connections":[{"id":"foreign","name":"Sales","group_id":"child","params":{"driver":"postgres","host":"db","database":["sales","other"],"username":"alice","ssh_enabled":true,"ssh_connection_id":"ssh"}}],"ssh_connections":[{"id":"ssh","name":"Bastion","host":"jump","port":22,"user":"deploy","auth_type":"ssh_key","key_file":"/key","key_passphrase":"ssh-secret"}]}"#;
+    let batch = decode(ClientFormat::Tabularis, bytes).unwrap();
+    assert_eq!(
+        batch.connections[0].group.as_deref(),
+        Some("Team/Production")
+    );
+    assert_eq!(batch.connections[0].values["ssh_auth"], "key");
+    assert_eq!(batch.connections[0].values["ssh_host"], "jump");
+    assert_eq!(batch.credentials[&0].0["ssh_key_passphrase"], "ssh-secret");
+    assert!(!batch.warnings.is_empty());
+}
+
+#[test]
+fn beekeeper_batch_export_writes_native_files_without_overwriting_existing_folders() {
+    use sqlr_store::client_migration::{read_source, save_export};
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("beekeeper");
+    let first = pg();
+    let mut second = first.clone();
+    second.id = "second".into();
+    second.name = "Other".into();
+    second.values.insert("database".into(), "other".into());
+    save_export(&path, ClientFormat::Beekeeper, &[first.clone(), second]).unwrap();
+    assert_eq!(std::fs::read_dir(&path).unwrap().count(), 2);
+    for file in std::fs::read_dir(&path).unwrap() {
+        let file = file.unwrap().path();
+        let json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        assert!(json.is_object());
+        assert_eq!(json["connectionType"], "postgresql");
+        assert!(!json.as_object().unwrap().contains_key("password"));
+        let (format, batch) = read_source(&file).unwrap();
+        assert_eq!(format, ClientFormat::Beekeeper);
+        assert_eq!(batch.connections.len(), 1);
+    }
+    assert!(save_export(&path, ClientFormat::Beekeeper, &[first]).is_err());
+}
+
+#[test]
+fn discovers_tabularis_and_reads_beekeeper_database_without_ciphertext_credentials() {
+    use sqlr_store::client_migration::{discover, read_source};
+    let dir = tempfile::tempdir().unwrap();
+    let tab = dir
+        .path()
+        .join("Library/Application Support/tabularis/connections.json");
+    std::fs::create_dir_all(tab.parent().unwrap()).unwrap();
+    std::fs::write(
+        &tab,
+        encode(ClientFormat::Tabularis, &[pg()]).unwrap().contents,
+    )
+    .unwrap();
+    let bee = dir.path().join(".config/beekeeper-studio/app.db");
+    std::fs::create_dir_all(bee.parent().unwrap()).unwrap();
+    let db = rusqlite::Connection::open(&bee).unwrap();
+    db.execute_batch("CREATE TABLE saved_connection (id INTEGER, workspaceId INTEGER, name TEXT, connectionType TEXT, host TEXT, port INTEGER, username TEXT, defaultDatabase TEXT, password TEXT); INSERT INTO saved_connection VALUES (1,-1,'Local','postgresql','db',5432,'alice','sales','CIPHERTEXT'),(2,1,'Cloud','postgresql','cloud',5432,'alice','cloud','CIPHERTEXT');").unwrap();
+    let sources = discover(dir.path());
+    assert!(sources.iter().any(|s| s.path == tab));
+    assert!(sources.iter().any(|s| s.path == bee));
+    let (format, batch) = read_source(&bee).unwrap();
+    assert_eq!(format, ClientFormat::Beekeeper);
+    assert_eq!(batch.connections.len(), 1);
+    assert_eq!(batch.connections[0].values["database"], "sales");
+    assert!(batch.credentials.is_empty());
+    assert!(!format!("{batch:?}").contains("CIPHERTEXT"));
+    assert!(!batch.warnings.is_empty());
+}
+
+#[test]
+fn tabularis_ssh_credentials_and_groups_round_trip_without_leaking_when_disabled() {
+    use sqlr_core::Secrets;
+    use sqlr_store::client_migration::encode_with_credentials;
+    let mut c = pg();
+    c.values.extend([
+        ("ssh_enabled".into(), "true".into()),
+        ("ssh_host".into(), "jump".into()),
+        ("ssh_auth".into(), "key".into()),
+        ("ssh_key_path".into(), "/key".into()),
+    ]);
+    let credentials = [(
+        c.id.clone(),
+        Secrets([("ssh_key_passphrase".into(), "ssh-secret".into())].into()),
+    )]
+    .into();
+    let doc = encode_with_credentials(
+        ClientFormat::Tabularis,
+        std::slice::from_ref(&c),
+        &credentials,
+    )
+    .unwrap();
+    let batch = decode(ClientFormat::Tabularis, doc.contents.as_bytes()).unwrap();
+    assert_eq!(batch.connections[0].group, c.group);
+    assert_eq!(batch.connections[0].values["ssh_auth"], "key");
+    assert_eq!(batch.credentials[&0].0["ssh_key_passphrase"], "ssh-secret");
+    assert!(
+        decode(
+            ClientFormat::Tabularis,
+            encode(ClientFormat::Tabularis, &[c])
+                .unwrap()
+                .contents
+                .as_bytes()
+        )
+        .unwrap()
+        .credentials
+        .is_empty()
+    );
+    let encrypted = br#"{"format":"tabularis-connections-encrypted","version":1,"encrypted":true,"ciphertext":"SECRET"}"#;
+    let error = sqlr_store::client_migration::detect(encrypted).unwrap_err();
+    assert!(error.contains("Encrypted"));
+    assert!(!error.contains("SECRET"));
+}
+
+#[test]
+fn beekeeper_preserves_ssh_agent_auth_and_excludes_bastion_connections() {
+    let input = br#"[{"name":"Agent","connectionType":"postgresql","host":"db","sshEnabled":true,"sshMode":"agent","sshHost":"ssh"},{"name":"Bastion","connectionType":"postgresql","host":"other","sshEnabled":true,"sshHost":"ssh","sshBastionHost":"jump"}]"#;
+    let batch = decode(ClientFormat::Beekeeper, input).unwrap();
+    assert_eq!(batch.connections.len(), 1);
+    assert_eq!(batch.connections[0].values["ssh_auth"], "agent");
+    assert!(batch.warnings.iter().any(|s| s.contains("bastion")));
+    let doc = encode(ClientFormat::Beekeeper, &batch.connections).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&doc.contents).unwrap();
+    assert_eq!(json["sshMode"], "agent");
+    assert!(encode(ClientFormat::Tabularis, &batch.connections).is_err());
+}
+
+#[cfg(unix)]
+#[test]
+fn credential_export_files_are_owner_only() {
+    use sqlr_core::Secrets;
+    use sqlr_store::client_migration::{encode_with_credentials, save_document};
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("backup.json");
+    let c = pg();
+    let credentials = [(
+        c.id.clone(),
+        Secrets([("password".into(), "secret".into())].into()),
+    )]
+    .into();
+    save_document(
+        &path,
+        encode_with_credentials(ClientFormat::Sqlr, &[c], &credentials).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+}

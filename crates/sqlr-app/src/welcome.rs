@@ -112,6 +112,7 @@ impl SqlrApp {
             Some(WelcomeAction::MoreDatabases) => {
                 self.databases_dialog = Some(crate::databases_dialog::DatabasesDialog::catalog());
             }
+            Some(WelcomeAction::ImportConnections) => self.open_client_import(),
             Some(WelcomeAction::OpenDemo) => self.open_demo(),
             Some(WelcomeAction::OpenRecent(id)) => self.open_recent(&id),
             None => {}

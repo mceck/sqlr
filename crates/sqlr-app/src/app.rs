@@ -451,7 +451,6 @@ impl SqlrApp {
         );
         app.reload_profiles();
         app.apply_listing(listing);
-        app.new_tab(None, None, "");
         app
     }
 

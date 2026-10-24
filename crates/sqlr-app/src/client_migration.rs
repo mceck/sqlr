@@ -16,6 +16,7 @@ struct Row {
     selected: bool,
     disabled: Option<String>,
     note: Option<String>,
+    credentials: sqlr_core::Secrets,
 }
 
 pub(crate) struct MigrationDialog {
@@ -33,6 +34,8 @@ pub(crate) struct MigrationDialog {
     error: Option<String>,
     ask: Option<FileAsk>,
     paste_pending: bool,
+    include_credentials: bool,
+    secret_fields: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 impl MigrationDialog {
@@ -52,7 +55,17 @@ impl MigrationDialog {
             error: None,
             ask: None,
             paste_pending: false,
+            include_credentials: false,
+            secret_fields: Default::default(),
         }
+    }
+
+    fn selected_import(&self) -> Vec<(ConnectionConfig, sqlr_core::Secrets)> {
+        self.rows
+            .iter()
+            .filter(|r| r.selected && r.disabled.is_none())
+            .map(|r| (r.config.clone(), r.credentials.clone()))
+            .collect()
     }
 
     fn selected(&self) -> Vec<ConnectionConfig> {
@@ -71,7 +84,7 @@ impl MigrationDialog {
     ) {
         self.warnings = batch.warnings;
         self.rows.clear();
-        for config in batch.connections {
+        for (index, config) in batch.connections.into_iter().enumerate() {
             let duplicate = existing.iter().any(|c| same_connection(c, &config))
                 || self
                     .rows
@@ -85,7 +98,9 @@ impl MigrationDialog {
                 notes.push("Username unavailable in source; review connection settings");
             }
             let note = (!notes.is_empty()).then(|| notes.join(" · "));
+            let credentials = batch.credentials.get(&index).cloned().unwrap_or_default();
             self.rows.push(Row {
+                credentials,
                 config,
                 selected: !duplicate,
                 disabled: duplicate.then(|| "Already saved / duplicate".into()),
@@ -201,6 +216,9 @@ impl MigrationDialog {
                         path,
                         format: self.format,
                         connections: self.selected(),
+                        secret_fields: (self.include_credentials
+                            && self.format.supports_credentials())
+                        .then(|| self.secret_fields.clone()),
                     });
                 }
             }
@@ -273,7 +291,7 @@ impl MigrationDialog {
                                 }
                             }
                             if ui.button("Choose file…").clicked() {
-                                self.ask = Some(FileAsk::open(answer,"Import connections",&["json","xml","plist","txt","tableplusconnection"]));
+                                self.ask = Some(FileAsk::open(answer,"Import connections",&["json","xml","plist","txt","db","tableplusconnection"]));
                             }
                         });
                         ui.horizontal(|ui| {
@@ -291,6 +309,8 @@ impl MigrationDialog {
                                 ui.label("DBeaver: <workspace>/<project>/.dbeaver/data-sources.json");
                                 ui.label("DataGrip: <project>/.idea/dataSources.xml, or save Copy Data Source XML to a file.");
                                 ui.label("TablePlus: Connections.plist, or connection URLs saved to a text file. Encrypted archives are not supported.");
+                                ui.label("Beekeeper Studio: exported connection JSON files, or app.db in the beekeeper-studio application data folder.");
+                                ui.label("Tabularis: Connections → Export → Plain text, or connections.json in the tabularis application data folder.");
                                 ui.label("pgAdmin: Tools → Import/Export Servers → Export.");
                             });
                         }
@@ -302,13 +322,23 @@ impl MigrationDialog {
                                 for f in ClientFormat::ALL { ui.selectable_value(&mut self.format,f,f.label()); }
                             });
                         });
-                        if before != self.format { self.refresh_export(); }
+                        if before != self.format { self.refresh_export(); self.include_credentials = false; }
+                        ui.add_enabled(self.format.supports_credentials(), egui::Checkbox::new(&mut self.include_credentials, "Include credentials"));
+                        if self.include_credentials {
+                            ui.colored_label(p.warning, "Credentials will be saved in plaintext. Store the export securely.");
+                        } else if !self.format.supports_credentials() {
+                            ui.small("This format does not support exporting credentials.");
+                        }
                         ui.label(self.format.export_help());
                         if self.format != ClientFormat::Sqlr { ui.small("Portable connection settings only. Custom profiles and client preferences may need to be recreated."); }
                     }
                 });
                 ui.add_space(Spacing::S);
-                ui.label(RichText::new("Passwords stay in each client's credential store. Enter them when connecting in the destination client.").small().color(p.text_muted));
+                if self.importing && self.rows.iter().any(|r| !r.credentials.0.is_empty()) {
+                    ui.small("This backup includes credentials. Importing will save them in sqlr's credential store.");
+                } else if !self.include_credentials {
+                    ui.label(RichText::new("Passwords stay in each client's credential store. Enter them when connecting in the destination client.").small().color(p.text_muted));
+                }
                 theme::hairline(ui);
                 if waiting {
                     ui.horizontal(|ui| {
@@ -433,7 +463,7 @@ impl MigrationDialog {
                             .clicked()
                         {
                             if self.importing {
-                                request = Some(MigrationRequest::Import(self.selected()));
+                                request = Some(MigrationRequest::Import(self.selected_import()));
                             } else {
                                 self.ask = Some(FileAsk::save(
                                     answer,
@@ -479,6 +509,19 @@ impl SqlrApp {
     }
     pub(crate) fn open_client_export(&mut self) {
         let mut dialog = MigrationDialog::new(false);
+        for c in &self.connections {
+            if let Some(manifest) = self.manifest(&c.driver) {
+                dialog.secret_fields.insert(
+                    c.id.clone(),
+                    manifest
+                        .fields
+                        .iter()
+                        .filter(|f| f.secret)
+                        .map(|f| f.key.clone())
+                        .collect(),
+                );
+            }
+        }
         dialog.rows = self
             .connections
             .iter()
@@ -487,6 +530,7 @@ impl SqlrApp {
                 selected: true,
                 disabled: None,
                 note: None,
+                credentials: Default::default(),
             })
             .collect();
         self.client_migration = Some(dialog);
@@ -582,6 +626,26 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         h.run_steps(3);
+    }
+
+    #[test]
+    fn export_credentials_are_opt_in_and_unavailable_for_unsupported_formats() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut h = harness(dir.path(), (1100.0, 760.0));
+        h.state_mut().dialog.importing = false;
+        h.run_steps(3);
+        assert!(!h.state().dialog.include_credentials);
+        h.get_by_label("Include credentials").click();
+        h.run_steps(2);
+        assert!(h.state().dialog.include_credentials);
+        h.get_by_label("Credentials will be saved in plaintext. Store the export securely.");
+        h.state_mut().dialog.format = ClientFormat::PgAdmin;
+        h.state_mut().dialog.include_credentials = false;
+        h.run_steps(2);
+        h.get_by_label("Include credentials").click();
+        h.run_steps(2);
+        assert!(!h.state().dialog.include_credentials);
+        assert!(!MigrationDialog::new(false).include_credentials);
     }
 
     #[test]

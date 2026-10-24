@@ -27,6 +27,12 @@ fn read(path: &Path) -> Result<Vec<u8>, String> {
 
 pub fn read_source(path: &Path) -> Result<(ClientFormat, ImportBatch), String> {
     let bytes = read(path)?;
+    if bytes.starts_with(b"SQLite format 3\0") {
+        return Ok((
+            ClientFormat::Beekeeper,
+            super::native_clients::read_beekeeper_db(path)?,
+        ));
+    }
     let format = detect(&bytes)?;
     let batch = if format == ClientFormat::Datagrip {
         let sibling = path.with_file_name("dataSources.local.xml");
@@ -119,6 +125,20 @@ pub fn discover(home: &Path) -> Vec<DetectedSource> {
                 project.join(".idea/dataSources.xml"),
             );
         }
+    }
+    for root in [
+        home.join("Library/Application Support"),
+        home.join(".config"),
+        appdata,
+    ] {
+        add(
+            ClientFormat::Tabularis,
+            root.join("tabularis/connections.json"),
+        );
+        add(
+            ClientFormat::Beekeeper,
+            root.join("beekeeper-studio/app.db"),
+        );
     }
     found.sort_by(|a, b| a.path.cmp(&b.path));
     found.dedup_by(|a, b| a.path == b.path);

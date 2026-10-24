@@ -1,11 +1,12 @@
-//! Portable client connection definitions. Credentials and agent consent never travel.
+//! Portable client connection definitions with optional explicit credential backups.
 //! Parsing is pure; discovery and file reads belong on the store worker.
 mod discovery;
 mod export;
 mod import;
+mod native_clients;
 
 pub use discovery::{DetectedSource, discover, read_source};
-pub use export::encode;
+pub use export::{encode, encode_with_credentials};
 pub use import::{decode, detect};
 use sqlr_core::{AgentAccess, ConnectionConfig};
 
@@ -16,18 +17,31 @@ pub enum ClientFormat {
     Datagrip,
     TablePlus,
     PgAdmin,
+    Beekeeper,
+    Tabularis,
 }
 
 impl ClientFormat {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 7] = [
         Self::Sqlr,
         Self::Dbeaver,
         Self::Datagrip,
         Self::TablePlus,
         Self::PgAdmin,
+        Self::Beekeeper,
+        Self::Tabularis,
     ];
+    pub fn supports_credentials(self) -> bool {
+        matches!(
+            self,
+            Self::Sqlr | Self::TablePlus | Self::Beekeeper | Self::Tabularis
+        )
+    }
+
     pub fn label(self) -> &'static str {
         match self {
+            Self::Beekeeper => "Beekeeper Studio",
+            Self::Tabularis => "Tabularis",
             Self::Sqlr => "sqlr",
             Self::Dbeaver => "DBeaver",
             Self::Datagrip => "DataGrip / JetBrains",
@@ -37,6 +51,8 @@ impl ClientFormat {
     }
     pub fn filename(self) -> &'static str {
         match self {
+            Self::Beekeeper => "beekeeper-connections",
+            Self::Tabularis => "tabularis-connections.json",
             Self::Sqlr => "sqlr-connections.json",
             Self::Dbeaver => "data-sources-sqlr.json",
             Self::Datagrip => "dataSources.xml",
@@ -46,6 +62,12 @@ impl ClientFormat {
     }
     pub fn export_help(self) -> &'static str {
         match self {
+            Self::Beekeeper => {
+                "Exports a new folder containing one JSON file per connection. In Beekeeper Studio, import the folder or select its JSON files."
+            }
+            Self::Tabularis => {
+                "In Tabularis, use Connections → Import and select this JSON file. Encrypted Tabularis backups must first be exported as plaintext."
+            }
             Self::Sqlr => "Import this backup with File → Import… in sqlr.",
             Self::Dbeaver => {
                 "Place this additional data-sources-sqlr.json file in your project's .dbeaver folder, then restart DBeaver. Keep the existing data-sources.json."
@@ -66,17 +88,26 @@ impl ClientFormat {
 #[derive(Debug, Default)]
 pub struct ImportBatch {
     pub connections: Vec<ConnectionConfig>,
+    pub credentials: std::collections::BTreeMap<usize, sqlr_core::Secrets>,
     pub warnings: Vec<String>,
 }
 
 pub struct ExportDocument {
     pub contents: String,
     pub warnings: Vec<String>,
+    pub files: Vec<(String, String)>,
 }
 
 pub fn supports_export(format: ClientFormat, c: &ConnectionConfig) -> bool {
     match format {
         ClientFormat::Sqlr => true,
+        ClientFormat::Tabularis | ClientFormat::Beekeeper => {
+            matches!(c.driver.as_str(), "postgres" | "mysql" | "sqlite")
+                && (c.values.get("ssh_enabled").is_none_or(|v| v != "true")
+                    || (c.values.get("ssh_jump_host").is_none_or(String::is_empty)
+                        && (format != ClientFormat::Tabularis
+                            || c.values.get("ssh_auth").is_none_or(|v| v != "agent"))))
+        }
         ClientFormat::PgAdmin => c.driver == "postgres",
         ClientFormat::Dbeaver => matches!(
             c.driver.as_str(),
@@ -89,16 +120,51 @@ pub fn supports_export(format: ClientFormat, c: &ConnectionConfig) -> bool {
     }
 }
 
+fn write_export_file(path: &std::path::Path, contents: &str) -> Result<(), std::io::Error> {
+    use std::io::Write;
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::Path::new("."));
+    // NamedTempFile is owner-only on Unix, including the final atomically replaced file.
+    let mut file = tempfile::NamedTempFile::new_in(parent)?;
+    file.write_all(contents.as_bytes())?;
+    file.persist(path).map_err(|e| e.error)?;
+    Ok(())
+}
+
+pub fn save_document(path: &std::path::Path, doc: ExportDocument) -> Result<Vec<String>, String> {
+    if !doc.files.is_empty() {
+        if path.exists() {
+            return Err("Choose a new folder for the Beekeeper export.".into());
+        }
+        let parent = path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| std::path::Path::new("."));
+        let staging = tempfile::tempdir_in(parent)
+            .map_err(|_| "Could not create the export folder.".to_string())?;
+        for (name, contents) in &doc.files {
+            write_export_file(&staging.path().join(name), contents)
+                .map_err(|_| "Could not save the connection export.".to_string())?;
+        }
+        std::fs::rename(staging.path(), path).map_err(|_| {
+            "Could not save the export folder. Choose a new destination.".to_string()
+        })?;
+        return Ok(doc.warnings);
+    }
+    write_export_file(path, &doc.contents).map_err(|_| {
+        "Could not save the export. Check the destination and permissions.".to_string()
+    })?;
+    Ok(doc.warnings)
+}
+
 pub fn save_export(
     path: &std::path::Path,
     format: ClientFormat,
     connections: &[ConnectionConfig],
 ) -> Result<Vec<String>, String> {
-    let doc = encode(format, connections)?;
-    crate::write_atomic(path, &doc.contents).map_err(|_| {
-        "Could not save the export. Check the destination and permissions.".to_string()
-    })?;
-    Ok(doc.warnings)
+    save_document(path, encode(format, connections)?)
 }
 
 pub(super) fn driver(id: &str) -> Option<&'static str> {

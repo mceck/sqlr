@@ -110,9 +110,10 @@ fn close_all_tabs(h: &mut Harness<'static, SqlrApp>) {
 fn welcome_shown_without_tabs() {
     let dir = tempfile::tempdir().unwrap();
     let mut h = harness(dir.path());
-    // The editor tab of the start hides it.
-    assert!(h.query_by_label("Open demo database").is_none());
-    close_all_tabs(&mut h);
+    assert!(
+        h.state().tab_titles().is_empty(),
+        "startup must show the homepage"
+    );
     h.get_by_label("Open demo database");
     h.get_by_label("A fast, native database client");
     h.get_by_label("No recent connections yet");
@@ -121,6 +122,21 @@ fn welcome_shown_without_tabs() {
     h.key_press_modifiers(Modifiers::COMMAND, Key::T);
     h.run_steps(2);
     assert!(h.query_by_label("Open demo database").is_none());
+    close_all_tabs(&mut h);
+    h.get_by_label("Open demo database");
+}
+
+#[test]
+fn welcome_import_link_opens_connection_import() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(dir.path());
+    close_all_tabs(&mut h);
+    h.get_by_label("Import connections…").click();
+    h.run_steps(3);
+    h.get_by_label("Import connections");
+    h.get_by_label("Cancel").click();
+    h.run_steps(3);
+    h.get_by_label("Import connections…");
 }
 
 /// Rows of `sql`'s single count, read straight from the file.
@@ -302,6 +318,8 @@ fn the_connection_dialog_opens_the_catalog() {
     // dialog to a new data source preset for it.
     let dir = tempfile::tempdir().unwrap();
     let mut h = harness(dir.path());
+    h.key_press_modifiers(Modifiers::COMMAND, Key::T);
+    h.run_steps(2);
     // The explorer header's button.
     h.get_by_label("New connection").click();
     h.run_steps(5);
