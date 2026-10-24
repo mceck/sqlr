@@ -1,6 +1,6 @@
 //! Explain against PostgreSQL 17.
 
-mod support;
+use crate::support;
 
 use sqlr_core::{Driver, ErrorKind, Execution, Value};
 use sqlr_driver_postgres::PostgresDriver;

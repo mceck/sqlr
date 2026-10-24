@@ -1,6 +1,6 @@
 //! Grid edits applied through the engine against a real PostgreSQL server.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

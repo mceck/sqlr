@@ -3,7 +3,7 @@
 // One helper for every driver suite.
 #[path = "../../sqlr-engine/tests/drivers/engine_objects.rs"]
 mod engine_objects;
-mod support;
+use crate::support;
 
 use sqlr_driver_mysql::MysqlDriver;
 use support::Server;

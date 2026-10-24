@@ -1,7 +1,7 @@
 //! The MySQL driver against MySQL 8.4 and MariaDB 11.4 containers. Every check runs on
 //! both servers (`mysql84::*`, `mariadb114::*`).
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

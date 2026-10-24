@@ -1,7 +1,7 @@
 //! Administration against PostgreSQL 17: roles, grants, sessions,
 //! cancel and terminate, locks, server properties, database sizes and table statistics.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

@@ -1,6 +1,6 @@
 //! Schema snapshots and compare against MySQL 8.4 and MariaDB 11.4.
 
-mod support;
+use crate::support;
 
 use std::collections::HashSet;
 use std::sync::Arc;

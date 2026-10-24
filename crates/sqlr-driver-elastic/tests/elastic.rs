@@ -237,7 +237,7 @@ async fn seed(conn: &Arc<dyn Connection>, index: &str, n: usize) {
 async fn hits(
     exec: DocExecution,
     page: usize,
-    pause: Option<Duration>,
+    expire_pit: Option<&Arc<dyn Connection>>,
 ) -> (Vec<DocValue>, Vec<String>) {
     let DocExecution::Docs(mut stream) = exec else {
         panic!("expected documents")
@@ -249,14 +249,34 @@ async fn hits(
         assert!(chunk.len() <= page);
         out.extend(chunk.docs());
         notices.extend(stream.take_notices());
-        if first && let Some(p) = pause {
-            tokio::time::sleep(p).await;
+        if first && let Some(conn) = expire_pit {
+            wait_for_pit_expiry(conn).await;
         }
         first = false;
     }
     notices.extend(stream.take_notices());
     stream.close().await.unwrap();
     (out, notices)
+}
+
+/// Wait for the real search context to expire, rather than sleeping for a fixed margin.
+/// This test owns the node's lock and its only open search is the PIT being exercised.
+async fn wait_for_pit_expiry(conn: &Arc<dyn Connection>) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let stats = value(run(conn, "GET big/_stats/search").await);
+        let open = stats
+            .get("_all")
+            .and_then(|v| v.get("total"))
+            .and_then(|v| v.get("search"))
+            .and_then(|v| v.get("open_contexts"))
+            .expect("search stats report open contexts");
+        if matches!(open, DocValue::Int32(0) | DocValue::Int64(0)) {
+            return;
+        }
+        assert!(Instant::now() < deadline, "PIT did not expire: {stats:?}");
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }
 
 fn ids(docs: &[DocValue]) -> HashSet<String> {
@@ -552,7 +572,7 @@ async fn es_pit_expired_restarts() {
     let (all, notices) = hits(
         run(&conn, "GET big/_search\n{\"query\": {\"match_all\": {}}}").await,
         500,
-        Some(Duration::from_secs(6)),
+        Some(&conn),
     )
     .await;
     assert_eq!(all.len(), 25_000);

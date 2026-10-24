@@ -1,4 +1,4 @@
-mod support;
+use crate::support;
 
 use sqlr_core::{Driver, RelationKind};
 use sqlr_driver_postgres::{PG_KEYWORDS, PG_RESERVED, PostgresDriver};

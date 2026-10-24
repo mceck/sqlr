@@ -1,6 +1,6 @@
 //! Object introspection and DDL generation against PostgreSQL 17.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 

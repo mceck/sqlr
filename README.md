@@ -92,6 +92,7 @@ The script builds the release binary and wraps it in `dist/sqlr.app` with `docs/
 
 ```sh
 make test           # every Docker service + nextest (services stop at the end)
+make test KEEP_TEST_SERVICES=1  # reuse services across full test runs while iterating
 make test-fast      # no database services: UI and unit tests only
 make coverage       # the whole suite under llvm-cov; Docker services start and stop
 make coverage-fast  # no Docker: UI and unit tests only
@@ -108,6 +109,11 @@ macOS set `DOCKER_HOST=unix://$HOME/.docker/run/docker.sock`.
 `make test-services` starts the containers without running tests. TLS certificates for the
 test services are generated into `.test-services/certs` (ignored by git).
 
+For repeated full runs, use `make test KEEP_TEST_SERVICES=1`. It starts any missing
+services and keeps them running afterwards, including when a test fails, avoiding
+database startup and teardown on every iteration. Stop them when finished with
+`scripts/test-services.sh down`. Plain `make test` still tears down the services.
+
 `make coverage` excludes SAP HANA, writes `target/coverage/` (`summary.txt`,
 `per-crate.txt`, `lcov.info`, `html/`) and fails when a crate is below 80% lines.
 `make coverage-open` opens the HTML report. `scripts/coverage.sh --fast --check` runs the
@@ -120,8 +126,9 @@ scripts/test-services.sh up
 cargo nextest run --workspace --profile containers
 ```
 
-App, engine and UI integration tests share an executable per crate to reduce linking
-and disk use; app smoke tests and engine peak-memory tests keep their own executables.
+App, engine, UI, PostgreSQL, MySQL/MariaDB and SQLite integration tests share an
+executable per crate to reduce linking and disk use; app smoke tests and engine
+peak-memory tests keep their own executables.
 Register new test modules in `tests/integration.rs`. To select a module, use e.g.
 `cargo nextest run -p sqlr-ui -E 'test(/^editor::/)'` or
 `cargo test -p sqlr-ui --test integration editor::`.

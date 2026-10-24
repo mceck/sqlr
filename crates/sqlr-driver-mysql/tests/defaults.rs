@@ -1,6 +1,6 @@
 //! Literal defaults survive introspection and table recreation on both servers.
 
-mod support;
+use crate::support;
 
 use sqlr_core::{Cell, Driver, Execution, ObjectKind, ObjectRef, SchemaChange};
 use sqlr_driver_mysql::MysqlDriver;

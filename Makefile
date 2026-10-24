@@ -31,9 +31,14 @@ SERVICES_ENV = \
 	SQLR_TEST_REDIS_TLS=127.0.0.1:56380 \
 	SQLR_TEST_CA=$(CURDIR)/.test-services/certs/ca.crt
 
-# The whole matrix in containers; the services stop at the end.
+# Set to 1 while iterating to reuse the running services between full test runs.
+KEEP_TEST_SERVICES ?= 0
+
+# The whole matrix in containers; by default the services stop at the end.
 test: check-nextest
-	@trap 'scripts/test-services.sh down' EXIT INT TERM; \
+	@if [ "$(KEEP_TEST_SERVICES)" != 1 ]; then \
+		trap 'scripts/test-services.sh down' EXIT INT TERM; \
+	fi; \
 	scripts/test-services.sh up && \
 	$(SERVICES_ENV) cargo nextest run --workspace --profile containers
 

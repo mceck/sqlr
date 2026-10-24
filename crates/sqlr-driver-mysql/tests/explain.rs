@@ -1,6 +1,6 @@
 //! Explain against MySQL 8.4 and MariaDB 11.4.
 
-mod support;
+use crate::support;
 
 use sqlr_core::{Driver, ErrorKind};
 use sqlr_driver_mysql::MysqlDriver;

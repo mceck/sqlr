@@ -416,20 +416,31 @@ async fn huge_values_paged() {
     const FIELDS: usize = 5_000_000;
     let server = start().await;
     let mut con = raw(&server).await;
-    // Pipelined HSETs of 1000 fields each.
-    for batch in 0..FIELDS / 50_000 {
-        let mut pipe = redis::pipe();
-        for chunk in 0..50 {
-            let mut cmd = redis::cmd("HSET");
-            cmd.arg("huge");
-            let base = batch * 50_000 + chunk * 1000;
-            for i in base..base + 1000 {
-                cmd.arg(i).arg(1);
-            }
-            pipe.add_command(cmd).ignore();
-        }
-        pipe.query_async::<()>(&mut con).await.unwrap();
-    }
+    // Generate the same five million fields on the server, in bounded HSET batches.
+    // Constructing and transferring every field from an unoptimized test process costs
+    // much more than the paged-read behavior this test measures.
+    let inserted: usize = redis::cmd("EVAL")
+        .arg(
+            r#"
+            local count = tonumber(ARGV[1])
+            for base = 0, count - 1, 1000 do
+                local args = {KEYS[1]}
+                for field = base, math.min(base + 999, count - 1) do
+                    args[#args + 1] = field
+                    args[#args + 1] = 1
+                end
+                redis.call('HSET', unpack(args))
+            end
+            return redis.call('HLEN', KEYS[1])
+            "#,
+        )
+        .arg(1)
+        .arg("huge")
+        .arg(FIELDS)
+        .query_async(&mut con)
+        .await
+        .unwrap();
+    assert_eq!(inserted, FIELDS);
     let conn = connect(&server, &[]).await;
     let kv = kv(&conn);
     let info = kv.key_info(0, b"huge").await.unwrap().expect("exists");

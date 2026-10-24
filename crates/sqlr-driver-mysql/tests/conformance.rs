@@ -1,6 +1,6 @@
 //! The shared conformance suite against MySQL and MariaDB (needs Docker).
 
-mod support;
+use crate::support;
 
 use sqlr_core::{Driver, Value};
 use sqlr_driver_mysql::MysqlDriver;

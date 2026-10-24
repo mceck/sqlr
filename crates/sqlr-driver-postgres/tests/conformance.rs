@@ -1,6 +1,6 @@
 //! The shared conformance suite against PostgreSQL (needs Docker).
 
-mod support;
+use crate::support;
 
 use sqlr_core::{Driver, TableRef, Value};
 use sqlr_driver_postgres::PostgresDriver;

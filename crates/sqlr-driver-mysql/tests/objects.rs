@@ -1,7 +1,7 @@
 //! Object introspection and DDL generation against MySQL 8.4 and MariaDB 11.4
 //!. Every check runs on both servers.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 

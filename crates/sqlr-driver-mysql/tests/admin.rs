@@ -2,7 +2,7 @@
 //! hosts, grants, sessions, cancel and terminate, locks, variables, database sizes and
 //! table statistics. Every check runs on both servers.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

@@ -1,6 +1,6 @@
 //! Schema snapshots and compare against PostgreSQL 17.
 
-mod support;
+use crate::support;
 
 use std::collections::HashSet;
 use std::sync::Arc;

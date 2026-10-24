@@ -1,6 +1,6 @@
 //! Grid edits applied through the engine against MySQL 8.4 and MariaDB 11.4.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
