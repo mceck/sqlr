@@ -1,0 +1,28 @@
+//! One executable for the integration tests, to share compilation and linking.
+
+mod admin;
+mod chrome;
+mod datagen;
+mod diff;
+mod docs;
+mod driver_manager;
+mod editor;
+mod er_canvas;
+mod form;
+mod format_editor;
+mod grid;
+mod grid_edit;
+mod hover;
+mod kv;
+mod library;
+mod mapping;
+mod objects;
+mod operations_panel;
+mod palette;
+mod plan_view;
+mod tasks;
+mod text_menu;
+mod theme;
+mod tree;
+mod welcome;
+mod wizard;

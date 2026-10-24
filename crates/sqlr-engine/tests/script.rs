@@ -9,7 +9,7 @@ use sqlr_engine::{
 use sqlr_store::Db;
 use sqlr_testkit::{FakeDriver, FakeScript};
 
-mod support;
+use crate::support;
 use support::{TIMEOUT, config, dev, no_repaint, wait_until};
 
 /// An engine on `db` with one fake driver and the session "c" already `Connected`.

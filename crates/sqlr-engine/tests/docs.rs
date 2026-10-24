@@ -2,7 +2,7 @@
 //! edits by `_id` (and `_index`), read-only refusals. The first tests use the fake document
 //! driver; the last ones run against the fixed MongoDB and Elasticsearch services.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 use std::time::Duration;

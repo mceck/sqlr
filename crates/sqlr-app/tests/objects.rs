@@ -928,8 +928,7 @@ fn an_applied_definition_asks_before_dropping_row_edits() {
     });
 }
 
-#[path = "support/visual.rs"]
-mod visual;
+use crate::visual;
 
 #[test]
 #[ignore = "visual audit; needs a GPU adapter"]

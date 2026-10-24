@@ -1,7 +1,7 @@
 //! The data-transfer pipeline between connections and files (§8.5), on SQLite files so it
 //! needs no Docker.
 
-mod support;
+use crate::support;
 
 use std::path::{Path, PathBuf};
 

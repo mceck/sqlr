@@ -1,7 +1,7 @@
 //! Transfers across real servers: PostgreSQL to MySQL and SQLite with new tables, type
 //! mapping, upsert and rejected rows. Runs against the fixed services (see CLAUDE.md).
 
-mod support;
+use crate::support;
 
 use std::time::Duration;
 

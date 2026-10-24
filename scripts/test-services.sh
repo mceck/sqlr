@@ -33,6 +33,9 @@ up_wait() {
         fi
         attempt=$((attempt + 1))
         echo "the test services failed to start; retrying (attempt $attempt)" >&2
+        # Replace crashed containers instead of reusing their failed startup state.
+        # Healthy services remain running.
+        compose rm -f "$@"
         sleep 2
     done
 }

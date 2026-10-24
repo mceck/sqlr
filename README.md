@@ -120,6 +120,18 @@ scripts/test-services.sh up
 cargo nextest run --workspace --profile containers
 ```
 
+App, engine and UI integration tests share an executable per crate to reduce linking
+and disk use; app smoke tests and engine peak-memory tests keep their own executables.
+Register new test modules in `tests/integration.rs`. To select a module, use e.g.
+`cargo nextest run -p sqlr-ui -E 'test(/^editor::/)'` or
+`cargo test -p sqlr-ui --test integration editor::`.
+
+The workspace build also builds the sidecar fixtures. Before package-only runs that
+use them, run `cargo build --workspace --examples --bins` with the same profile and
+target. Sidecar tests use those binaries directly instead of invoking Cargo per test.
+After upgrading from the previous test layout, `cargo clean` once removes obsolete
+test executables and incremental caches. Regular test runs reuse the build outputs.
+
 Editor performance budgets: `cargo run --release -p sqlr-ui --example editor_measure`.
 
 ## Where things live

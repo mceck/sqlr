@@ -1,8 +1,7 @@
 //! The engine cannot tell a sidecar from an in-process driver (spec §6.2).
 
 use std::path::PathBuf;
-use std::process::Command;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use sqlr_core::{ConnectionConfig, ConnectionProfile, Secrets};
@@ -10,19 +9,7 @@ use sqlr_engine::{DriverRegistry, Engine, QueryId, QueryStatus, SessionStatus};
 use sqlr_sidecar::{SidecarDriver, SidecarSpec};
 
 fn echo_program() -> PathBuf {
-    static BUILT: OnceLock<()> = OnceLock::new();
-    let exe = std::env::current_exe().unwrap();
-    let profile_dir = exe.parent().unwrap().parent().unwrap().to_path_buf();
-    BUILT.get_or_init(|| {
-        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-        let mut build = Command::new(cargo);
-        build.args(["build", "-p", "sqlr-driver-sdk", "--examples"]);
-        if profile_dir.file_name().is_some_and(|n| n == "release") {
-            build.arg("--release");
-        }
-        assert!(build.status().unwrap().success(), "building the examples");
-    });
-    profile_dir.join("examples").join("echo_driver")
+    sqlr_testkit::workspace_binary("examples/echo_driver")
 }
 
 fn wait_until(mut cond: impl FnMut() -> bool) -> bool {

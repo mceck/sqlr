@@ -332,8 +332,7 @@ fn palette_opens_collections_and_creates_indexes() {
     wait_for_label(&mut h, "New index on users");
 }
 
-#[path = "support/visual.rs"]
-mod visual;
+use crate::visual;
 
 #[test]
 #[ignore = "visual audit; needs a GPU adapter"]

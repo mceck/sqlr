@@ -718,8 +718,7 @@ fn object_permissions_and_statistics() {
     });
 }
 
-#[path = "support/visual.rs"]
-mod visual;
+use crate::visual;
 
 #[test]
 #[ignore = "visual audit; needs a GPU adapter"]

@@ -1,6 +1,6 @@
 //! Saved tasks: running them, their run history and validation (spec §8.5).
 
-mod support;
+use crate::support;
 
 use std::path::{Path, PathBuf};
 

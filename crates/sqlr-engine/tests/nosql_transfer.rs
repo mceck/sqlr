@@ -1,7 +1,7 @@
 //! NoSQL transfer endpoints: collections and indices as sources and
 //! targets, Redis keys as a source. The fixed services come from the test compose file.
 
-mod support;
+use crate::support;
 
 use std::time::Duration;
 

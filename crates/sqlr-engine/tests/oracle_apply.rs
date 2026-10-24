@@ -1,6 +1,6 @@
 //! Default-only grid inserts through the engine and a real Oracle connection.
 
-mod support;
+use crate::support;
 
 use std::time::Duration;
 

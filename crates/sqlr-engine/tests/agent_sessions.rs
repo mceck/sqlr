@@ -1,4 +1,4 @@
-mod support;
+use crate::support;
 
 use sqlr_core::{CommitMode, ConnectionProfile, Secrets};
 use sqlr_driver_sqlite::SqliteDriver;

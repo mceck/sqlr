@@ -34,7 +34,7 @@ SERVICES_ENV = \
 # The whole matrix in containers; the services stop at the end.
 test: check-nextest
 	@trap 'scripts/test-services.sh down' EXIT INT TERM; \
-	scripts/test-services.sh up; \
+	scripts/test-services.sh up && \
 	$(SERVICES_ENV) cargo nextest run --workspace --profile containers
 
 test-docker: test

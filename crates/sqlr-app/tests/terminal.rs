@@ -240,7 +240,10 @@ fn the_shell_starts_at_the_canvas_size() {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         harness.step();
-        if let Ok(size) = std::fs::read_to_string(&path) {
+        // Shell redirection creates the file before stty writes its output.
+        if let Ok(size) = std::fs::read_to_string(&path)
+            && size.ends_with('\n')
+        {
             let cols: u16 = size
                 .split_whitespace()
                 .nth(1)

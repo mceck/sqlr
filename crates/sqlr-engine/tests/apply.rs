@@ -1,7 +1,7 @@
 //! Applying grid edits (§7.7): changesets run in a transaction that refuses concurrent
 //! changes.
 
-mod support;
+use crate::support;
 
 use std::sync::Arc;
 

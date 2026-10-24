@@ -4,6 +4,12 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+autotests = false
+
+# Link the integration tests once instead of once per module.
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
 
 [dependencies]
 sqlr-core = { path = "../sqlr-core" }

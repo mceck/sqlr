@@ -81,9 +81,11 @@ cargo llvm-cov clean --workspace
 
 echo "coverage: running tests (profile: $PROFILE)"
 status=0
+# Build HANA with the workspace: the app tests install its binary as a fixture. Its
+# live tests stay ignored, and it remains excluded from the coverage report.
 cargo llvm-cov nextest \
     --workspace \
-    --exclude sqlr-driver-hana \
+    --exclude-from-report sqlr-driver-hana \
     --profile "$PROFILE" \
     --no-fail-fast \
     --no-report || status=$?

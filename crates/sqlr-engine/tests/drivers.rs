@@ -1,31 +1,18 @@
 //! Installed sidecar drivers join the engine without a restart.
 
 use std::path::PathBuf;
-use std::process::Command;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use sqlr_core::{ConnectionConfig, ConnectionProfile, Secrets};
 use sqlr_engine::{DriverJobState, DriverRegistry, Engine, QueryStatus, SessionStatus};
 use sqlr_registry::Registry;
 
-mod support;
+use crate::support;
 use support::{TIMEOUT, no_repaint, wait_until};
 
 fn echo_binary() -> PathBuf {
-    static BUILT: OnceLock<()> = OnceLock::new();
-    let exe = std::env::current_exe().unwrap();
-    let profile_dir = exe.parent().unwrap().parent().unwrap().to_path_buf();
-    BUILT.get_or_init(|| {
-        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-        let mut build = Command::new(cargo);
-        build.args(["build", "-p", "sqlr-driver-sdk", "--example", "echo_driver"]);
-        if profile_dir.file_name().is_some_and(|n| n == "release") {
-            build.arg("--release");
-        }
-        assert!(build.status().unwrap().success());
-    });
-    profile_dir.join("examples").join("echo_driver")
+    sqlr_testkit::workspace_binary("examples/echo_driver")
 }
 
 fn archive(version: &str) -> Vec<u8> {

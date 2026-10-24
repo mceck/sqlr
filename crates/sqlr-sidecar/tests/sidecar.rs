@@ -2,8 +2,7 @@
 
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::Command;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use sqlr_core::{
@@ -14,21 +13,9 @@ use sqlr_driver_sqlite::SqliteDriver;
 use sqlr_driver_tests::{Target, TypeCase, relational_suite};
 use sqlr_sidecar::{SidecarDriver, SidecarSpec};
 
-/// Builds the SDK's examples once and returns the path of `name`.
+/// The SDK examples are built together with the workspace tests.
 fn example(name: &str) -> PathBuf {
-    static BUILT: OnceLock<()> = OnceLock::new();
-    let exe = std::env::current_exe().unwrap();
-    let profile_dir = exe.parent().unwrap().parent().unwrap().to_path_buf();
-    BUILT.get_or_init(|| {
-        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-        let mut build = Command::new(cargo);
-        build.args(["build", "-p", "sqlr-driver-sdk", "--examples"]);
-        if profile_dir.file_name().is_some_and(|n| n == "release") {
-            build.arg("--release");
-        }
-        assert!(build.status().unwrap().success(), "building the examples");
-    });
-    profile_dir.join("examples").join(name)
+    sqlr_testkit::workspace_binary(&format!("examples/{name}"))
 }
 
 fn config() -> ConnectionConfig {

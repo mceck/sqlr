@@ -1,6 +1,6 @@
 //! Schema compare jobs (spec §8.6), on two SQLite files.
 
-mod support;
+use crate::support;
 
 use std::collections::HashSet;
 use std::path::Path;

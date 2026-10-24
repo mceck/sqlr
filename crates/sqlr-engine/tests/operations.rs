@@ -1,8 +1,8 @@
+use crate::support;
 use sqlr_core::Secrets;
 use sqlr_engine::{DriverRegistry, Engine, OperationKind, OperationState, SessionStatus};
 use sqlr_testkit::{FakeDriver, FakeScript};
 use std::{sync::Arc, time::Duration};
-mod support;
 use support::{TIMEOUT, config, dev, no_repaint, wait_until};
 #[test]
 fn cancel_hung_connect_ends_cancelled_within_1s() {

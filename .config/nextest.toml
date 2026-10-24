@@ -13,33 +13,53 @@ final-status-level = "slow"
 [test-groups.app]
 max-threads = 2
 
-[[profile.default.overrides]]
-filter = 'package(sqlr-app) and binary(smoke)'
-test-group = "app"
+# These services have server-global state guarded by TestLock. Queue their tests in
+# nextest so processes waiting for the same lock do not occupy all execution slots.
+# Keep the file locks too: separate nextest/cargo invocations must still be safe.
+[test-groups.mongo]
+max-threads = 1
 
-# Every suite that runs `cargo build -p sqlr-driver-sdk --example echo_driver` takes the
-# same process-wide build lock. Run them one at a time: a stack of waiters looks like a
-# hung test and reaches the slow timeout before cargo gets to them.
-[test-groups.sidecar]
+[test-groups.elasticsearch]
+max-threads = 1
+
+[test-groups.redis]
+max-threads = 1
+
+[test-groups.mssql]
+max-threads = 1
+
+[test-groups.oracle]
 max-threads = 1
 
 [[profile.default.overrides]]
-filter = 'package(sqlr-sidecar)'
-test-group = "sidecar"
-
-[[profile.default.overrides]]
-filter = 'package(sqlr-engine) and binary(drivers)'
-test-group = "sidecar"
-
-[[profile.default.overrides]]
-filter = 'package(sqlr-registry)'
-test-group = "sidecar"
+filter = 'package(sqlr-app) and binary(smoke)'
+test-group = "app"
 
 # Longer timeout for the integration suite (the Docker services). All servers
 # are fixed services, so the tests can use every core like the rest of the workspace.
 [profile.containers]
 inherits = "default"
 slow-timeout = { period = "120s", terminate-after = 4 }
+
+[[profile.containers.overrides]]
+filter = 'package(sqlr-driver-mongo) or (package(sqlr-engine) and test(/^(docs::(run_doc_pages_and_fetch_all|edit_document_preserves_types|delete_docs_confirms_count)|nosql_transfer::(mongo_to_pg_flattened|csv_to_mongo_documents))$/))'
+test-group = "mongo"
+
+[[profile.containers.overrides]]
+filter = 'package(sqlr-driver-elastic) or (package(sqlr-engine) and test(/^(docs::es_doc_edit_by_id_and_index|nosql_transfer::es_to_jsonl)$/))'
+test-group = "elasticsearch"
+
+[[profile.containers.overrides]]
+filter = 'package(sqlr-driver-redis) or (package(sqlr-engine) and test(=nosql_transfer::redis_keys_to_csv))'
+test-group = "redis"
+
+[[profile.containers.overrides]]
+filter = 'package(sqlr-driver-mssql) or (package(sqlr-engine) and test(/^mssql_tx::/))'
+test-group = "mssql"
+
+[[profile.containers.overrides]]
+filter = 'package(sqlr-driver-oracle) or (package(sqlr-engine) and test(/^oracle_apply::/))'
+test-group = "oracle"
 
 # Keep one retry as a safety net for a missed click in the event loop.
 [[profile.containers.overrides]]

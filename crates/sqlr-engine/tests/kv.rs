@@ -8,7 +8,7 @@ use sqlr_engine::{DriverRegistry, Engine, SessionStatus};
 use sqlr_store::Db;
 use sqlr_testkit::{FakeKvDriver, FakeKvScript};
 
-mod support;
+use crate::support;
 use support::{TIMEOUT, config, dev, no_repaint, wait_until};
 
 fn names(engine: &Engine, pattern: &str) -> Vec<String> {

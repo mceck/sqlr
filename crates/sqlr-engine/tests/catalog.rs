@@ -9,7 +9,7 @@ use sqlr_engine::{ConnCatalog, DriverRegistry, Engine, LoadState, QueryStatus, S
 use sqlr_store::Db;
 use sqlr_testkit::{FakeDriver, FakeScript};
 
-mod support;
+use crate::support;
 use support::{TIMEOUT, config, dev, no_repaint, wait_until};
 
 fn schema_node(name: &str) -> Node {

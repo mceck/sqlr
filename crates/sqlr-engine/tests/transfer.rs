@@ -1,6 +1,6 @@
 //! Export, import, file preview and clipboard jobs (§8.3).
 
-mod support;
+use crate::support;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

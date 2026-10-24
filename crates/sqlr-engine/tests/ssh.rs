@@ -17,7 +17,7 @@ use sqlr_testkit::{FakeDriver, FakeScript};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
-mod support;
+use crate::support;
 use support::{TIMEOUT, config, dev, no_repaint, wait_until};
 
 const USER: &str = "tunnel";

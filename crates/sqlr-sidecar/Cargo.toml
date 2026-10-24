@@ -16,6 +16,7 @@ tokio = { workspace = true, features = ["rt", "sync", "time", "io-util", "io-std
 tracing.workspace = true
 
 [dev-dependencies]
+sqlr-testkit = { path = "../sqlr-testkit" }
 sqlr-engine = { path = "../sqlr-engine" }
 sqlr-driver-tests = { path = "../sqlr-driver-tests" }
 sqlr-driver-sqlite = { path = "../sqlr-driver-sqlite" }

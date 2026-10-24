@@ -1,5 +1,5 @@
 //! A visual review of the explain plan widget on a synthetic PostgreSQL plan.
-//! `SQLR_PLAN_PNG=/tmp/plan.png cargo test -p sqlr-app --test plan_visual -- --ignored`
+//! `SQLR_PLAN_PNG=/tmp/plan.png cargo test -p sqlr-app --test integration plan_visual -- --ignored`
 
 use egui::vec2;
 use egui_kittest::Harness;

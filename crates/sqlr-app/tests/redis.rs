@@ -387,8 +387,7 @@ fn read_only_switch_on_a_redis_tab_refuses_a_console_write() {
     assert!(driver.commands().is_empty(), "{:?}", driver.commands());
 }
 
-#[path = "support/visual.rs"]
-mod visual;
+use crate::visual;
 
 #[test]
 #[ignore = "visual audit; needs a GPU adapter"]

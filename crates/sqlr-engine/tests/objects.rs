@@ -14,7 +14,7 @@ use sqlr_engine::{
 };
 use sqlr_testkit::{FakeDriver, FakeScript};
 
-mod support;
+use crate::support;
 use support::{TIMEOUT, config, dev, no_repaint, wait_until};
 
 fn table(name: &str, columns: &[&str]) -> TableDef {

@@ -7,6 +7,24 @@ mod kv;
 pub use doc::{FakeDocDriver, FakeDocScript};
 pub use kv::{FakeKvDriver, FakeKvScript};
 
+/// A binary built by `cargo test --workspace` (including `examples/echo_driver`).
+///
+/// Tests must not invoke Cargo: nextest runs each test in a fresh process, so even a
+/// `OnceLock` would rebuild and contend for Cargo's build lock once per test.
+/// For a package-only run, build the workspace fixtures first with
+/// `cargo build --workspace --examples --bins` using the same profile and target.
+pub fn workspace_binary(name: &str) -> std::path::PathBuf {
+    let exe = std::env::current_exe().expect("locate the test executable");
+    let profile = exe.parent().unwrap().parent().unwrap();
+    let path = profile.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+    assert!(
+        path.is_file(),
+        "missing test fixture {}: run cargo build --workspace --examples --bins with the same profile and target before package-only tests",
+        path.display()
+    );
+    path
+}
+
 /// Whether container-backed tests should return early because the environment asks for a
 /// Docker-free run (`SQLR_SKIP_CONTAINER_TESTS=1`).
 pub fn skip_container_tests() -> bool {

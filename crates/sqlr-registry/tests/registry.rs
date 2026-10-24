@@ -3,8 +3,7 @@
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use sqlr_registry::{Registry, RegistryError, platform_key};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -13,19 +12,7 @@ use tokio::net::TcpListener;
 // ----- a driver to install: the SDK's echo example -----
 
 fn echo_binary() -> PathBuf {
-    static BUILT: OnceLock<()> = OnceLock::new();
-    let exe = std::env::current_exe().unwrap();
-    let profile_dir = exe.parent().unwrap().parent().unwrap().to_path_buf();
-    BUILT.get_or_init(|| {
-        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-        let mut build = Command::new(cargo);
-        build.args(["build", "-p", "sqlr-driver-sdk", "--example", "echo_driver"]);
-        if profile_dir.file_name().is_some_and(|n| n == "release") {
-            build.arg("--release");
-        }
-        assert!(build.status().unwrap().success());
-    });
-    profile_dir.join("examples").join("echo_driver")
+    sqlr_testkit::workspace_binary("examples/echo_driver")
 }
 
 /// A `.tar.gz` holding `driver.toml` and the echo driver as `bin/echo`.

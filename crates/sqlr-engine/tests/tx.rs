@@ -9,7 +9,7 @@ use sqlr_engine::{
 };
 use sqlr_testkit::{FakeDocDriver, FakeDocScript, FakeDriver, FakeScript};
 
-mod support;
+use crate::support;
 use support::{TIMEOUT, config, dev, no_repaint, wait_until};
 
 fn profile(mode: CommitMode) -> ConnectionProfile {

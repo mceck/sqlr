@@ -877,7 +877,7 @@ fn edit_preview_apply_flow() {
     h.run_steps(2);
     press(&mut h, Modifiers::NONE, Key::Enter);
     wait_for_label(&mut h, "1 pending change");
-    h.get_by_label("Preview").click();
+    h.get_by_label("SQL").click();
     h.run_steps(5);
     let preview = h
         .state()
@@ -2306,18 +2306,8 @@ fn driver_manager_opens_from_the_palette_and_lists_bundled_drivers() {
 fn hana_connection_form_from_manifest() {
     // The real HANA sidecar, packaged and installed like a user would: its form (and its
     // TLS and redirect options) comes from the manifest it announces.
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let exe = std::env::current_exe().unwrap();
-    let target = exe.ancestors().nth(2).unwrap().to_path_buf(); // .../target/debug
-    let built = std::process::Command::new(&cargo)
-        .args(["build", "-p", "sqlr-driver-hana"])
-        .arg("--target-dir")
-        .arg(target.parent().unwrap())
-        .current_dir(&root)
-        .status()
-        .unwrap();
-    assert!(built.success());
+    let binary = sqlr_testkit::workspace_binary("sqlr-driver-hana");
     let dir = tempfile::tempdir().unwrap();
     let archive = dir.path().join("hana.tar.gz");
     let packed = std::process::Command::new("sh")
@@ -2325,7 +2315,7 @@ fn hana_connection_form_from_manifest() {
         .args(["hana"])
         .arg(&archive)
         .arg("--bin")
-        .arg(target.join("sqlr-driver-hana"))
+        .arg(binary)
         .output()
         .unwrap();
     assert!(
@@ -2402,18 +2392,7 @@ fn hana_connection_form_from_manifest() {
 #[test]
 fn a_sidecar_connection_gets_its_dialect_once_connected() {
     // The echo driver, installed from a file, announces its dialect only on connect.
-    let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    assert!(
-        std::process::Command::new(&cargo)
-            .args(["build", "-p", "sqlr-driver-sdk", "--example", "echo_driver"])
-            .current_dir(&root)
-            .status()
-            .unwrap()
-            .success()
-    );
-    let exe = std::env::current_exe().unwrap();
-    let examples = exe.ancestors().nth(2).unwrap().join("examples/echo_driver");
+    let examples = sqlr_testkit::workspace_binary("examples/echo_driver");
     let dir = tempfile::tempdir().unwrap();
     let pack = dir.path().join("pack");
     std::fs::create_dir_all(&pack).unwrap();

@@ -1,6 +1,6 @@
 //! Test-data generation through the transfer pipeline (spec §8.6), on a SQLite file.
 
-mod support;
+use crate::support;
 
 use sqlr_core::{
     ColumnGen, ConnectionConfig, DataGenSpec, Endpoint, Generator, Secrets, TableRef,

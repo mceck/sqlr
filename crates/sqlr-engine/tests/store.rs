@@ -9,7 +9,7 @@ use sqlr_engine::{DriverRegistry, Engine, SessionStatus};
 use sqlr_store::{MemorySecretStore, SecretStore, StoreError};
 use sqlr_testkit::{FakeDriver, FakeScript};
 
-mod support;
+use crate::support;
 use support::{TIMEOUT, config, dev, no_repaint, wait_until};
 
 /// A secret store that records the thread of every read.

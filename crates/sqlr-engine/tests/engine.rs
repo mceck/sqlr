@@ -6,7 +6,7 @@ use sqlr_core::{DriverError, ErrorKind, Node, NodeKind, NodePath, Secrets};
 use sqlr_engine::{DriverRegistry, Engine, LoadState, QueryId, QueryStatus, SessionStatus};
 use sqlr_testkit::{FakeDriver, FakeScript};
 
-mod support;
+use crate::support;
 use support::{TIMEOUT, config, dev, no_repaint, wait_until};
 
 fn engine_with(fake: Arc<FakeDriver>, repaint: sqlr_engine::Repaint) -> Engine {

@@ -1,6 +1,6 @@
 //! Reading and writing every transfer file format (§8.5), on SQLite so it needs no Docker.
 
-mod support;
+use crate::support;
 
 use std::path::Path;
 use std::sync::Arc;

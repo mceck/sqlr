@@ -11,7 +11,7 @@ use sqlr_engine::{
 use sqlr_store::Db;
 use sqlr_testkit::{FakeDriver, FakeScript};
 
-mod support;
+use crate::support;
 use support::{TIMEOUT, config, dev, no_repaint, wait_until};
 
 fn engine_on(script: FakeScript, db: Arc<Db>) -> Engine {

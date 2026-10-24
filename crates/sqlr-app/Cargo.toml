@@ -4,6 +4,16 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+autotests = false
+
+# Link the integration tests once instead of once per module.
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[[test]]
+name = "smoke"
+path = "tests/smoke.rs"
 
 # The app menu on macOS is named after the executable; call it sqlr, like the product.
 [[bin]]

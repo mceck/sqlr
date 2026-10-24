@@ -1,6 +1,6 @@
 //! Nested SQL Server transactions stay usable until their outermost commit.
 
-mod support;
+use crate::support;
 
 use std::time::Duration;
 
