@@ -11,7 +11,7 @@ use crate::app::SqlrApp;
 use crate::diagnostics::model::StartupNotice;
 use crate::diagnostics::{
     ApplicationInfo, BundleInputs, BundleOutline, ConnectionInfo, DriverInfo, Environment,
-    Incident, IncidentSummary, InterfaceInfo, LogLevel, OperationSnapshot, TabInfo,
+    Incident, IncidentSummary, InterfaceInfo, IssueDraft, LogLevel, OperationSnapshot, TabInfo,
 };
 
 /// The window's state, owned by the application.
@@ -23,6 +23,8 @@ pub struct DiagnosticsUi {
     pub outline: Option<BundleOutline>,
     pub preview: Option<String>,
     pub preview_open: bool,
+    /// The GitHub issue prefilled from the previewed bundle.
+    pub issue: Option<IssueDraft>,
     pub status: Option<String>,
     pub incidents: Vec<IncidentSummary>,
     pub(crate) loaded: bool,
@@ -59,6 +61,7 @@ pub enum BundleAction {
     Copy,
     Save,
     Preview,
+    Issue,
 }
 
 /// Report a Problem: a free-text note and what to include.
@@ -183,6 +186,7 @@ impl SqlrApp {
         };
         let palette = theme::palette(ctx);
         let mut open_report = false;
+        let mut report_issue = false;
         let mut copy = false;
         let mut dismiss = false;
         egui::Area::new(Id::new("startup-notice"))
@@ -220,6 +224,15 @@ impl SqlrApp {
                                 open_report = true;
                             }
                             if ui
+                                .button("Report on GitHub")
+                                .on_hover_text(
+                                    "Review the full report, then open a prefilled issue",
+                                )
+                                .clicked()
+                            {
+                                report_issue = true;
+                            }
+                            if ui
                                 .button("Copy")
                                 .on_hover_text("Copy the incident report")
                                 .clicked()
@@ -241,6 +254,10 @@ impl SqlrApp {
             ctx.copy_text(notice.json().to_string());
             self.notify("Crash report copied");
         }
+        if report_issue {
+            let incident = serde_json::from_str(notice.json()).ok();
+            self.start_bundle(BundleAction::Issue, ctx, true, true, incident);
+        }
         if dismiss {
             let id = notice.incident().id.clone();
             self.store_work(move |diagnostics| {
@@ -257,8 +274,10 @@ impl SqlrApp {
         let mut close = false;
         let mut copy_bundle = false;
         let mut save_bundle = false;
+        let mut issue_bundle = false;
         let mut copy_incident = false;
         let mut save_incident = false;
+        let mut issue_incident = false;
         let mut open_logs = false;
         let mut new_report = false;
         let mut level_change: Option<LogLevel> = None;
@@ -277,7 +296,7 @@ impl SqlrApp {
                     ui,
                     icons::WARNING,
                     "Diagnostics",
-                    Some("Local reports and logs; nothing is sent anywhere"),
+                    Some("Local reports and logs; nothing leaves this machine unless you share it"),
                 ) {
                     close = true;
                 }
@@ -292,8 +311,10 @@ impl SqlrApp {
                                     ui,
                                     &mut copy_bundle,
                                     &mut save_bundle,
+                                    &mut issue_bundle,
                                     &mut copy_incident,
                                     &mut save_incident,
+                                    &mut issue_incident,
                                     &mut open_logs,
                                     &mut new_report,
                                     &mut level_change,
@@ -331,6 +352,9 @@ impl SqlrApp {
         if save_bundle {
             self.start_bundle(BundleAction::Save, ctx, true, true, None);
         }
+        if issue_bundle {
+            self.start_bundle(BundleAction::Issue, ctx, true, true, None);
+        }
         if copy_incident && let Some(id) = self.diagnostics_ui.selected.clone() {
             self.store_work(move |diagnostics| {
                 StoreResult::Copied(diagnostics.read_incident_json(&id))
@@ -345,6 +369,15 @@ impl SqlrApp {
                 self.diagnostics_ui.selected_incident.clone(),
             );
         }
+        if issue_incident {
+            self.start_bundle(
+                BundleAction::Issue,
+                ctx,
+                true,
+                true,
+                self.diagnostics_ui.selected_incident.clone(),
+            );
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -353,8 +386,10 @@ impl SqlrApp {
         ui: &mut egui::Ui,
         copy_bundle: &mut bool,
         save_bundle: &mut bool,
+        issue_bundle: &mut bool,
         copy_incident: &mut bool,
         save_incident: &mut bool,
+        issue_incident: &mut bool,
         open_logs: &mut bool,
         new_report: &mut bool,
         level_change: &mut Option<LogLevel>,
@@ -416,13 +451,20 @@ impl SqlrApp {
             );
         }
         ui.add_space(Spacing::M);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = Spacing::S;
             if ui.button("Copy diagnostics").clicked() {
                 *copy_bundle = true;
             }
             if ui.button("Save bundle…").clicked() {
                 *save_bundle = true;
+            }
+            if ui
+                .button("Open GitHub issue…")
+                .on_hover_text("Review the full report, then open a prefilled issue")
+                .clicked()
+            {
+                *issue_bundle = true;
             }
             if ui.button("Report a Problem…").clicked() {
                 *new_report = true;
@@ -575,6 +617,13 @@ impl SqlrApp {
                 if ui.button("Save…").clicked() {
                     *save_incident = true;
                 }
+                if ui
+                    .button("Open GitHub issue…")
+                    .on_hover_text("Review the full report, then open a prefilled issue")
+                    .clicked()
+                {
+                    *issue_incident = true;
+                }
             });
         }
 
@@ -642,6 +691,7 @@ impl SqlrApp {
         let mut close = false;
         let mut create_copy = false;
         let mut create_save = false;
+        let mut create_issue = false;
         egui::Window::new("Report a Problem")
             .open(&mut open)
             .title_bar(false)
@@ -675,10 +725,11 @@ impl SqlrApp {
                         ui.add_space(Spacing::S);
                         theme::hint(
                             ui,
-                            "Passwords, passphrases, tokens and vault values are never included.",
+                            "Passwords, passphrases, tokens and vault values are never included. \
+                             A GitHub issue opens only after you review the full report.",
                         );
                         ui.add_space(Spacing::M);
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             if ui
                                 .add(theme::primary_button(ui.ctx(), "Create report and copy"))
                                 .clicked()
@@ -688,17 +739,20 @@ impl SqlrApp {
                             if ui.button("Create report and save…").clicked() {
                                 create_save = true;
                             }
+                            if ui.button("Create report for GitHub…").clicked() {
+                                create_issue = true;
+                            }
                             if ui.button("Cancel").clicked() {
                                 close = true;
                             }
                         });
                     });
             });
-        if open && !close && !create_copy && !create_save {
+        if open && !close && !create_copy && !create_save && !create_issue {
             self.diagnostics_ui.report = Some(dialog);
             return;
         }
-        if !(create_copy || create_save) {
+        if !(create_copy || create_save || create_issue) {
             return;
         }
         let include_sql = dialog.include_sql;
@@ -706,8 +760,10 @@ impl SqlrApp {
         let note = dialog.note.trim().to_string();
         let action = if create_copy {
             BundleAction::Copy
-        } else {
+        } else if create_save {
             BundleAction::Save
+        } else {
+            BundleAction::Issue
         };
         self.store_work(move |diagnostics| {
             StoreResult::Manual(
@@ -768,10 +824,11 @@ impl SqlrApp {
         match received {
             PendingBundleResult::Built(text, outline) => {
                 self.diagnostics_ui.outline = Some(outline);
+                self.diagnostics_ui.issue = Some(crate::diagnostics::issue_draft(&text));
                 self.diagnostics_ui.preview = Some(text);
                 self.diagnostics_ui.preview_open = true;
                 self.diagnostics_ui.status =
-                    Some("Review the bundle before copying or saving".into());
+                    Some("Review the bundle before copying, saving or sharing it".into());
             }
 
             PendingBundleResult::Saved(Ok(())) => {
@@ -784,6 +841,27 @@ impl SqlrApp {
                 self.diagnostics_ui.status = Some(error);
             }
         }
+    }
+
+    /// Opens the prefilled issue. The app sends nothing: the browser shows the form and the
+    /// person decides. A bundle too large for the URL is copied for one paste.
+    fn open_issue(&mut self, ctx: &egui::Context) {
+        let Some(draft) = self.diagnostics_ui.issue.clone() else {
+            self.diagnostics_ui.status = Some("Build the bundle before opening an issue".into());
+            return;
+        };
+        if draft.paste_required
+            && let Some(text) = &self.diagnostics_ui.preview
+        {
+            ctx.copy_text(text.clone());
+        }
+        ctx.open_url(egui::OpenUrl::new_tab(draft.url));
+        self.diagnostics_ui.status = Some(if draft.paste_required {
+            "GitHub issue opened; paste the full report that sqlr put on the clipboard".into()
+        } else {
+            "GitHub issue opened in the browser with the full report".into()
+        });
+        self.diagnostics_ui.preview_open = false;
     }
 
     fn choose_bundle_path(&mut self) -> Option<PathBuf> {
@@ -806,6 +884,7 @@ impl SqlrApp {
         let mut open = true;
         let mut copy = false;
         let mut save = false;
+        let mut issue = false;
         egui::Window::new("Review diagnostics bundle")
             .open(&mut open)
             .default_size(vec2(760.0, 560.0))
@@ -822,7 +901,29 @@ impl SqlrApp {
                         );
                     }
                 });
+                if let Some(draft) = &self.diagnostics_ui.issue {
+                    theme::hint(
+                        ui,
+                        if draft.paste_required {
+                            "The report is too large for a prefilled issue: sqlr copies it to the \
+                             clipboard, and the issue asks you to paste it at the marker."
+                        } else {
+                            "The whole report fits in the issue body. Nothing is sent until you \
+                             submit the issue on GitHub."
+                        },
+                    );
+                }
                 ui.horizontal(|ui| {
+                    if ui
+                        .add(theme::primary_button(
+                            ctx,
+                            "Open GitHub issue with this report",
+                        ))
+                        .on_hover_text("Open a prefilled public issue in your browser")
+                        .clicked()
+                    {
+                        issue = true;
+                    }
                     if ui.button("Copy reviewed bundle").clicked() {
                         copy = true;
                     }
@@ -832,6 +933,9 @@ impl SqlrApp {
                 });
             });
         self.diagnostics_ui.preview_open = open;
+        if issue {
+            self.open_issue(ctx);
+        }
         if copy && let Some(text) = &self.diagnostics_ui.preview {
             ctx.copy_text(text.clone());
             self.diagnostics_ui.status = Some("Diagnostics copied".into());

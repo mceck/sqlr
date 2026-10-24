@@ -149,6 +149,22 @@ fn a_previous_panic_shows_the_full_banner_and_dismiss_is_remembered() {
 }
 
 #[test]
+fn the_crash_banner_opens_a_prefilled_github_issue() {
+    let dir = tempfile::tempdir().unwrap();
+    previous_session(dir.path(), true);
+    let (mut h, _) = harness(&dir);
+    wait_for_label(&mut h, "Report on GitHub");
+    h.get_by_label("Report on GitHub").click();
+    step_until(&mut h, "the crash issue", |h| {
+        h.state().diagnostics_ui_for_tests().issue.is_some()
+            && h.state().diagnostics_ui_for_tests().preview_open
+    });
+    let draft = h.state().diagnostics_ui_for_tests().issue.clone().unwrap();
+    assert!(draft.title.starts_with("Crash"));
+    assert!(draft.body.contains("the previous run crashed"));
+}
+
+#[test]
 fn an_unclean_shutdown_uses_the_lighter_wording() {
     let dir = tempfile::tempdir().unwrap();
     previous_session(dir.path(), false);
@@ -220,6 +236,38 @@ fn the_diagnostics_window_works_without_a_database_or_vault() {
     h.get_by_label("Diagnostics…").click();
     h.run_steps(3);
     wait_for_label(&mut h, "This session");
+}
+
+#[test]
+fn the_reviewed_bundle_can_become_a_prefilled_github_issue() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut h, _) = harness(&dir);
+    h.get_by_label("Help").click();
+    h.run_steps(2);
+    h.get_by_label("Diagnostics…").click();
+    h.run_steps(3);
+    h.get_by_label("Open GitHub issue…").click();
+    step_until(&mut h, "the prefilled issue", |h| {
+        h.state().diagnostics_ui_for_tests().issue.is_some()
+            && h.state().diagnostics_ui_for_tests().preview_open
+    });
+
+    let draft = h.state().diagnostics_ui_for_tests().issue.clone().unwrap();
+    assert!(draft.url.starts_with(sqlr_app::diagnostics::NEW_ISSUE));
+    assert!(draft.title.starts_with("Bug report"));
+    assert!(draft.body.contains("### Environment"));
+
+    h.get_by_label("Open GitHub issue with this report").click();
+    h.run_steps(2);
+    assert!(!h.state().diagnostics_ui_for_tests().preview_open);
+    assert!(
+        h.state()
+            .diagnostics_ui_for_tests()
+            .status
+            .as_deref()
+            .unwrap_or("")
+            .contains("GitHub issue opened")
+    );
 }
 
 #[test]

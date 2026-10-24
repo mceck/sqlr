@@ -1,10 +1,14 @@
 # Troubleshooting
 
-Open **Help → Diagnostics…** to see the current session, installed drivers and recent incidents. Diagnostics work independently of the local history database and credential vault. Reports stay on your computer: there are no uploads, network requests or telemetry.
+Open **Help → Diagnostics…** to see the current session, installed drivers and recent incidents. Diagnostics work independently of the local history database and credential vault. Reports stay on your computer: there are no uploads, network requests or telemetry. Sharing is always an explicit action.
 
-## Copy or save a report
+## Copy, save or report a problem
 
 Choose **Copy diagnostics** or **Save bundle…**, review the JSON preview, then use **Copy reviewed bundle** or **Save reviewed bundle…**. The bundle describes the current session: application version and build, system, drivers, sanitized settings, connection metadata, open tabs and transactions, recent operations, logs and the selected incident. It does not claim that current tabs or connections describe the moment of an earlier crash.
+
+## Open a GitHub issue
+
+From the same preview, choose **Open GitHub issue with this report**. sqlr opens a new public issue in your browser with a title and a summary already filled in. When the whole bundle fits in the prefilled URL it goes into the issue body; otherwise sqlr copies the bundle to the clipboard and the issue asks you to paste it at the marker. Nothing is submitted until you press **Create** on GitHub, and sqlr never makes the request itself.
 
 Use **Help → Report a Problem…** to add a note and choose whether to include SQL and open tab titles. Creating the report saves a manual incident that can be reopened later. A result error's **Copy details** copies its message, hint, connection, database, duration and permitted SQL without creating an incident.
 
@@ -16,7 +20,7 @@ Bundles are valid JSON capped at 512 KiB, with explicit truncation markers. Path
 
 ## Crashes and startup failures
 
-A panic writes an incident before the process exits. On the next launch, a non-blocking banner offers **Open report**, **Copy** and **Dismiss**. Copy on the banner copies the original incident JSON. Dismiss is remembered, and the report remains in Diagnostics.
+A panic writes an incident before the process exits. On the next launch, a non-blocking banner offers **Open report**, **Report on GitHub**, **Copy** and **Dismiss**. Copy on the banner copies the original incident JSON. Dismiss is remembered, and the report remains in Diagnostics.
 
 A killed process, segmentation fault, power loss or out-of-memory termination may leave no panic report. The next launch only says that the previous session did not close cleanly. A clean exit produces no notice; another running instance does not count as a crash.
 

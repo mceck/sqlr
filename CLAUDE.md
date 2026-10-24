@@ -54,7 +54,7 @@ To run `cargo test` or `cargo nextest` directly, start the services first with
 - **No OpenSSL:** rustls only (`cargo tree -i openssl-sys` must find no match). Connections begin without TLS unless the driver configuration enables it.
 - **UI thread:** it never does I/O or blocks. Database, keychain and credential-vault work runs on background workers. Never hold an `engine.result(q)` read guard while calling engine methods.
 - **Secrets:** never written to `connections.toml`, to logs, or to `Debug` output.
-- **Diagnostics:** `tracing::error!` means an incident: reserve it for unexpected failures. Expected server errors use `info` or `warn`; cancellation uses `debug`. Diagnostics are local only and never make network requests. SQL in logs and reports follows the single global `diagnostics.include_sql` setting. Never log arguments, result rows or parameter values.
+- **Diagnostics:** `tracing::error!` means an incident: reserve it for unexpected failures. Expected server errors use `info` or `warn`; cancellation uses `debug`. Diagnostics are local only and never make network requests; opening a reviewed report on GitHub is an explicit browser hand-off, and the app itself never performs the request. SQL in logs and reports follows the single global `diagnostics.include_sql` setting. Never log arguments, result rows or parameter values.
 - **Catalog SQL:** always parameterized. Identifiers in generated SQL go through `Dialect::quote_ident`.
 - **TDD:** write a failing test first. UI tests use `egui_kittest` 0.36 (`build_ui` / `build_ui_state`; it has no `allow_missing_glyphs()`).
 

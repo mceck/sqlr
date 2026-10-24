@@ -37,8 +37,9 @@ was their query, the network, a driver or the application; the maintainer cannot
 
 sqlr gains a **local diagnostics system**. It records structured logs for every failure,
 creates a self-contained **incident** for every unexpected event, and keeps those
-incidents in the data directory with a bounded retention. Nothing is sent over the
-network and there is no telemetry.
+incidents in the data directory with a bounded retention. sqlr sends nothing over the
+network and there is no telemetry; sharing a reviewed report is an explicit hand-off to
+the browser.
 
 Every failed operation writes one structured log line at the moment it settles, with the
 operation kind, connection, driver, database, duration, error kind and — according to a
@@ -55,12 +56,14 @@ be caught; a session lock and marker distinguish a clean exit from an unclean on
 produce a lighter notice on the next launch.
 
 On the next launch, a non-blocking banner says that the previous session ended
-abnormally, with **Open report**, **Copy** and **Dismiss**. A new **Diagnostics** window,
-opened from Help, shows the current session summary and the recent incidents, and can
-**copy** or **save** a diagnostics bundle that contains the application and system
-environment, driver versions, sanitized settings, connection metadata, interface state,
-recent operations, the recent log ring and the incident itself. The window also exposes a
-session-only log level, the logs folder and the SQL setting.
+abnormally, with **Open report**, **Report on GitHub**, **Copy** and **Dismiss**. A new
+**Diagnostics** window, opened from Help, shows the current session summary and the recent
+incidents, and can **copy**, **save** or **open as a prefilled GitHub issue** a
+diagnostics bundle that contains the application and system environment, driver versions,
+sanitized settings, connection metadata, interface state, recent operations, the recent
+log ring and the incident itself. The issue action hands the report to the browser's
+public new-issue page after review; sqlr itself makes no request. The window also exposes
+a session-only log level, the logs folder and the SQL setting.
 
 The interface surfaces the same information where failures happen: a result's error panel
 gains **Copy details**. A **Report a Problem** dialog lets the person add a note and
@@ -127,8 +130,8 @@ reviews the bundle before sharing it.
 18. As a person using sqlr, I want a lighter notice when the previous session ended
     uncleanly without a recorded panic (kill, out-of-memory, power loss), so that the
     application does not claim to know a cause it does not know.
-19. As a person using sqlr, I want **Open report**, **Copy** and **Dismiss** on that
-    banner, so that I can act immediately.
+19. As a person using sqlr, I want **Open report**, **Report on GitHub**, **Copy** and
+    **Dismiss** on that banner, so that I can act immediately.
 20. As a person using sqlr, I want **Dismiss** to be remembered, so that the same crash is
     not announced at every launch.
 21. As a person using sqlr, I want a clean exit to remove the session marker, so that a
@@ -159,80 +162,85 @@ reviews the bundle before sharing it.
 30. As a person using sqlr, I want **Save bundle…** to write the bundle to a file, so that
     I can attach it to a report.
 31. As a person using sqlr, I want an explicit preview of what the bundle contains before
-    it is copied or saved, so that I never share more than I intend to.
-32. As a person using sqlr, I want **Copy details** in a result's error panel, so that I
+    it is copied, saved or opened as a GitHub issue, so that I never share more than I
+    intend to.
+32. As a person using sqlr, I want **Open GitHub issue** to prefill a public issue with
+    the whole report — inline when it fits the URL, otherwise copied for one paste — so
+    that a report carries all the information with minimal effort.
+33. As a person using sqlr, I want **Copy details** in a result's error panel, so that I
     can copy the error with its connection, database, statement and duration without
     opening the Diagnostics window.
-33. As a person using sqlr, I want **Report a Problem…** with a free-text note, so that I
+34. As a person using sqlr, I want **Report a Problem…** with a free-text note, so that I
     can explain what I was doing when the problem happened.
-34. As a person using sqlr, I want to choose whether the manual report includes SQL and
+35. As a person using sqlr, I want to choose whether the manual report includes SQL and
     open tab titles, so that I control sensitive content.
-35. As a person using sqlr, I want a manual report to appear in the incident list, so that
+36. As a person using sqlr, I want a manual report to appear in the incident list, so that
     it can be reopened and shared later like an automatic one.
-36. As a person using sqlr, I want bundle files to have a predictable, bounded size with
+37. As a person using sqlr, I want bundle files to have a predictable, bounded size with
     explicit truncation markers, so that they are easy to attach and do not grow without
     limit.
-37. As a person using sqlr, I want absolute paths in a bundle shortened to
+38. As a person using sqlr, I want absolute paths in a bundle shortened to
     `<home>/…` and `<data-dir>/…`, so that the report does not expose my user name
     unnecessarily.
 
 ### Privacy and control
 
-38. As a person using sqlr, I want diagnostics to make no network requests, so that the
-    application keeps its no-telemetry promise.
-39. As a security-conscious person, I want passwords, passphrases, bearer tokens and vault
+39. As a person using sqlr, I want diagnostics to make no network requests and sharing to
+    happen only through an explicit browser hand-off, so that the application keeps its
+    no-telemetry promise.
+40. As a security-conscious person, I want passwords, passphrases, bearer tokens and vault
     contents never to appear in logs, incidents or bundles, so that sharing a report is
     safe.
-40. As a person working with regulated data, I want one setting that excludes SQL from
+41. As a person working with regulated data, I want one setting that excludes SQL from
     both logs and reports, so that I do not have to remember two switches.
-41. As a person using sqlr, I want SQL to be included by default, so that a report is
+42. As a person using sqlr, I want SQL to be included by default, so that a report is
     useful without extra configuration.
-42. As a person using sqlr, I want failed SQL to be truncated with a clear marker, so that
+43. As a person using sqlr, I want failed SQL to be truncated with a clear marker, so that
     one huge statement does not dominate the log or the bundle.
-43. As a person using sqlr, I want to change the log level for the current session from the
+44. As a person using sqlr, I want to change the log level for the current session from the
     Diagnostics window, so that I can capture more detail without relaunching from a
     terminal.
-44. As a person using sqlr, I want the log level to reset to the default on the next
+45. As a person using sqlr, I want the log level to reset to the default on the next
     launch, so that a debugging session does not silently leave the application logging at
     debug forever.
-45. As an advanced person, I want `RUST_LOG` to override the in-app level, so that my
+46. As an advanced person, I want `RUST_LOG` to override the in-app level, so that my
     existing launch scripts keep working.
-46. As a person using sqlr, I want the logs and diagnostics directories to be readable
+47. As a person using sqlr, I want the logs and diagnostics directories to be readable
     only by me, so that SQL and connection details are not exposed to other local users.
-47. As a person using sqlr, I want old log files and old incidents to be pruned
+48. As a person using sqlr, I want old log files and old incidents to be pruned
     automatically, so that the application does not fill the disk.
-48. As a person using sqlr, I want **Open logs folder** in the Diagnostics window, so that
+49. As a person using sqlr, I want **Open logs folder** in the Diagnostics window, so that
     I can inspect or archive the raw logs myself.
-49. As a person using sqlr, I want to be told in the interface when the log directory is
+50. As a person using sqlr, I want to be told in the interface when the log directory is
     not writable, so that I am not under the illusion that diagnostics are being saved.
 
 ### Logging and observability
 
-50. As a person maintaining sqlr, I want operation spans with operation, connection,
+51. As a person maintaining sqlr, I want operation spans with operation, connection,
     driver, database and query identifiers, so that concurrent activity can be told apart.
-51. As a person maintaining sqlr, I want one failure line per operation at the point it
+52. As a person maintaining sqlr, I want one failure line per operation at the point it
     settles, so that the log does not repeat the same error at every layer.
-52. As a person maintaining sqlr, I want sidecar driver output tagged with a driver field,
+53. As a person maintaining sqlr, I want sidecar driver output tagged with a driver field,
     so that logs from several drivers can be filtered.
-53. As a person maintaining sqlr, I want log files rotated daily and bounded to fourteen
+54. As a person maintaining sqlr, I want log files rotated daily and bounded to fourteen
     files, so that disk use is predictable.
-54. As a person maintaining sqlr, I want the `error!`-means-incident rule documented next
+55. As a person maintaining sqlr, I want the `error!`-means-incident rule documented next
     to the other hard rules, so that future error paths do not silently lose incidents.
-55. As a person maintaining sqlr, I want a session identifier at startup with version,
+56. As a person maintaining sqlr, I want a session identifier at startup with version,
     system, data directory and driver count, so that a log file is self-describing.
 
 ### Reliability and platforms
 
-56. As a person using sqlr, I want a sidecar driver crash to fail only that driver's
+57. As a person using sqlr, I want a sidecar driver crash to fail only that driver's
     connections and leave the rest of the application working.
-57. As a person using sqlr, I want one engine task panic not to stop other operations, so
+58. As a person using sqlr, I want one engine task panic not to stop other operations, so
     that unrelated work keeps running.
-58. As a person using sqlr, I want the Diagnostics window to work even when the local
+59. As a person using sqlr, I want the Diagnostics window to work even when the local
     SQLite database, the vault or the configuration is broken, so that the worst failures
     are still reportable.
-59. As a person using sqlr on macOS, I want the startup-failure dialog to be a native
+60. As a person using sqlr on macOS, I want the startup-failure dialog to be a native
     dialog, so that it appears even when the application never opens a window.
-60. As a person using sqlr, I want the diagnostics files to be ordinary JSON, so that I
+61. As a person using sqlr, I want the diagnostics files to be ordinary JSON, so that I
     can read them with any tool and they survive outside the application.
 
 ## Implementation Decisions
@@ -477,13 +485,22 @@ A **Diagnostics** window is opened from Help → Diagnostics… (including the n
 Help menu) and from the startup banner.
 It has these areas:
 
-- **This session**: the current session summary, with **Copy diagnostics** and
-  **Save bundle…**.
+- **This session**: the current session summary, with **Copy diagnostics**,
+  **Save bundle…** and **Open GitHub issue…**.
 - **Incidents**: recent incidents with time, kind and message; selecting one shows its
-  event, environment and log excerpt, with **Copy** and **Save**.
+  event, environment and log excerpt, with **Copy**, **Save** and **Open GitHub issue**.
 - **Logs**: the session log level, a note when `RUST_LOG` controls it, and **Open logs
   folder**.
 - **Privacy**: the **Include SQL in logs and reports** checkbox.
+
+Every sharing action goes through a review window that shows the exact JSON and offers
+**Copy reviewed bundle**, **Save reviewed bundle…** and **Open GitHub issue with this
+report**. The issue page is `github.com/mceck/sqlr/issues/new`, with a title and a summary
+taken from the bundle. GitHub limits the request line to a few kilobytes, so a bundle that
+fits is embedded in the body inside a collapsible code block; otherwise sqlr copies the
+full bundle to the clipboard and the body carries a marker for one paste. The browser
+opens only after the review and nothing is submitted until the person presses **Create**
+on GitHub; sqlr itself makes no request.
 
 The startup banner is non-blocking and stays until dismissed. **Dismiss** acknowledges the
 incident so it is not announced again. When the previous session ended without a panic,
@@ -494,8 +511,9 @@ connection and database, the statement subject to the SQL setting, and the elaps
 It does not create an incident.
 
 **Report a Problem…** is available from Help and from the Diagnostics window. It offers a
-free-text note, checkboxes for SQL and open tab titles, **Copy diagnostics** and
-**Save bundle…**, and records a `manual` incident with the note.
+free-text note, checkboxes for SQL and open tab titles, **Create report and copy**,
+**Create report and save…** and **Create report for GitHub…**, and records a `manual`
+incident with the note. The GitHub path also goes through the review window first.
 
 ### Settings
 
@@ -530,8 +548,8 @@ otherwise.
 The design document's error-handling section and security section are updated: the "Copy
 diagnostics" action becomes real, the local-only and no-telemetry statement stays, and the
 absence of symbols and backtraces in release is explicit. The usage documentation gains a
-troubleshooting page covering where reports live, what they contain, how to copy or save
-them, retention, log level and the SQL setting. The paths table in the README and in the
+troubleshooting page covering where reports live, what they contain, how to copy, save or
+report them, retention, log level and the SQL setting. The paths table in the README and in the
 settings documentation gains the diagnostics directory and the fourteen-file log
 retention. The project instructions gain the hard rule that `error!` means incident.
 

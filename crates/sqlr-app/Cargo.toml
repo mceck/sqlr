@@ -47,6 +47,7 @@ egui_dock.workspace = true
 egui_extras = { workspace = true, features = ["image"] }
 image.workspace = true
 jiff.workspace = true
+percent-encoding.workspace = true
 rfd.workspace = true
 serde.workspace = true
 tracing.workspace = true

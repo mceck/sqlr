@@ -6,6 +6,7 @@
 
 mod bundle;
 mod hook;
+mod issue;
 mod model;
 pub(crate) mod ring;
 pub(crate) mod store;
@@ -21,6 +22,7 @@ use std::time::Instant;
 
 pub use bundle::{BUNDLE_BYTES, BundleContext, home_dir};
 pub use hook::PanicHookGuard;
+pub use issue::{IssueDraft, NEW_ISSUE, draft as issue_draft};
 pub use model::{
     ApplicationInfo, BundleInputs, BundleOutline, ConnectionInfo, DriverInfo, Environment,
     Incident, IncidentKind, IncidentSummary, InterfaceInfo, OperationSnapshot, SessionSummary,

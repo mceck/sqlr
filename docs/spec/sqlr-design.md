@@ -468,7 +468,7 @@ All widgets take data in and return action values. None of them calls the engine
   - an optional read-only mode;
   - a confirmation dialog before destructive statements: `DELETE` or `UPDATE` without `WHERE`, `DROP`, `TRUNCATE`, `FLUSHDB`/`FLUSHALL`.
 - **Drivers:** signature verification as described in §6.4.
-- **No telemetry.** Diagnostics are local only, with no network requests. Help → Diagnostics previews, copies and saves bounded JSON bundles. Secrets and vault contents are structurally excluded; SQL defaults on and can be omitted globally with `diagnostics.include_sql`. Reports never mask SQL literals automatically. Logs and diagnostics directories are owner-only.
+- **No telemetry.** Diagnostics are local only, with no network requests. Help → Diagnostics previews, copies and saves bounded JSON bundles; from the review window, **Open GitHub issue** hands the report to the browser's public new-issue page, which pre-fills the whole bundle when it fits the URL and otherwise asks for one paste of the bundle copied to the clipboard. sqlr itself sends nothing and the person decides whether to submit. Secrets and vault contents are structurally excluded; SQL defaults on and can be omitted globally with `diagnostics.include_sql`. Reports never mask SQL literals automatically. Logs and diagnostics directories are owner-only.
 
 ## 10. Error handling
 
@@ -483,8 +483,8 @@ All widgets take data in and return action values. None of them calls the engine
   - A sidecar crash fails only its own connections.
 - Logging uses `tracing` to stderr, daily files (newest fourteen retained) and a bounded in-memory ring. Every line carries the session identifier. Expected failures are logged once at settlement; `error!` means an unexpected incident.
 - Incidents are standalone JSON under `diagnostics/` in the data directory, independent of SQLite, settings and the vault; retention is twenty files or thirty days. Startup failures produce an incident and a native dialog.
-- The global panic hook writes a report before exiting. The next launch offers a non-blocking banner with Open report, Copy and persistent Dismiss. A session marker and lock distinguish clean exit, unclean shutdown and a live second instance.
-- Help → Diagnostics and Report a Problem preview bundles before copying or saving; result errors have Copy details. Bundles are capped at 512 KiB with explicit truncation markers. The log level is session-only and `RUST_LOG` takes precedence.
+- The global panic hook writes a report before exiting. The next launch offers a non-blocking banner with Open report, Copy, Report on GitHub and persistent Dismiss. A session marker and lock distinguish clean exit, unclean shutdown and a live second instance.
+- Help → Diagnostics and Report a Problem preview bundles before copying, saving or opening a GitHub issue; result errors have Copy details. Bundles are capped at 512 KiB with explicit truncation markers. The log level is session-only and `RUST_LOG` takes precedence.
 - Release binaries remain stripped. Crash reports contain messages and source locations, without backtraces or symbols; native crashes are detected as unclean shutdowns on the next launch.
 
 ## 11. Testing
