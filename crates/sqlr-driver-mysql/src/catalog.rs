@@ -122,6 +122,9 @@ pub(crate) async fn describe(
         .await?
         .iter()
         .map(|row| TableColumn {
+            automatic: string(row, 4)
+                .to_ascii_lowercase()
+                .contains("auto_increment"),
             name: string(row, 0),
             type_name: string(row, 1),
             nullable: string(row, 2) == "YES",

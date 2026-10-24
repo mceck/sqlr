@@ -116,6 +116,7 @@ async fn fake_describes_scripted_tables_and_records_params() {
             name: "users".into(),
         },
         columns: vec![TableColumn {
+            automatic: false,
             name: "id".into(),
             type_name: "int8".into(),
             nullable: false,

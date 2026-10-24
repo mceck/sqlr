@@ -336,6 +336,7 @@ pub(crate) async fn column_defs(
                 text(row, 7).as_deref() == Some("YES") || text(row, 8).as_deref() == Some("YES");
             let name = text(row, 0).unwrap_or_default();
             sqlr_core::TableColumn {
+                automatic: text(row, 8).as_deref() == Some("YES"),
                 default: defaults.get(&name).cloned().flatten(),
                 name,
                 type_name: type_name(

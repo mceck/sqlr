@@ -33,6 +33,9 @@ pub struct EditBuffer {
     writable: Vec<bool>,
     /// Per result column: the table column is `NOT NULL`.
     not_null: Vec<bool>,
+    automatic: Vec<bool>,
+    defaults: Vec<bool>,
+    missing_required: Vec<String>,
     /// New values of loaded rows, by row then column.
     updates: BTreeMap<usize, BTreeMap<usize, Value>>,
     /// Inserted rows by their row number, in insertion order; `None` leaves the column to
@@ -47,7 +50,11 @@ pub struct EditBuffer {
 
 impl EditBuffer {
     pub fn new(key_cols: Vec<usize>, writable: Vec<bool>, not_null: Vec<bool>) -> Self {
+        let automatic = (0..writable.len()).map(|c| key_cols.contains(&c)).collect();
+        let defaults = vec![false; writable.len()];
         Self {
+            automatic,
+            defaults,
             key_cols,
             writable,
             not_null,
@@ -86,7 +93,32 @@ impl EditBuffer {
         let not_null = (0..columns.len())
             .map(|c| table_column(c).is_some_and(|t| !t.nullable))
             .collect();
-        Ok(Self::new(key_cols, writable, not_null))
+        let mut edits = Self::new(key_cols, writable, not_null);
+        edits.automatic = (0..columns.len())
+            .map(|c| {
+                table_column(c).is_some_and(|t| {
+                    t.automatic || (info.primary_key.contains(&t.name) && t.default.is_some())
+                })
+            })
+            .collect();
+        edits.defaults = (0..columns.len())
+            .map(|c| {
+                table_column(c).is_some_and(|t| t.default.is_some() || t.generated || t.automatic)
+            })
+            .collect();
+        edits.missing_required = info
+            .columns
+            .iter()
+            .filter(|t| !t.nullable && !t.generated && !t.automatic && t.default.is_none())
+            .filter(|t| {
+                !origins
+                    .iter()
+                    .flatten()
+                    .any(|origin| origin.column == t.name)
+            })
+            .map(|t| t.name.clone())
+            .collect();
+        Ok(edits)
     }
 
     /// Changed rows, inserted rows and deleted rows.
@@ -117,11 +149,15 @@ impl EditBuffer {
         self.inserted.iter().map(|(row, _)| *row).collect()
     }
 
+    pub(super) fn inserted_number_at(&self, index: usize) -> Option<usize> {
+        self.inserted.get(index).map(|(row, _)| *row)
+    }
+
     fn inserted_cells(&self, row: usize) -> Option<&Vec<Option<Value>>> {
         self.inserted
-            .iter()
-            .find(|(r, _)| *r == row)
-            .map(|(_, cells)| cells)
+            .binary_search_by_key(&row, |(r, _)| *r)
+            .ok()
+            .map(|index| &self.inserted[index].1)
     }
 
     pub fn writable(&self, col: usize) -> bool {
@@ -130,6 +166,86 @@ impl EditBuffer {
 
     pub fn not_null(&self, col: usize) -> bool {
         self.not_null.get(col).copied().unwrap_or(false)
+    }
+
+    pub fn automatic(&self, col: usize) -> bool {
+        self.automatic.get(col).copied().unwrap_or(false)
+    }
+
+    pub fn has_default(&self, col: usize) -> bool {
+        self.defaults.get(col).copied().unwrap_or(false) || self.automatic(col)
+    }
+
+    pub(super) fn check_insert_columns(&self) -> Result<(), String> {
+        if self.missing_required.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "Open all table columns before pasting; this result omits required columns: {}",
+                self.missing_required.join(", ")
+            ))
+        }
+    }
+
+    pub(super) fn content_eq(&self, other: &Self) -> bool {
+        self.updates == other.updates
+            && self.inserted == other.inserted
+            && self.deleted == other.deleted
+    }
+
+    pub(super) fn history_bytes(&self) -> usize {
+        let size = |v: &Value| {
+            std::mem::size_of::<Value>()
+                + match v {
+                    Value::Text(t) => t.len(),
+                    Value::Bytes(b) => b.len(),
+                    _ => 0,
+                }
+        };
+        self.updates
+            .values()
+            .flat_map(|r| r.values())
+            .map(&size)
+            .sum::<usize>()
+            + self
+                .inserted
+                .iter()
+                .flat_map(|(_, r)| r.iter().flatten())
+                .map(&size)
+                .sum::<usize>()
+            + self.deleted.len() * 32
+            + self.updates.len() * 64
+            + self.inserted.len() * 64
+    }
+
+    pub(super) fn clipboard_overrides(&self) -> BTreeMap<(usize, usize), Value> {
+        let mut values: BTreeMap<_, _> = self
+            .updates
+            .iter()
+            .flat_map(|(&r, cells)| cells.iter().map(move |(&c, v)| ((r, c), v.clone())))
+            .collect();
+        for (r, cells) in &self.inserted {
+            for (c, value) in cells.iter().enumerate() {
+                values.insert((*r, c), value.clone().unwrap_or(Value::Null));
+            }
+        }
+        values
+    }
+
+    pub(super) fn revert_cell(&mut self, row: usize, col: usize) {
+        if is_inserted_row(row) {
+            if let Ok(index) = self.inserted.binary_search_by_key(&row, |(r, _)| *r)
+                && let Some(cell) = self.inserted[index].1.get_mut(col)
+            {
+                *cell = None;
+            }
+        } else if let Some(cells) = self.updates.get_mut(&row) {
+            cells.remove(&col);
+            if cells.is_empty() {
+                self.updates.remove(&row);
+            }
+        }
+        self.revision += 1;
     }
 
     pub fn row_state(&self, row: usize) -> RowState {
@@ -180,8 +296,9 @@ impl EditBuffer {
             let width = self.writable.len();
             let cells = self
                 .inserted
-                .iter_mut()
-                .find(|(r, _)| *r == row)
+                .binary_search_by_key(&row, |(r, _)| *r)
+                .ok()
+                .and_then(|index| self.inserted.get_mut(index))
                 .map(|(_, cells)| cells)
                 .ok_or("No such row")?;
             cells.resize(width, None);
@@ -211,12 +328,12 @@ impl EditBuffer {
         self.push_inserted(cells)
     }
 
-    /// Appends a copy of `row` (its writable columns other than the key, which keep their
-    /// default); returns the new row's number.
+    /// Appends a copy of `row`, leaving automatic columns to their defaults; returns the
+    /// new row's number. Manually assigned keys are copied like other writable values.
     pub fn duplicate(&mut self, rows: &RowBuffer, row: usize) -> usize {
         let cells = (0..self.writable.len())
             .map(|c| {
-                (self.writable(c) && !self.key_cols.contains(&c))
+                (self.writable(c) && !self.automatic(c))
                     .then(|| self.value(rows, row, c))
                     .flatten()
             })
@@ -390,6 +507,7 @@ mod tests {
 
     fn info(primary_key: &[&str]) -> TableInfo {
         let c = |name: &str, nullable, generated| TableColumn {
+            automatic: name == "id",
             name: name.into(),
             type_name: "t".into(),
             nullable,
@@ -450,6 +568,28 @@ mod tests {
             EditBuffer::for_table(&mixed, &info(&["id"])),
             Err("columns from several tables".into())
         );
+    }
+
+    #[test]
+    fn manually_assigned_primary_keys_are_copied_when_duplicating() {
+        let r = rows();
+        let mut info = info(&["id"]);
+        info.columns[0].automatic = false;
+        let mut edits = EditBuffer::for_table(r.columns(), &info).unwrap();
+        let row = edits.duplicate(&r, 0);
+        assert_eq!(edits.value(&r, row, 0), Some(Value::Int(1)));
+    }
+
+    #[test]
+    fn primary_keys_with_server_defaults_are_regenerated() {
+        let r = rows();
+        let mut info = info(&["id"]);
+        info.columns[0].automatic = false;
+        info.columns[0].default = Some("100".into());
+        let mut edits = EditBuffer::for_table(r.columns(), &info).unwrap();
+        assert!(edits.automatic(0));
+        let row = edits.duplicate(&r, 0);
+        assert_eq!(edits.value(&r, row, 0), None);
     }
 
     #[test]

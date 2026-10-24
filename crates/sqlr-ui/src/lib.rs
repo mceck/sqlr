@@ -71,6 +71,7 @@ pub use grid::{
     INSERTED_ROW_BASE, MAX_CELL_BYTES, MAX_CELL_CHARS, MAX_COPY_BYTES, MAX_COPY_CELLS,
     NEED_MORE_MARGIN, RowState, Selection, cell_display, change_tint, data_formats, data_grid,
     doc_table, is_inserted_row, parse_hex, parse_input, result_grid, set_data_formats,
+    set_grid_clipboard,
 };
 pub use history::{HistoryAction, HistoryPanelState, format_duration, format_when, history_panel};
 pub use json_view::{JsonViewState, json_view};

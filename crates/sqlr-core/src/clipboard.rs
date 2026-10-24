@@ -1,0 +1,234 @@
+//! Typed, masked clipboard data shared by the grid and background clipboard jobs.
+
+use std::collections::BTreeMap;
+use std::ops::RangeInclusive;
+
+use crate::{Cell, ColumnMeta, Dialect, Encoder, RowBuffer, TextFormat, Value};
+
+/// Text plus owned cell values. `None` is an unselected hole, distinct from SQL NULL.
+#[derive(Clone, Debug, PartialEq)]
+pub struct GridClipboard {
+    pub columns: Vec<ColumnMeta>,
+    pub rows: Vec<Vec<Option<Value>>>,
+    pub text: String,
+}
+
+/// Clipboard data and its text are bounded together; larger transfers should use export.
+pub const MAX_CLIPBOARD_BYTES: usize = 128 * 1024 * 1024;
+
+#[derive(Clone, Debug)]
+pub struct ClipboardRegion {
+    pub rows: RangeInclusive<usize>,
+    pub cols: RangeInclusive<usize>,
+}
+
+/// Immutable result snapshot, selection in view order, and pending values. Cloning result
+/// chunks only clones their Arcs, so the UI can hand encoding to a background job.
+#[derive(Clone, Debug)]
+pub struct ClipboardSource {
+    pub rows: RowBuffer,
+    /// (view row, source row), including pending inserted rows.
+    pub order: Vec<(usize, usize)>,
+    pub cols: Vec<usize>,
+    pub regions: Vec<ClipboardRegion>,
+    pub overrides: BTreeMap<(usize, usize), Value>,
+}
+
+pub struct ClipboardBuilder<'d> {
+    data: GridClipboard,
+    encoder: Encoder<'d>,
+    value_bytes: usize,
+}
+
+impl<'d> ClipboardBuilder<'d> {
+    pub fn new(
+        columns: Vec<ColumnMeta>,
+        format: TextFormat,
+        dialect: Option<&'d dyn Dialect>,
+    ) -> Self {
+        let encoder = Encoder::new(format, &columns, dialect).with_spreadsheet_safe();
+        let mut data = GridClipboard {
+            columns,
+            rows: Vec::new(),
+            text: String::new(),
+        };
+        encoder.header(&mut data.text);
+        Self {
+            data,
+            encoder,
+            value_bytes: 0,
+        }
+    }
+
+    pub fn push(&mut self, row: Vec<Option<Value>>) -> Result<(), String> {
+        if row.len() != self.data.columns.len() {
+            return Err("Clipboard row width does not match its columns".into());
+        }
+        self.value_bytes += std::mem::size_of::<Vec<Option<Value>>>()
+            + row.len() * std::mem::size_of::<Option<Value>>()
+            + row
+                .iter()
+                .flatten()
+                .map(|v| match v {
+                    Value::Text(t) => t.len(),
+                    Value::Bytes(b) => b.len(),
+                    _ => 0,
+                })
+                .sum::<usize>();
+        let cells: Vec<_> = row
+            .iter()
+            .map(|v| v.as_ref().map_or(Cell::Null, Value::as_cell))
+            .collect();
+        self.encoder.row(&cells, &mut self.data.text);
+        if self.value_bytes.saturating_add(self.data.text.len()) > MAX_CLIPBOARD_BYTES {
+            return Err("The clipboard exceeds 128 MiB; export the results instead".into());
+        }
+        self.data.rows.push(row);
+        Ok(())
+    }
+
+    pub fn rows(&self) -> usize {
+        self.data.rows.len()
+    }
+    pub fn bytes(&self) -> usize {
+        self.data.text.len()
+    }
+
+    pub fn finish(mut self) -> GridClipboard {
+        self.encoder.footer(&mut self.data.text);
+        self.data
+    }
+}
+
+impl ClipboardSource {
+    /// `progress` returns false to cancel, without publishing a partial clipboard.
+    pub fn encode(
+        &self,
+        format: TextFormat,
+        dialect: Option<&dyn Dialect>,
+        mut progress: impl FnMut(usize, usize) -> bool,
+    ) -> Result<Option<GridClipboard>, String> {
+        let columns = self
+            .cols
+            .iter()
+            .map(|&c| {
+                self.rows
+                    .columns()
+                    .get(c)
+                    .cloned()
+                    .ok_or_else(|| "Clipboard column no longer exists".to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let mut builder = ClipboardBuilder::new(columns, format, dialect);
+        for &(view, source) in &self.order {
+            if !progress(builder.rows(), builder.bytes()) {
+                return Ok(None);
+            }
+            let row = self
+                .cols
+                .iter()
+                .map(|&col| {
+                    let selected = self
+                        .regions
+                        .iter()
+                        .any(|r| r.rows.contains(&view) && r.cols.contains(&col));
+                    selected.then(|| {
+                        self.overrides
+                            .get(&(source, col))
+                            .cloned()
+                            .or_else(|| self.rows.cell(source, col).map(Value::from_cell))
+                            .unwrap_or(Value::Null)
+                    })
+                })
+                .collect();
+            builder.push(row)?;
+        }
+        progress(builder.rows(), builder.bytes())
+            .then(|| builder.finish())
+            .map_or(Ok(None), |v| Ok(Some(v)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ChunkBuilder, ColumnKind, CsvOptions, DisplayHint};
+
+    #[test]
+    fn selection_encoding_keeps_holes_pending_values_and_view_order() {
+        let columns: std::sync::Arc<[ColumnMeta]> = vec![
+            ColumnMeta::new("id", "int", ColumnKind::Int, DisplayHint::Number),
+            ColumnMeta::new("name", "text", ColumnKind::Text, DisplayHint::Plain),
+        ]
+        .into();
+        let mut rows = RowBuffer::new(columns.clone());
+        let mut b = ChunkBuilder::new(columns);
+        b.push_row(&[Cell::Int(1), Cell::Text("")]).unwrap();
+        b.push_row(&[Cell::Int(2), Cell::Null]).unwrap();
+        rows.push_chunk(b.finish());
+        let source = ClipboardSource {
+            rows,
+            order: vec![(0, 1), (1, 0)],
+            cols: vec![0, 1],
+            regions: vec![
+                ClipboardRegion {
+                    rows: 0..=0,
+                    cols: 0..=0,
+                },
+                ClipboardRegion {
+                    rows: 1..=1,
+                    cols: 1..=1,
+                },
+            ],
+            overrides: [((0, 1), Value::Text("changed".into()))].into(),
+        };
+        let data = source
+            .encode(TextFormat::Csv(CsvOptions::tsv()), None, |_, _| true)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            data.rows,
+            vec![
+                vec![Some(Value::Int(2)), None],
+                vec![None, Some(Value::Text("changed".into()))]
+            ]
+        );
+        assert!(
+            source
+                .encode(TextFormat::Tsv, None, |_, _| false)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn builder_preserves_null_empty_text_bytes_and_spreadsheet_formula_text() {
+        let columns = vec![ColumnMeta::new(
+            "v",
+            "mixed",
+            ColumnKind::Mixed,
+            DisplayHint::Plain,
+        )];
+        let mut builder = ClipboardBuilder::new(columns, TextFormat::Csv(CsvOptions::tsv()), None);
+        let values = [
+            Value::Null,
+            Value::Text(String::new()),
+            Value::Bytes(vec![0, 255]),
+            Value::Text("=1+1".into()),
+        ];
+        for value in &values {
+            builder.push(vec![Some(value.clone())]).unwrap();
+        }
+        let data = builder.finish();
+        assert_eq!(
+            data.rows,
+            values
+                .into_iter()
+                .map(|v| vec![Some(v)])
+                .collect::<Vec<_>>()
+        );
+        assert!(data.text.contains("\"\""));
+        assert!(data.text.contains("'=1+1"));
+        assert!(data.text.contains("0x00ff"));
+    }
+}

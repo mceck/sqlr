@@ -18,6 +18,7 @@ fn source(name: &str, ty: &str) -> ColumnMeta {
 
 fn target(name: &str, ty: &str) -> TableColumn {
     TableColumn {
+        automatic: false,
         name: name.into(),
         type_name: ty.into(),
         nullable: true,

@@ -7,6 +7,7 @@
 //! Redis keys, `write_docs` inserts into collections; tables and files are written by the
 //! import and export code below.
 
+mod clipboard;
 mod convert;
 mod encoding;
 mod files;
@@ -72,6 +73,18 @@ pub(crate) struct TransferRun {
 }
 
 pub(crate) enum Work {
+    CopyGrid {
+        q: QueryId,
+        source: sqlr_core::ClipboardSource,
+        format: TextFormat,
+    },
+    CopyQuery {
+        key: SessionKey,
+        io: Arc<SessionIo>,
+        ticket: u64,
+        database: Option<String>,
+        sql: String,
+    },
     ExportLoaded {
         q: QueryId,
         format: TextFormat,
@@ -313,6 +326,18 @@ impl Shared {
     pub(crate) async fn run_transfer(self: Arc<Self>, run: TransferRun) {
         let TransferRun { job, work } = run;
         let outcome = match work {
+            Work::CopyGrid { q, source, format } => self.copy_grid(&job, q, source, format).await,
+            Work::CopyQuery {
+                key,
+                io,
+                ticket,
+                database,
+                sql,
+            } => {
+                let _slot = take_turn(&self, &io, ticket).await;
+                self.copy_query(&job, &key, &io, database.as_deref(), &sql)
+                    .await
+            }
             Work::ExportLoaded { q, format, path } => {
                 self.export_loaded(&job, q, format, path).await
             }

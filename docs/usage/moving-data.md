@@ -4,10 +4,14 @@ sqlr has four ways to move data, from the quickest to the most thorough.
 
 | Tool | Best for |
 |---|---|
-| Copy from the grid | A few rows, into a chat or a document |
+| Copy from the grid | Selected cells or complete query results, into another grid or application |
 | Export a result | Saving what a query returned to a file |
 | Transfer data | Copying between two databases, or between a database and a file |
 | Dump and restore | A faithful backup using the database's own tools |
+
+## Copy between grids
+
+Use **Copy** for selected cells or **Copy all results** for all rows of the current query, including those not yet fetched. In the destination grid, choose **Paste as new rows…**, review the column mapping and automatic-ID option, then add the pending rows. **Apply** writes them to the destination database. See [Results and data editing](results-and-editing.md) for selection, undo and clipboard limits.
 
 ## Export a result
 

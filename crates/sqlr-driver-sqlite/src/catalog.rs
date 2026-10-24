@@ -48,10 +48,24 @@ pub(crate) fn describe(conn: &Connection, table: &TableRef) -> Result<TableInfo,
         .map(|r| (r.4, r.0.clone()))
         .collect();
     pk.sort();
+    let indexed_primary_key: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_index_list(?1, ?2) WHERE origin = 'pk')",
+            [&table.name, schema],
+            |r| r.get(0),
+        )
+        .map_err(map_error)?;
+    let automatic_key = if pk.len() == 1 && !indexed_primary_key {
+        Some(pk[0].1.clone())
+    } else {
+        None
+    };
     let columns = rows
         .into_iter()
         .map(
             |(name, type_name, not_null, default, _, hidden)| TableColumn {
+                automatic: automatic_key.as_ref() == Some(&name)
+                    && type_name.eq_ignore_ascii_case("INTEGER"),
                 name,
                 type_name,
                 nullable: !not_null,

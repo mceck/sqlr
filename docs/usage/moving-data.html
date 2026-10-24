@@ -51,7 +51,9 @@ img{max-width:100%}
 <main>
 <h1 id="import-export-transfer-and-backup">Import, export, transfer and backup</h1>
 <p>sqlr has four ways to move data, from the quickest to the most thorough.</p>
-<table><thead><tr><th>Tool</th><th>Best for</th></tr></thead><tbody><tr><td>Copy from the grid</td><td>A few rows, into a chat or a document</td></tr><tr><td>Export a result</td><td>Saving what a query returned to a file</td></tr><tr><td>Transfer data</td><td>Copying between two databases, or between a database and a file</td></tr><tr><td>Dump and restore</td><td>A faithful backup using the database's own tools</td></tr></tbody></table>
+<table><thead><tr><th>Tool</th><th>Best for</th></tr></thead><tbody><tr><td>Copy from the grid</td><td>Selected cells or complete query results, into another grid or application</td></tr><tr><td>Export a result</td><td>Saving what a query returned to a file</td></tr><tr><td>Transfer data</td><td>Copying between two databases, or between a database and a file</td></tr><tr><td>Dump and restore</td><td>A faithful backup using the database's own tools</td></tr></tbody></table>
+<h2 id="copy-between-grids">Copy between grids</h2>
+<p>Use <strong>Copy</strong> for selected cells or <strong>Copy all results</strong> for all rows of the current query, including those not yet fetched. In the destination grid, choose <strong>Paste as new rows…</strong>, review the column mapping and automatic-ID option, then add the pending rows. <strong>Apply</strong> writes them to the destination database. See <a href="results-and-editing.html">Results and data editing</a> for selection, undo and clipboard limits.</p>
 <h2 id="export-a-result">Export a result</h2>
 <p>Run a query, then choose <strong>Export result</strong> from the palette (⌘⇧P) or the result's menu. Pick a format and a file name. Supported formats:</p>
 <ul><li>CSV and TSV</li><li>JSON (an array of objects) and JSON Lines (one object per line)</li><li>SQL <code>INSERT</code> statements</li><li>Markdown tables</li></ul>

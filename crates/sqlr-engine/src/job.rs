@@ -103,6 +103,8 @@ pub enum JobOutcome {
     },
     /// Text built for the clipboard.
     Copied(String),
+    /// Typed, masked cells and their interoperable text representation.
+    GridCopied(Arc<sqlr_core::GridClipboard>),
     /// The tables and foreign keys of a schema (`Engine::er_model`).
     ErModel(sqlr_core::ErModel),
     /// A saved ER layout, if any (`Engine::load_er_layout`).

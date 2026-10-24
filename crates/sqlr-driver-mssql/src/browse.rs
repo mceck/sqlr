@@ -278,6 +278,7 @@ pub(crate) async fn column_defs(
             let base = r.get::<&str, _>(1).unwrap_or("sql_variant");
             let generated = r.get::<bool, _>(7).unwrap_or(false);
             TableColumn {
+                automatic: r.get::<bool, _>(6).unwrap_or(false),
                 name: r.get::<&str, _>(0).unwrap_or_default().to_string(),
                 type_name: type_name(
                     base,

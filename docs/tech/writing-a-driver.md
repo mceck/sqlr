@@ -35,6 +35,16 @@ Optional interfaces (`describe`, `catalog`, `execute_with`, `introspect`, `admin
 features such as editing results and the object editors; leave them out until you need
 them.
 
+### Automatic values in table descriptions
+
+For result editing, `RelationalConn::describe` returns `TableColumn` metadata. Set
+`generated` when the column refuses explicit values (computed columns and identities
+that always generate). Set `automatic` when the server supplies the value if omitted,
+including identities, sequence-backed defaults and rowid aliases. An automatic column
+may still allow explicit values. The grid uses this distinction when duplicating rows
+and when regenerating IDs for pasted rows. Sidecar descriptions that omit `automatic`
+remain valid and default it to `false`.
+
 ## Rules
 
 - **stdout is the protocol.** Never `println!`; use `eprintln!` or `tracing` to stderr.

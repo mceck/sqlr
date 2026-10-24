@@ -85,6 +85,7 @@ pub(crate) fn refresh_editability(
         Editability::ReadOnly(reason) => {
             edit.read_only = Some(reason);
             edit.table = first.map(|o| o.table.clone());
+            grid.discard_edits();
             grid.edits = None;
         }
         Editability::Pending(table) => {
@@ -102,6 +103,7 @@ pub(crate) fn refresh_editability(
                 }
                 Err(reason) => {
                     edit.read_only = Some(reason);
+                    grid.discard_edits();
                     grid.edits = None;
                 }
             }
@@ -123,14 +125,16 @@ pub(crate) struct ChangesDialog {
 /// A copy too large to start without asking.
 pub(crate) struct PendingCopy {
     q: QueryId,
-    rows: Vec<usize>,
-    cols: Vec<usize>,
+    source: sqlr_core::ClipboardSource,
     format: sqlr_core::TextFormat,
 }
 
 impl PendingCopy {
     fn cells(&self) -> usize {
-        self.rows.len() * self.cols.len()
+        self.source
+            .order
+            .len()
+            .saturating_mul(self.source.cols.len())
     }
 }
 
@@ -181,8 +185,8 @@ impl SqlrApp {
             }
             ChangesAction::Discard => {
                 if let Some(t) = tab_mut(&mut self.dock, tab) {
-                    if let Some(edits) = t.grids.get_mut(&q).and_then(|g| g.edits.as_mut()) {
-                        edits.clear();
+                    if let Some(grid) = t.grids.get_mut(&q) {
+                        grid.discard_edits();
                     }
                     t.value_edit = None;
                 }
@@ -381,6 +385,7 @@ impl SqlrApp {
             GridAction::SortOnServer(order) => self.server_rerun(tab, q, Some(order), None),
             GridAction::FilterOnServer(filter) => self.server_rerun(tab, q, None, Some(filter)),
             GridAction::Copy(format) => self.copy_request(tab, q, format),
+            GridAction::CopyAll => self.copy_all_results(tab, q),
             GridAction::EditCell { row, col } => {
                 let engine = &self.engine;
                 let Some(t) = tab_mut(&mut self.dock, tab) else {
@@ -404,7 +409,8 @@ impl SqlrApp {
             }
             GridAction::OpenValue { .. } => self.show_value_panel = true,
             GridAction::PasteFailed(message) => self.notify_as(ToastKind::Error, message),
-            GridAction::Sort(_)
+            GridAction::EditsChanged
+            | GridAction::Sort(_)
             | GridAction::SetCell { .. }
             | GridAction::AddRow
             | GridAction::DuplicateRow(_)
@@ -494,10 +500,16 @@ impl SqlrApp {
             .get(&q)
             .and_then(|e| e.table.as_ref())
             .map(|t| t.name.clone());
+        let Some(result) = self.engine.result(q) else {
+            return;
+        };
+        let source = {
+            let result = result.read();
+            grid.clipboard_source(&result.rows)
+        };
         let pending = PendingCopy {
             q,
-            rows: grid.selected_rows(),
-            cols: grid.selected_cols(),
+            source,
             format: format.text_format(grid.whole_columns(), table.as_deref()),
         };
         if pending.cells() > MAX_COPY_CELLS {
@@ -507,11 +519,42 @@ impl SqlrApp {
         }
     }
 
+    fn copy_all_results(&mut self, tab: u64, q: QueryId) {
+        let Some(t) = tab_mut(&mut self.dock, tab) else {
+            return;
+        };
+        if t.grids
+            .get(&q)
+            .and_then(|g| g.edits.as_ref())
+            .is_some_and(|e| !e.is_empty())
+        {
+            self.notify_as(
+                ToastKind::Info,
+                "Apply or discard pending changes before copying all results",
+            );
+            return;
+        }
+        let Some(conn) = t.conn.clone() else {
+            return;
+        };
+        let database = t.database.clone();
+        let Some(sql) = self.engine.result(q).map(|r| r.read().sql.clone()) else {
+            return;
+        };
+        let id = self
+            .engine
+            .copy_query(&sqlr_engine::SessionKey::meta(&conn), database, sql);
+        self.jobs.push(TrackedJob {
+            id,
+            what: JobWhat::Copy { cells: 0 },
+        });
+    }
+
     fn start_copy(&mut self, pending: PendingCopy) {
         let cells = pending.cells();
         let id = self
             .engine
-            .copy_text(pending.q, pending.rows, pending.cols, pending.format);
+            .copy_grid(pending.q, pending.source, pending.format);
         self.jobs.push(TrackedJob {
             id,
             what: JobWhat::Copy { cells },

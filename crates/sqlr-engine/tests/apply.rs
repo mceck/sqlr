@@ -367,6 +367,7 @@ fn describe_caches_table_info() {
     let info = TableInfo {
         table: orders(),
         columns: vec![TableColumn {
+            automatic: false,
             name: "id".into(),
             type_name: "int8".into(),
             nullable: false,
