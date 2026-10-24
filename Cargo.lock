@@ -7377,6 +7377,7 @@ dependencies = [
  "egui-phosphor",
  "egui_dock",
  "egui_kittest",
+ "image",
  "jiff",
  "memory-stats",
  "nucleo-matcher",

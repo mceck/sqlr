@@ -17,6 +17,7 @@ arboard.workspace = true
 egui.workspace = true
 egui_dock.workspace = true
 egui-phosphor.workspace = true
+image.workspace = true
 jiff.workspace = true
 nucleo-matcher.workspace = true
 ropey.workspace = true

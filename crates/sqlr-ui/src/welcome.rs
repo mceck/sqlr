@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use egui::text::{LayoutJob, TextWrapping};
 use egui::{
-    Align2, Color32, CornerRadius, FontId, Galley, Rect, RichText, Sense, Stroke, StrokeKind,
-    WidgetInfo, WidgetType, pos2, vec2,
+    Color32, CornerRadius, FontId, Galley, Rect, RichText, Sense, Stroke, StrokeKind, WidgetInfo,
+    WidgetType, pos2, vec2,
 };
 
 use crate::theme::{self, Spacing, icons};
@@ -116,14 +116,12 @@ fn header(ui: &mut egui::Ui, width: f32) {
     let palette = theme::palette(ui.ctx());
     let (row, _) = ui.allocate_exact_size(vec2(width, 46.0), Sense::hover());
     let mark = Rect::from_center_size(row.center(), vec2(46.0, 46.0));
-    ui.painter()
-        .rect_filled(mark, CornerRadius::same(11), palette.accent);
-    ui.painter().text(
-        mark.center(),
-        Align2::CENTER_CENTER,
-        icons::DATA_SOURCE,
-        icons::font(ui, 26.0),
-        palette.accent_text,
+    let icon = app_icon_texture(ui.ctx());
+    ui.painter().image(
+        icon,
+        mark,
+        Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+        Color32::WHITE,
     );
     ui.add_space(Spacing::L);
     ui.vertical_centered(|ui| {
@@ -134,6 +132,24 @@ fn header(ui: &mut egui::Ui, width: f32) {
         );
         ui.label(RichText::new("A fast, native database client").color(palette.text_muted));
     });
+}
+
+fn app_icon_texture(ctx: &egui::Context) -> egui::TextureId {
+    let id = egui::Id::new("sqlr-app-icon");
+    if let Some(handle) = ctx.data(|data| data.get_temp::<egui::TextureHandle>(id)) {
+        return handle.id();
+    }
+
+    let image = image::load_from_memory(include_bytes!("../../../docs/media/icon.png"))
+        .expect("the bundled sqlr app icon is a valid image")
+        .resize(256, 256, image::imageops::FilterType::Lanczos3)
+        .into_rgba8();
+    let size = [image.width() as usize, image.height() as usize];
+    let image = egui::ColorImage::from_rgba_unmultiplied(size, image.as_raw());
+    let handle = ctx.load_texture("sqlr-app-icon", image, egui::TextureOptions::LINEAR);
+    let texture = handle.id();
+    ctx.data_mut(|data| data.insert_temp(id, handle));
+    texture
 }
 
 fn section(ui: &mut egui::Ui, title: &str) {
