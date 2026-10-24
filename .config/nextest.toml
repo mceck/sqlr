@@ -17,8 +17,9 @@ max-threads = 2
 filter = 'package(sqlr-app) and binary(smoke)'
 test-group = "app"
 
-# Each sidecar test builds the SDK examples through `cargo`; run them one at a time so
-# they do not wait on cargo's package lock while a probe's handshake times out.
+# Every suite that runs `cargo build -p sqlr-driver-sdk --example echo_driver` takes the
+# same process-wide build lock. Run them one at a time: a stack of waiters looks like a
+# hung test and reaches the slow timeout before cargo gets to them.
 [test-groups.sidecar]
 max-threads = 1
 
@@ -26,8 +27,16 @@ max-threads = 1
 filter = 'package(sqlr-sidecar)'
 test-group = "sidecar"
 
-# Longer timeout for the Docker-backed suite. All servers are fixed services, so the
-# tests can use every core like the rest of the workspace.
+[[profile.default.overrides]]
+filter = 'package(sqlr-engine) and binary(drivers)'
+test-group = "sidecar"
+
+[[profile.default.overrides]]
+filter = 'package(sqlr-registry)'
+test-group = "sidecar"
+
+# Longer timeout for the integration suite (Docker or native fixed services). All servers
+# are fixed services, so the tests can use every core like the rest of the workspace.
 [profile.containers]
 inherits = "default"
 slow-timeout = { period = "120s", terminate-after = 4 }

@@ -26,6 +26,10 @@ pub struct TerminalTheme {
     pub selection: Color32,
     pub ansi: [Color32; 16],
     pub font_size: f32,
+    /// The app's icon font and the glyphs for the header's buttons.
+    pub icon_font: egui::FontId,
+    pub restart_icon: &'static str,
+    pub close_icon: &'static str,
 }
 
 impl TerminalTheme {
@@ -89,9 +93,7 @@ pub struct Selection {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TerminalAction {
     Restart,
-    Clear,
-    Kill,
-    CopyMcpConfig,
+    Close,
     OpenSettings,
 }
 
@@ -243,16 +245,15 @@ impl TerminalPanel {
         self.session = Some(TerminalSession::spawn(&config, repaint));
     }
 
-    /// Draws the panel. `copy_config_enabled` controls the header action when MCP is off.
+    /// Draws the panel.
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
         theme: &TerminalTheme,
-        copy_config_enabled: bool,
         repaint: Arc<dyn Fn() + Send + Sync>,
     ) -> Vec<TerminalAction> {
         let mut actions = Vec::new();
-        self.header(ui, copy_config_enabled, &mut actions);
+        self.header(ui, theme, &mut actions);
         ui.add_space(4.0);
         self.canvas(ui, theme, repaint);
         actions
@@ -261,7 +262,7 @@ impl TerminalPanel {
     fn header(
         &mut self,
         ui: &mut egui::Ui,
-        copy_config_enabled: bool,
+        theme: &TerminalTheme,
         actions: &mut Vec<TerminalAction>,
     ) {
         let status = self.status();
@@ -292,25 +293,26 @@ impl TerminalPanel {
             ));
             ui.label(egui::RichText::new(summary).small().weak());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .add_enabled(copy_config_enabled, egui::Button::new("Copy MCP config"))
-                    .on_hover_text("Copy the client configuration; it contains the token")
-                    .clicked()
-                {
-                    actions.push(TerminalAction::CopyMcpConfig);
+                let close = egui::RichText::new(theme.close_icon).font(theme.icon_font.clone());
+                let close = ui
+                    .add(egui::Button::new(close).small())
+                    .on_hover_text("Close the terminal");
+                close.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Close")
+                });
+                if close.clicked() {
+                    actions.push(TerminalAction::Close);
                 }
-                if ui.button("Clear").clicked() {
-                    actions.push(TerminalAction::Clear);
-                }
-                if ui.button("Restart").clicked() {
+                let restart =
+                    egui::RichText::new(theme.restart_icon).font(theme.icon_font.clone());
+                let restart = ui
+                    .add(egui::Button::new(restart).small())
+                    .on_hover_text("Restart the shell");
+                restart.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Restart")
+                });
+                if restart.clicked() {
                     actions.push(TerminalAction::Restart);
-                }
-                if ui
-                    .add(egui::Button::new("Kill").frame(false))
-                    .on_hover_text("Terminate the shell and its processes")
-                    .clicked()
-                {
-                    actions.push(TerminalAction::Kill);
                 }
             });
         });
@@ -917,6 +919,9 @@ mod tests {
             selection: Color32::BLUE,
             ansi: [Color32::BLACK; 16],
             font_size: 13.0,
+            icon_font: egui::FontId::proportional(14.0),
+            restart_icon: "R",
+            close_icon: "X",
         }
     }
 
@@ -996,7 +1001,7 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
-                    panel.show(ui, &theme(), true, Arc::new(|| {}));
+                    panel.show(ui, &theme(), Arc::new(|| {}));
                 },
             );
             result.textures_delta.clear();
@@ -1069,7 +1074,7 @@ mod tests {
         };
         let ctx = egui::Context::default();
         let mut output = ctx.run_ui(Default::default(), |ui| {
-            assert!(panel.show(ui, &theme(), false, Arc::new(|| {})).is_empty());
+            assert!(panel.show(ui, &theme(), Arc::new(|| {})).is_empty());
         });
         output.textures_delta.clear();
         assert_eq!(

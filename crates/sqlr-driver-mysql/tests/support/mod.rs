@@ -114,6 +114,24 @@ async fn global(server: Server, env: &str) -> (Container, ConnectionConfig, Secr
     )
 }
 
+/// Whether the server folds table names (`lower_case_table_names != 0`). A macOS data
+/// directory on a case-insensitive filesystem forces this mode, unlike the Linux image.
+pub async fn lower_case_table_names(cfg: &ConnectionConfig) -> bool {
+    let opts = mysql_async::OptsBuilder::default()
+        .ip_or_hostname(cfg.values["host"].clone())
+        .tcp_port(cfg.values["port"].parse().unwrap())
+        .user(Some("root"));
+    let mut conn = mysql_async::Conn::new(opts)
+        .await
+        .expect("read lower_case_table_names");
+    let folded: Option<u8> = conn
+        .query_first("SELECT @@lower_case_table_names")
+        .await
+        .expect("lower_case_table_names");
+    conn.disconnect().await.ok();
+    folded.unwrap_or(0) != 0
+}
+
 async fn connection(host: &str, port: u16) -> mysql_async::Conn {
     let opts = mysql_async::OptsBuilder::default()
         .ip_or_hostname(host)

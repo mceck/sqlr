@@ -91,15 +91,36 @@ The script builds the release binary and wraps it in `dist/sqlr.app` with `docs/
 ## Tests
 
 ```sh
-make test        # fixed service containers + nextest (services stop at the end)
-make test-fast   # no Docker
-make coverage    # the whole suite under llvm-cov; services start and stop
+make test           # native Postgres/MySQL/Redis + nextest (services stop at the end)
+make test-docker    # the same suite against every service in docker-compose.test.yml
+make test-fast      # no database services: UI and unit tests only
+make coverage       # the whole suite under llvm-cov; Docker services start and stop
 make coverage-fast  # no Docker: UI and unit tests only
 ```
 
-`make test` starts every Docker-backed server from `docker-compose.test.yml`: PostgreSQL, MySQL, MariaDB, MongoDB, Redis, Elasticsearch, SQL Server and Oracle, and stops them when the run ends. Nothing starts a container per test; Postgres/MySQL tests get a fresh database on the fixed server, and the few tests that touch server-global state serialize through a cross-process lock. The first run also starts Oracle and three Elasticsearch nodes; later runs reuse them. `make test-services-reset` recreates the volumes.
+`make test` starts PostgreSQL, MySQL and Redis as native processes on the same fixed ports
+as the compose file, and stops them when the run ends. It uses the `initdb`/`pg_ctl`,
+`mysqld`/`mysql` and `redis-server` binaries on `PATH` (macOS: `brew install postgresql@18
+mysql redis`). Nothing starts a server per test: Postgres/MySQL tests get a fresh database
+on the fixed server, and the few tests that touch server-global state serialize through a
+cross-process lock. Data lives in `.test-services/local`; `make test-services-reset` wipes
+it. Suites without a native server (MariaDB, MongoDB, Elasticsearch, SQL Server, Oracle)
+return early in this mode.
 
-`make coverage` excludes SAP HANA, writes `target/coverage/` (`summary.txt`, `per-crate.txt`, `lcov.info`, `html/`) and fails when a crate is below 80% lines. `make coverage-open` opens the HTML report. `scripts/coverage.sh --fast --check` runs the same in a Docker-free environment.
+`make test-docker` starts every service from `docker-compose.test.yml` — PostgreSQL,
+MySQL, MariaDB, MongoDB, Redis, Elasticsearch, SQL Server and Oracle — and runs the full
+matrix. The first run also starts Oracle and three Elasticsearch nodes; later runs reuse
+the volumes. On Docker Desktop for macOS set
+`DOCKER_HOST=unix://$HOME/.docker/run/docker.sock`.
+
+`make test-services` starts the native servers without running tests;
+`make test-services-docker` starts the containers. TLS certificates for the test services
+are generated into `.test-services/certs` (ignored by git).
+
+`make coverage` excludes SAP HANA, writes `target/coverage/` (`summary.txt`,
+`per-crate.txt`, `lcov.info`, `html/`) and fails when a crate is below 80% lines.
+`make coverage-open` opens the HTML report. `scripts/coverage.sh --fast --check` runs the
+same in a Docker-free environment.
 
 To run the suite directly, start the services once and then use nextest:
 
@@ -108,7 +129,12 @@ scripts/test-services.sh up
 cargo nextest run --workspace --profile containers
 ```
 
-On Docker Desktop for macOS set `DOCKER_HOST=unix://$HOME/.docker/run/docker.sock`. TLS certificates for the test services are generated into `.test-services/certs` (ignored by git).
+For Docker-backed runs, select the backend explicitly:
+
+```sh
+SQLR_TEST_SERVICES=docker scripts/test-services.sh up
+SQLR_TEST_BACKEND=docker cargo nextest run --workspace --profile containers
+```
 
 Editor performance budgets: `cargo run --release -p sqlr-ui --example editor_measure`.
 

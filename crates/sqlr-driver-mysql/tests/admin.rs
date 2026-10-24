@@ -265,7 +265,13 @@ async fn grants_round_trip(server: Server) {
     )
     .await;
     let admin = env.admin();
-    let table = object(ObjectKind::Table, Some("shop"), "Order Lines");
+    // A macOS MySQL on a case-insensitive filesystem folds table names (`lower_case_table_names=2`).
+    let table_name = if support::lower_case_table_names(&env.cfg).await {
+        "order lines"
+    } else {
+        "Order Lines"
+    };
+    let table = object(ObjectKind::Table, Some("shop"), table_name);
     let database = object(ObjectKind::Database, None, "shop");
     let function = object(ObjectKind::Function, Some("shop"), "total");
     let add = [

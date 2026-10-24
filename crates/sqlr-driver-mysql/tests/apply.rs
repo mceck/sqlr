@@ -150,6 +150,8 @@ fn origin_table(engine: &Engine, q: QueryId) -> TableRef {
 async fn apply_changeset_end_to_end(server: Server) {
     let (_c, cfg, sec) = start(server).await;
     let database = cfg.values["database"].clone();
+    let folded = support::lower_case_table_names(&cfg).await;
+    let table_name = if folded { "my items" } else { "My Items" };
     let engine = engine(cfg, sec).await;
     run(
         &engine,
@@ -169,7 +171,7 @@ async fn apply_changeset_end_to_end(server: Server) {
         TableRef {
             database: None,
             schema: Some(database),
-            name: "My Items".into()
+            name: table_name.into()
         }
     );
     engine.describe(&tab(), table.clone());

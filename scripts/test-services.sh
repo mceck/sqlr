@@ -20,6 +20,21 @@ compose() {
     "$DOCKER" compose -f docker-compose.test.yml "$@"
 }
 
+# Native servers left behind by an interrupted `make test` hold the same ports the
+# containers publish. Stop them before Docker starts instead of colliding with them.
+stop_local() {
+    if [ -d .test-services/local ]; then
+        scripts/test-services-local.sh down >/dev/null 2>&1 || true
+    fi
+}
+
+# The reverse: a previous Docker run holds the ports the native servers need.
+stop_docker() {
+    if "$DOCKER" info >/dev/null 2>&1; then
+        compose down >/dev/null 2>&1 || true
+    fi
+}
+
 # A throwaway CA and server certificate for the TLS services. The key is world-readable:
 # it only protects a database that listens on 127.0.0.1 during tests.
 certificates() {
@@ -59,20 +74,25 @@ EOF
     chmod 644 "$dir"/*.key "$dir"/*.crt
 }
 
-# Native processes are the default: Docker stays available with SQLR_TEST_SERVICES=docker
-# (what `make test-docker` sets).
+# Native processes are the default (`make test`). Docker stays available with
+# SQLR_TEST_SERVICES=docker (what `make test-docker` sets).
 case "${SQLR_TEST_SERVICES:-local}" in
     local)
+        case "${1:-up}" in
+            up | up-core | reset) stop_docker ;;
+        esac
         certificates
         exec scripts/test-services-local.sh "${1:-up}"
         ;;
     docker)
         case "${1:-up}" in
             up)
+                stop_local
                 certificates
                 compose up -d --wait --wait-timeout 600
                 ;;
             up-core)
+                stop_local
                 certificates
                 compose up -d --wait --wait-timeout 180 postgres postgres-global mysql mariadb \
                     mysql-global mariadb-global mysql-notls mariadb-notls
@@ -81,6 +101,7 @@ case "${SQLR_TEST_SERVICES:-local}" in
                 compose down
                 ;;
             reset)
+                stop_local
                 certificates
                 compose down -v
                 compose up -d --wait --wait-timeout 600

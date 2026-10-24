@@ -1,6 +1,6 @@
 
 
-.PHONY: test test-docker test-fast test-services test-services-docker test-services-reset check-nextest macos install coverage coverage-fast coverage-open
+.PHONY: test test-local test-docker test-fast test-services test-services-local test-services-docker test-services-reset check-nextest macos install coverage coverage-fast coverage-open
 
 $(shell mkdir -p dist)
 
@@ -35,15 +35,17 @@ DOCKER_SERVICES_ENV = \
 	SQLR_TEST_MSSQL=127.0.0.1:51433 \
 	SQLR_TEST_ORACLE=127.0.0.1:51521
 
-# Local native servers by default. Docker-only suites (MariaDB, MongoDB, Elasticsearch,
-# SQL Server, Oracle) return early; use `make test-docker` for the whole matrix.
+# Native Postgres, MySQL and Redis are the default. Docker-only suites (MariaDB, MongoDB,
+# Elasticsearch, SQL Server, Oracle) return early there; `make test-docker` runs the whole
+# matrix in containers.
 test: check-nextest
 	@export SQLR_TEST_SERVICES=local; \
 	trap 'scripts/test-services.sh down' EXIT INT TERM; \
 	scripts/test-services.sh up; \
 	SQLR_TEST_BACKEND=local $(CORE_SERVICES_ENV) cargo nextest run --workspace --profile containers
 
-# Everything in Docker, exactly as the suite ran before the native services existed.
+test-local: test
+
 test-docker: check-nextest
 	@export SQLR_TEST_SERVICES=docker; \
 	trap 'scripts/test-services.sh down' EXIT INT TERM; \
@@ -62,14 +64,19 @@ coverage-open:
 	scripts/coverage.sh --open
 
 test-services:
-	scripts/test-services.sh up
+	SQLR_TEST_SERVICES=local scripts/test-services.sh up
+
+test-services-local: test-services
 
 test-services-docker:
 	SQLR_TEST_SERVICES=docker scripts/test-services.sh up
 
 # Recreates the local data directories (or the Docker volumes) from empty.
 test-services-reset:
-	scripts/test-services.sh reset
+	SQLR_TEST_SERVICES=local scripts/test-services.sh reset
+
+test-services-reset-docker:
+	SQLR_TEST_SERVICES=docker scripts/test-services.sh reset
 
 # No Docker needed; everything else runs.
 test-fast: check-nextest

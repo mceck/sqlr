@@ -103,6 +103,11 @@ pg_stop() {
         say "stopping $1"
         pg_ctl -D "$dir" stop -m fast -w -t 60 >/dev/null || true
     fi
+    # A killed server leaves its pid file behind; then the service looks alive and the
+    # next start refuses to run. Remove it only once the server really is gone.
+    if ! pg_ctl -D "$dir" status >/dev/null 2>&1; then
+        rm -f "$dir/postmaster.pid"
+    fi
 }
 
 # --- MySQL ----------------------------------------------------------------------------
@@ -167,6 +172,9 @@ mysql_stop() {
             sleep 0.2
         done
     fi
+    if ! mysql_alive "$dir"; then
+        rm -f "$dir/mysqld.pid"
+    fi
 }
 
 # --- Redis ----------------------------------------------------------------------------
@@ -212,7 +220,15 @@ redis_stop() {
     dir="$BASE/$1"
     if redis_alive "$dir"; then
         say "stopping $1"
-        kill "$(cat "$dir/redis.pid")" 2>/dev/null || true
+        pid=$(cat "$dir/redis.pid")
+        kill "$pid" 2>/dev/null || true
+        deadline=$(( $(date +%s) + 30 ))
+        while kill -0 "$pid" 2>/dev/null && [ "$(date +%s)" -lt "$deadline" ]; do
+            sleep 0.2
+        done
+    fi
+    if ! redis_alive "$dir"; then
+        rm -f "$dir/redis.pid"
     fi
 }
 

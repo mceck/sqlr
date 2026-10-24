@@ -9,7 +9,7 @@ so you can keep additional instructions here.
 
 `.mcp.json` in this directory contains the active sqlr MCP server URL and its
 authentication credentials. Use it with clients that support project MCP config.
-For other clients, use **Copy MCP config** in the terminal header and import the
+For other clients, use **Copy MCP config** in **Settings → Agents** and import the
 configuration in the client's supported format.
 
 If the server configuration is empty, ask the user to enable MCP in **Settings →

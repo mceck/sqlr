@@ -1,5 +1,5 @@
-//! Transfers across real servers (Docker): PostgreSQL to MySQL and SQLite with new tables,
-//! type mapping, upsert and rejected rows. Needs `DOCKER_HOST` (see CLAUDE.md).
+//! Transfers across real servers: PostgreSQL to MySQL and SQLite with new tables, type
+//! mapping, upsert and rejected rows. Runs against the fixed services (see CLAUDE.md).
 
 mod support;
 
@@ -53,10 +53,12 @@ async fn start() -> Servers {
 
 fn connect(engine: &Engine, cfg: ConnectionConfig, secrets: Secrets) {
     let id = cfg.id.clone();
-    let deadline = std::time::Instant::now() + Duration::from_secs(120);
+    // The fixed services are healthchecked before the run, so a refused connection means
+    // the server is gone: fail in half a minute instead of sitting on nextest's timeout.
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
     loop {
         engine.connect(cfg.clone(), secrets.clone(), dev());
-        wait_until(Duration::from_secs(70), || {
+        wait_until(Duration::from_secs(5), || {
             !matches!(engine.session_status(&id), Some(SessionStatus::Connecting))
         });
         if matches!(
@@ -65,8 +67,12 @@ fn connect(engine: &Engine, cfg: ConnectionConfig, secrets: Secrets) {
         ) {
             return;
         }
-        assert!(std::time::Instant::now() < deadline, "{id} never connected");
-        std::thread::sleep(Duration::from_secs(1));
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{id} never connected: {:?}",
+            engine.session_status(&id)
+        );
+        std::thread::sleep(Duration::from_millis(250));
     }
 }
 

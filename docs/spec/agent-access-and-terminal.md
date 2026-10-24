@@ -43,7 +43,8 @@ sqlr also gains an **integrated terminal** at the bottom of the workspace. It is
 PTY with a login shell, toggled with `Ctrl+Backtick` on every platform, and it keeps
 running when hidden. The person can launch Claude Code, Codex or any other agent in it.
 The terminal is not exposed to MCP and its output is never logged; a **Copy MCP config**
-action in its header makes configuring the agent a single paste. The terminal uses the
+action in Settings → Agents makes configuring the agent a single paste, while the terminal
+header offers icon-only Restart and Close actions. The terminal uses the
 app theme and monospace font and behaves like a normal terminal: ANSI colours, alternate
 screen, wide characters, resize, selection, copy/paste and scrollback.
 
@@ -137,12 +138,12 @@ rules instead of ad-hoc copy/paste.
 68. As a user, I want a real PTY with a login shell, so that Claude Code, Codex and my tools on `PATH` work normally.
 69. As a user, I want the shell command, working directory and scrollback configurable, so that the terminal fits my environment.
 70. As a user, I want the terminal to keep running when hidden, so that a long agent task is not interrupted.
-71. As a user, I want Kill, Restart and the exit code, so that I can recover from a dead or wedged shell.
+71. As a user, I want Restart, Close and the exit code, so that I can recover from a dead shell and dismiss the panel from where I work.
 72. As a user, I want ANSI colours, cursor, alternate screen, wide characters and resize, so that TUI agents render correctly.
 73. As a user, I want selection, copy, paste and bracketed paste, so that I can work efficiently and paste multi-line prompts safely.
 74. As a user, I want no mouse reporting or clickable links in the first version, so that the terminal stays simple and predictable.
 75. As a user, I want the terminal to use my theme and monospace font, so that it feels native to sqlr.
-76. As a user, I want a Copy MCP config action in the terminal header, so that I can configure the agent from where I launch it.
+76. As a user, I want a Copy MCP config action in Settings → Agents, so that I can configure the agent with one paste without crowding the terminal header.
 77. As a user, I want no automatic token environment variables and no automatic agent launch, so that secrets do not leak into the PTY and I stay in control.
 78. As a user, I want `terminal.shell` to be unreadable and unwritable by agents, so that an agent cannot make my terminal execute arbitrary code.
 79. As a user, I want `terminal.cwd` and `terminal.scrollback` readable and writable by agents, so that harmless preferences can be automated.
@@ -659,11 +660,12 @@ available egui terminal crates do not support the pinned egui version.
   shortcuts are suppressed so keystrokes reach the shell, except the global terminal
   toggle, Settings and other explicitly global actions. Toggling the panel focuses the
   terminal.
-- Lifecycle: the panel header offers Restart, Clear, Kill and Copy MCP config. Kill
-  terminates the process group after a short grace period. Restart creates a new session
-  with the current settings. When the process exits, the panel keeps the final screen and
-  shows the exit status with a Restart action. On application quit, the process group is
-  killed; no shell or agent process is left behind.
+- Lifecycle: the panel header offers icon-only Restart and Close actions. Restart creates
+  a new session with the current settings and terminates the previous process group after
+  a short grace period. Close hides the panel and keeps the shell running; the global
+  toggle reopens it. When the process exits, the panel keeps the final screen and shows
+  the exit status with a Restart action. On application quit, the process group is killed;
+  no shell or agent process is left behind.
 - Logging: terminal output, scrollback and the shell command are never logged. Only
   lifecycle metadata (started, exited with code, killed) may be logged, without the
   command or working directory.
@@ -763,10 +765,9 @@ The UI is intentionally small and integrated rather than a new workspace.
 
 - Bottom panel directly above the status bar; history sits above it when both are open.
   Default height about 300 px, minimum 120 px, resizable with the standard splitter.
-- Header: a terminal icon and title, a status dot, the shell/cwd summary, and actions
-  Restart, Clear and Copy MCP config (the same configuration content and token warning as
-  Settings), with Kill as a clearly separated secondary action. The header uses the same
-  spacing and typography as other panels.
+- Header: a terminal icon and title, a status dot, the shell/cwd summary, and icon-only
+  Restart and Close actions at the right. Close hides the panel and keeps the shell
+  running. The header uses the same spacing and typography as other panels.
 - Empty/start state: the panel opens and starts the shell; if starting fails, it shows a
   concise error, a Retry action and a link to Terminal settings.
 - Exit state: final screen remains, exit code and Restart are visible.
@@ -1016,8 +1017,8 @@ Required test coverage:
 - Scrollback, wheel scrolling, selection, copy and bracketed paste.
 - Shell resolution: automatic login shell, custom command, Windows fallback order, cwd and
   environment.
-- Lazy start, hidden keeps running, exit status and Restart, Kill terminates the process
-  group, app quit kills the process.
+- Lazy start, hidden keeps running, exit status and Restart; restart and app quit kill the
+  process group.
 - Real-PTY smoke test runs a short command and observes its output/exit.
 - No terminal output or shell command appears in logs or diagnostics.
 
@@ -1034,7 +1035,7 @@ Required test coverage:
   settings.
 - Terminal panel: toggle in toolbar, View menu, palette and `Ctrl+Backtick`; default
   hidden; opening starts the shell; hiding keeps it alive; height and resize; exit and
-  error states; Copy MCP config enabled only when MCP is on; theme/font.
+  error states; icon-only Restart and Close; theme/font and icon glyphs.
 - Focus: typing in the terminal does not trigger editor or global query shortcuts; copying
   and pasting use the correct platform shortcuts; `Ctrl+C` is an interrupt.
 - Toasts for agent configuration and snippet writes; no secret content.
@@ -1100,7 +1101,7 @@ Required test coverage:
 17. Snippets are readable and writable, support global and connection scopes and folders,
     and delete only after approval.
 18. The integrated terminal is a real PTY with a login shell, configurable shell/cwd/
-    scrollback, lazy start, hidden persistence, Kill/Restart/exit status and process-group
+    scrollback, lazy start, hidden persistence, Restart/Close/exit status and process-group
     cleanup on quit.
 19. The terminal renders ANSI 16/256/truecolour, cursor, alternate screen, wide characters
     and resize correctly; supports selection, copy/paste and bracketed paste; does not
@@ -1112,8 +1113,8 @@ Required test coverage:
     `terminal.scrollback` are readable/writable; the terminal is not exposed to MCP; its
     output and shell command are never logged; no MCP token is injected into its
     environment and no agent is launched automatically.
-22. The terminal header offers Copy MCP config when the server is running; configuration
-    is a one-paste setup for a client; the terminal works when MCP is disabled.
+22. Settings → Agents offers Copy MCP config when the server is running; configuration is
+    a one-paste setup for a client; the terminal works when MCP is disabled.
 23. Settings contains Agents and Terminal sections with clear status, errors, validation
     and “applies on restart” guidance; the connection dialog and explorer expose agent
     access clearly; the status bar shows MCP only when enabled; approvals and toasts follow

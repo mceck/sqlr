@@ -9,17 +9,17 @@ pub use kv::{FakeKvDriver, FakeKvScript};
 
 /// Where the integration tests find their database servers.
 ///
-/// `local` runs the servers as native processes started by `scripts/test-services.sh`
-/// (`initdb`, `mysqld`, `redis-server`); `docker` starts them with
-/// `docker-compose.test.yml`. The default is `local`, so a checkout without Docker still
-/// runs the Postgres, MySQL and Redis suites.
+/// `local` runs Postgres, MySQL and Redis as native processes started by
+/// `scripts/test-services.sh` (`make test`), so a checkout without Docker still runs those
+/// suites. `docker` starts every server with `docker-compose.test.yml` (`make test-docker`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Backend {
     Local,
     Docker,
 }
 
-/// The backend selected by `SQLR_TEST_BACKEND` (`local` when unset).
+/// The backend selected by `SQLR_TEST_BACKEND` (`local` when unset, matching
+/// `scripts/test-services.sh` and `make test`).
 pub fn backend() -> Backend {
     static BACKEND: std::sync::OnceLock<Backend> = std::sync::OnceLock::new();
     *BACKEND.get_or_init(|| match std::env::var("SQLR_TEST_BACKEND").as_deref() {
@@ -161,10 +161,10 @@ pub fn unique_name(prefix: &str) -> String {
 
 /// Returns early from a container-backed test when the service cannot run.
 ///
-/// With no argument the test needs Docker: it returns early in every non-Docker backend,
-/// or when `SQLR_SKIP_CONTAINER_TESTS=1`. With a service name (`"POSTGRES"`, `"MYSQL"`,
-/// `"REDIS"`, …) the test runs whenever [`service_available`] says the service can run,
-/// which in the default local backend means the three native servers.
+/// With no argument the test needs Docker: it returns early in the local backend, or when
+/// `SQLR_SKIP_CONTAINER_TESTS=1`. With a service name (`"POSTGRES"`, `"MYSQL"`, `"REDIS"`,
+/// …) the test runs whenever [`service_available`] says the service can run; the local
+/// backend has native Postgres, MySQL and Redis only.
 #[macro_export]
 macro_rules! skip_container_tests {
     () => {

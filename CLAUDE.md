@@ -25,25 +25,31 @@ sqlr is a lightweight, universal database client in native Rust + egui. No webvi
 ## Commands
 
 ```sh
-make test                                                # fixed Docker services + nextest (services stop at the end)
-make test-fast                                           # no Docker
-make coverage                                            # llvm-cov report per crate; stops the services
+make test                                                # native Postgres/MySQL/Redis + nextest (services stop at the end)
+make test-docker                                         # the same suite against every compose service
+make test-fast                                           # no database services
+make coverage                                            # llvm-cov report per crate; uses Docker services
 cargo nextest run --workspace --profile containers       # needs the services below
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt
 cargo run --release -p sqlr-app
 ```
 
-`make test` starts every fixed service in `docker-compose.test.yml` (Postgres, MySQL,
-MariaDB, MongoDB, Redis, Elasticsearch, SQL Server, Oracle) and runs the nextest
-`containers` profile. No test starts its own container: per-test databases isolate the
-parallel tests, and the server-global tests take a cross-process `sqlr_testkit::TestLock`.
-The support modules read `SQLR_TEST_*` variables (or `sqlr_testkit::service` defaults).
-`make test-services-reset` recreates the volumes. `make test-fast` sets
-`SQLR_SKIP_CONTAINER_TESTS=1` and needs no Docker.
+`make test` starts Postgres, MySQL and Redis as native processes on the fixed test ports
+(`initdb`/`pg_ctl`, `mysqld`, `redis-server`) and runs the nextest `containers` profile.
+No test starts a server per test: per-test databases isolate the parallel tests, and the
+server-global tests take a cross-process `sqlr_testkit::TestLock`. The support modules read
+`SQLR_TEST_*` variables (or `sqlr_testkit::service` defaults). Data lives in
+`.test-services/local`; `make test-services-reset` wipes it. MariaDB, MongoDB,
+Elasticsearch, SQL Server and Oracle have no native service, so their tests return early;
+`make test-docker` runs them (and everything else) from `docker-compose.test.yml`.
+`make test-fast` sets `SQLR_SKIP_CONTAINER_TESTS=1` and needs no services.
 
-To run `cargo test` or `cargo nextest` directly, start the services first with
-`scripts/test-services.sh up` (or `make test-services`). On Docker Desktop for macOS set
+`SQLR_TEST_BACKEND=local|docker` picks the test backend; `SQLR_TEST_SERVICES=local|docker`
+picks what `scripts/test-services.sh` starts. Both default to `local`. `make test-docker`
+sets both to `docker`. To run `cargo test` or `cargo nextest` directly, start the services
+first with `scripts/test-services.sh up` (or `make test-services` for native,
+`make test-services-docker` for containers). On Docker Desktop for macOS set
 `DOCKER_HOST=unix://$HOME/.docker/run/docker.sock`. The docker CLI is
 `~/.docker/bin/docker`, which is not on `PATH`.
 

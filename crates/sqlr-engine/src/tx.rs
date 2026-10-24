@@ -212,6 +212,15 @@ impl TxState {
         }
     }
 
+    /// Records a savepoint. MySQL and MariaDB replace a savepoint with the same name, so
+    /// the older one disappears from the stack.
+    pub(crate) fn savepoint(&mut self, name: String) {
+        if let Some(i) = self.savepoints.iter().position(|s| s == &name) {
+            self.savepoints.remove(i);
+        }
+        self.savepoints.push(name);
+    }
+
     /// Keeps only the savepoints up to and including `name` (the target of a rollback).
     pub(crate) fn rolled_back_to(&mut self, name: &str) {
         if let Some(i) = self.savepoints.iter().position(|s| s == name) {
@@ -273,7 +282,7 @@ impl TxState {
             }
             StatementClass::Transaction(TxVerb::Savepoint(name)) => {
                 if self.is_open() {
-                    self.savepoints.push(name.clone());
+                    self.savepoint(name.clone());
                 }
                 None
             }
@@ -441,7 +450,7 @@ impl Shared {
                                 s.tx.close(now);
                                 s.tx_conn = None;
                             }
-                            TxOp::Savepoint(name) => s.tx.savepoints.push(name.clone()),
+                            TxOp::Savepoint(name) => s.tx.savepoint(name.clone()),
                             TxOp::RollbackTo(name) => s.tx.rolled_back_to(name),
                             // The flag follows the server once it accepted the switch.
                             TxOp::SetReadOnly(on) => {
@@ -529,6 +538,17 @@ mod tests {
         tx.after_success(&class("commit"), rules, 6);
         assert_eq!(tx.phase, TxPhase::Idle);
         assert_eq!(tx.last_activity_ms, 6);
+    }
+
+    #[test]
+    fn a_reused_savepoint_name_replaces_the_older_one() {
+        let mut tx = TxState::new(CommitMode::Auto, false, 0);
+        let rules = TxRules::default();
+        tx.after_success(&class("begin"), rules, 1);
+        for sql in ["savepoint a", "savepoint b", "savepoint a"] {
+            tx.after_success(&class(sql), rules, 2);
+        }
+        assert_eq!(tx.savepoints, ["b", "a"]);
     }
 
     #[test]

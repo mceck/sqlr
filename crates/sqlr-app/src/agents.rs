@@ -1201,6 +1201,9 @@ impl SqlrApp {
             selection: palette.selection,
             ansi,
             font_size: self.settings.terminal_font_size,
+            icon_font: sqlr_ui::theme::fonts::icons(ui.ctx(), sqlr_ui::theme::icons::SIZE),
+            restart_icon: sqlr_ui::theme::icons::REFRESH,
+            close_icon: sqlr_ui::theme::icons::CLOSE,
         };
         self.terminal.set_config(sqlr_terminal::SessionConfig {
             shell: self.settings.terminal_shell.clone(),
@@ -1212,9 +1215,7 @@ impl SqlrApp {
             let ctx = ui.ctx().clone();
             Arc::new(move || ctx.request_repaint())
         };
-        let actions = self
-            .terminal
-            .show(ui, &theme, self.mcp.status.is_running(), repaint);
+        let actions = self.terminal.show(ui, &theme, repaint);
         for action in actions {
             match action {
                 sqlr_terminal::TerminalAction::Restart => {
@@ -1224,14 +1225,7 @@ impl SqlrApp {
                     };
                     self.terminal.restart(repaint);
                 }
-                sqlr_terminal::TerminalAction::Clear => self.terminal.clear(),
-                sqlr_terminal::TerminalAction::Kill => self.terminal.kill(),
-                sqlr_terminal::TerminalAction::CopyMcpConfig => {
-                    if let Some(config) = self.mcp.client_config() {
-                        ui.ctx().copy_text(config);
-                        self.notify("MCP client configuration copied (it contains the token)");
-                    }
-                }
+                sqlr_terminal::TerminalAction::Close => self.terminal.close(),
                 sqlr_terminal::TerminalAction::OpenSettings => {
                     self.prefs = Some(crate::prefs::PrefsWindow::new_for_section(
                         &self.layered,
