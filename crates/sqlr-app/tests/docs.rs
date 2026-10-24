@@ -321,7 +321,7 @@ fn palette_opens_collections_and_creates_indexes() {
         h.state().tab_titles().iter().any(|t| t == "users (app)")
     });
     step_until(&mut h, "the find", |_| !driver.runs().is_empty());
-    // ⌘K offers "New index" on the collection selected in the explorer.
+    // ⌘⇧P offers "New index" on the collection selected in the explorer.
     h.get_by_label("users").click();
     h.run_steps(2);
     h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, egui::Key::P);

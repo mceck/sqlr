@@ -3,7 +3,7 @@
 //!
 //! eframe/winit only install the minimal AppKit application menu (About, Services, Hide,
 //! Quit), so the app's menus would stay in the toolbar. `muda` replaces that menu; the
-//! commands are the same [`AppCommand`]s the in-window menus and ⌘K use, queued from the
+//! commands are the same [`AppCommand`]s the in-window menus and ⌘⇧P use, queued from the
 //! AppKit callback and drained at the start of the next frame.
 //!
 //! Only the real binary installs this (`main.rs`): tests and other platforms keep the

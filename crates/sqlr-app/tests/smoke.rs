@@ -1643,7 +1643,7 @@ fn esc_closes_the_palette_before_stopping() {
     start_blocking_run(&mut h);
     press(&mut h, Modifiers::COMMAND | Modifiers::SHIFT, Key::P);
     h.run_steps(5);
-    assert!(h.state().palette_open(), "⌘K opens the palette");
+    assert!(h.state().palette_open(), "⌘⇧P opens the palette");
     esc_leaves_run(&mut h, "the palette was open");
     assert!(!h.state().palette_open(), "Esc closed the palette");
     esc_stops(&mut h);

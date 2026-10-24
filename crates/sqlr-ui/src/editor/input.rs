@@ -24,7 +24,7 @@ pub(crate) enum Action {
 }
 
 /// The action for `key` pressed with `m`; `None` when the editor leaves the key alone (the
-/// app owns ⌘↵, ⌘P, ⌘K and ⌘T). `page` is the number of lines a page moves.
+/// app owns ⌘↵, ⌘P, ⌘⇧P and ⌘T). `page` is the number of lines a page moves.
 pub(crate) fn key_action(key: Key, m: Modifiers, mac: bool, page: usize) -> Option<Action> {
     use EditCommand as C;
     let word = if mac { m.alt } else { m.ctrl };

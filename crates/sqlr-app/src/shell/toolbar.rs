@@ -467,7 +467,7 @@ impl SqlrApp {
                 }
                 icons::toolbar_divider(ui);
                 if icons::toolbar_button(ui, true, icons::SEARCH, None, false, "Command palette")
-                    .on_hover_text("Commands, history and snippets (⌘K)")
+                    .on_hover_text("Commands, history and snippets (⌘⇧P)")
                     .clicked()
                 {
                     self.open_palette(PaletteMode::Commands);

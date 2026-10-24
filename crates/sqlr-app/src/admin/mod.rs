@@ -1,6 +1,6 @@
 //! Administration in the app: the "Users and roles", "Sessions and
 //! locks" and "Server properties" tabs of a connection, opened from the explorer's
-//! connection menu and ⌘K, and the confirmations their actions need.
+//! connection menu and ⌘⇧P, and the confirmations their actions need.
 //!
 //! - Role and grant changes are DDL: they go through the profile's confirmation (a revoke
 //!   is destructive) and [`sqlr_engine::Engine::apply_ddl`], with passwords masked.

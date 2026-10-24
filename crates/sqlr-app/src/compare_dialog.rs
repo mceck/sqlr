@@ -331,7 +331,7 @@ impl CompareDialog {
 }
 
 impl SqlrApp {
-    /// "Compare with…" on a schema or database node, or ⌘K "Compare schemas…".
+    /// "Compare with…" on a schema or database node, or ⌘⇧P "Compare schemas…".
     pub(crate) fn open_compare(
         &mut self,
         conn: Option<&str>,

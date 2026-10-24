@@ -219,7 +219,7 @@ impl SqlrApp {
         }
     }
 
-    /// Shows the Tasks pane (⌘K "Tasks").
+    /// Shows the Tasks pane (⌘⇧P "Tasks").
     pub(crate) fn show_tasks_pane(&mut self) {
         self.left = LeftPane::Tasks;
     }

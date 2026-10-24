@@ -1,4 +1,4 @@
-//! The palettes: ⌘P over every known catalog's relations, ⌘K over app commands, snippets
+//! The palettes: ⌘P over every known catalog's relations, ⌘⇧P over app commands, snippets
 //! and history. Items are rebuilt only when what they list changes.
 
 use sqlr_ui::ToastKind;
@@ -16,7 +16,7 @@ use sqlr_ui::{
 
 use crate::app::SqlrApp;
 
-/// History matches listed in ⌘K.
+/// History matches listed in ⌘⇧P.
 const HISTORY_ITEMS: usize = 20;
 /// Chars of a history entry's first line in its label.
 const HISTORY_LABEL_CHARS: usize = 80;
@@ -99,7 +99,7 @@ pub enum AppCommand {
     NewIndex(String, NodePath),
 }
 
-/// Kinds "New …" offers in ⌘K, in this order.
+/// Kinds "New …" offers in ⌘⇧P, in this order.
 const PALETTE_NEW: [ObjectKind; 6] = [
     ObjectKind::Table,
     ObjectKind::View,

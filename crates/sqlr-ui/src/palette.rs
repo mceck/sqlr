@@ -1,4 +1,4 @@
-//! The command palette: ⌘P over database objects, ⌘K over commands, snippets and history.
+//! The command palette: ⌘P over database objects, ⌘⇧P over commands, snippets and history.
 //!
 //! The widget only ranks and shows the items it is given and reports which one was chosen; the
 //! caller keeps whatever each item stands for in a parallel list.
@@ -19,7 +19,7 @@ const MAX_LIST_HEIGHT: f32 = 420.0;
 pub enum PaletteMode {
     /// ⌘P: tables, views and other relations of the known catalogs.
     Objects,
-    /// ⌘K: app commands, snippets and history.
+    /// ⌘⇧P: app commands, snippets and history.
     Commands,
 }
 
