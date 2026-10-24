@@ -289,7 +289,10 @@ async fn duplicate_savepoints_keep_the_older_target_after_releasing_the_newer_on
         run(&engine, sql).await;
     }
     engine.rollback_to(&tab(), "a".into());
-    assert_eq!(rows(&engine, "SELECT id FROM items").await, vec![vec![Value::Int(1)]]);
+    assert_eq!(
+        rows(&engine, "SELECT id FROM items").await,
+        vec![vec![Value::Int(1)]]
+    );
     let before_release = engine.transaction(&tab()).unwrap().savepoints;
     run(&engine, "RELEASE SAVEPOINT a").await;
     let after_release = engine.transaction(&tab()).unwrap().savepoints;
@@ -315,7 +318,10 @@ async fn a_top_level_savepoint_enables_toolbar_rollback_in_auto_mode() {
         run(&engine, "ROLLBACK").await;
     }
     assert_eq!(phase, sqlr_engine::TxPhase::Open);
-    assert!(remaining.is_empty(), "toolbar rollback left the inserted row: {remaining:?}");
+    assert!(
+        remaining.is_empty(),
+        "toolbar rollback left the inserted row: {remaining:?}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -335,7 +341,15 @@ async fn releasing_the_outermost_savepoint_commits_its_transaction() {
     let after_inner = engine.transaction(&tab()).unwrap().phase;
     run(&engine, "RELEASE SAVEPOINT outermost").await;
     assert_eq!(after_inner, sqlr_engine::TxPhase::Open);
-    assert_eq!(engine.transaction(&tab()).unwrap().phase, sqlr_engine::TxPhase::Idle);
+    assert_eq!(
+        engine.transaction(&tab()).unwrap().phase,
+        sqlr_engine::TxPhase::Idle
+    );
     let observer = rusqlite::Connection::open(path).unwrap();
-    assert_eq!(observer.query_row("SELECT id FROM items", [], |r| r.get::<_, i64>(0)).unwrap(), 1);
+    assert_eq!(
+        observer
+            .query_row("SELECT id FROM items", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        1
+    );
 }

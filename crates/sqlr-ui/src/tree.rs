@@ -1381,17 +1381,19 @@ fn conn_row(
         }
         toggle |= arrow(ui, conn.name, true, open, palette.text_muted);
         let selected = state.is_selected(conn.id, &root);
-        // The name gives way to the badge, the detail and the row buttons: a long one is
-        // cut with an ellipsis and shown whole on hover.
+        // The name gives way to the state mark, the detail and the row buttons: a long one
+        // is cut with an ellipsis and shown whole on hover.
         let live = matches!(conn.badge, ConnBadge::Connected | ConnBadge::Connecting);
-        let (text, color) = match &conn.badge {
-            ConnBadge::Disconnected => ("disconnected", palette.text_muted),
-            ConnBadge::Connecting => ("connecting…", palette.warning),
-            ConnBadge::Connected => ("connected", palette.success),
-            ConnBadge::Failed(_) => ("failed", palette.error),
-            ConnBadge::MissingDriver => ("driver missing", palette.warning),
+        // The state is an icon alone: its color names it at a glance, its accessible label
+        // and tooltip spell it out.
+        let (mark, color, label) = match &conn.badge {
+            ConnBadge::Disconnected => (icons::DISCONNECTED, palette.text_muted, "disconnected"),
+            ConnBadge::Connecting => (icons::CONNECTING, palette.warning, "connecting…"),
+            ConnBadge::Connected => (icons::CONNECTED, palette.success, "connected"),
+            ConnBadge::Failed(_) => (icons::FAILED, palette.error, "failed"),
+            ConnBadge::MissingDriver => (icons::WARNING, palette.warning, "driver missing"),
         };
-        let badge_text = RichText::new(text).small().color(color);
+        let badge_text = icons::text(ui, mark, 12.0).color(color);
         let badge_width = egui::WidgetText::from(badge_text.clone())
             .into_galley(
                 ui,
@@ -1404,12 +1406,7 @@ fn conn_row(
         let trailing = badge_width
             + ui.spacing().item_spacing.x
             + if live { ROW_BUTTONS_WIDTH } else { 0.0 }
-            + if conn.open_transaction { 16.0 } else { 0.0 }
-            + if conn.agent_access.is_exposed() {
-                18.0
-            } else {
-                0.0
-            };
+            + if conn.open_transaction { 16.0 } else { 0.0 };
         let budget = (ui.available_width() - trailing).max(60.0);
         let name = ui.horizontal(|ui| {
             ui.set_max_width(budget);
@@ -1447,23 +1444,13 @@ fn conn_row(
             state.selected_folder = None;
         }
         toggle |= response.double_clicked() || icon_double_clicked;
-        if conn.agent_access.is_exposed() {
-            let tip = match conn.agent_access {
-                sqlr_core::AgentAccess::Read => "Agents: read",
-                sqlr_core::AgentAccess::Write => "Agents: read and write",
-                sqlr_core::AgentAccess::None => "",
-            };
-            ui.label(
-                RichText::new(icons::VIEW)
-                    .font(theme::fonts::icons(ui.ctx(), 12.0))
-                    .color(palette.text_muted),
-            )
-            .on_hover_text(tip);
-        }
         let badge = ui.label(badge_text);
-        if let ConnBadge::Failed(message) = &conn.badge {
-            badge.on_hover_text(message);
-        }
+        badge.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, label));
+        let tip = match &conn.badge {
+            ConnBadge::Failed(message) => message.as_str(),
+            _ => label,
+        };
+        badge.on_hover_text(tip);
         if conn.open_transaction {
             ui.label(RichText::new("●").color(palette.warning))
                 .on_hover_text("Open transaction");

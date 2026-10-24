@@ -33,6 +33,8 @@ struct StubSource {
     database_tools: bool,
     /// The "local" connection's state.
     local_badge: ConnBadge,
+    /// The "local" connection's agent access.
+    local_access: sqlr_core::AgentAccess,
     /// Objects have DDL ("Open DDL").
     ddl: bool,
     /// "public" also holds a "views" folder with three loaded views.
@@ -57,6 +59,7 @@ impl StubSource {
             key_value: false,
             database_tools: false,
             local_badge: ConnBadge::Disconnected,
+            local_access: sqlr_core::AgentAccess::None,
             ddl: false,
             views: None,
         }
@@ -91,7 +94,7 @@ impl SchemaSource for StubSource {
                 badge: self.local_badge.clone(),
                 tint: None,
                 open_transaction: false,
-                agent_access: Default::default(),
+                agent_access: self.local_access,
             },
             TreeConn {
                 id: "prod",
@@ -979,6 +982,74 @@ fn only_live_connections_offer_disconnect() {
         h.state()
             .actions
             .contains(&TreeAction::Disconnect("prod".into()))
+    );
+}
+
+#[test]
+fn connection_state_is_an_icon_without_text() {
+    let mut h = harness(StubSource::new());
+    h.state_mut().state.expand_folder("prod");
+    h.run_steps(2);
+    let painted: Vec<String> = h
+        .output()
+        .shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) => Some(text.galley.text().to_string()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        !painted
+            .iter()
+            .any(|text| matches!(text.as_str(), "connected" | "disconnected")),
+        "the state is written out: {painted:?}"
+    );
+    assert!(
+        painted.iter().any(|text| text == theme::icons::CONNECTED),
+        "the connected state is not drawn as an icon: {painted:?}"
+    );
+    assert!(
+        painted
+            .iter()
+            .any(|text| text == theme::icons::DISCONNECTED),
+        "the disconnected state is not drawn as an icon: {painted:?}"
+    );
+}
+
+#[test]
+fn connected_icon_is_as_legible_as_disconnected_icon() {
+    let mut h = harness(StubSource::new());
+    theme::install_fonts(&h.ctx, &[]);
+    open_folder(&mut h, "prod");
+    let bounds = |icon: &str| {
+        h.output()
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) if text.galley.text() == icon => {
+                    Some(text.galley.mesh_bounds.size())
+                }
+                _ => None,
+            })
+            .expect("connection state icon is painted")
+    };
+    let connected = bounds(theme::icons::CONNECTED);
+    let disconnected = bounds(theme::icons::DISCONNECTED);
+    assert!(
+        connected.x >= disconnected.x * 0.8 && connected.y >= disconnected.y * 0.8,
+        "connected icon is too small: {connected:?}, disconnected: {disconnected:?}"
+    );
+}
+
+#[test]
+fn connection_rows_do_not_show_the_agent_access_eye() {
+    let mut source = StubSource::new();
+    source.local_access = sqlr_core::AgentAccess::Read;
+    let h = harness(source);
+    assert!(
+        h.query_by_label(theme::icons::VIEW).is_none(),
+        "the connection row still shows the agent access eye"
     );
 }
 

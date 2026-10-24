@@ -90,6 +90,11 @@ impl Dialect for SqliteDialect {
         Some(format!("PRAGMA query_only = {}", u8::from(on)))
     }
 
+    /// SQLite starts a transaction with a top-level `SAVEPOINT`.
+    fn savepoint_starts_transaction(&self) -> bool {
+        true
+    }
+
     fn ddl_gen(&self) -> Option<&dyn DdlGen> {
         Some(self)
     }

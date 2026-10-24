@@ -35,7 +35,7 @@ test-group = "sidecar"
 filter = 'package(sqlr-registry)'
 test-group = "sidecar"
 
-# Longer timeout for the integration suite (Docker or native fixed services). All servers
+# Longer timeout for the integration suite (the Docker services). All servers
 # are fixed services, so the tests can use every core like the rest of the workspace.
 [profile.containers]
 inherits = "default"

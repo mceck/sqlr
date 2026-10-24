@@ -11,6 +11,9 @@ services:
     image: postgres:17-alpine
     environment:
       POSTGRES_PASSWORD: postgres
+    # Test-only durability: checkpoints must not stall the suite on Docker's disk.
+    command:
+      ["postgres", "-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off"]
     ports:
       - "127.0.0.1:55432:5432"
     healthcheck:
@@ -25,6 +28,9 @@ services:
     image: postgres:17-alpine
     environment:
       POSTGRES_PASSWORD: postgres
+    # Test-only durability: checkpoints must not stall the suite on Docker's disk.
+    command:
+      ["postgres", "-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off"]
     volumes:
       - ./.test-services/certs:/certs:ro
       - ./scripts/postgres-tls-init.sh:/docker-entrypoint-initdb.d/10-tls.sh:ro
@@ -158,6 +164,8 @@ services:
 
   redis:
     image: redis:7
+    # The tests write multi-megabyte values; background snapshots only add disk stalls.
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
     ports:
       - "127.0.0.1:56379:6379"
     healthcheck:
@@ -184,6 +192,10 @@ services:
         "--tls-ca-cert-file",
         "/tls/ca.crt",
         "--tls-auth-clients",
+        "no",
+        "--save",
+        "",
+        "--appendonly",
         "no",
         "--user",
         "alice",

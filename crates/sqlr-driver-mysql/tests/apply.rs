@@ -123,7 +123,12 @@ async fn apply(engine: &Engine, changeset: Changeset) -> JobOutcome {
 async fn reused_savepoint_names_replace_the_old_target(server: Server) {
     let (_server, cfg, sec) = start(server).await;
     let engine = engine(cfg, sec).await;
-    for sql in ["START TRANSACTION", "SAVEPOINT a", "SAVEPOINT b", "SAVEPOINT a"] {
+    for sql in [
+        "START TRANSACTION",
+        "SAVEPOINT a",
+        "SAVEPOINT b",
+        "SAVEPOINT a",
+    ] {
         run(&engine, sql).await;
     }
     let before_release = engine.transaction(&tab()).unwrap().savepoints;

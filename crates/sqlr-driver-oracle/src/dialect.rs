@@ -70,6 +70,11 @@ impl Dialect for OracleDialect {
         true
     }
 
+    /// A second savepoint with the same name erases the earlier one.
+    fn savepoint_names_replace(&self) -> bool {
+        true
+    }
+
     /// Oracle has no `RELEASE SAVEPOINT`: a savepoint ends with its transaction.
     fn release_savepoint_sql(&self, _name: &str) -> Option<String> {
         None

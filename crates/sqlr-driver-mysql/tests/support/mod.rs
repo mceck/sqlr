@@ -124,7 +124,7 @@ pub async fn lower_case_table_names(cfg: &ConnectionConfig) -> bool {
     let mut conn = mysql_async::Conn::new(opts)
         .await
         .expect("read lower_case_table_names");
-    let folded: Option<u8> = conn
+    let folded: Option<i64> = conn
         .query_first("SELECT @@lower_case_table_names")
         .await
         .expect("lower_case_table_names");

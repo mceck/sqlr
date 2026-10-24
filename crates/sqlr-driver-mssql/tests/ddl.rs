@@ -97,14 +97,20 @@ async fn indexes_on_parenthesized_column_names_round_trip() {
     let (_lock, conn) = server().await;
     let column_name = "(id)); DROP TABLE shop.victim;-- )";
     let quoted = MsDialect.quote_ident(column_name);
-    run(&*conn, &[
-        "CREATE SCHEMA shop".into(),
-        "CREATE TABLE shop.victim (id int)".into(),
-        format!("CREATE TABLE shop.original ({quoted} int)"),
-        format!("CREATE INDEX ix_original ON shop.original ({quoted})"),
-    ]).await;
+    run(
+        &*conn,
+        &[
+            "CREATE SCHEMA shop".into(),
+            "CREATE TABLE shop.victim (id int)".into(),
+            format!("CREATE TABLE shop.original ({quoted} int)"),
+            format!("CREATE INDEX ix_original ON shop.original ({quoted})"),
+        ],
+    )
+    .await;
     let original = table(&*conn, "original").await;
-    let statements = MsDialect.ddl(&[SchemaChange::Create(ObjectDef::Table(copy_of(&original)))]).unwrap();
+    let statements = MsDialect
+        .ddl(&[SchemaChange::Create(ObjectDef::Table(copy_of(&original)))])
+        .unwrap();
     run(&*conn, &statements).await;
     let copied = table(&*conn, "original_copy").await;
     assert_eq!(copied.indexes[0].columns[0].expr, column_name);

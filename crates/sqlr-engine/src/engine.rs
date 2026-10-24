@@ -2258,6 +2258,8 @@ impl Shared {
             ddl_commits: dialect.ddl_commits_transaction(),
             error_aborts: dialect.error_aborts_transaction(),
             nested_begin: dialect.nested_begin_increments_depth(),
+            savepoints_replace: dialect.savepoint_names_replace(),
+            savepoint_opens: dialect.savepoint_starts_transaction(),
         };
         let (read_only, begin, elsewhere) = {
             let mut inner = self.inner.lock();

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Starts/stops the fixed services used by `make test`.
+# Starts/stops the fixed Docker services used by `make test`.
 set -eu
 
 cd "$(dirname "$0")/.."
@@ -20,26 +20,29 @@ compose() {
     "$DOCKER" compose -f docker-compose.test.yml "$@"
 }
 
-# Native servers left behind by an interrupted `make test` hold the same ports the
-# containers publish. Stop them before Docker starts instead of colliding with them.
-stop_local() {
-    if [ -d .test-services/local ]; then
-        scripts/test-services-local.sh down >/dev/null 2>&1 || true
-    fi
-}
-
-# The reverse: a previous Docker run holds the ports the native servers need.
-stop_docker() {
-    if "$DOCKER" info >/dev/null 2>&1; then
-        compose down >/dev/null 2>&1 || true
-    fi
+# SQL Server 2025 sometimes crashes while starting under x86 emulation (mssql-docker
+# issue #974); a retry starts it again instead of failing the whole suite.
+up_wait() {
+    timeout=$1
+    shift
+    attempt=1
+    while ! compose up -d --wait --wait-timeout "$timeout" "$@"; do
+        if [ "$attempt" -ge 3 ]; then
+            echo "the test services did not start after 3 attempts" >&2
+            exit 1
+        fi
+        attempt=$((attempt + 1))
+        echo "the test services failed to start; retrying (attempt $attempt)" >&2
+        sleep 2
+    done
 }
 
 # A throwaway CA and server certificate for the TLS services. The key is world-readable:
 # it only protects a database that listens on 127.0.0.1 during tests.
 certificates() {
     dir=".test-services/certs"
-    if [ -f "$dir/ca.crt" ] && [ -f "$dir/server.crt" ] && [ -f "$dir/server.key" ]; then
+    if [ -f "$dir/ca.crt" ] && [ -f "$dir/server.crt" ] && [ -f "$dir/server.key" ] &&
+        openssl x509 -checkend 3600 -noout -in "$dir/server.crt" >/dev/null 2>&1; then
         return
     fi
     mkdir -p "$dir"
@@ -74,49 +77,29 @@ EOF
     chmod 644 "$dir"/*.key "$dir"/*.crt
 }
 
-# Native processes are the default (`make test`). Docker stays available with
-# SQLR_TEST_SERVICES=docker (what `make test-docker` sets).
-case "${SQLR_TEST_SERVICES:-local}" in
-    local)
-        case "${1:-up}" in
-            up | up-core | reset) stop_docker ;;
-        esac
+case "${1:-up}" in
+    up)
         certificates
-        exec scripts/test-services-local.sh "${1:-up}"
+        up_wait 600
         ;;
-    docker)
-        case "${1:-up}" in
-            up)
-                stop_local
-                certificates
-                compose up -d --wait --wait-timeout 600
-                ;;
-            up-core)
-                stop_local
-                certificates
-                compose up -d --wait --wait-timeout 180 postgres postgres-global mysql mariadb \
-                    mysql-global mariadb-global mysql-notls mariadb-notls
-                ;;
-            down)
-                compose down
-                ;;
-            reset)
-                stop_local
-                certificates
-                compose down -v
-                compose up -d --wait --wait-timeout 600
-                ;;
-            logs)
-                compose logs -f
-                ;;
-            *)
-                echo "usage: $0 {up|up-core|down|reset|logs}" >&2
-                exit 2
-                ;;
-        esac
+    up-core)
+        certificates
+        up_wait 180 postgres postgres-global mysql mariadb \
+            mysql-global mariadb-global mysql-notls mariadb-notls
+        ;;
+    down)
+        compose down
+        ;;
+    reset)
+        certificates
+        compose down -v
+        up_wait 600
+        ;;
+    logs)
+        compose logs -f
         ;;
     *)
-        echo "SQLR_TEST_SERVICES must be 'local' or 'docker', not '$SQLR_TEST_SERVICES'" >&2
+        echo "usage: $0 {up|up-core|down|reset|logs}" >&2
         exit 2
         ;;
 esac

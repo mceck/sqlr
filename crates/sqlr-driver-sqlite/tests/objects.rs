@@ -179,7 +179,8 @@ async fn parenthesized_index_column_remains_an_identifier_when_rebuilt() {
     // its name as the constant expression (1) rejects the two distinct values.
     env.alter(&before, &after).await;
     assert_eq!(
-        env.query("SELECT \"(1)\" FROM awkward ORDER BY \"(1)\"").await,
+        env.query("SELECT \"(1)\" FROM awkward ORDER BY \"(1)\"")
+            .await,
         vec![vec![Value::Int(1)], vec![Value::Int(2)]]
     );
     let restored = env.table("awkward").await;

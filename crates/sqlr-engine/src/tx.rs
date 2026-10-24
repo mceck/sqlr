@@ -38,6 +38,9 @@ pub struct TxState {
     pub idle_timeout: bool,
     /// A statement that may modify (or a changeset) ran in the open transaction.
     pub wrote: bool,
+    /// A top-level `SAVEPOINT` started the transaction (SQLite): releasing the last
+    /// savepoint commits it.
+    pub started_by_savepoint: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,6 +81,10 @@ pub(crate) struct TxRules {
     pub error_aborts: bool,
     /// BEGIN inside an open transaction adds a level that COMMIT must remove.
     pub nested_begin: bool,
+    /// `SAVEPOINT` with an existing name replaces the old one (MySQL, MariaDB, Oracle).
+    pub savepoints_replace: bool,
+    /// A top-level `SAVEPOINT` starts a transaction by itself (SQLite).
+    pub savepoint_opens: bool,
 }
 
 pub(crate) const FAILED_COMMIT_NOTE: &str = "The failed transaction was rolled back";
@@ -134,6 +141,7 @@ impl TxState {
             last_activity_ms: now_ms,
             idle_timeout: false,
             wrote: false,
+            started_by_savepoint: false,
         }
     }
 
@@ -190,6 +198,7 @@ impl TxState {
         self.savepoints.clear();
         self.last_activity_ms = now_ms;
         self.wrote = false;
+        self.started_by_savepoint = false;
     }
 
     pub(crate) fn close(&mut self, now_ms: i64) {
@@ -200,6 +209,7 @@ impl TxState {
         self.savepoints.clear();
         self.last_activity_ms = now_ms;
         self.wrote = false;
+        self.started_by_savepoint = false;
     }
 
     /// A successful COMMIT ends only the innermost level on servers with nested BEGIN.
@@ -212,18 +222,19 @@ impl TxState {
         }
     }
 
-    /// Records a savepoint. MySQL and MariaDB replace a savepoint with the same name, so
-    /// the older one disappears from the stack.
-    pub(crate) fn savepoint(&mut self, name: String) {
-        if let Some(i) = self.savepoints.iter().position(|s| s == &name) {
+    /// Records a savepoint. MySQL, MariaDB and Oracle replace a savepoint with the same
+    /// name, so the older one disappears from the stack; PostgreSQL and SQLite keep both.
+    pub(crate) fn savepoint(&mut self, name: String, replace: bool) {
+        if replace && let Some(i) = self.savepoints.iter().rposition(|s| s == &name) {
             self.savepoints.remove(i);
         }
         self.savepoints.push(name);
     }
 
     /// Keeps only the savepoints up to and including `name` (the target of a rollback).
+    /// Duplicate names resolve to the most recent one, as PostgreSQL and SQLite do.
     pub(crate) fn rolled_back_to(&mut self, name: &str) {
-        if let Some(i) = self.savepoints.iter().position(|s| s == name) {
+        if let Some(i) = self.savepoints.iter().rposition(|s| s == name) {
             self.savepoints.truncate(i + 1);
         }
         if self.phase == TxPhase::Failed {
@@ -281,8 +292,12 @@ impl TxState {
                 was_open.then(|| RunMessage::new(MessageLevel::Info, "Transaction rolled back"))
             }
             StatementClass::Transaction(TxVerb::Savepoint(name)) => {
+                if !self.is_open() && rules.savepoint_opens {
+                    self.open(now_ms);
+                    self.started_by_savepoint = true;
+                }
                 if self.is_open() {
-                    self.savepoint(name.clone());
+                    self.savepoint(name.clone(), rules.savepoints_replace);
                 }
                 None
             }
@@ -291,8 +306,14 @@ impl TxState {
                 None
             }
             StatementClass::Transaction(TxVerb::Release(name)) => {
-                if let Some(i) = self.savepoints.iter().position(|s| s == name) {
+                // RELEASE drops the most recent savepoint with this name (an older
+                // duplicate stays valid) and every savepoint after it.
+                if let Some(i) = self.savepoints.iter().rposition(|s| s == name) {
                     self.savepoints.truncate(i);
+                }
+                // SQLite commits when the savepoint that started the transaction goes.
+                if self.started_by_savepoint && self.savepoints.is_empty() {
+                    self.close(now_ms);
                 }
                 None
             }
@@ -450,7 +471,12 @@ impl Shared {
                                 s.tx.close(now);
                                 s.tx_conn = None;
                             }
-                            TxOp::Savepoint(name) => s.tx.savepoint(name.clone()),
+                            TxOp::Savepoint(name) => {
+                                let replace = conn
+                                    .relational()
+                                    .is_some_and(|rel| rel.dialect().savepoint_names_replace());
+                                s.tx.savepoint(name.clone(), replace);
+                            }
                             TxOp::RollbackTo(name) => s.tx.rolled_back_to(name),
                             // The flag follows the server once it accepted the switch.
                             TxOp::SetReadOnly(on) => {
@@ -541,14 +567,80 @@ mod tests {
     }
 
     #[test]
-    fn a_reused_savepoint_name_replaces_the_older_one() {
+    fn a_reused_savepoint_name_replaces_the_older_one_on_mysql() {
+        let mut tx = TxState::new(CommitMode::Auto, false, 0);
+        let rules = TxRules {
+            savepoints_replace: true,
+            ..TxRules::default()
+        };
+        tx.after_success(&class("begin"), rules, 1);
+        for sql in ["savepoint a", "savepoint b", "savepoint a"] {
+            tx.after_success(&class(sql), rules, 2);
+        }
+        assert_eq!(tx.savepoints, ["b", "a"]);
+    }
+
+    #[test]
+    fn postgres_keeps_savepoints_with_the_same_name() {
         let mut tx = TxState::new(CommitMode::Auto, false, 0);
         let rules = TxRules::default();
         tx.after_success(&class("begin"), rules, 1);
         for sql in ["savepoint a", "savepoint b", "savepoint a"] {
             tx.after_success(&class(sql), rules, 2);
         }
-        assert_eq!(tx.savepoints, ["b", "a"]);
+        assert_eq!(tx.savepoints, ["a", "b", "a"]);
+    }
+
+    #[test]
+    fn duplicate_savepoints_resolve_to_the_most_recent_one() {
+        let mut tx = TxState::new(CommitMode::Auto, false, 0);
+        let rules = TxRules::default();
+        tx.after_success(&class("begin"), rules, 1);
+        for sql in ["savepoint a", "savepoint a", "savepoint b"] {
+            tx.after_success(&class(sql), rules, 2);
+        }
+        tx.after_success(&class("rollback to savepoint a"), rules, 3);
+        assert_eq!(tx.savepoints, ["a", "a"]);
+        tx.after_success(&class("release savepoint a"), rules, 4);
+        assert_eq!(tx.savepoints, ["a"]);
+    }
+
+    #[test]
+    fn a_top_level_savepoint_opens_and_its_release_commits() {
+        let mut tx = TxState::new(CommitMode::Auto, false, 0);
+        let rules = TxRules {
+            savepoint_opens: true,
+            ..TxRules::default()
+        };
+        tx.after_success(&class("savepoint outermost"), rules, 1);
+        assert_eq!(tx.phase, TxPhase::Open);
+        assert!(tx.started_by_savepoint);
+        tx.after_success(&class("savepoint inner"), rules, 2);
+        tx.after_success(&class("release savepoint inner"), rules, 3);
+        assert_eq!(tx.phase, TxPhase::Open);
+        tx.after_success(&class("release savepoint outermost"), rules, 4);
+        assert_eq!(tx.phase, TxPhase::Idle);
+        assert!(tx.savepoints.is_empty());
+    }
+
+    #[test]
+    fn releasing_the_last_savepoint_keeps_an_explicit_transaction_open() {
+        let mut tx = TxState::new(CommitMode::Auto, false, 0);
+        let rules = TxRules {
+            savepoint_opens: true,
+            ..TxRules::default()
+        };
+        tx.after_success(&class("begin"), rules, 1);
+        tx.after_success(&class("savepoint a"), rules, 2);
+        tx.after_success(&class("release savepoint a"), rules, 3);
+        assert_eq!(tx.phase, TxPhase::Open);
+    }
+
+    #[test]
+    fn a_top_level_savepoint_does_not_open_where_the_server_ignores_it() {
+        let mut tx = TxState::new(CommitMode::Auto, false, 0);
+        tx.after_success(&class("savepoint a"), TxRules::default(), 1);
+        assert_eq!(tx.phase, TxPhase::Idle);
     }
 
     #[test]

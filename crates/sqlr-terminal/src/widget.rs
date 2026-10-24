@@ -303,8 +303,7 @@ impl TerminalPanel {
                 if close.clicked() {
                     actions.push(TerminalAction::Close);
                 }
-                let restart =
-                    egui::RichText::new(theme.restart_icon).font(theme.icon_font.clone());
+                let restart = egui::RichText::new(theme.restart_icon).font(theme.icon_font.clone());
                 let restart = ui
                     .add(egui::Button::new(restart).small())
                     .on_hover_text("Restart the shell");
@@ -399,9 +398,6 @@ impl TerminalPanel {
                 session.resize(rows, cols);
             }
         }
-        let Some(session) = self.session.as_ref() else {
-            return;
-        };
         if self.focus_next {
             self.focus_next = false;
             ui.memory_mut(|m| m.request_focus(response.id));
@@ -428,6 +424,10 @@ impl TerminalPanel {
                 );
             });
         }
+        // The canvas owns the keyboard while the shell starts too.
+        let Some(session) = self.session.as_ref() else {
+            return;
+        };
         // The wheel belongs to the application when it enabled mouse reports; a full-screen
         // application without them gets arrow keys; otherwise it moves the scrollback.
         let mut snapshot = session.snapshot(self.scroll);

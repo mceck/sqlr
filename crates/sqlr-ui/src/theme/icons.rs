@@ -26,6 +26,11 @@ pub const PROCEDURE: &str = ph::GEAR_SIX;
 pub const TRIGGER: &str = ph::LIGHTNING_A;
 pub const CARET_RIGHT: &str = ph::CARET_RIGHT;
 pub const CARET_DOWN: &str = ph::CARET_DOWN;
+/// Connection state marks: a checked circle while live, a ring while offline, a half circle
+/// while connecting.
+pub const CONNECTED: &str = ph::CHECK_CIRCLE;
+pub const DISCONNECTED: &str = ph::CIRCLE;
+pub const CONNECTING: &str = ph::CIRCLE_HALF;
 // Toolbar.
 pub const RUN: &str = ph::PLAY;
 pub const RUN_SCRIPT: &str = ph::PLAY_CIRCLE;

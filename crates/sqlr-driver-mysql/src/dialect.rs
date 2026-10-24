@@ -182,6 +182,10 @@ impl Dialect for MyDialect {
         true
     }
 
+    fn savepoint_names_replace(&self) -> bool {
+        true
+    }
+
     /// A backslash is an escape character in MySQL string literals unless the session runs
     /// with `NO_BACKSLASH_ESCAPES`. Text holding one is written as a hex literal with a
     /// `utf8mb4` introducer, which reads the same in both modes; other text is quoted.

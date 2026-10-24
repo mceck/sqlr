@@ -235,6 +235,15 @@ pub trait Dialect: Send + Sync {
     fn nested_begin_increments_depth(&self) -> bool {
         false
     }
+    /// Whether `SAVEPOINT` with an existing name replaces the old one instead of nesting a
+    /// second savepoint with the same name (MySQL, MariaDB, Oracle).
+    fn savepoint_names_replace(&self) -> bool {
+        false
+    }
+    /// Whether a top-level `SAVEPOINT` starts a transaction by itself (SQLite).
+    fn savepoint_starts_transaction(&self) -> bool {
+        false
+    }
     fn savepoint_sql(&self, name: &str) -> String {
         format!("SAVEPOINT {}", self.quote_ident(name))
     }

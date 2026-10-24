@@ -789,6 +789,7 @@ mod tests {
             last_activity_ms: 0,
             idle_timeout: false,
             wrote: false,
+            started_by_savepoint: false,
         }
     }
 
