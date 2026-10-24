@@ -548,6 +548,11 @@ pub enum TabCommand {
     RequestClose(u64),
     /// The breadcrumb's connection or database: select the tab's connection in the explorer.
     RevealConnection(u64),
+    /// Selects the database used by this query tab.
+    ChangeDatabase {
+        tab: u64,
+        database: String,
+    },
     Add,
     /// A change from a Redis tab.
     Redis {
@@ -596,6 +601,8 @@ pub struct Viewer<'a> {
     /// The grids' display formats, per connection.
     pub formats: &'a crate::prefs::Formats,
     pub show_value_panel: bool,
+    /// Failed statements are included in the error panel's copied details.
+    pub include_sql: bool,
     /// The keys of each leaf's active tab (their titles are underlined).
     pub active: HashSet<u64>,
     pub palette: Palette,
@@ -768,8 +775,10 @@ impl egui_dock::TabViewer for Viewer<'_> {
                 let cfg = conn.and_then(|c| self.connections.iter().find(|x| x.id == c));
                 let name = cfg.map(|c| c.name.as_str());
                 let mode = cfg.map(|c| crate::app::profile_of(self.profiles, c).commit_mode);
-                if crate::shell::tab_breadcrumb(ui, self.engine, tab, name, mode) {
-                    self.commands.push(TabCommand::RevealConnection(tab.key));
+                if let Some(command) =
+                    crate::shell::tab_breadcrumb(ui, self.engine, tab, name, mode)
+                {
+                    self.commands.push(command);
                 }
             });
         // The results get the larger share by default; the editor can still be dragged
@@ -794,6 +803,8 @@ impl egui_dock::TabViewer for Viewer<'_> {
             dialect: dialect.map(|d| &**d),
             editable: tab.conn.as_ref().is_some_and(|c| self.editable.contains(c)),
             explain: tab.conn.as_ref().is_some_and(|c| self.explain.contains(c)),
+            connections: self.connections,
+            include_sql: self.include_sql,
             commands: &mut self.commands,
         };
         run_view(ui, tab, &mut cx);
@@ -852,6 +863,8 @@ impl Viewer<'_> {
             dialect: dialect.map(|d| &**d),
             editable: self.editable.contains(&conn),
             explain: false,
+            connections: self.connections,
+            include_sql: self.include_sql,
             commands: &mut self.commands,
         };
         match &tab.run {
@@ -887,6 +900,10 @@ pub(crate) struct ViewCx<'a> {
     pub editable: bool,
     /// The tab connection's driver produces query plans.
     pub explain: bool,
+    /// Saved connections, for the names the error details carry.
+    pub connections: &'a [ConnectionConfig],
+    /// Whether failed statements are copied with their details.
+    pub include_sql: bool,
     pub commands: &'a mut Vec<TabCommand>,
 }
 
@@ -1294,7 +1311,24 @@ fn result_view(
     match &r.status {
         QueryStatus::Failed(e) => {
             let at = tab.error_at(statement);
-            error_panel(ui, e, at);
+            let connection = tab.conn.as_deref().map(|id| {
+                cx.connections
+                    .iter()
+                    .find(|connection| connection.id == id)
+                    .map_or_else(
+                        || id.to_string(),
+                        |connection| format!("{} ({id})", connection.name),
+                    )
+            });
+            let details = ErrorDetails {
+                error: e,
+                at,
+                connection,
+                database: r.database.as_deref(),
+                sql: cx.include_sql.then_some(r.sql.as_str()),
+                elapsed_ms: r.elapsed.as_millis() as u64,
+            };
+            error_panel(ui, &details);
         }
         status => {
             if let Some(n) = r.affected {
@@ -1374,15 +1408,55 @@ fn hint(ui: &mut egui::Ui, text: &str) {
     });
 }
 
-/// `at` is the 1-based line and column of the error position, in the editor's buffer.
-fn error_panel(ui: &mut egui::Ui, e: &DriverError, at: Option<(usize, usize)>) {
+/// The error with everything needed to copy a useful report.
+struct ErrorDetails<'a> {
+    error: &'a DriverError,
+    at: Option<(usize, usize)>,
+    connection: Option<String>,
+    database: Option<&'a str>,
+    sql: Option<&'a str>,
+    elapsed_ms: u64,
+}
+
+impl ErrorDetails<'_> {
+    /// The text **Copy details** puts on the clipboard.
+    fn text(&self) -> String {
+        let mut out = format!("Error: {}\n", self.error.message);
+        if let Some(hint) = &self.error.hint {
+            out.push_str(&format!("Hint: {hint}\n"));
+        }
+        if let Some(connection) = &self.connection {
+            out.push_str(&format!("Connection: {connection}\n"));
+        }
+        if let Some(database) = self.database {
+            out.push_str(&format!("Database: {database}\n"));
+        }
+        if let Some((line, column)) = self.at {
+            out.push_str(&format!("At: line {line}, column {column}\n"));
+        }
+        if let Some(sql) = self.sql {
+            out.push_str(&format!(
+                "Statement: {}\n",
+                crate::logging::truncate_sql(sql).0
+            ));
+        }
+        out.push_str(&format!("Elapsed: {} ms", self.elapsed_ms));
+        out
+    }
+}
+
+/// `details.at` is the 1-based line and column of the error position, in the editor's buffer.
+fn error_panel(ui: &mut egui::Ui, details: &ErrorDetails<'_>) {
     ui.add_space(Spacing::M);
-    ui.colored_label(theme::palette(ui.ctx()).error, &e.message);
-    if let Some(hint) = &e.hint {
+    ui.colored_label(theme::palette(ui.ctx()).error, &details.error.message);
+    if let Some(hint) = &details.error.hint {
         ui.label(format!("Hint: {hint}"));
     }
-    if let Some((line, column)) = at {
+    if let Some((line, column)) = details.at {
         ui.label(format!("at line {line}, column {column}"));
+    }
+    if ui.button("Copy details").clicked() {
+        ui.ctx().copy_text(details.text());
     }
 }
 
@@ -1656,6 +1730,49 @@ mod tests {
     use sqlr_engine::DriverRegistry;
 
     #[test]
+    fn copy_error_details_reaches_the_clipboard_with_context() {
+        use egui_kittest::kittest::Queryable;
+        let mut error = DriverError::new(sqlr_core::ErrorKind::Syntax, "syntax error");
+        error.hint = Some("check FROM".into());
+        let mut h = egui_kittest::Harness::builder().build_ui(move |ui| {
+            error_panel(
+                ui,
+                &ErrorDetails {
+                    error: &error,
+                    at: Some((2, 3)),
+                    connection: Some("local".into()),
+                    database: Some("app"),
+                    sql: Some("select bad"),
+                    elapsed_ms: 17,
+                },
+            );
+        });
+        h.run_steps(2);
+        h.get_by_label("Copy details").click();
+        let mut copied = None;
+        for _ in 0..5 {
+            h.step();
+            for command in &h.output().platform_output.commands {
+                if let egui::OutputCommand::CopyText(text) = command {
+                    copied = Some(text.clone());
+                }
+            }
+        }
+        let text = copied.expect("the clipboard command");
+        for expected in [
+            "syntax error",
+            "check FROM",
+            "local",
+            "app",
+            "select bad",
+            "17 ms",
+            "line 2, column 3",
+        ] {
+            assert!(text.contains(expected), "{text}");
+        }
+    }
+
+    #[test]
     fn line_col_uses_buffer_coordinates() {
         let tab = QueryTab::new(1, "t".into(), None, "é\r\nü x", SqlSyntax::ansi(), 500);
         assert_eq!(tab.line_col(0), (1, 1));
@@ -1890,6 +2007,8 @@ mod tests {
                 startup_notice: None,
                 storage_warning: None,
                 mcp_token_store: None,
+                diagnostics: None,
+                diagnostics_warning: None,
             },
             &egui::Context::default(),
         )

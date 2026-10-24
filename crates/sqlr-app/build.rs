@@ -15,6 +15,31 @@ fn ld_knows_flag() -> bool {
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    // The short commit is embedded when the build happens in a git checkout; it is omitted
+    // otherwise instead of being guessed.
+    let commit = Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .filter(|commit| !commit.is_empty());
+    if let Some(commit) = commit {
+        println!("cargo:rustc-env=SQLR_GIT_COMMIT={commit}");
+    }
+    println!(
+        "cargo:rustc-env=SQLR_PROFILE={}",
+        std::env::var("PROFILE").unwrap_or_default()
+    );
+    println!(
+        "cargo:rustc-env=SQLR_TARGET={}",
+        std::env::var("TARGET").unwrap_or_default()
+    );
+    println!("cargo:rerun-if-changed=../../.git/HEAD");
+    println!("cargo:rerun-if-changed=../../.git/refs/heads");
+    if std::path::Path::new("../../.git/packed-refs").exists() {
+        println!("cargo:rerun-if-changed=../../.git/packed-refs");
+    }
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") && ld_knows_flag() {
         println!("cargo:rustc-link-arg=-Wl,-no_warn_eh_frame_too_large");
     }

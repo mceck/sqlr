@@ -18,6 +18,16 @@ const MAX_CRUMB: f32 = 220.0;
 /// `crumbs` separated by `›`, with `right` in muted text at the right edge. Segments are
 /// cut with an ellipsis when the strip is narrow. Returns the index of a clicked segment.
 pub fn breadcrumb(ui: &mut egui::Ui, crumbs: &[Crumb], right: &str) -> Option<usize> {
+    breadcrumb_with_response(ui, crumbs, right, |_, _, _| {})
+}
+
+/// Like [`breadcrumb`], with access to each segment's response for anchored menus.
+pub fn breadcrumb_with_response(
+    ui: &mut egui::Ui,
+    crumbs: &[Crumb],
+    right: &str,
+    mut segment: impl FnMut(&mut egui::Ui, usize, &egui::Response),
+) -> Option<usize> {
     let p = theme::palette(ui.ctx());
     let mut clicked = None;
     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -52,6 +62,7 @@ pub fn breadcrumb(ui: &mut egui::Ui, crumbs: &[Crumb], right: &str) -> Option<us
                 if response.clicked() {
                     clicked = Some(i);
                 }
+                segment(ui, i, &response);
             }
         });
     });

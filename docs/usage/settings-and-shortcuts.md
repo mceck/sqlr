@@ -108,11 +108,12 @@ In Settings, open Keymap. The Keymap section lists every command with its keys a
 | Installed drivers | `drivers/<id>/<version>/` in the data directory |
 | Passwords, SSH secrets and MCP token | encrypted `secrets.vault` in the config directory; the OS keychain holds its encryption key under service `sqlr` |
 | History and snippets | `sqlr.db` in the data directory |
-| Logs | `logs/sqlr.log.<date>` in the data directory |
+| Logs (newest fourteen daily files) | `logs/sqlr.log.<date>` in the data directory |
+| Local incidents (twenty files or thirty days) | `diagnostics/<incident-id>.json` in the data directory |
 
 On macOS, both directories are inside `~/Library/Application Support/dev.sqlr.sqlr/`. On Linux, the config directory is `~/.config/sqlr/` and the data directory is `~/.local/share/sqlr/`. Use `--config-dir` and `--data-dir` to put them somewhere else.
 
-The log level follows the `RUST_LOG` environment variable and defaults to `info`. Passwords are kept out of logs.
+Help → Diagnostics lets you select a log level for this session; it resets to `info` on restart. `RUST_LOG` takes precedence. General preferences and Diagnostics share **Include SQL in logs and reports** (`diagnostics.include_sql`, global only, default true). See [Troubleshooting](troubleshooting.md) for privacy, retention and sharing reports.
 
 ## Performance you can count on
 

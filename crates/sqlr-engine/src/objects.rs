@@ -215,7 +215,7 @@ impl Engine {
             None => shared.jobs.finish(id, JobOutcome::Failed(not_connected())),
             Some(io) => {
                 let task = shared.clone().run_load(job, conn.to_string(), io, object);
-                shared.send(Command::Spawn(Box::pin(task)));
+                shared.send(Command::job(id, Some(conn.to_string()), task));
             }
         }
         shared.repaint();
@@ -242,7 +242,7 @@ impl Engine {
             None => shared.jobs.finish(id, JobOutcome::Failed(not_connected())),
             Some(io) => {
                 let task = shared.clone().run_load_ddl(job, key.clone(), io, node);
-                shared.send(Command::Spawn(Box::pin(task)));
+                shared.send(Command::job(id, Some(key.conn.clone()), task));
             }
         }
         shared.repaint();
@@ -282,7 +282,7 @@ impl Engine {
                         statements,
                         options,
                     );
-                    shared.send(Command::Spawn(Box::pin(task)));
+                    shared.send(Command::job(id, Some(key.conn.clone()), task));
                 }
             }
         }

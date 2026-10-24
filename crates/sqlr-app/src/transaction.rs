@@ -681,6 +681,8 @@ mod tests {
             startup_notice: None,
             storage_warning: None,
             mcp_token_store: None,
+            diagnostics: None,
+            diagnostics_warning: None,
         };
         let mut app = SqlrApp::new(deps, &egui::Context::default());
         let key = app.new_tab(None, Some("c1".into()), "select 1");
@@ -722,6 +724,8 @@ mod tests {
             startup_notice: None,
             storage_warning: None,
             mcp_token_store: None,
+            diagnostics: None,
+            diagnostics_warning: None,
         };
         (SqlrApp::new(deps, &egui::Context::default()), dir)
     }

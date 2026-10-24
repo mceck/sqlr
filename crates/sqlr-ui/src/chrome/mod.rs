@@ -8,7 +8,7 @@ mod empty;
 mod status;
 mod toast;
 
-pub use breadcrumb::{Crumb, breadcrumb};
+pub use breadcrumb::{Crumb, breadcrumb, breadcrumb_with_response};
 pub use button::tool_button;
 pub use chip::{ChipAction, ChipItem, ChipState, connection_chip};
 pub use empty::empty_state;

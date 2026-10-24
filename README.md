@@ -153,9 +153,10 @@ Editor performance budgets: `cargo run --release -p sqlr-ui --example editor_mea
 | Installed drivers | `drivers/<id>/<version>/` in the data directory |
 | Secrets (passwords, SSH secrets, MCP token) | encrypted `secrets.vault` in the config directory; its encryption key lives in the OS keychain, service `sqlr` |
 | History, snippets | `sqlr.db` in the data directory |
-| Logs | `logs/sqlr.log.<date>` |
+| Logs (newest fourteen daily files) | `logs/sqlr.log.<date>` in the data directory |
+| Local incidents (twenty files or thirty days) | `diagnostics/<incident-id>.json` in the data directory |
 
-MacOS: both under `~/Library/Application Support/dev.sqlr.sqlr/`. Linux: `~/.config/sqlr/` and `~/.local/share/sqlr/`. `RUST_LOG` sets the log level (default `info`).
+MacOS: both under `~/Library/Application Support/dev.sqlr.sqlr/`. Linux: `~/.config/sqlr/` and `~/.local/share/sqlr/`. Help → Diagnostics shows local reports and a session-only log level (default `info`); `RUST_LOG` takes precedence. See [Troubleshooting](docs/usage/troubleshooting.md) for reports, bundles and SQL privacy.
 
 ## License
 

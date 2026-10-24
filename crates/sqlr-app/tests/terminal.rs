@@ -55,6 +55,8 @@ fn app_with_terminal_settings(dir: &std::path::Path, shell: &str, cwd: &str) -> 
         mcp_token_store: Some(Arc::new(sqlr_store::MemoryMcpTokenStore::with_token(
             "terminal-test-token",
         ))),
+        diagnostics: None,
+        diagnostics_warning: None,
     };
     SqlrApp::new(deps, &egui::Context::default())
 }

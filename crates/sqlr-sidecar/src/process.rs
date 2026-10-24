@@ -64,6 +64,7 @@ pub(crate) struct Process {
     pending: Mutex<HashMap<u64, mpsc::UnboundedSender<Event>>>,
     out: mpsc::UnboundedSender<Vec<u8>>,
     alive: AtomicBool,
+    stopping: AtomicBool,
     reason: Mutex<Option<DriverError>>,
     kill: Mutex<Option<oneshot::Sender<()>>>,
     conns: AtomicUsize,
@@ -156,6 +157,12 @@ impl Process {
             .kill_on_drop(true)
             .spawn()
             .map_err(|e| {
+                tracing::warn!(
+                    target: "sqlr_sidecar::process",
+                    driver = %spec.id,
+                    error = %e,
+                    "cannot start driver"
+                );
                 DriverError::new(
                     ErrorKind::Connection,
                     format!(
@@ -176,6 +183,7 @@ impl Process {
             pending: Mutex::default(),
             out,
             alive: AtomicBool::new(true),
+            stopping: AtomicBool::new(false),
             reason: Mutex::new(None),
             kill: Mutex::new(Some(kill_tx)),
             conns: AtomicUsize::new(0),
@@ -198,7 +206,7 @@ impl Process {
         tokio::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                tracing::info!(target: "sqlr_sidecar::driver", "[{id}] {line}");
+                tracing::info!(target: "sqlr_sidecar::driver", driver = %id, "{line}");
             }
         });
         // Reader: answers from the child's stdout.
@@ -213,6 +221,14 @@ impl Process {
                                 reader.deliver(frame.id, Event::Control(Box::new(response)));
                             }
                             Err(e) => {
+                                tracing::error!(
+                                    target: "sqlr_sidecar::process",
+                                    incident = "sidecar_crash",
+                                    driver = %reader.id,
+                                    error_kind = "Protocol",
+                                    error = %e,
+                                    "driver sent a malformed message"
+                                );
                                 reader.kill(protocol_error(format!(
                                     "driver {} sent a malformed message: {e}",
                                     reader.id
@@ -223,11 +239,15 @@ impl Process {
                         CHUNK => reader.deliver(frame.id, Event::Chunk(frame.payload)),
                         LOG => tracing::info!(
                             target: "sqlr_sidecar::driver",
-                            "[{}] {}",
-                            reader.id,
+                            driver = %reader.id,
+                            "{}",
                             String::from_utf8_lossy(&frame.payload)
                         ),
-                        DOC_CHUNK => tracing::warn!("[{}] document chunk ignored", reader.id),
+                        DOC_CHUNK => tracing::warn!(
+                            target: "sqlr_sidecar::driver",
+                            driver = %reader.id,
+                            "document chunk ignored"
+                        ),
                         _ => {}
                     },
                     Ok(None) => {
@@ -238,6 +258,14 @@ impl Process {
                         break;
                     }
                     Err(e) => {
+                        tracing::error!(
+                            target: "sqlr_sidecar::process",
+                            incident = "sidecar_crash",
+                            driver = %reader.id,
+                            error_kind = "Protocol",
+                            error = %e,
+                            "driver broke the protocol"
+                        );
                         reader.kill(protocol_error(format!(
                             "driver {} broke the protocol: {e}",
                             reader.id
@@ -253,6 +281,16 @@ impl Process {
             tokio::select! {
                 status = child.wait() => {
                     let how = status.map_or_else(|e| e.to_string(), |s| s.to_string());
+                    if !waiter.stopping.load(Ordering::Acquire) {
+                    tracing::error!(
+                        target: "sqlr_sidecar::process",
+                        incident = "sidecar_crash",
+                        driver = %waiter.id,
+                        error_kind = "Protocol",
+                        reason = %how,
+                        "driver process exited"
+                    );
+                    }
                     waiter.fail_all(protocol_error(format!(
                         "driver {} exited unexpectedly ({how})", waiter.id
                     )));
@@ -280,6 +318,14 @@ impl Process {
                         spec.id, spec.handshake_timeout
                     ),
                 );
+                tracing::error!(
+                    target: "sqlr_sidecar::process",
+                    incident = "sidecar_crash",
+                    driver = %spec.id,
+                    error_kind = "Timeout",
+                    error = %e.message,
+                    "driver handshake failed"
+                );
                 process.kill(e.clone());
                 return Err(e);
             }
@@ -288,10 +334,26 @@ impl Process {
             Ok(Response::Welcome { protocol, manifest }) => (protocol, manifest),
             Ok(other) => {
                 let e = protocol_error(format!("driver {} answered Hello with {other:?}", spec.id));
+                tracing::error!(
+                    target: "sqlr_sidecar::process",
+                    incident = "sidecar_crash",
+                    driver = %spec.id,
+                    error_kind = "Protocol",
+                    error = %e.message,
+                    "driver handshake failed"
+                );
                 process.kill(e.clone());
                 return Err(e);
             }
             Err(e) => {
+                tracing::error!(
+                    target: "sqlr_sidecar::process",
+                    incident = "sidecar_crash",
+                    driver = %spec.id,
+                    error_kind = "Protocol",
+                    error = %e.message,
+                    "driver handshake failed"
+                );
                 process.kill(e.clone());
                 return Err(e);
             }
@@ -301,10 +363,24 @@ impl Process {
                 "Driver {} speaks protocol {protocol}, sqlr speaks {PROTOCOL}",
                 spec.id
             ));
+            tracing::error!(
+                target: "sqlr_sidecar::process",
+                incident = "sidecar_crash",
+                driver = %spec.id,
+                error_kind = "Protocol",
+                error = %e.message,
+                "driver handshake failed"
+            );
             process.kill(e.clone());
             return Err(e);
         }
         startup.complete();
+        tracing::info!(
+            target: "sqlr_sidecar::process",
+            driver = %spec.id,
+            version = %spec.version,
+            "driver started"
+        );
         Ok((process, manifest))
     }
 
@@ -350,6 +426,8 @@ impl Process {
 
     /// Kills the process; its requests fail with `error`.
     pub(crate) fn kill(&self, error: DriverError) {
+        self.stopping.store(true, Ordering::Release);
+        tracing::info!(target: "sqlr_sidecar::process", driver = %self.id, reason = %error.message, "stopping driver process");
         self.fail_all(error);
         if let Some(tx) = self.kill.lock().take() {
             let _ = tx.send(());
@@ -422,10 +500,16 @@ impl Process {
 
     /// Asks the driver to exit, then makes sure it did.
     pub(crate) async fn shutdown(self: &Arc<Self>) {
+        self.stopping.store(true, Ordering::Release);
         if self.alive() {
             let _ = tokio::time::timeout(Duration::from_millis(500), self.call(&Request::Shutdown))
                 .await;
         }
+        tracing::info!(
+            target: "sqlr_sidecar::process",
+            driver = %self.id,
+            "driver stopped"
+        );
         self.kill(protocol_error(format!("driver {} was stopped", self.id)));
     }
 }

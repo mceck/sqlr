@@ -413,9 +413,18 @@ impl AgentsUi {
         token_store: Arc<dyn McpTokenStore>,
         repaint: Arc<dyn Fn() + Send + Sync>,
     ) {
-        if let Some(receiver) = &self.start
-            && let Ok(result) = receiver.try_recv()
-        {
+        let result = self
+            .start
+            .as_ref()
+            .and_then(|receiver| match receiver.try_recv() {
+                Ok(result) => Some(result),
+                Err(mpsc::TryRecvError::Empty) => None,
+                Err(mpsc::TryRecvError::Disconnected) => Some(Err((
+                    McpStatus::Error,
+                    "internal panic: MCP startup worker stopped".into(),
+                ))),
+            });
+        if let Some(result) = result {
             self.start = None;
             match result {
                 Ok(running) => {
@@ -1274,6 +1283,8 @@ mod tests {
                 startup_notice: None,
                 storage_warning: None,
                 mcp_token_store: None,
+                diagnostics: None,
+                diagnostics_warning: None,
             },
             &egui::Context::default(),
         )
@@ -1448,6 +1459,8 @@ mod tests {
                 startup_notice: None,
                 storage_warning: None,
                 mcp_token_store: None,
+                diagnostics: None,
+                diagnostics_warning: None,
             },
             &ctx,
         );
@@ -1489,6 +1502,8 @@ mod tests {
                 startup_notice: None,
                 storage_warning: None,
                 mcp_token_store: None,
+                diagnostics: None,
+                diagnostics_warning: None,
             },
             &ctx,
         );

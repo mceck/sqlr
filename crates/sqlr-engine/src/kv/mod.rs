@@ -380,7 +380,7 @@ impl Shared {
         let id = job.id;
         let shared = self.clone();
         let task = work(shared.clone(), job);
-        self.send(Command::Spawn(Box::pin(async move {
+        self.send(Command::job(id, None, async move {
             let outcome = match task.await {
                 Ok(()) => JobOutcome::Done,
                 Err(e) if e.kind == ErrorKind::Cancelled => JobOutcome::Cancelled,
@@ -388,7 +388,7 @@ impl Shared {
             };
             shared.jobs.finish(id, outcome);
             shared.kv.retire(&shared.jobs, id);
-        })));
+        }));
         id
     }
 

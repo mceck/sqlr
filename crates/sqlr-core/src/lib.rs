@@ -32,6 +32,7 @@ pub mod library;
 pub mod manifest;
 pub mod mongo_shell;
 pub mod node;
+pub mod panic_scope;
 pub mod plan;
 pub mod profile;
 pub mod read;

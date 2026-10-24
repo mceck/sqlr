@@ -238,6 +238,13 @@ impl ServerHandler for McpService {
             self.state.register_session(&session_id, &name, &version);
         }
         let tool_ctx = self.state.context(&session_id);
+        let conn = request
+            .arguments
+            .as_ref()
+            .and_then(|args| args.get("connection").or_else(|| args.get("conn")))
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned);
+        let span = tracing::info_span!("mcp_tool", tool = %request.name, conn = conn.as_deref());
         let started = std::time::Instant::now();
         self.state.begin_call(&session_id);
         let outcome = crate::tools::call(
@@ -245,8 +252,8 @@ impl ServerHandler for McpService {
             &tool_ctx,
             request.name.as_ref(),
             request.arguments.as_ref(),
-        )
-        .await;
+        );
+        let outcome = tracing::Instrument::instrument(outcome, span).await;
         self.state.end_call(&session_id);
         let ok = outcome.is_ok();
         let error_code = outcome.as_ref().err().map(|error| error.code);
@@ -255,6 +262,7 @@ impl ServerHandler for McpService {
             client = %tool_ctx.client_label(),
             session = %session_id,
             tool = %request.name,
+            conn = conn.as_deref(),
             ok,
             error = ?error_code,
             ms = started.elapsed().as_millis() as u64,

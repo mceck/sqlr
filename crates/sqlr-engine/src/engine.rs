@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use futures_util::FutureExt as _;
 use parking_lot::{Mutex, RwLock};
 use sqlr_core::{
     CancelHandle, CatalogNeed, Changeset, CommitMode, Connection, ConnectionConfig,
@@ -79,6 +80,16 @@ pub(crate) enum Command {
     },
     /// Runs a task on the runtime (object loads and DDL applies, `crate::objects`).
     Spawn(std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>),
+    JobTask {
+        id: JobId,
+        conn: Option<String>,
+        task: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
+    },
+    DocTask {
+        q: QueryId,
+        conn: String,
+        task: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>,
+    },
     Execute {
         q: QueryId,
         ticket: u64,
@@ -136,6 +147,31 @@ pub(crate) enum Command {
     },
 }
 
+impl Command {
+    pub(crate) fn job(
+        id: JobId,
+        conn: Option<String>,
+        task: impl std::future::Future<Output = ()> + Send + 'static,
+    ) -> Self {
+        Self::JobTask {
+            id,
+            conn,
+            task: Box::pin(task),
+        }
+    }
+    pub(crate) fn document(
+        q: QueryId,
+        conn: String,
+        task: impl std::future::Future<Output = ()> + Send + 'static,
+    ) -> Self {
+        Self::DocTask {
+            q,
+            conn,
+            task: Box::pin(task),
+        }
+    }
+}
+
 impl Engine {
     /// An engine on an in-memory `sqlr.db`: nothing outlives it.
     pub fn new(drivers: DriverRegistry, repaint: Repaint) -> Self {
@@ -164,6 +200,7 @@ impl Engine {
             repaint,
             per_tab: AtomicBool::new(true),
             connect_timeout_s: AtomicU64::new(15),
+            include_sql: AtomicBool::new(true),
             row_cap: AtomicUsize::new(DEFAULT_ROW_CAP),
             result_byte_cap: AtomicUsize::new(DEFAULT_RESULT_BYTES),
             result_budget: crate::result_memory::ResultBudget::new(DEFAULT_TOTAL_RESULT_BYTES),
@@ -197,8 +234,42 @@ impl Engine {
                     .expect("build the engine runtime");
                 rt.block_on(async move {
                     let db_worker = tokio::spawn(run_db_worker(worker.clone(), db, db_jobs));
+                    let mut next_run = 0_u64;
                     while let Some(cmd) = rx.recv().await {
-                        tokio::spawn(worker.clone().handle(cmd));
+                        next_run += 1;
+                        let run = next_run;
+                        let context = CommandContext::of(&worker, &cmd);
+                        if let Some(job) = context.job_id {
+                            worker.jobs.bind(JobId(job), run, context.conn.clone());
+                        }
+                        let span = tracing::info_span!(
+                            "operation",
+                            op = context.op,
+                            conn = context.conn.as_deref(),
+                            driver = context.driver.as_deref(),
+                            database = context.database.as_deref(),
+                            query_id = context.query_id,
+                            job_id = context.job_id,
+                            operation_id = context
+                                .job_id
+                                .and_then(|id| worker.jobs.operation(JobId(id)))
+                                .map(|id| id.0),
+                        );
+                        let task = crate::operations::EngineTask(
+                            std::panic::AssertUnwindSafe(
+                                crate::operations::RUN.scope(run, worker.clone().handle(cmd)),
+                            )
+                            .catch_unwind(),
+                        );
+                        let supervisor = worker.clone();
+                        tokio::spawn(tracing::Instrument::instrument(
+                            async move {
+                                if let Err(payload) = task.await {
+                                    supervisor.report_command_panic(run, context, payload);
+                                }
+                            },
+                            span,
+                        ));
                     }
                     // Writes already queued still reach the file.
                     worker.db.close();
@@ -242,6 +313,16 @@ impl Engine {
         self.shared
             .connect_timeout_s
             .store(u64::from(seconds.max(1)), Ordering::Relaxed);
+    }
+
+    /// Whether failed statements are included in failure log lines. The application's one
+    /// diagnostic setting controls this and incident bundles alike.
+    pub fn set_include_sql(&self, include: bool) {
+        self.shared.include_sql.store(include, Ordering::Relaxed);
+    }
+
+    pub fn include_sql(&self) -> bool {
+        self.shared.include_sql.load(Ordering::Relaxed)
     }
 
     /// Where SSH host keys are recorded; without one they are remembered for the engine's
@@ -389,6 +470,12 @@ impl Engine {
             inner.tables.retain(|(conn, _), _| conn != conn_id);
         }
         self.shared.repaint();
+        tracing::info!(
+            target: "sqlr_engine::session",
+            op = "disconnect",
+            conn = conn_id,
+            "disconnected"
+        );
     }
 
     /// The status of the connection's explorer session.
@@ -455,6 +542,13 @@ impl Engine {
             }
         }
         self.shared.repaint();
+        tracing::info!(
+            target: "sqlr_engine::session",
+            op = "close_session",
+            conn = key.conn,
+            slot = ?key.slot,
+            "session closed"
+        );
     }
 
     /// The engine session key for an MCP agent (`agent_id` is the MCP session id) on
@@ -1521,6 +1615,114 @@ enum PageEnd {
     Failed(DriverError),
 }
 
+/// The context a command task's span and an `engine_panic` incident carry.
+#[derive(Clone, Default)]
+struct CommandContext {
+    op: &'static str,
+    conn: Option<String>,
+    driver: Option<String>,
+    database: Option<String>,
+    query_id: Option<u64>,
+    job_id: Option<u64>,
+    job_kind: Option<JobKind>,
+    connect: Option<(SessionKey, Arc<SessionIo>)>,
+}
+
+impl CommandContext {
+    fn of(shared: &Shared, cmd: &Command) -> Self {
+        let (op, conn, query_id, job_id, job_kind) = match cmd {
+            Command::Connect { cfg, .. } => ("connect", Some(cfg.id.clone()), None, None, None),
+            Command::Browse { conn_id, .. } => ("browse", Some(conn_id.clone()), None, None, None),
+            Command::Spawn(_) => ("object", None, None, None, None),
+            Command::JobTask { id, conn, .. } => (
+                "job",
+                conn.clone(),
+                None,
+                Some(id.0),
+                shared.jobs.state(*id).map(|state| state.kind),
+            ),
+            Command::DocTask { q, conn, .. } => {
+                ("document", Some(conn.clone()), Some(q.0), None, None)
+            }
+            Command::Execute { q, .. } | Command::Fetch { q, .. } => {
+                let conn = shared
+                    .inner
+                    .lock()
+                    .results
+                    .get(q)
+                    .map(|entry| entry.key.conn.clone());
+                (
+                    if matches!(cmd, Command::Fetch { .. }) {
+                        "fetch"
+                    } else {
+                        "query"
+                    },
+                    conn,
+                    Some(q.0),
+                    None,
+                    None,
+                )
+            }
+            Command::Cancel(_) => ("cancel", None, None, None, None),
+            Command::CloseStream { .. } => ("close_stream", None, None, None, None),
+            Command::LoadCatalog { conn_id, .. } => {
+                ("browse", Some(conn_id.clone()), None, None, None)
+            }
+            Command::RunScript(run) => ("script", Some(run.key.conn.clone()), None, None, None),
+            Command::Tx { key, .. } => ("transaction", Some(key.conn.clone()), None, None, None),
+            Command::Apply { job, key, .. } => (
+                "job",
+                Some(key.conn.clone()),
+                None,
+                Some(job.id.0),
+                Some(JobKind::Apply),
+            ),
+            Command::Describe { key, .. } => ("describe", Some(key.conn.clone()), None, None, None),
+            Command::Transfer(run) => ("job", None, None, Some(run.job.id.0), None),
+            Command::Tool { job, conn, .. } => {
+                ("job", Some(conn.clone()), None, Some(job.id.0), None)
+            }
+        };
+        let driver = conn
+            .as_deref()
+            .and_then(|conn| shared.inner.lock().driver_of(conn));
+        Self {
+            op,
+            conn,
+            driver,
+            database: match cmd {
+                Command::Execute { database, .. } | Command::LoadCatalog { database, .. } => {
+                    database.clone()
+                }
+                Command::Fetch { q, .. } => {
+                    shared.result(*q).and_then(|r| r.read().database.clone())
+                }
+                Command::Tool { database, .. } => Some(database.clone()),
+                Command::Connect { cfg, .. } => cfg.values.get("database").cloned(),
+                _ => None,
+            },
+            query_id,
+            job_id,
+            job_kind,
+            connect: match cmd {
+                Command::Connect { key, io, .. } => Some((key.clone(), io.clone())),
+                _ => None,
+            },
+        }
+    }
+}
+
+/// The text of a caught panic payload.
+fn panic_payload(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(text) = payload.downcast_ref::<&str>() {
+        (*text).to_string()
+    } else if let Some(text) = payload.downcast_ref::<String>() {
+        text.clone()
+    } else {
+        "non-string panic payload".to_string()
+    }
+}
+
 pub(crate) struct Shared {
     pub(crate) operations: crate::operations::Operations,
     pub(crate) drivers_hub: crate::drivers::DriverHub,
@@ -1536,6 +1738,8 @@ pub(crate) struct Shared {
     repaint: Repaint,
     per_tab: AtomicBool,
     connect_timeout_s: AtomicU64,
+    /// Failed SQL is recorded in failure lines (the app's privacy setting).
+    include_sql: AtomicBool,
     /// Rows a `fetch_all` may keep before it truncates the result.
     row_cap: AtomicUsize,
     result_byte_cap: AtomicUsize,
@@ -1554,8 +1758,72 @@ pub(crate) struct Shared {
 }
 
 impl Shared {
+    pub(crate) fn diagnostics_include_sql(&self) -> bool {
+        self.include_sql.load(Ordering::Relaxed)
+    }
+
     pub(crate) fn repaint(&self) {
         (self.repaint)();
+    }
+
+    /// Converts a panic caught in a command task into a failed query/job, failed operations
+    /// and one `engine_panic` incident. Other commands keep running.
+    fn report_command_panic(
+        self: &Arc<Self>,
+        run: u64,
+        context: CommandContext,
+        payload: Box<dyn std::any::Any + Send>,
+    ) {
+        let panic = panic_payload(payload.as_ref());
+        let message = format!("internal panic: {panic}");
+        if let Some(q) = context.query_id {
+            let q = QueryId(q);
+            let running = self
+                .result(q)
+                .is_some_and(|result| result.read().status == QueryStatus::Running);
+            if context.op == "document" {
+                self.settle_docs(
+                    q,
+                    QueryStatus::Failed(DriverError::new(ErrorKind::Other, message.clone())),
+                    Vec::new(),
+                );
+            } else if running {
+                self.finish(
+                    q,
+                    QueryStatus::Failed(DriverError::new(ErrorKind::Other, message.clone())),
+                );
+            }
+        }
+        if let Some(job) = context.job_id {
+            self.jobs.finish(
+                JobId(job),
+                JobOutcome::Failed(DriverError::new(ErrorKind::Other, message.clone())),
+            );
+        }
+        let jobs = self.jobs.fail_run(run, &message);
+        let operations = self.operations.fail_run(run, &message);
+        if let Some((key, io)) = &context.connect {
+            let mut inner = self.inner.lock();
+            if let Some(session) = inner.session(key, io) {
+                session.status =
+                    SessionStatus::Failed(DriverError::new(ErrorKind::Other, message.clone()));
+            }
+            io.finish_connect();
+        }
+        self.repaint();
+        tracing::error!(
+            target: "sqlr_engine::panic",
+            incident = "engine_panic",
+            op = context.op,
+            conn = context.conn.as_deref(),
+            driver = context.driver.as_deref(),
+            query_id = context.query_id,
+            operation_id = operations.first().map(|operation| operation.id.0),
+            job = ?context.job_kind,
+            failed_jobs = jobs.len(),
+            failed_operations = operations.len(),
+            "engine command task panicked: {message}"
+        );
     }
 
     /// The I/O handle of the connection's explorer session, if it is connecting or
@@ -1974,7 +2242,9 @@ impl Shared {
                     .await
             }
             Command::Browse { conn_id, path, io } => self.browse(conn_id, path, io).await,
-            Command::Spawn(task) => task.await,
+            Command::Spawn(task)
+            | Command::JobTask { task, .. }
+            | Command::DocTask { task, .. } => task.await,
             Command::Execute {
                 q,
                 ticket,
@@ -2020,12 +2290,8 @@ impl Shared {
                 path,
                 work,
             } => {
-                let shared = self.clone();
-                tokio::spawn(async move {
-                    shared
-                        .run_database_tool(job, conn, database, path, work)
-                        .await;
-                });
+                self.run_database_tool(job, conn, database, path, work)
+                    .await;
             }
         }
     }
@@ -2075,6 +2341,18 @@ impl Shared {
             Err(e) if e.kind == ErrorKind::Cancelled => crate::OperationState::Cancelled,
             Err(e) => crate::OperationState::Failed(e.to_string()),
         };
+        let failure = match &outcome {
+            Ok(_) => None,
+            Err(e) => Some((e.kind, e.message.clone())),
+        };
+        let database = cfg.values.get("database").cloned();
+        let address = cfg
+            .values
+            .get("host")
+            .map(|host| match cfg.values.get("port") {
+                Some(port) => format!("{host}:{port}"),
+                None => host.clone(),
+            });
         let mut connected = false;
         {
             let mut inner = self.inner.lock();
@@ -2109,6 +2387,34 @@ impl Shared {
             // schema loaded between the two can already be `Ready` when this runs, and the
             // refresh fetches it a second time.
             self.refresh_catalog(&key.conn, &io);
+        }
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        match failure {
+            Some((kind, message)) => {
+                crate::log::log_at!(
+                    crate::log::failure_level(kind),
+                    target: "sqlr_engine::operation",
+                    op = "connect",
+                    conn = cfg.id,
+                    driver = cfg.driver,
+                    database = database.as_deref(),
+                    address = address.as_deref(),
+                    elapsed_ms,
+                    error_kind = crate::log::kind_name(kind),
+                    error = message,
+                    "connect failed"
+                );
+            }
+            None => tracing::info!(
+                target: "sqlr_engine::operation",
+                op = "connect",
+                conn = cfg.id,
+                driver = cfg.driver,
+                database = database.as_deref(),
+                address = address.as_deref(),
+                elapsed_ms,
+                "connected"
+            ),
         }
         io.finish_connect();
         self.operations.finish(operation, op_state);
@@ -2653,9 +2959,14 @@ impl Shared {
         if e.kind != ErrorKind::Connection {
             return None;
         }
-        let lost = {
+        let (lost, driver, database) = {
             let mut inner = self.inner.lock();
+            let driver = inner.conns.get(&key.conn).map(|c| c.cfg.driver.clone());
             let session = inner.session(key, io).filter(|s| s.is_connected())?;
+            let database = session
+                .conn
+                .as_ref()
+                .and_then(|conn| conn.database_name().map(str::to_string));
             session.status = SessionStatus::Failed(e.clone());
             session.conn = None;
             session.cancel = None;
@@ -2663,8 +2974,18 @@ impl Shared {
             session.tx_conn = None;
             // A tunnel that died with the connection must not be reused on reconnect.
             session.tunnel = None;
-            session.tx.lost(&e.message, now_ms())
+            (session.tx.lost(&e.message, now_ms()), driver, database)
         };
+        tracing::error!(
+            target: "sqlr_engine::operation",
+            op = "connection_lost",
+            conn = key.conn,
+            driver = driver.as_deref(),
+            database = database.as_deref(),
+            error_kind = crate::log::kind_name(e.kind),
+            error = %e.message,
+            "connection lost"
+        );
         // The caller may hold the stream lock, so the close runs as its own task.
         let this = self.clone();
         let io = io.clone();
@@ -2690,16 +3011,20 @@ impl Shared {
     fn finish_with(self: &Arc<Self>, q: QueryId, status: QueryStatus, notes: Vec<RunMessage>) {
         let entry = {
             let mut inner = self.inner.lock();
+            let conn = inner.results.get(&q).map(|e| e.key.conn.clone());
+            let driver = conn.as_deref().and_then(|conn| inner.driver_of(conn));
             inner.results.get_mut(&q).map(|e| {
                 let first = !e.recorded && status != QueryStatus::Running;
                 e.recorded |= first;
                 let first = first.then(|| (e.key.conn.clone(), e.started_at_ms, e.settled.clone()));
-                (e.result.clone(), e.started, first)
+                (e.result.clone(), e.started, first, driver, conn)
             })
         };
-        if let Some((result, started, first)) = entry {
+        if let Some((result, started, first, driver, conn)) = entry {
+            let mut failure = None;
             let history = {
                 let mut r = result.write();
+                let settled = r.status == QueryStatus::Running && status != QueryStatus::Running;
                 r.status = status;
                 r.elapsed = started.elapsed();
                 if first.is_some() {
@@ -2707,8 +3032,47 @@ impl Shared {
                     r.messages.push(outcome);
                     r.messages.extend(notes);
                 }
+                if settled {
+                    failure = match &r.status {
+                        QueryStatus::Failed(e) => Some((
+                            conn.clone().unwrap_or_default(),
+                            e.kind,
+                            e.message.clone(),
+                            r.sql.clone(),
+                            r.database.clone(),
+                            r.elapsed.as_millis() as u64,
+                        )),
+                        QueryStatus::Cancelled => Some((
+                            conn.clone().unwrap_or_default(),
+                            ErrorKind::Cancelled,
+                            "cancelled".to_string(),
+                            r.sql.clone(),
+                            r.database.clone(),
+                            r.elapsed.as_millis() as u64,
+                        )),
+                        _ => None,
+                    };
+                }
                 first.map(|(conn_id, at, settled)| (history_entry(conn_id, at, &r), settled))
             };
+            if let Some((conn, kind, message, sql, database, elapsed_ms)) = failure {
+                let sql = self
+                    .include_sql
+                    .load(Ordering::Relaxed)
+                    .then(|| crate::log::truncate_sql(&sql).0);
+                log_query_settled(
+                    crate::log::failure_level(kind),
+                    if history.is_some() { "query" } else { "fetch" },
+                    &conn,
+                    driver.as_deref(),
+                    database.as_deref(),
+                    q.0,
+                    elapsed_ms,
+                    kind,
+                    &message,
+                    sql.as_deref(),
+                );
+            }
             // The status first left `Running`: record it, then wake a waiting script.
             if let Some((history, settled)) = history {
                 if let Some(history) = history {
@@ -2820,6 +3184,51 @@ fn error_status(e: DriverError) -> QueryStatus {
         QueryStatus::Cancelled
     } else {
         QueryStatus::Failed(e)
+    }
+}
+
+/// The one failure line a query or fetch writes when it settles.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn log_query_settled(
+    level: tracing::Level,
+    op: &str,
+    conn: &str,
+    driver: Option<&str>,
+    database: Option<&str>,
+    query_id: u64,
+    elapsed_ms: u64,
+    kind: ErrorKind,
+    message: &str,
+    sql: Option<&str>,
+) {
+    match sql {
+        Some(sql) => crate::log::log_at!(
+            level,
+            target: "sqlr_engine::operation",
+            op,
+            conn,
+            driver,
+            database,
+            query_id,
+            elapsed_ms,
+            error_kind = crate::log::kind_name(kind),
+            error = message,
+            sql,
+            "query failed"
+        ),
+        None => crate::log::log_at!(
+            level,
+            target: "sqlr_engine::operation",
+            op,
+            conn,
+            driver,
+            database,
+            query_id,
+            elapsed_ms,
+            error_kind = crate::log::kind_name(kind),
+            error = message,
+            "query failed"
+        ),
     }
 }
 

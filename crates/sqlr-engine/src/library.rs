@@ -412,7 +412,7 @@ impl Shared {
 
     /// Reports a background persistence failure to the UI.
     pub(crate) fn notice(&self, message: String) {
-        tracing::warn!("{message}");
+        tracing::error!(op = "store", "{message}");
         self.library.state.lock().notices.push(message);
         self.repaint();
     }

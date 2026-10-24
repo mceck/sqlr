@@ -64,6 +64,8 @@ fn harness(dir: &Path) -> Harness<'static, SqlrApp> {
         startup_notice: None,
         storage_warning: None,
         mcp_token_store: None,
+        diagnostics: None,
+        diagnostics_warning: None,
     };
     let app = SqlrApp::new(deps, &egui::Context::default());
     let mut h = Harness::builder()

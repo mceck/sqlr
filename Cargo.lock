@@ -6982,6 +6982,7 @@ name = "sqlr-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "arboard",
  "async-trait",
  "eframe",
  "egui",
@@ -6998,6 +6999,7 @@ dependencies = [
  "rfd",
  "rusqlite",
  "rustls",
+ "serde",
  "serde_json",
  "sqlr-core",
  "sqlr-driver-elastic",
@@ -7214,6 +7216,7 @@ dependencies = [
  "calamine",
  "encoding_rs",
  "flate2",
+ "futures-util",
  "libc",
  "minisign",
  "mongodb",
@@ -7243,6 +7246,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

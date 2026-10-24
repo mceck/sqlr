@@ -23,6 +23,7 @@ sqlr-registry = { path = "../sqlr-registry" }
 sqlr-sidecar = { path = "../sqlr-sidecar" }
 parking_lot.workspace = true
 serde_json.workspace = true
+futures-util.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "sync", "net", "time", "io-util", "macros", "fs", "process"] }
 tempfile.workspace = true
 tracing.workspace = true
@@ -49,6 +50,7 @@ sqlr-driver-postgres = { path = "../sqlr-driver-postgres" }
 sqlr-driver-redis = { path = "../sqlr-driver-redis" }
 sqlr-driver-sqlite = { path = "../sqlr-driver-sqlite" }
 sqlr-testkit = { path = "../sqlr-testkit" }
+tracing-subscriber.workspace = true
 rustls.workspace = true
 redis.workspace = true
 reqwest.workspace = true

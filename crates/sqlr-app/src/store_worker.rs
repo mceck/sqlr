@@ -47,8 +47,8 @@ pub(crate) struct Listing {
 impl Listing {
     pub(crate) fn read(repo: &ConnectionRepo) -> Self {
         Self {
-            connections: repo.list().map_err(|e| e.to_string()),
-            folders: repo.folders().map_err(|e| e.to_string()),
+            connections: repo.list().map_err(store_error),
+            folders: repo.folders().map_err(store_error),
         }
     }
 }
@@ -163,6 +163,79 @@ pub(crate) enum StoreReply {
     },
 }
 
+impl StoreOp {
+    fn panic_reply(&self) -> StoreReply {
+        let error = || "internal panic in the store worker".to_string();
+        let listing = || Listing {
+            connections: Err(error()),
+            folders: Err(error()),
+        };
+        match self {
+            Self::ClientMigration { id, .. } => StoreReply::ClientMigration {
+                id: id.clone(),
+                result: MigrationResult::Error(error()),
+                listing: None,
+            },
+            Self::List => StoreReply::Listed(listing()),
+            Self::CreateFolder(name) => StoreReply::FolderCreated {
+                name: name.clone(),
+                result: Err(error()),
+                listing: listing(),
+            },
+            Self::RenameFolder { from, to } => StoreReply::FolderRenamed {
+                from: from.clone(),
+                to: to.clone(),
+                result: Err(error()),
+                listing: listing(),
+            },
+            Self::DeleteFolder(name) => StoreReply::FolderDeleted {
+                name: name.clone(),
+                result: Err(error()),
+                listing: listing(),
+            },
+            Self::MoveConnection { conn, folder, .. } => StoreReply::ConnectionMoved {
+                conn: conn.clone(),
+                folder: folder.clone(),
+                result: Err(error()),
+                listing: listing(),
+            },
+            Self::MoveFolder { folder, .. } => StoreReply::FolderMoved {
+                folder: folder.clone(),
+                to: folder.clone(),
+                result: Err(error()),
+                listing: listing(),
+            },
+            Self::Save { cfg, editing, .. } => StoreReply::Saved {
+                id: cfg.id.clone(),
+                editing: *editing,
+                result: Err(error()),
+                listing: listing(),
+            },
+            Self::SetAgentAccess { id, .. } => StoreReply::Saved {
+                id: id.clone(),
+                editing: false,
+                result: Err(error()),
+                listing: listing(),
+            },
+            Self::Delete { cfg, .. } => StoreReply::Deleted {
+                id: cfg.id.clone(),
+                name: cfg.name.clone(),
+                result: Err(error()),
+                listing: listing(),
+            },
+            Self::Duplicate { cfg, .. } => StoreReply::Duplicated {
+                name: cfg.name.clone(),
+                copy: Err(error()),
+                listing: listing(),
+            },
+            Self::SecretsFor { cfg, .. } => StoreReply::Secrets {
+                id: cfg.id.clone(),
+                result: Err(error()),
+            },
+        }
+    }
+}
+
 /// The store's worker thread and its queues.
 pub(crate) struct StoreWorker {
     ops: mpsc::Sender<StoreOp>,
@@ -180,7 +253,10 @@ impl StoreWorker {
             .name("sqlr-store".into())
             .spawn(move || {
                 for op in op_rx {
-                    let reply = run(&repo, op);
+                    let fallback = op.panic_reply();
+                    let reply =
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&repo, op)))
+                            .unwrap_or(fallback);
                     if reply_tx.send(reply).is_err() {
                         return;
                     }
@@ -215,9 +291,16 @@ impl StoreWorker {
     }
 }
 
+fn store_error(error: sqlr_store::StoreError) -> String {
+    if !matches!(error, sqlr_store::StoreError::Invalid(_)) {
+        tracing::error!(op = "store", error = %error, "local storage operation failed");
+    }
+    error.to_string()
+}
+
 /// Runs `op` on `repo` (on the store thread; tests call it in place).
 pub(crate) fn run(repo: &ConnectionRepo, op: StoreOp) -> StoreReply {
-    let text = |r: Result<(), sqlr_store::StoreError>| r.map_err(|e| e.to_string());
+    let text = |r: Result<(), sqlr_store::StoreError>| r.map_err(store_error);
     match op {
         StoreOp::ClientMigration { id, request } => {
             let importing = matches!(&request, MigrationRequest::Import(_));
@@ -232,7 +315,7 @@ pub(crate) fn run(repo: &ConnectionRepo, op: StoreOp) -> StoreReply {
         StoreOp::CreateFolder(name) => {
             let (name, result) = match repo.create_folder(&name) {
                 Ok(name) => (name, Ok(())),
-                Err(e) => (name, Err(e.to_string())),
+                Err(e) => (name, Err(store_error(e))),
             };
             StoreReply::FolderCreated {
                 name,
@@ -243,7 +326,7 @@ pub(crate) fn run(repo: &ConnectionRepo, op: StoreOp) -> StoreReply {
         StoreOp::RenameFolder { from, to } => {
             let (to, result) = match repo.rename_folder(&from, &to) {
                 Ok(to) => (to, Ok(())),
-                Err(e) => (to, Err(e.to_string())),
+                Err(e) => (to, Err(store_error(e))),
             };
             StoreReply::FolderRenamed {
                 from,
@@ -276,7 +359,7 @@ pub(crate) fn run(repo: &ConnectionRepo, op: StoreOp) -> StoreReply {
         StoreOp::MoveFolder { folder, target } => {
             let (result, to) = match repo.move_folder(&folder, target) {
                 Ok(to) => (Ok(()), to),
-                Err(e) => (Err(e.to_string()), String::new()),
+                Err(e) => (Err(store_error(e)), String::new()),
             };
             StoreReply::FolderMoved {
                 folder,
@@ -317,7 +400,7 @@ pub(crate) fn run(repo: &ConnectionRepo, op: StoreOp) -> StoreReply {
                     cfg.agent_access = access;
                     repo.save(&cfg, &Secrets::default())
                 })
-                .map_err(|e| e.to_string());
+                .map_err(store_error);
             StoreReply::Saved {
                 id,
                 editing: false,
@@ -326,12 +409,12 @@ pub(crate) fn run(repo: &ConnectionRepo, op: StoreOp) -> StoreReply {
             }
         }
         StoreOp::Duplicate { cfg, manifest } => StoreReply::Duplicated {
-            copy: duplicate(repo, &cfg, &manifest).map_err(|e| e.to_string()),
+            copy: duplicate(repo, &cfg, &manifest).map_err(store_error),
             name: cfg.name,
             listing: Listing::read(repo),
         },
         StoreOp::SecretsFor { cfg, manifest } => StoreReply::Secrets {
-            result: repo.secrets_for(&cfg, &manifest).map_err(|e| e.to_string()),
+            result: repo.secrets_for(&cfg, &manifest).map_err(store_error),
             id: cfg.id,
         },
     }
@@ -378,9 +461,7 @@ fn migrate(repo: &ConnectionRepo, request: MigrationRequest) -> Result<Migration
             for c in &mut connections {
                 c.id = uuid::Uuid::new_v4().to_string();
             }
-            let count = repo
-                .import_connections(&connections)
-                .map_err(|e| e.to_string())?;
+            let count = repo.import_connections(&connections).map_err(store_error)?;
             Ok(MigrationResult::Imported(count))
         }
         MigrationRequest::Export {
@@ -457,6 +538,56 @@ mod tests {
 
     fn manifest() -> DriverManifest {
         FakeDriver::new(Default::default()).manifest().clone()
+    }
+
+    #[test]
+    fn a_panicking_store_operation_fails_and_the_worker_keeps_answering() {
+        struct BrokenSecrets;
+        impl sqlr_store::SecretStore for BrokenSecrets {
+            fn get(&self, _: &str, _: &str) -> Result<Option<String>, sqlr_store::StoreError> {
+                panic!("broken keychain");
+            }
+            fn set(&self, _: &str, _: &str, _: &str) -> Result<(), sqlr_store::StoreError> {
+                panic!("broken keychain");
+            }
+            fn delete(&self, _: &str, _: &str) -> Result<(), sqlr_store::StoreError> {
+                Ok(())
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let repo = ConnectionRepo::open(dir.path(), Box::new(BrokenSecrets)).unwrap();
+        let mut worker = StoreWorker::spawn(repo, || {});
+        worker.send(StoreOp::Save {
+            cfg: config("c", "test"),
+            secrets: Secrets([("password".into(), "sentinel".into())].into()),
+            editing: false,
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        loop {
+            if let Some(StoreReply::Saved {
+                result: Err(error), ..
+            }) = worker.try_recv()
+            {
+                assert!(error.contains("internal panic"));
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the panicking operation must answer"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        worker.send(StoreOp::List);
+        loop {
+            if matches!(worker.try_recv(), Some(StoreReply::Listed(_))) {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the next operation must answer"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
     }
 
     #[test]

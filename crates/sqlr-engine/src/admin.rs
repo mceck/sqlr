@@ -116,7 +116,7 @@ impl Engine {
                 let task = shared
                     .clone()
                     .run_snapshot(job, conn.to_string(), io, query);
-                shared.send(Command::Spawn(Box::pin(task)));
+                shared.send(Command::job(id, Some(conn.to_string()), task));
             }
         }
         shared.repaint();
@@ -145,7 +145,7 @@ impl Engine {
             None => shared.jobs.finish(id, JobOutcome::Failed(not_connected())),
             Some(io) => {
                 let task = shared.clone().run_action(job, conn.to_string(), io, action);
-                shared.send(Command::Spawn(Box::pin(task)));
+                shared.send(Command::job(id, Some(conn.to_string()), task));
             }
         }
         shared.repaint();

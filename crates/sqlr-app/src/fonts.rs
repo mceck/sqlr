@@ -45,6 +45,7 @@ pub fn install(ctx: &egui::Context) {
         Loading,
         Ready,
         Installed,
+        Failed,
     }
     let state = Arc::new(Mutex::new(Load::Idle));
     ctx.on_end_pass(
@@ -53,7 +54,7 @@ pub fn install(ctx: &egui::Context) {
             let ctx = ui.ctx();
             let mut load = state.lock().unwrap();
             match *load {
-                Load::Installed | Load::Loading => return,
+                Load::Installed | Load::Loading | Load::Failed => return,
                 Load::Ready => {
                     *load = Load::Installed;
                     drop(load);
@@ -102,8 +103,12 @@ pub fn install(ctx: &egui::Context) {
             std::thread::Builder::new()
                 .name("sqlr-cjk-font".into())
                 .spawn(move || {
-                    let _ = fallback_fonts();
-                    *state.lock().unwrap() = Load::Ready;
+                    let result = std::panic::catch_unwind(fallback_fonts);
+                    *state.lock().unwrap_or_else(|e| e.into_inner()) = if result.is_ok() {
+                        Load::Ready
+                    } else {
+                        Load::Failed
+                    };
                     repaint.request_repaint();
                 })
                 .expect("spawn CJK font loader");

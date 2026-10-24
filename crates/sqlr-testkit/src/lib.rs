@@ -185,10 +185,14 @@ pub struct FakeScript {
     pub connect_error: Option<DriverError>,
     /// Parks the connect future until it is dropped.
     pub block_on_connect: bool,
+    /// Simulates a driver panic while connecting.
+    pub panic_on_connect: bool,
     /// Returned by `execute`.
     pub query_error: Option<DriverError>,
     /// When set, `execute` fails (`ErrorKind::Syntax`) for any SQL containing this text.
     pub fail_matching: Option<String>,
+    /// When set, `execute` panics for any SQL containing this text, as a broken driver would.
+    pub panic_matching: Option<String>,
     /// When set, `execute` returns `Execution::Affected` with this count instead of rows.
     pub affected: Option<u64>,
     /// `next_chunk` waits until cancelled, then returns `ErrorKind::Cancelled`.
@@ -793,6 +797,10 @@ impl Driver for FakeDriver {
             .connects
             .lock()
             .push((cfg.clone(), secrets.clone()));
+        assert!(
+            !self.shared.script.panic_on_connect,
+            "fake driver connect panic"
+        );
         if self.shared.script.block_on_connect {
             std::future::pending::<()>().await;
         }
@@ -960,6 +968,11 @@ impl RelationalConn for FakeConnection {
         }
         if let Some(e) = &self.shared.script.query_error {
             return Err(e.clone());
+        }
+        if let Some(pattern) = &self.shared.script.panic_matching
+            && sql.contains(pattern.as_str())
+        {
+            panic!("fake driver panic near \"{pattern}\"");
         }
         if let Some(pattern) = &self.shared.script.fail_matching
             && sql.contains(pattern.as_str())

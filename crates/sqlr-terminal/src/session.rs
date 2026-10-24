@@ -69,7 +69,7 @@ pub struct TerminalSession {
     emulator: Arc<Emulator>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     resize_fn: Box<dyn Fn(u16, u16) + Send + Sync>,
-    kill_fn: Box<dyn Fn() + Send + Sync>,
+    kill_fn: Arc<dyn Fn() + Send + Sync>,
     status: Arc<Mutex<TerminalStatus>>,
     reader: Option<JoinHandle<()>>,
     monitor: Option<JoinHandle<()>>,
@@ -100,7 +100,7 @@ impl TerminalSession {
                     emulator,
                     writer: Arc::new(Mutex::new(Box::new(std::io::sink()))),
                     resize_fn: Box::new(|_, _| {}),
-                    kill_fn: Box::new(|| {}),
+                    kill_fn: Arc::new(|| {}),
                     status,
                     reader: None,
                     monitor: None,
@@ -109,6 +109,7 @@ impl TerminalSession {
                 };
             }
         };
+        let kill: Arc<dyn Fn() + Send + Sync> = Arc::from(parts.kill);
         *status.lock() = TerminalStatus::Running { pid: parts.pid };
         let killed = Arc::new(AtomicBool::new(false));
         // The reader thread also writes the replies the application asked for (for example
@@ -118,52 +119,83 @@ impl TerminalSession {
         let reader_emulator = emulator.clone();
         let reader_repaint = repaint.clone();
         let reader_writer = writer.clone();
+        let reader_status = status.clone();
+        let reader_kill = kill.clone();
         let reader = std::thread::Builder::new()
             .name("sqlr-terminal-reader".into())
             .spawn(move || {
                 let mut reader = parts.reader;
                 let mut buffer = [0u8; 16 * 1024];
-                loop {
-                    match reader.read(&mut buffer) {
-                        Ok(0) => break,
-                        Ok(n) => {
-                            reader_emulator.feed(&buffer[..n]);
-                            let responses = reader_emulator.take_responses();
-                            if !responses.is_empty() {
-                                let mut writer = reader_writer.lock();
-                                let _ = writer.write_all(&responses);
-                                let _ = writer.flush();
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    loop {
+                        match reader.read(&mut buffer) {
+                            Ok(0) => break,
+                            Ok(n) => {
+                                reader_emulator.feed(&buffer[..n]);
+                                let responses = reader_emulator.take_responses();
+                                if !responses.is_empty() {
+                                    let mut writer = reader_writer.lock();
+                                    let _ = writer.write_all(&responses);
+                                    let _ = writer.flush();
+                                }
+                                reader_repaint();
                             }
-                            reader_repaint();
+                            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
+                                continue;
+                            }
+                            Err(_) => break,
                         }
-                        Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-                        Err(_) => break,
                     }
+                }));
+                if result.is_err() {
+                    *reader_status.lock() = TerminalStatus::Failed {
+                        message: "internal panic in terminal reader".into(),
+                    };
+                    reader_kill();
+                    reader_repaint();
                 }
             })
             .ok();
         let monitor_status = status.clone();
         let monitor_repaint = repaint;
+        let monitor_kill = kill.clone();
         let wait = parts.wait;
         let monitor = std::thread::Builder::new()
             .name("sqlr-terminal-monitor".into())
             .spawn(move || {
-                match wait() {
-                    Ok(code) => {
-                        *monitor_status.lock() = TerminalStatus::Exited { code };
+                match std::panic::catch_unwind(std::panic::AssertUnwindSafe(wait)) {
+                    Err(_) => {
+                        *monitor_status.lock() = TerminalStatus::Failed {
+                            message: "internal panic in terminal monitor".into(),
+                        };
+                        monitor_kill();
                     }
-                    Err(message) => {
-                        *monitor_status.lock() = TerminalStatus::Failed { message };
-                    }
+                    Ok(result) => match result {
+                        Ok(code) => {
+                            let mut status = monitor_status.lock();
+                            if !matches!(*status, TerminalStatus::Failed { .. }) {
+                                *status = TerminalStatus::Exited { code };
+                            }
+                        }
+                        Err(message) => {
+                            *monitor_status.lock() = TerminalStatus::Failed { message };
+                        }
+                    },
                 }
                 monitor_repaint();
             })
             .ok();
+        if reader.is_none() || monitor.is_none() {
+            *status.lock() = TerminalStatus::Failed {
+                message: "Could not start the terminal worker threads".into(),
+            };
+            kill();
+        }
         Self {
             emulator,
             writer,
             resize_fn: parts.resize,
-            kill_fn: parts.kill,
+            kill_fn: kill,
             status,
             reader,
             monitor,
@@ -279,14 +311,27 @@ mod tests {
             _rows: u16,
             _cols: u16,
         ) -> Result<BackendParts, String> {
-            let reader = std::io::Cursor::new(self.output.clone());
+            struct BrokenReader;
+            impl Read for BrokenReader {
+                fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                    panic!("reader panic");
+                }
+            }
+            let reader: Box<dyn Read + Send> = if self.output == b"panic-reader" {
+                Box::new(BrokenReader)
+            } else {
+                Box::new(std::io::Cursor::new(self.output.clone()))
+            };
             let exit = self.exit;
             Ok(BackendParts {
-                reader: Box::new(reader),
+                reader,
                 writer: Box::new(std::io::sink()),
                 resize: Box::new(|_, _| {}),
                 kill: Box::new(|| {}),
-                wait: Box::new(move || Ok(exit)),
+                wait: Box::new(move || {
+                    assert_ne!(exit, u32::MAX, "monitor panic");
+                    Ok(exit)
+                }),
                 pid: Some(7),
             })
         }
@@ -310,6 +355,50 @@ mod tests {
         let snapshot = session.snapshot(0);
         assert_eq!(snapshot.text_between((0, 0), (0, 5)), "hello");
         assert_eq!(snapshot.text_between((1, 0), (1, 5)), "world");
+    }
+
+    #[test]
+    fn a_reader_panic_ends_the_terminal_as_failed() {
+        let spec = CommandSpec {
+            program: "/bin/sh".into(),
+            args: vec![],
+            cwd: "/tmp".into(),
+        };
+        let session = TerminalSession::spawn_with(
+            &Fake {
+                output: b"panic-reader".to_vec(),
+                exit: 0,
+            },
+            &spec,
+            &SessionConfig::default(),
+            Arc::new(|| {}),
+        );
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while !matches!(session.status(), TerminalStatus::Failed { .. }) {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    #[test]
+    fn a_monitor_panic_ends_the_terminal_as_failed() {
+        let spec = CommandSpec {
+            program: "/bin/sh".into(),
+            args: vec![],
+            cwd: "/tmp".into(),
+        };
+        let session = TerminalSession::spawn_with(
+            &Fake {
+                output: vec![],
+                exit: u32::MAX,
+            },
+            &spec,
+            &SessionConfig::default(),
+            Arc::new(|| {}),
+        );
+        assert!(
+            matches!(session.wait_for_exit(Duration::from_secs(2)), Some(TerminalStatus::Failed { message }) if message.contains("internal panic"))
+        );
     }
 
     #[cfg(unix)]

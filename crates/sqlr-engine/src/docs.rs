@@ -282,7 +282,7 @@ impl Engine {
                     database.map(str::to_string),
                     text,
                 );
-                shared.send(Command::Spawn(Box::pin(task)));
+                shared.send(Command::document(q, key.conn.clone(), task));
             }
             None => shared.settle_docs(q, QueryStatus::Failed(not_connected()), Vec::new()),
         }
@@ -319,7 +319,11 @@ impl Engine {
             r.status = QueryStatus::Running;
         }
         let task = self.shared.clone().fetch_docs(q, all);
-        self.shared.send(Command::Spawn(Box::pin(task)));
+        self.shared.send(Command::document(
+            q,
+            self.shared.doc_connection(q).unwrap_or_default(),
+            task,
+        ));
         self.shared.repaint();
     }
 
@@ -457,7 +461,7 @@ impl Engine {
                 let task = shared
                     .clone()
                     .run_doc_job(job, key.clone(), io, ticket, work);
-                shared.send(Command::Spawn(Box::pin(task)));
+                shared.send(Command::job(id, Some(key.conn.clone()), task));
             }
         }
         shared.repaint();
@@ -482,6 +486,10 @@ enum DocWork {
 }
 
 impl Shared {
+    pub(crate) fn doc_connection(&self, q: QueryId) -> Option<String> {
+        self.docs.entries.lock().get(&q).map(|e| e.key.conn.clone())
+    }
+
     fn doc_entry(&self, q: QueryId) -> Option<(Arc<RwLock<DocResult>>, DocStreamSlot)> {
         let entries = self.docs.entries.lock();
         entries
@@ -880,16 +888,31 @@ impl Shared {
                 (
                     e.result.clone(),
                     e.started,
+                    e.key.conn.clone(),
                     first.then(|| (e.key.conn.clone(), e.started_at_ms)),
                 )
             })
         };
-        let Some((result, started, first)) = entry else {
+        let Some((result, started, conn, first)) = entry else {
             self.repaint();
             return;
         };
+        let mut failure = None;
         let history = {
             let mut r = result.write();
+            let settled = r.status == QueryStatus::Running && status != QueryStatus::Running;
+            if settled && !r.tabular {
+                let error = match &status {
+                    QueryStatus::Failed(error) => Some(error.clone()),
+                    QueryStatus::Cancelled => {
+                        Some(DriverError::new(ErrorKind::Cancelled, "cancelled"))
+                    }
+                    _ => None,
+                };
+                if let Some(error) = error {
+                    failure = Some((error, r.text.clone()));
+                }
+            }
             r.status = status;
             r.elapsed = started.elapsed();
             match first {
@@ -906,6 +929,24 @@ impl Shared {
                 }
             }
         };
+        if let Some((error, text)) = failure {
+            let driver = self.inner.lock().driver_of(&conn);
+            let sql = self
+                .diagnostics_include_sql()
+                .then(|| crate::log::truncate_sql(&text).0);
+            super::engine::log_query_settled(
+                crate::log::failure_level(error.kind),
+                "document",
+                &conn,
+                driver.as_deref(),
+                None,
+                q.0,
+                started.elapsed().as_millis() as u64,
+                error.kind,
+                &error.message,
+                sql.as_deref(),
+            );
+        }
         if let Some(entry) = history {
             self.record_history(entry);
         }

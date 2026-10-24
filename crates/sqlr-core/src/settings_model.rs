@@ -329,6 +329,28 @@ fn agents_readable(
     }
 }
 
+/// A privacy switch: readable by agents, never written by them.
+fn privacy_flag(
+    id: &'static str,
+    label: &'static str,
+    description: &'static str,
+    keywords: &'static [&'static str],
+) -> SettingDef {
+    SettingDef {
+        agent_writable: false,
+        ..def(
+            id,
+            "General",
+            label,
+            description,
+            keywords,
+            SettingKind::Bool,
+            SettingValue::Bool(true),
+            Levels::GlobalOnly,
+        )
+    }
+}
+
 /// A setting neither readable nor writable by agents (`terminal.shell`).
 fn human_only(
     id: &'static str,
@@ -409,6 +431,19 @@ fn build_defs() -> Vec<SettingDef> {
             K::Int { min: 0, max: 3600 },
             V::Int(30),
             GlobalOnly,
+        ),
+        privacy_flag(
+            "diagnostics.include_sql",
+            "Include SQL in logs and reports",
+            "Failed statements are recorded as typed in logs, incidents and diagnostics bundles. Turn this off to keep SQL out of everything diagnostics write; there is no automatic literal redaction.",
+            &[
+                "diagnostics",
+                "crash",
+                "report",
+                "privacy",
+                "sql",
+                "statement",
+            ],
         ),
         def(
             "appearance.theme",

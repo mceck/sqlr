@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Troubleshooting · sqlr</title>
+<style>
+:root{--bg:#0b0e14;--bg-soft:#10151f;--panel:#141b27;--line:#243049;--text:#e8edf5;--muted:#9aa7bd;--dim:#6b7a93;--accent:#4fd1a5;--accent-soft:rgba(79,209,165,.14);--blue:#6ea8fe;--mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,monospace;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.7 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+.topbar{position:sticky;top:0;z-index:10;background:rgba(11,14,20,.88);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.topbar .in{max-width:1180px;margin:0 auto;padding:0 24px;height:56px;display:flex;align-items:center;gap:18px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;color:var(--text)}
+.brand img{width:26px;height:26px;border-radius:6px}.brand:hover{text-decoration:none}
+.topbar .back{margin-left:auto}.topbar .back,.topbar .gh{font-size:14px;color:var(--muted)}.topbar a:hover{color:var(--text)}
+.layout{max-width:1180px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:230px minmax(0,1fr);gap:48px}
+aside{position:sticky;top:56px;align-self:start;height:calc(100vh - 56px);overflow:auto;padding:28px 0;font-size:14.5px}
+aside h4{margin:18px 0 6px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+aside h4:first-child{margin-top:0}
+aside a{display:block;padding:5px 10px;border-radius:8px;color:var(--muted)}
+aside a:hover{color:var(--text);background:var(--panel);text-decoration:none}
+aside a.on{color:var(--accent);background:var(--accent-soft)}
+main{padding:36px 0 80px;max-width:780px}
+h1{font-size:36px;letter-spacing:-.02em;margin:0 0 18px;line-height:1.2}
+h2{font-size:25px;letter-spacing:-.01em;margin:44px 0 10px;padding-top:26px;border-top:1px solid var(--line)}
+h3{font-size:19px;margin:30px 0 8px}h4{font-size:16px;margin:22px 0 6px}
+p{margin:0 0 14px;color:#cfd8e6}li{color:#cfd8e6}
+ul,ol{margin:0 0 16px;padding-left:24px}li{margin:4px 0}li>ul,li>ol{margin:4px 0 0}
+code{font-family:var(--mono);font-size:.88em;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:var(--blue)}
+pre{background:var(--bg-soft);border:1px solid var(--line);border-radius:12px;padding:14px 16px;overflow-x:auto;line-height:1.55;margin:0 0 18px}
+pre code{background:none;border:0;padding:0;color:var(--text);font-size:13.5px}
+blockquote{margin:0 0 16px;padding:2px 16px;border-left:3px solid var(--accent);background:var(--panel);border-radius:0 10px 10px 0}
+table{width:100%;border-collapse:collapse;margin:0 0 20px;font-size:14.5px;display:block;overflow-x:auto}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-size:12.5px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+td{color:#cfd8e6}
+hr{border:0;border-top:1px solid var(--line);margin:30px 0}
+img{max-width:100%}
+@media(max-width:820px){.layout{grid-template-columns:1fr;gap:0}aside{position:static;height:auto;padding:18px 0 0;border-bottom:1px solid var(--line)}h1{font-size:29px}}
+</style>
+</head>
+<body>
+<div class="topbar"><div class="in">
+<a class="brand" href="../index.html"><img src="../media/icon.png" alt="">sqlr</a>
+<a class="back" href="../index.html#docs">All documentation</a>
+<a class="gh" href="https://github.com/mceck/sqlr">GitHub</a>
+</div></div>
+<div class="layout">
+<aside><h4>Using sqlr</h4><a class="" href="../usage/README.html">Start here</a><a class="" href="../usage/getting-started.html">Getting started</a><a class="" href="../usage/connections.html">Connections</a><a class="" href="../usage/migrating-connections.html">Import and export connections</a><a class="" href="../usage/explorer-and-objects.html">Explorer and object editors</a><a class="" href="../usage/sql-editor.html">The SQL editor</a><a class="" href="../usage/results-and-editing.html">Results and data editing</a><a class="" href="../usage/profiles-and-transactions.html">Profiles and transactions</a><a class="" href="../usage/moving-data.html">Import, export, transfer</a><a class="" href="../usage/schema-tools.html">Schema tools</a><a class="" href="../usage/administration.html">Administration</a><a class="" href="../usage/nosql.html">Document and key-value</a><a class="" href="../usage/drivers.html">Drivers</a><a class="" href="../usage/settings-and-shortcuts.html">Settings and shortcuts</a><a class="on" href="../usage/troubleshooting.html">Troubleshooting</a><h4>Project</h4><a href="https://github.com/mceck/sqlr">Source on GitHub</a></aside>
+<main>
+<h1 id="troubleshooting">Troubleshooting</h1>
+<p>Open <strong>Help → Diagnostics…</strong> to see the current session, installed drivers and recent incidents. Diagnostics work independently of the local history database and credential vault. Reports stay on your computer: there are no uploads, network requests or telemetry.</p>
+<h2 id="copy-or-save-a-report">Copy or save a report</h2>
+<p>Choose <strong>Copy diagnostics</strong> or <strong>Save bundle…</strong>, review the JSON preview, then use <strong>Copy reviewed bundle</strong> or <strong>Save reviewed bundle…</strong>. The bundle describes the current session: application version and build, system, drivers, sanitized settings, connection metadata, open tabs and transactions, recent operations, logs and the selected incident. It does not claim that current tabs or connections describe the moment of an earlier crash.</p>
+<p>Use <strong>Help → Report a Problem…</strong> to add a note and choose whether to include SQL and open tab titles. Creating the report saves a manual incident that can be reopened later. A result error's <strong>Copy details</strong> copies its message, hint, connection, database, duration and permitted SQL without creating an incident.</p>
+<p>Bundles are valid JSON capped at 512 KiB, with explicit truncation markers. Paths under your home and data directories are shortened to <code>&lt;home&gt;</code> and <code>&lt;data-dir&gt;</code>. Passwords, SSH passphrases, bearer tokens and vault contents are excluded. Review other potentially sensitive content, including connection names, hosts, usernames, notes and SQL, before sharing.</p>
+<h2 id="sql-privacy">SQL privacy</h2>
+<p><strong>Include SQL in logs and reports</strong> is available in Diagnostics and General preferences. It defaults to enabled and is persisted globally as <code>diagnostics.include_sql</code>. SQL is recorded as typed, without automatic literal masking, up to 4 KiB with a truncation marker. Disable the setting to omit SQL from subsequent logs and reports; manual reports can also exclude SQL individually. Existing files on disk are not rewritten.</p>
+<h2 id="crashes-and-startup-failures">Crashes and startup failures</h2>
+<p>A panic writes an incident before the process exits. On the next launch, a non-blocking banner offers <strong>Open report</strong>, <strong>Copy</strong> and <strong>Dismiss</strong>. Copy on the banner copies the original incident JSON. Dismiss is remembered, and the report remains in Diagnostics.</p>
+<p>A killed process, segmentation fault, power loss or out-of-memory termination may leave no panic report. The next launch only says that the previous session did not close cleanly. A clean exit produces no notice; another running instance does not count as a crash.</p>
+<p>An engine command panic fails its operation and leaves unrelated work running. A driver process crash fails only its own connections. Release binaries are stripped: reports contain the panic message and source location when available, but no backtrace, symbols or native minidump.</p>
+<p>A startup failure after the data directory is known creates a startup incident and opens a native error dialog with <strong>Copy details</strong> and <strong>Open logs</strong>. Invalid command-line arguments remain terminal errors.</p>
+<h2 id="files-retention-and-log-level">Files, retention and log level</h2>
+<p>Files live under the data directory shown in Diagnostics:</p>
+<table><thead><tr><th>Content</th><th>Path</th><th>Retention</th></tr></thead><tbody><tr><td>Daily logs</td><td><code>logs/sqlr.log.&lt;date&gt;</code></td><td>Newest fourteen files</td></tr><tr><td>Incidents</td><td><code>diagnostics/&lt;incident-id&gt;.json</code></td><td>Newest twenty, no older than thirty days</td></tr><tr><td>Session marker and lock</td><td><code>diagnostics/session.json</code>, <code>diagnostics/session.lock</code></td><td>Used to distinguish a crash from a running instance</td></tr></tbody></table>
+<p>Use <strong>Open logs folder</strong> to inspect raw logs. Logs and diagnostics directories and incident files are owner-only. Reports require no SQLite database, vault or working settings file. If the log directory is unwritable, sqlr still starts and shows a persistent warning that diagnostics are limited to stderr.</p>
+<p>Choose error, warn, info or debug in Diagnostics to change the running session's log level. It resets to info on the next launch. If <code>RUST_LOG</code> is set, the environment controls the level and the selector is disabled. Cancellation is logged only at debug level; ordinary syntax, permission, authentication and timeout errors do not create incidents.</p>
+</main>
+</div>
+</body>
+</html>

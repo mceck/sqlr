@@ -145,6 +145,15 @@ impl SqlrApp {
         });
         ui.menu_button("Help", |ui| {
             command_item(ui, self, "Keyboard Shortcuts", None, AppCommand::Shortcuts);
+            ui.separator();
+            command_item(ui, self, "Diagnostics…", None, AppCommand::Diagnostics);
+            command_item(
+                ui,
+                self,
+                "Report a Problem…",
+                None,
+                AppCommand::ReportProblem,
+            );
         });
     }
 

@@ -33,6 +33,8 @@ pub struct SidecarDriver {
     process: Mutex<Option<Arc<Process>>>,
     spawn: tokio::sync::Mutex<()>,
     next_conn: AtomicU64,
+    /// How many times the process was restarted or respawned after an exit.
+    restarts: AtomicU64,
     /// The dialect the first connection announced, for the app's editors and generated SQL.
     dialect: Mutex<Option<Arc<SidecarDialect>>>,
 }
@@ -55,6 +57,7 @@ impl SidecarDriver {
             process: Mutex::new(None),
             spawn: tokio::sync::Mutex::new(()),
             next_conn: AtomicU64::new(1),
+            restarts: AtomicU64::new(0),
             dialect: Mutex::new(None),
         }
     }
@@ -63,11 +66,27 @@ impl SidecarDriver {
     /// `connect` starts a fresh process.
     pub fn restart(&self) {
         if let Some(process) = self.process.lock().take() {
+            self.restarts.fetch_add(1, Ordering::AcqRel);
+            tracing::info!(
+                target: "sqlr_sidecar::process",
+                driver = %process.id(),
+                "driver restarted"
+            );
             process.kill(protocol_error(format!(
                 "driver {} was restarted",
                 self.spec.id
             )));
         }
+    }
+
+    /// How many times this driver's process was restarted or respawned.
+    pub fn restart_count(&self) -> u64 {
+        self.restarts.load(Ordering::Acquire)
+    }
+
+    /// The version of the installed driver.
+    pub fn version(&self) -> &str {
+        &self.spec.version
     }
 
     /// Whether the process is alive right now.
@@ -84,7 +103,11 @@ impl SidecarDriver {
         if let Some(process) = self.process.lock().as_ref().filter(|p| p.alive()) {
             return Ok(process.clone());
         }
+        let had_process = self.process.lock().is_some();
         let (process, _) = Process::start(&self.spec).await?;
+        if had_process {
+            self.restarts.fetch_add(1, Ordering::AcqRel);
+        }
         *self.process.lock() = Some(process.clone());
         Ok(process)
     }

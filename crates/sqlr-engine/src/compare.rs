@@ -27,7 +27,7 @@ impl Engine {
         let job = self.shared.jobs.create(JobKind::Compare);
         let id = job.id;
         let task = self.shared.clone().run_compare(job, source, target);
-        self.shared.send(Command::Spawn(Box::pin(task)));
+        self.shared.send(Command::job(id, None, task));
         self.shared.repaint();
         id
     }
@@ -56,7 +56,8 @@ impl Engine {
             shared.jobs.finish(job.id, outcome);
             shared.repaint();
         };
-        self.shared.send(Command::Spawn(Box::pin(task)));
+        self.shared
+            .send(Command::job(id, Some(conn.to_string()), task));
         self.shared.repaint();
         id
     }

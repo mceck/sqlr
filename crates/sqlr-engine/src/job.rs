@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use parking_lot::Mutex;
-use sqlr_core::{CancelHandle, DriverError, ObjectDef, Value};
+use sqlr_core::{CancelHandle, DriverError, ErrorKind, ObjectDef, Value};
 
 use crate::admin::AdminSnapshot;
 use crate::library::now_ms;
@@ -148,6 +148,17 @@ pub enum JobOutcome {
     Cancelled,
 }
 
+impl JobOutcome {
+    fn failure(&self) -> Option<&DriverError> {
+        match self {
+            Self::Failed(error) => Some(error),
+            Self::Applied(report) => report.failed.as_ref().map(|(_, error)| error),
+            Self::DdlApplied(report) => report.failure(),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct JobState {
     pub kind: JobKind,
@@ -217,6 +228,8 @@ struct JobEntry {
     cancelled: Arc<AtomicBool>,
     cancel: Option<Arc<dyn CancelHandle>>,
     operation: Option<crate::OperationId>,
+    /// The command task that created it, when it was created there.
+    run: Option<u64>,
 }
 
 #[derive(Default)]
@@ -274,6 +287,7 @@ impl Jobs {
                         crate::operations::Target::Job(id),
                     )
                 }),
+                run: crate::operations::current_run(),
             },
         );
         JobControl {
@@ -281,6 +295,23 @@ impl Jobs {
             cancelled,
             jobs: self.inner.clone(),
         }
+    }
+
+    pub fn bind(&self, id: JobId, run: u64, conn: Option<String>) {
+        if let Some(entry) = self.inner.map.lock().get_mut(&id) {
+            entry.run = Some(run);
+            if let (Some(ops), Some(operation)) = (&self.inner.operations, entry.operation) {
+                ops.bind(operation, run, conn);
+            }
+        }
+    }
+
+    pub fn operation(&self, id: JobId) -> Option<crate::OperationId> {
+        self.inner
+            .map
+            .lock()
+            .get(&id)
+            .and_then(|entry| entry.operation)
     }
 
     pub fn state(&self, id: JobId) -> Option<JobState> {
@@ -296,11 +327,14 @@ impl Jobs {
                         let state = match &outcome {
                             JobOutcome::Cancelled => crate::OperationState::Cancelled,
                             JobOutcome::Failed(e) => crate::OperationState::Failed(e.to_string()),
-                            _ => crate::OperationState::Done { ok: true },
+                            _ => crate::OperationState::Done {
+                                ok: outcome.failure().is_none(),
+                            },
                         };
                         ops.progress(id, entry.state.progress);
                         ops.finish(id, state);
                     }
+                    log_job_failure(id, entry.operation, &entry.state, &outcome);
                     entry.state.outcome = Some(outcome);
                     entry.cancel = None;
                     Some(entry.state.clone())
@@ -314,6 +348,25 @@ impl Jobs {
         {
             observer(state);
         }
+    }
+
+    /// Fails every unfinished job created by command task `run` (a panic in that task), and
+    /// returns their ids and kinds for the incident.
+    pub fn fail_run(&self, run: u64, message: &str) -> Vec<(JobId, JobKind)> {
+        let ids: Vec<(JobId, JobKind)> = {
+            let map = self.inner.map.lock();
+            map.iter()
+                .filter(|(_, entry)| entry.run == Some(run) && entry.state.outcome.is_none())
+                .map(|(id, entry)| (*id, entry.state.kind))
+                .collect()
+        };
+        for (id, _) in &ids {
+            self.finish(
+                *id,
+                JobOutcome::Failed(DriverError::new(ErrorKind::Other, message)),
+            );
+        }
+        ids
     }
 
     /// Calls `observer` once with the job's final state: now when it already ended, else
@@ -346,5 +399,45 @@ impl Jobs {
 
     pub fn forget(&self, id: JobId) {
         self.inner.map.lock().remove(&id);
+    }
+}
+
+/// One failure line when a job settles. Nothing for a success: the UI already shows it.
+fn log_job_failure(
+    id: JobId,
+    operation: Option<crate::OperationId>,
+    state: &JobState,
+    outcome: &JobOutcome,
+) {
+    let elapsed_ms = (now_ms() - state.started_ms).max(0) as u64;
+    match outcome.failure() {
+        Some(e) => {
+            let level = crate::log::failure_level(e.kind);
+            crate::log::log_at!(
+                level,
+                target: "sqlr_engine::operation",
+                op = "job",
+                job_id = id.0,
+                operation_id = operation.map(|id| id.0),
+                job = ?state.kind,
+                elapsed_ms,
+                error_kind = crate::log::kind_name(e.kind),
+                error = %e.message,
+                "job failed"
+            );
+        }
+        None if matches!(outcome, JobOutcome::Cancelled) => {
+            tracing::debug!(
+                target: "sqlr_engine::operation",
+                op = "job",
+                job_id = id.0,
+                operation_id = operation.map(|id| id.0),
+                job = ?state.kind,
+                elapsed_ms,
+                error_kind = "Cancelled",
+                "job cancelled"
+            );
+        }
+        _ => {}
     }
 }

@@ -23,6 +23,8 @@ Keyboard shortcuts are written for macOS (⌘ is Command). On Windows and Linux,
 | Change the theme, formats or shortcuts | [Settings and shortcuts](settings-and-shortcuts.md) |
 | Use an agent with sqlr, or the integrated terminal | [Agents and the terminal](agents.md) |
 
+| Investigate an error or share a local report | [Troubleshooting](troubleshooting.md) |
+
 ## The window at a glance
 
 - **Left:** the explorer. Every saved connection lives here, in folders you can rearrange by drag and drop. Expanding a connection shows its databases, schemas, tables and so on.

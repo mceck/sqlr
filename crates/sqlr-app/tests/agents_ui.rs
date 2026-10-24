@@ -37,6 +37,8 @@ fn app(dir: &std::path::Path) -> SqlrApp {
             startup_notice: None,
             storage_warning: None,
             mcp_token_store: None,
+            diagnostics: None,
+            diagnostics_warning: None,
         },
         &egui::Context::default(),
     )
@@ -122,6 +124,8 @@ fn enabling_mcp_starts_the_listener_and_disabling_removes_the_discovery_file() {
             startup_notice: None,
             storage_warning: None,
             mcp_token_store: Some(token_store),
+            diagnostics: None,
+            diagnostics_warning: None,
         },
         &egui::Context::default(),
     );
@@ -173,6 +177,8 @@ fn the_toolbar_toggle_switches_agent_access() {
             mcp_token_store: Some(Arc::new(sqlr_store::MemoryMcpTokenStore::with_token(
                 "ui-test-token",
             ))),
+            diagnostics: None,
+            diagnostics_warning: None,
         },
         &egui::Context::default(),
     );

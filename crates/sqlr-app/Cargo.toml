@@ -15,6 +15,10 @@ path = "tests/integration.rs"
 name = "smoke"
 path = "tests/smoke.rs"
 
+[[test]]
+name = "diagnostics"
+path = "tests/diagnostics.rs"
+
 # The app menu on macOS is named after the executable; call it sqlr, like the product.
 [[bin]]
 name = "sqlr"
@@ -36,6 +40,7 @@ sqlr-terminal = { path = "../sqlr-terminal" }
 sqlr-store = { path = "../sqlr-store" }
 sqlr-ui = { path = "../sqlr-ui" }
 anyhow.workspace = true
+arboard.workspace = true
 eframe.workspace = true
 egui.workspace = true
 egui_dock.workspace = true
@@ -43,6 +48,7 @@ egui_extras = { workspace = true, features = ["image"] }
 image.workspace = true
 jiff.workspace = true
 rfd.workspace = true
+serde.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 tracing-appender.workspace = true

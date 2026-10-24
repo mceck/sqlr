@@ -162,11 +162,20 @@ impl NativeMenu {
 
         // Help.
         let shortcuts = MenuItem::new("Keyboard Shortcuts", true, None);
+        let diagnostics = MenuItem::new("Diagnostics…", true, None);
+        let report = MenuItem::new("Report a Problem…", true, None);
         let help_about = MenuItem::new("About sqlr", true, None);
         let help = Submenu::with_items(
             "Help",
             true,
-            &[&shortcuts, &PredefinedMenuItem::separator(), &help_about],
+            &[
+                &shortcuts,
+                &PredefinedMenuItem::separator(),
+                &diagnostics,
+                &report,
+                &PredefinedMenuItem::separator(),
+                &help_about,
+            ],
         )?;
 
         let menu = Menu::with_items(&[&app, &file, &edit, &view, &query, &help])?;
@@ -202,6 +211,8 @@ impl NativeMenu {
             (stop.id().clone(), AppCommand::Stop),
             (save_snippet.id().clone(), AppCommand::SaveSnippet),
             (shortcuts.id().clone(), AppCommand::Shortcuts),
+            (diagnostics.id().clone(), AppCommand::Diagnostics),
+            (report.id().clone(), AppCommand::ReportProblem),
             (help_about.id().clone(), AppCommand::About),
             (value_panel_item.id().clone(), AppCommand::ToggleValuePanel),
             (history_item.id().clone(), AppCommand::ToggleHistory),

@@ -43,8 +43,8 @@ pub use admin::{
     table_stats_detail, table_stats_view,
 };
 pub use chrome::{
-    ChipAction, ChipItem, ChipState, Crumb, ToastKind, Toasts, breadcrumb, connection_chip,
-    empty_state, status_segment, tool_button,
+    ChipAction, ChipItem, ChipState, Crumb, ToastKind, Toasts, breadcrumb,
+    breadcrumb_with_response, connection_chip, empty_state, status_segment, tool_button,
 };
 pub use console::{ConsoleState, RespLine, RespLineKind, console, resp_lines};
 pub use datagen::{datagen_table, generator_label};

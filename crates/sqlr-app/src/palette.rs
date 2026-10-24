@@ -95,6 +95,10 @@ pub enum AppCommand {
     SelectAll,
     /// Opens the Help > Keyboard Shortcuts window.
     Shortcuts,
+    /// Opens the Diagnostics window.
+    Diagnostics,
+    /// Opens Report a Problem.
+    ReportProblem,
     /// "New index…" on the collection (or Indices folder) selected in the explorer.
     NewIndex(String, NodePath),
 }
@@ -625,6 +629,15 @@ impl SqlrApp {
             AppCommand::Delete => send_key(ctx, egui::Key::Delete, egui::Modifiers::NONE),
             AppCommand::SelectAll => send_key(ctx, egui::Key::A, egui::Modifiers::COMMAND),
             AppCommand::Shortcuts => self.shortcuts.open = true,
+            AppCommand::Diagnostics => {
+                self.diagnostics_ui.open = true;
+                self.diagnostics_ui.loaded = false;
+            }
+            AppCommand::ReportProblem => {
+                self.diagnostics_ui.report = Some(crate::diagnostics::ReportProblemDialog::new(
+                    self.settings.include_sql_in_diagnostics,
+                ));
+            }
             AppCommand::NewIndex(conn, path) => {
                 let parent =
                     NodePath(path.segments()[..path.segments().len().saturating_sub(1)].to_vec());

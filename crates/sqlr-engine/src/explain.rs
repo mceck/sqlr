@@ -49,7 +49,8 @@ impl Engine {
                     sql,
                     analyze,
                 );
-                self.shared.send(Command::Spawn(Box::pin(task)));
+                self.shared
+                    .send(Command::job(id, Some(key.conn.clone()), task));
             }
         }
         self.shared.repaint();

@@ -721,6 +721,8 @@ mod tests {
                 startup_notice: None,
                 storage_warning: None,
                 mcp_token_store: None,
+                diagnostics: None,
+                diagnostics_warning: None,
             },
             &egui::Context::default(),
         );

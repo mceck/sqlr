@@ -282,6 +282,12 @@ async fn cancel_escalates_to_kill() {
 
 #[tokio::test]
 async fn idle_sidecar_stops() {
+    let capture = Capture::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(capture.clone())
+        .with_ansi(false)
+        .finish();
+    let _ = tracing::subscriber::set_global_default(subscriber);
     let mut spec = echo_spec();
     spec.idle_timeout = Duration::from_millis(150);
     let (driver, _) = SidecarDriver::probe(spec).await.unwrap();
@@ -305,6 +311,12 @@ async fn idle_sidecar_stops() {
     assert!(
         !driver.is_running(),
         "the process stopped after the last connection closed"
+    );
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let log = String::from_utf8_lossy(&capture.0.lock()).to_string();
+    assert!(
+        !log.contains("ERROR"),
+        "intentional shutdown is not an incident: {log}"
     );
     // A new connection starts it again.
     let again = driver

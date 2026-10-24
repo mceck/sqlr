@@ -19,6 +19,15 @@ use sqlr_sidecar::{SidecarDriver, SidecarSpec};
 use crate::engine::{Command, Engine, Shared};
 use crate::registry::DriverRegistry;
 
+/// The runtime state of one installed sidecar driver, for diagnostics.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SidecarState {
+    pub id: String,
+    pub version: String,
+    pub running: bool,
+    pub restarts: u64,
+}
+
 /// Where an install, update or removal stands.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DriverJobState {
@@ -172,6 +181,23 @@ impl Engine {
 
     pub fn installed_drivers(&self) -> Vec<InstalledDriver> {
         self.shared.drivers_hub.inner.lock().installed.clone()
+    }
+
+    /// The sidecar processes of the installed drivers, and how often they restarted.
+    pub fn sidecar_states(&self) -> Vec<SidecarState> {
+        let hub = self.shared.drivers_hub.inner.lock();
+        let mut states: Vec<SidecarState> = hub
+            .sidecars
+            .values()
+            .map(|sidecar| SidecarState {
+                id: sidecar.spec().id.clone(),
+                version: sidecar.spec().version.clone(),
+                running: sidecar.is_running(),
+                restarts: sidecar.restart_count(),
+            })
+            .collect();
+        states.sort_by(|a, b| a.id.cmp(&b.id));
+        states
     }
 
     /// Install, update, remove and activate jobs by driver id (the last state of each).

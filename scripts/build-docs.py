@@ -32,6 +32,7 @@ USAGE = [
     ("usage/nosql.md", "Document and key-value"),
     ("usage/drivers.md", "Drivers"),
     ("usage/settings-and-shortcuts.md", "Settings and shortcuts"),
+    ("usage/troubleshooting.md", "Troubleshooting"),
 ]
 PAGES = {path for path, _ in USAGE}
 

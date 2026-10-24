@@ -7,6 +7,36 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::Notify;
+
+tokio::task_local! {
+    /// The command task currently running, so an operation it starts can be failed if the
+    /// task panics.
+    pub static RUN: u64;
+}
+
+/// The current command task's id, when called inside one.
+pub(crate) fn current_run() -> Option<u64> {
+    RUN.try_with(|run| *run).ok()
+}
+
+/// A future that marks every poll as belonging to an engine command task, so the global
+/// panic hook leaves the incident to the engine converter.
+pub(crate) struct EngineTask<F>(pub(crate) F);
+
+impl<F: std::future::Future> std::future::Future for EngineTask<F> {
+    type Output = F::Output;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let _scope = sqlr_core::panic_scope::EngineTaskScope::enter();
+        // SAFETY: `EngineTask` never moves or drops the inner future itself; this is the
+        // standard pin projection and the inner value is only ever used through `Pin`.
+        let inner = unsafe { self.map_unchecked_mut(|task| &mut task.0) };
+        inner.poll(cx)
+    }
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct OperationId(pub u64);
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,6 +81,8 @@ struct Entry {
     target: Target,
     start: Instant,
     finished: Option<Instant>,
+    /// The command task that started it, if any.
+    run: Option<u64>,
 }
 struct Inner {
     next: u64,
@@ -97,9 +129,42 @@ impl Operations {
                 target,
                 start: Instant::now(),
                 finished: None,
+                run: current_run(),
             },
         );
+        tracing::Span::current().record("operation_id", id.0);
         id
+    }
+
+    pub fn bind(&self, id: OperationId, run: u64, conn: Option<String>) {
+        if let Some(entry) = self.0.lock().entries.get_mut(&id) {
+            entry.run = Some(run);
+            entry.info.conn = conn;
+        }
+    }
+
+    /// Fails every still-running operation started by command task `run`, and returns them
+    /// so the caller can name them in an incident.
+    pub fn fail_run(&self, run: u64, message: &str) -> Vec<OperationInfo> {
+        let mut inner = self.0.lock();
+        let now = Instant::now();
+        let mut failed = Vec::new();
+        for entry in inner.entries.values_mut() {
+            if entry.run != Some(run)
+                || !matches!(
+                    entry.info.state,
+                    OperationState::Running | OperationState::Cancelling
+                )
+            {
+                continue;
+            }
+            entry.info.state = OperationState::Failed(message.to_string());
+            entry.info.cancelable = false;
+            entry.info.elapsed = now.duration_since(entry.start);
+            entry.finished = Some(now);
+            failed.push(entry.info.clone());
+        }
+        failed
     }
     pub fn finish(&self, id: OperationId, state: OperationState) {
         if let Some(e) = self.0.lock().entries.get_mut(&id)

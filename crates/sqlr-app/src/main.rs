@@ -1,8 +1,10 @@
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
 use sqlr_app::cli::{CliCommand, USAGE, parse_args, version_line};
-use sqlr_app::{SqlrApp, init_logging, production_deps_in};
+use sqlr_app::diagnostics::{Diagnostics, PanicHookGuard};
+use sqlr_app::{SqlrApp, init_logging, production_deps_with};
 
 /// Wraps the app in a frameless central panel and logs the time to the first frame.
 struct Shell {
@@ -17,6 +19,7 @@ impl eframe::App for Shell {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.app.observe_graphics("glow");
         egui::CentralPanel::no_frame().show(ui, |ui| self.app.ui(ui));
         if let Some(started) = self.started.take() {
             let elapsed = started.elapsed().as_secs_f64() * 1000.0;
@@ -76,11 +79,19 @@ fn main() -> eframe::Result {
             std::process::exit(2);
         }
     };
-    let log_dir = data_dir
-        .clone()
-        .or_else(sqlr_store::default_data_dir)
-        .map(|d| d.join("logs"));
-    let _log_guard = init_logging(log_dir.as_deref());
+    let data_dir = data_dir.or_else(sqlr_store::default_data_dir);
+    // The panic hook needs the diagnostics directory before anything else can fail.
+    let diagnostics = Arc::new(Diagnostics::open(data_dir.as_deref()));
+    let _panic_hook = PanicHookGuard::install(diagnostics.clone());
+    let log_dir = data_dir.clone().map(|d| d.join("logs"));
+    let logging = init_logging(
+        log_dir.as_deref(),
+        diagnostics.session_id(),
+        Some(diagnostics.clone()),
+    );
+    let diagnostics_warning = logging.warning();
+    let app_data_dir = data_dir.clone();
+    let app_diagnostics = diagnostics.clone();
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("sqlr")
@@ -92,13 +103,19 @@ fn main() -> eframe::Result {
         viewport,
         ..Default::default()
     };
-    eframe::run_native(
+    let result = eframe::run_native(
         "sqlr",
         options,
         Box::new(move |cc| {
             let ctx = cc.egui_ctx.clone();
             let repaint = Arc::new(move || ctx.request_repaint());
-            let deps = production_deps_in(repaint, config_dir, data_dir)?;
+            let deps = production_deps_with(
+                repaint,
+                config_dir,
+                app_data_dir,
+                Some(app_diagnostics),
+                diagnostics_warning,
+            )?;
             let mut app = SqlrApp::new(deps, &cc.egui_ctx);
             let budget = std::env::var_os("SQLR_BUDGET_REPORT").map(|path| {
                 app.connect_for_tests("budget-a");
@@ -115,7 +132,72 @@ fn main() -> eframe::Result {
                 budget,
             }))
         }),
-    )
+    );
+    match result {
+        Ok(()) => {
+            diagnostics.clean_exit();
+            drop(logging);
+            Ok(())
+        }
+        Err(error) => {
+            let message = format!("{error:#}");
+            let incident = diagnostics.record_startup_failure(&message);
+            tracing::warn!(error = %message, "startup failed");
+            show_startup_failure(&message, log_dir.as_deref(), incident.as_ref());
+            diagnostics.clean_exit();
+            drop(logging);
+            Err(error)
+        }
+    }
+}
+
+/// A native blocking dialog: no event loop exists when startup fails.
+fn show_startup_failure(
+    message: &str,
+    log_dir: Option<&Path>,
+    incident: Option<&sqlr_app::diagnostics::Incident>,
+) {
+    let storage = if incident.is_some() {
+        "A startup report was saved in the diagnostics folder."
+    } else {
+        "The diagnostics folder is unavailable; the startup report could not be saved."
+    };
+    let report = format!("{message}\n\n{storage}");
+    let details = incident
+        .and_then(|incident| serde_json::to_string_pretty(incident).ok())
+        .unwrap_or_else(|| report.clone());
+    let answer = rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Error)
+        .set_title(sqlr_app::diagnostics::STARTUP_TITLE)
+        .set_description(&report)
+        .set_buttons(rfd::MessageButtons::OkCancelCustom(
+            "Copy details".into(),
+            "Open logs".into(),
+        ))
+        .show();
+    match answer {
+        rfd::MessageDialogResult::Custom(label) if label == "Copy details" => {
+            if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                let _ = clipboard.set_text(details);
+            }
+        }
+        rfd::MessageDialogResult::Custom(_) => {
+            if let Some(dir) = log_dir {
+                open_folder(dir);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn open_folder(dir: &Path) {
+    #[cfg(target_os = "macos")]
+    let program = "open";
+    #[cfg(target_os = "windows")]
+    let program = "explorer";
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    let program = "xdg-open";
+    let _ = std::process::Command::new(program).arg(dir).spawn();
 }
 
 #[cfg(test)]
@@ -182,6 +264,8 @@ mod tests {
                 startup_notice: None,
                 storage_warning: None,
                 mcp_token_store: Some(Arc::new(MemoryMcpTokenStore::with_token("hidden-test"))),
+                diagnostics: None,
+                diagnostics_warning: None,
             },
             &ctx,
         );

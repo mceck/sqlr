@@ -81,6 +81,10 @@ pub struct AppDeps {
     pub storage_warning: Option<String>,
     /// Where the MCP bearer token lives; tests pass an in-memory store.
     pub mcp_token_store: Option<Arc<dyn sqlr_store::McpTokenStore>>,
+    /// The session's diagnostics, when the binary initialized them.
+    pub diagnostics: Option<Arc<crate::diagnostics::Diagnostics>>,
+    /// Why diagnostics are limited to stderr, when they are.
+    pub diagnostics_warning: Option<String>,
 }
 
 /// The real dependencies: keychain secrets, the user's config directory, `sqlr.db` (or an
@@ -96,6 +100,18 @@ pub fn production_deps_in(
     config_dir: Option<PathBuf>,
     data_dir: Option<PathBuf>,
 ) -> anyhow::Result<AppDeps> {
+    production_deps_with(repaint, config_dir, data_dir, None, None)
+}
+
+/// [`production_deps_in`] with the session's diagnostics and the warning about a log
+/// directory that cannot be written.
+pub fn production_deps_with(
+    repaint: Repaint,
+    config_dir: Option<PathBuf>,
+    data_dir: Option<PathBuf>,
+    diagnostics: Option<Arc<crate::diagnostics::Diagnostics>>,
+    diagnostics_warning: Option<String>,
+) -> anyhow::Result<AppDeps> {
     let config_dir = match config_dir {
         Some(dir) => dir,
         None => sqlr_store::default_config_dir().context("no config directory for this user")?,
@@ -108,7 +124,7 @@ pub fn production_deps_in(
     let repo = ConnectionRepo::open(&config_dir, Box::new(secrets.clone()))
         .context("open the connection store")?;
     let settings = Settings::load(&config_dir).unwrap_or_else(|e| {
-        tracing::warn!(error = %e, "settings unreadable, using defaults");
+        tracing::error!(incident = "startup", error = %e, "settings unreadable, using defaults");
         Settings::default()
     });
     let mut drivers = DriverRegistry::default();
@@ -142,6 +158,8 @@ pub fn production_deps_in(
             secrets,
             Arc::new(sqlr_store::KeyringMcpTokenStore),
         ))),
+        diagnostics,
+        diagnostics_warning,
     })
 }
 
@@ -216,6 +234,12 @@ pub struct SqlrApp {
     pub(crate) folder_opener: Arc<dyn Fn(&Path) + Send + Sync>,
     /// See [`AppDeps::storage_warning`].
     pub(crate) storage_warning: Option<String>,
+    /// The session's diagnostics; `None` in tests that do not opt in.
+    pub(crate) diagnostics: Option<Arc<crate::diagnostics::Diagnostics>>,
+    /// The Diagnostics window, the startup banner and Report a Problem.
+    pub(crate) diagnostics_ui: crate::diagnostics::DiagnosticsUi,
+    /// The graphics backend eframe reported, once the first frame drew.
+    pub(crate) graphics_backend: Option<String>,
     /// A run waiting for the profile's confirmation.
     pub(crate) confirm: Option<PendingRun>,
     /// Open transactions to commit or roll back before something else happens.
@@ -302,6 +326,8 @@ impl SqlrApp {
             startup_notice,
             storage_warning,
             mcp_token_store,
+            diagnostics,
+            diagnostics_warning,
         } = deps;
         let engine = Arc::new(engine);
         // The only UI-thread I/O outside the store thread: `connections.toml`, once, before
@@ -314,6 +340,14 @@ impl SqlrApp {
         let wake = ctx.clone();
         let store = crate::store_worker::StoreWorker::spawn(repo, move || wake.request_repaint());
         let (host_tx, host_rx) = std::sync::mpsc::channel();
+        let mut diagnostics_ui = crate::diagnostics::DiagnosticsUi::default();
+        if let Some(diagnostics) = &diagnostics {
+            diagnostics_ui.notice = diagnostics.take_startup_notice();
+        }
+        let storage_warning = match (storage_warning, diagnostics_warning) {
+            (Some(first), Some(second)) => Some(format!("{first}; {second}")),
+            (first, second) => first.or(second),
+        };
         let mut app = Self {
             engine,
             store,
@@ -355,6 +389,9 @@ impl SqlrApp {
             applied_ui_scale: None,
             folder_opener: default_folder_opener(),
             storage_warning,
+            diagnostics,
+            diagnostics_ui,
+            graphics_backend: None,
             confirm: None,
             ending: None,
             kept_open: HashMap::new(),
@@ -403,6 +440,15 @@ impl SqlrApp {
             app.notify(corrupt);
         }
         app.apply_engine_settings();
+        tracing::info!(
+            target: "sqlr_app::session",
+            version = env!("CARGO_PKG_VERSION"),
+            os = std::env::consts::OS,
+            arch = std::env::consts::ARCH,
+            data_dir = %app.data_dir.display(),
+            drivers = app.engine.manifests().len(),
+            "session started"
+        );
         app.reload_profiles();
         app.apply_listing(listing);
         app.new_tab(None, None, "");
@@ -544,8 +590,20 @@ impl SqlrApp {
         self.database_tools_ui(ui.ctx());
         self.index_admin_ui(ui.ctx());
         self.shortcuts.show(ui.ctx());
+        self.diagnostics_ui(ui.ctx());
         self.toasts.show(ui.ctx());
         self.esc_stop(ui.ctx(), esc_stop);
+    }
+
+    /// Records the renderer eframe chose, once, for the diagnostics environment.
+    pub fn observe_graphics(&mut self, backend: &str) {
+        if self.graphics_backend.is_some() {
+            return;
+        }
+        self.graphics_backend = Some(backend.to_string());
+        if let Some(diagnostics) = &self.diagnostics {
+            diagnostics.set_graphics_backend(backend);
+        }
     }
 
     /// The active tab's editor text.
@@ -561,6 +619,18 @@ impl SqlrApp {
                 )
             })
             .count()
+    }
+
+    /// The session's diagnostics, for tests and embedding.
+    #[doc(hidden)]
+    pub fn diagnostics_for_tests(&self) -> Option<&Arc<crate::diagnostics::Diagnostics>> {
+        self.diagnostics.as_ref()
+    }
+
+    /// The Diagnostics window's state, for tests.
+    #[doc(hidden)]
+    pub fn diagnostics_ui_for_tests(&self) -> &crate::diagnostics::DiagnosticsUi {
+        &self.diagnostics_ui
     }
 
     pub fn active_text(&mut self) -> Option<String> {
@@ -608,6 +678,18 @@ impl SqlrApp {
     pub(crate) fn toggle_soft_wrap(&mut self, ctx: &egui::Context) {
         self.settings.soft_wrap = !self.settings.soft_wrap;
         self.settings.apply_to(&mut self.layered);
+        self.save_settings(ctx);
+    }
+
+    /// Applies the one diagnostics privacy setting to logs, incidents, bundles and the
+    /// engine, and persists it.
+    pub(crate) fn set_include_sql(&mut self, include: bool, ctx: &egui::Context) {
+        if self.settings.include_sql_in_diagnostics == include {
+            return;
+        }
+        self.settings.include_sql_in_diagnostics = include;
+        self.settings.apply_to(&mut self.layered);
+        self.apply_engine_settings();
         self.save_settings(ctx);
     }
 
@@ -925,6 +1007,7 @@ impl SqlrApp {
             profiles: &self.profiles,
             formats: &self.formats,
             show_value_panel: self.show_value_panel,
+            include_sql: self.settings.include_sql_in_diagnostics,
             active,
             palette: theme::palette(ui.ctx()),
             icon_font: theme::fonts::icons(ui.ctx(), icons::SIZE),
@@ -943,6 +1026,11 @@ impl SqlrApp {
                 TabCommand::FetchMore(q) => self.engine.fetch_more(q),
                 TabCommand::RequestClose(key) => self.request_close_tab(key),
                 TabCommand::RevealConnection(key) => self.reveal_tab_connection(key),
+                TabCommand::ChangeDatabase { tab, database } => {
+                    if let Some(tab) = tab_mut(&mut self.dock, tab) {
+                        tab.database = Some(database);
+                    }
+                }
                 TabCommand::Add => {
                     self.new_tab(None, None, "");
                 }
@@ -1087,6 +1175,11 @@ impl SqlrApp {
         self.engine
             .set_connect_timeout(self.settings.connect_timeout_s);
         self.engine.set_row_cap(self.settings.row_cap);
+        self.engine
+            .set_include_sql(self.settings.include_sql_in_diagnostics);
+        if let Some(diagnostics) = &self.diagnostics {
+            diagnostics.set_include_sql(self.settings.include_sql_in_diagnostics);
+        }
         self.engine.set_result_memory_limits(
             self.settings.result_memory_mib.saturating_mul(1 << 20),
             self.settings.total_memory_mib.saturating_mul(1 << 20),
@@ -1796,6 +1889,8 @@ mod tests {
             startup_notice: None,
             storage_warning: None,
             mcp_token_store: None,
+            diagnostics: None,
+            diagnostics_warning: None,
         };
         let mut app = SqlrApp::new(deps, &egui::Context::default());
         let on_c1 = app.new_tab(None, Some("c1".into()), "");
@@ -1840,6 +1935,8 @@ mod tests {
             startup_notice: None,
             storage_warning: None,
             mcp_token_store: None,
+            diagnostics: None,
+            diagnostics_warning: None,
         };
         let mut app = SqlrApp::new(deps, &egui::Context::default());
 
@@ -1909,6 +2006,8 @@ mod tests {
             startup_notice: None,
             storage_warning: None,
             mcp_token_store: None,
+            diagnostics: None,
+            diagnostics_warning: None,
         };
         SqlrApp::new(deps, &egui::Context::default())
     }
@@ -2000,6 +2099,8 @@ mod tests {
                 startup_notice: None,
                 storage_warning: None,
                 mcp_token_store: None,
+                diagnostics: None,
+                diagnostics_warning: None,
             },
             &egui::Context::default(),
         );
@@ -2103,6 +2204,8 @@ mod tests {
             startup_notice: None,
             storage_warning: None,
             mcp_token_store: None,
+            diagnostics: None,
+            diagnostics_warning: None,
         };
         let mut app = SqlrApp::new(deps, &egui::Context::default());
         // The profiles arrive from the engine.
@@ -2152,6 +2255,8 @@ mod tests {
             startup_notice: None,
             storage_warning: None,
             mcp_token_store: None,
+            diagnostics: None,
+            diagnostics_warning: None,
         };
         let mut app = SqlrApp::new(deps, &egui::Context::default());
         app.connect("c1");

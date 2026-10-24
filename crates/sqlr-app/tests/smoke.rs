@@ -102,6 +102,8 @@ fn deps_with_db(
         startup_notice: None,
         storage_warning: None,
         mcp_token_store: None,
+        diagnostics: None,
+        diagnostics_warning: None,
     };
     (deps, driver)
 }
@@ -1741,6 +1743,51 @@ fn notices_become_toasts() {
     assert!(
         h.query_by_label_contains("connection profiles").is_some(),
         "the toast is on screen"
+    );
+}
+
+#[test]
+fn breadcrumb_switches_the_query_database() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut h, driver) = harness_with_script(
+        &dir,
+        FakeScript {
+            own_database: Some("original".into()),
+            tree: vec![
+                node(&NodePath::root(), "original", NodeKind::Database, true),
+                node(&NodePath::root(), "other", NodeKind::Database, true),
+            ],
+            databases: vec!["other".into()],
+            ..Default::default()
+        },
+    );
+    expand_to_orders(&mut h);
+    context_menu(&mut h, "original", "New query");
+    replace_text(&mut h, "select 42");
+    h.get_all_by_label("original")
+        .find(|n| n.rect().left() > 270.0)
+        .expect("database breadcrumb")
+        .click();
+    step_until(&mut h, "database dropdown", |h| {
+        h.get_all_by_label("other").any(|n| n.rect().left() > 270.0)
+    });
+    h.get_all_by_label("other")
+        .find(|n| n.rect().left() > 270.0)
+        .expect("database menu item")
+        .click();
+    h.run_steps(3);
+    assert_eq!(
+        h.state().tab_databases().last(),
+        Some(&Some("other".into()))
+    );
+    let previous = driver.executed_on().len();
+    press(&mut h, Modifiers::COMMAND, Key::Enter);
+    step_until(&mut h, "query on the selected database", |_| {
+        driver.executed_on().len() > previous
+    });
+    assert_eq!(
+        driver.executed_on().last(),
+        Some(&(Some("other".into()), "select 42".into()))
     );
 }
 

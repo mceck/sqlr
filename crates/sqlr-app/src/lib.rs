@@ -15,6 +15,7 @@ mod databases_dialog;
 mod datagen_dialog;
 mod ddl_tab;
 mod demo;
+pub mod diagnostics;
 mod dialogs;
 mod drivers;
 mod explorer;
@@ -45,7 +46,11 @@ mod transfer_wizard;
 mod tree_snapshot;
 mod welcome;
 
-pub use app::{AppDeps, SqlrApp, production_deps, production_deps_in};
+pub use app::{AppDeps, SqlrApp, production_deps, production_deps_in, production_deps_with};
+pub use diagnostics::{
+    Diagnostics, DiagnosticsUi, Incident, IncidentKind, IncidentSummary, LogLevel, PanicHookGuard,
+    StartupNotice,
+};
 pub use library::open_db_or_memory;
 pub use logging::init as init_logging;
 
