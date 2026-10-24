@@ -88,7 +88,7 @@ pub fn result_bar(ui: &mut egui::Ui, view: &ResultBarView<'_>) -> Option<ResultB
                 (
                     icons::PREVIEW,
                     None,
-                    "Preview",
+                    "SQL",
                     ChangesAction::Preview,
                     "Show the SQL of the pending changes",
                 ),

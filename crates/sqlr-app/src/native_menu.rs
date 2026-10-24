@@ -82,6 +82,7 @@ impl NativeMenu {
         let profiles = MenuItem::new("Connection profiles…", true, None);
         let import_connections = MenuItem::new("Import…", true, None);
         let export_connections = MenuItem::new("Export…", true, None);
+        let operations = MenuItem::new("Operations", true, None);
         let file = Submenu::with_items(
             "File",
             true,
@@ -94,6 +95,8 @@ impl NativeMenu {
                 &PredefinedMenuItem::separator(),
                 &import_connections,
                 &export_connections,
+                &PredefinedMenuItem::separator(),
+                &operations,
             ],
         )?;
 
@@ -186,6 +189,7 @@ impl NativeMenu {
                 export_connections.id().clone(),
                 AppCommand::ExportConnections,
             ),
+            (operations.id().clone(), AppCommand::ShowOperations),
             (undo.id().clone(), AppCommand::Undo),
             (redo.id().clone(), AppCommand::Redo),
             (cut.id().clone(), AppCommand::Cut),
@@ -213,6 +217,7 @@ impl NativeMenu {
             (settings.clone(), A::Settings),
             (new_tab.clone(), A::NewTab),
             (close_tab.clone(), A::CloseTab),
+            (operations.clone(), A::ShowOperations),
             (run.clone(), A::RunStatement),
             (run_script.clone(), A::RunScript),
             (undo.clone(), A::Undo),

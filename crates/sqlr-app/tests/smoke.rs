@@ -2497,6 +2497,23 @@ fn remapped_run_reaches_engine_and_old_binding_stops_running() {
 }
 
 #[test]
+fn operations_panel_closes_and_reopens_from_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(&dir);
+    for _ in 0..2 {
+        h.get_by_label("File").click();
+        h.run_steps(2);
+        h.get_by_label_contains("Operations").click();
+        h.run_steps(2);
+        h.get_by_label("No operations");
+        h.get_by_label("Close Operations").click();
+        h.run_steps(2);
+        assert!(h.query_by_label("No operations").is_none());
+        assert!(h.query_by_label("Close Operations").is_none());
+    }
+}
+
+#[test]
 fn cancel_hung_connect_from_operations() {
     let dir = tempfile::tempdir().unwrap();
     let (mut h, _) = harness_with_script(

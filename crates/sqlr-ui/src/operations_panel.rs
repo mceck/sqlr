@@ -1,7 +1,7 @@
 //! Reusable view of client-side operations; the app owns cancellation and retention.
 use egui::{Align, Frame, Layout, Margin, RichText, Stroke};
 
-use crate::theme::{self, Spacing};
+use crate::theme::{self, Spacing, icons};
 
 #[derive(Clone, Debug)]
 pub struct OperationRow {
@@ -16,6 +16,7 @@ pub struct OperationRow {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum OperationsAction {
+    Close,
     Cancel(u64),
     CancelAll,
     Forget(u64),
@@ -33,12 +34,17 @@ pub fn operations_panel(ui: &mut egui::Ui, rows: &[OperationRow]) -> Vec<Operati
                     .small()
                     .color(p.text_muted),
             );
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("Cancel all…").clicked() {
-                    out.push(OperationsAction::CancelAll);
-                }
-            });
         }
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if icons::icon_button(ui, icons::CLOSE, Some(p.text_muted), "Close Operations")
+                .clicked()
+            {
+                out.push(OperationsAction::Close);
+            }
+            if running > 0 && ui.button("Cancel all…").clicked() {
+                out.push(OperationsAction::CancelAll);
+            }
+        });
     });
     theme::hairline(ui);
     ui.add_space(Spacing::S);

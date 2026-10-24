@@ -47,6 +47,7 @@ impl SqlrApp {
                         .collect::<Vec<_>>();
                     for action in operations_panel(ui, &rows) {
                         match action {
+                            OperationsAction::Close => self.show_operations = false,
                             OperationsAction::Cancel(id) => {
                                 self.engine.cancel_operation(OperationId(id));
                             }
