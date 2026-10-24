@@ -1,0 +1,184 @@
+name: release
+
+# Push a tag like `v0.1.0` to build every platform and publish a GitHub release.
+# The tag must match the version in crates/sqlr-app/Cargo.toml.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: ver
+        name: Check the tag against the crate version
+        run: |
+          crate=$(sed -n 's/^version *= *"\(.*\)"/\1/p' crates/sqlr-app/Cargo.toml | head -1)
+          tag=${GITHUB_REF_NAME#v}
+          if [ "$tag" != "$crate" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match crates/sqlr-app version $crate"
+            exit 1
+          fi
+          echo "version=$crate" >> "$GITHUB_OUTPUT"
+
+  # Fast, container-free tests gate the release and run in parallel with the builds.
+  tests:
+    needs: version
+    runs-on: ubuntu-latest
+    env:
+      SQLR_SKIP_CONTAINER_TESTS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxi-dev libxcursor-dev libxrandr-dev pkg-config xvfb mesa-vulkan-drivers
+      - name: cargo test --workspace (no containers)
+        run: xvfb-run -a cargo test --workspace
+
+  macos:
+    needs: version
+    runs-on: macos-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+      - name: Build a universal binary
+        run: |
+          cargo build --release -p sqlr-app --bin sqlr --target aarch64-apple-darwin
+          cargo build --release -p sqlr-app --bin sqlr --target x86_64-apple-darwin
+          lipo -create -output target/release/sqlr-universal \
+            target/aarch64-apple-darwin/release/sqlr \
+            target/x86_64-apple-darwin/release/sqlr
+          target/release/sqlr-universal --version
+      - name: Package the app bundle
+        run: scripts/package-macos.sh --bin target/release/sqlr-universal
+      - name: Stage the distribution
+        run: |
+          stage="sqlr_${VERSION}_macos-universal"
+          mkdir "$stage"
+          cp -R dist/sqlr.app "$stage/"
+          cat > "$stage/README.txt" <<'EOF'
+          sqlr for macOS
+          ==============
+
+          Install: drag sqlr.app into /Applications.
+
+          The app is ad-hoc signed, not notarized, so Gatekeeper asks on the
+          first launch. Either right-click sqlr.app and choose Open, or run:
+
+            xattr -dr com.apple.quarantine /Applications/sqlr.app
+
+          Builds for Apple Silicon (arm64) and Intel (x86_64) in one binary.
+          EOF
+          COPYFILE_DISABLE=1 ditto -c -k --keepParent "$stage" "${stage}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: sqlr_${{ env.VERSION }}_macos-universal.zip
+          if-no-files-found: error
+
+  linux:
+    needs: version
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxi-dev libxcursor-dev libxrandr-dev pkg-config
+      - name: Build
+        run: cargo build --release -p sqlr-app --bin sqlr
+      - name: Smoke test
+        run: target/release/sqlr --version
+      - name: Stage the distribution
+        run: |
+          stage="sqlr_${VERSION}_linux-x86_64"
+          mkdir -p "$stage/bin" "$stage/share/applications" "$stage/share/icons/hicolor/1024x1024/apps"
+          cp target/release/sqlr "$stage/bin/sqlr"
+          cp docs/media/icon.png "$stage/share/icons/hicolor/1024x1024/apps/sqlr.png"
+          cat > "$stage/share/applications/sqlr.desktop" <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=sqlr
+          GenericName=Database client
+          Comment=Universal database client
+          Exec=sqlr
+          Icon=sqlr
+          Terminal=false
+          Categories=Development;Database;
+          Keywords=sql;database;db;client;
+          EOF
+          cat > "$stage/README.txt" <<'EOF'
+          sqlr for Linux (x86_64)
+          =======================
+
+          Run it directly:            ./bin/sqlr
+          Or install it system-wide:   sudo cp -r bin share /usr/local/
+          EOF
+          tar -czf "${stage}.tar.gz" "$stage"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: sqlr_${{ env.VERSION }}_linux-x86_64.tar.gz
+          if-no-files-found: error
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release -p sqlr-app --bin sqlr
+      - name: Smoke test
+        run: ./target/release/sqlr.exe --version
+      - name: Stage the distribution
+        run: Compress-Archive -Path ./target/release/sqlr.exe -DestinationPath "sqlr_${env:VERSION}_windows-x86_64.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: sqlr_${{ env.VERSION }}_windows-x86_64.zip
+          if-no-files-found: error
+
+  release:
+    needs: [version, tests, macos, linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd assets
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: assets/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
