@@ -425,3 +425,60 @@ async fn bad_connection_settings_fail_with_a_useful_kind() {
     assert!(driver.dialect().is_some());
     assert_eq!(driver.manifest().id, "sqlserver");
 }
+
+#[tokio::test]
+async fn first_page_does_not_wait_for_the_rest_of_the_batch() {
+    sqlr_testkit::skip_container_tests!();
+    let (_lock, conn) = server().await;
+    let rel = conn.relational().unwrap();
+    let execute = rel.execute("SELECT TOP (20000) ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS n, REPLICATE('x', 1000) AS payload FROM sys.all_objects a CROSS JOIN sys.all_objects b; WAITFOR DELAY '00:00:05'");
+    let Execution::Rows(mut rows) =
+        tokio::time::timeout(std::time::Duration::from_secs(3), execute)
+            .await
+            .expect("execute must return before the trailing delay")
+            .unwrap()
+    else {
+        panic!("rows")
+    };
+    let page = rows.next_chunk(100).await.unwrap().unwrap();
+    assert_eq!(page.len(), 100);
+    assert_eq!(page.cell(0, 0), sqlr_core::Cell::Int(1));
+    tokio::time::timeout(std::time::Duration::from_secs(10), rows.close())
+        .await
+        .expect("closing a partial stream must drain it with bounded memory")
+        .unwrap();
+    let Execution::Rows(mut next) = rel.execute("SELECT 42").await.unwrap() else {
+        panic!("rows")
+    };
+    assert_eq!(
+        next.next_chunk(1).await.unwrap().unwrap().cell(0, 0),
+        sqlr_core::Cell::Int(42)
+    );
+    next.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn browsing_does_not_wait_for_an_open_result_stream() {
+    sqlr_testkit::skip_container_tests!();
+    let (_lock, conn) = server().await;
+    let Execution::Rows(mut rows) = conn
+        .relational()
+        .unwrap()
+        .execute(
+            "SELECT TOP (20000) a.object_id FROM sys.all_objects a CROSS JOIN sys.all_objects b",
+        )
+        .await
+        .unwrap()
+    else {
+        panic!("rows")
+    };
+    rows.next_chunk(1).await.unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        conn.browse(&sqlr_core::NodePath::root()),
+    )
+    .await
+    .expect("an open result must not block explorer metadata")
+    .unwrap();
+    rows.close().await.unwrap();
+}

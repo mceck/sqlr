@@ -431,6 +431,7 @@ mod tests {
         // 2 MiB of a 2-byte char, offset by one byte so the limit falls inside a char.
         let sql = format!("x{}", "é".repeat(MAX_HISTORY_SQL_BYTES));
         let r = QueryResult {
+            memory: Default::default(),
             sql,
             database: None,
             status: QueryStatus::Ready { more: false },
@@ -460,6 +461,7 @@ mod tests {
             "SELECT api_key FROM settings",
         ] {
             let r = QueryResult {
+                memory: Default::default(),
                 sql: sql.into(),
                 database: None,
                 status: QueryStatus::Ready { more: false },

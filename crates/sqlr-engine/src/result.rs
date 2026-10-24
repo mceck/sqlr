@@ -39,4 +39,6 @@ pub struct QueryResult {
     pub cut_short: bool,
     /// The statement's outcome, server notices and transaction notes, oldest first.
     pub messages: Vec<RunMessage>,
+    // Drop the payload before releasing its reservation.
+    pub(crate) memory: crate::result_memory::Reservation,
 }

@@ -4,7 +4,7 @@
 //! egui's defaults stay as further fallbacks and include an emoji font (Noto Emoji); the system
 //! color-emoji fonts are bitmap formats egui cannot render, so only CJK is added here.
 
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use sqlr_ui::theme;
 
@@ -36,9 +36,91 @@ fn fallback_fonts() -> &'static [(&'static str, &'static [u8])] {
     })
 }
 
-/// Installs the bundled fonts with every available fallback appended to each family.
+/// Installs the small bundled fonts immediately. The system CJK collection is read on a
+/// worker only after CJK text is actually painted, including text in popups and results.
 pub fn install(ctx: &egui::Context) {
-    theme::install_fonts(ctx, fallback_fonts());
+    theme::install_fonts(ctx, &[]);
+    enum Load {
+        Idle,
+        Loading,
+        Ready,
+        Installed,
+    }
+    let state = Arc::new(Mutex::new(Load::Idle));
+    ctx.on_end_pass(
+        "sqlr-cjk-fallback",
+        Arc::new(move |ui| {
+            let ctx = ui.ctx();
+            let mut load = state.lock().unwrap();
+            match *load {
+                Load::Installed | Load::Loading => return,
+                Load::Ready => {
+                    *load = Load::Installed;
+                    drop(load);
+                    let families =
+                        ctx.fonts(|f| f.definitions().families.keys().cloned().collect::<Vec<_>>());
+                    for &(name, bytes) in fallback_fonts() {
+                        ctx.add_font(egui::epaint::text::FontInsert::new(
+                            name,
+                            egui::FontData::from_static(bytes),
+                            families
+                                .iter()
+                                .cloned()
+                                .map(|family| egui::epaint::text::InsertFontFamily {
+                                    family,
+                                    priority: egui::epaint::text::FontPriority::Lowest,
+                                })
+                                .collect(),
+                        ));
+                    }
+                    ctx.request_repaint();
+                    return;
+                }
+                Load::Idle => {}
+            }
+            let mut layers = ctx.memory(|m| m.layer_ids().collect::<Vec<_>>());
+            layers.extend([
+                ui.layer_id(),
+                egui::LayerId::background(),
+                egui::LayerId::debug(),
+            ]);
+            let needed = ctx.graphics(|g| {
+                layers.iter().any(|&id| {
+                    g.get(id).is_some_and(|list| {
+                        list.all_entries()
+                            .any(|entry| shape_needs_cjk(&entry.shape))
+                    })
+                })
+            });
+            if !needed {
+                return;
+            }
+            *load = Load::Loading;
+            drop(load);
+            let state = state.clone();
+            let repaint = ctx.clone();
+            std::thread::Builder::new()
+                .name("sqlr-cjk-font".into())
+                .spawn(move || {
+                    let _ = fallback_fonts();
+                    *state.lock().unwrap() = Load::Ready;
+                    repaint.request_repaint();
+                })
+                .expect("spawn CJK font loader");
+        }),
+    );
+}
+
+fn shape_needs_cjk(shape: &egui::Shape) -> bool {
+    match shape {
+        egui::Shape::Text(t) => t.galley.text().chars().any(|c| {
+            matches!(c as u32,
+            0x1100..=0x11ff | 0x2e80..=0xa4cf | 0xac00..=0xd7ff |
+            0xf900..=0xfaff | 0xfe30..=0xfe4f | 0xff00..=0xffef | 0x20000..=0x323af)
+        }),
+        egui::Shape::Vec(shapes) => shapes.iter().any(shape_needs_cjk),
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -51,6 +133,56 @@ mod tests {
 
     fn definitions() -> egui::FontDefinitions {
         theme::fonts::definitions(fallback_fonts())
+    }
+
+    #[test]
+    fn latin_frames_do_not_install_the_cjk_fallback() {
+        let ctx = egui::Context::default();
+        install(&ctx);
+        for _ in 0..3 {
+            let mut out = ctx.run_ui(Default::default(), |ui| {
+                ui.label("SELECT hello, café");
+            });
+            out.textures_delta.clear();
+        }
+        ctx.fonts(|fonts| {
+            assert!(
+                !fonts
+                    .definitions()
+                    .font_data
+                    .keys()
+                    .any(|k| FALLBACKS.contains(&k.as_str()))
+            );
+        });
+    }
+
+    #[test]
+    fn visible_cjk_text_loads_the_fallback_in_the_background() {
+        if !FALLBACKS.iter().any(|p| std::path::Path::new(p).exists()) {
+            return;
+        }
+        let ctx = egui::Context::default();
+        install(&ctx);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            let mut out = ctx.run_ui(Default::default(), |ui| {
+                ui.label("日本語 中文");
+            });
+            out.textures_delta.clear();
+            if ctx.fonts(|f| {
+                f.definitions()
+                    .font_data
+                    .keys()
+                    .any(|k| FALLBACKS.contains(&k.as_str()))
+            }) {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "CJK fallback did not load"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
     }
 
     #[test]

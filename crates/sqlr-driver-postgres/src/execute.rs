@@ -1,6 +1,8 @@
-//! Query execution: cursor-streamed reads, buffered row-returning statements, row counts.
+//! Query execution: cursor-streamed reads, bounded wire streams and row counts.
 
+use futures_util::TryStreamExt;
 use std::collections::HashMap;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use sqlr_core::{
@@ -88,17 +90,18 @@ pub(crate) async fn execute(
     let mode = if is_cursor_query(sql) && declare_cursor(&mut guard, sql, &params).await? {
         Mode::Cursor { exhausted: false }
     } else if params.is_empty() {
-        let messages = guard.client.simple_query(sql).await.map_err(map_error)?;
-        Mode::Buffered {
-            rows: Buffered::Text(data_rows(messages)),
-            at: 0,
-        }
+        Mode::Text(Box::pin(
+            guard
+                .client
+                .simple_query_raw(sql)
+                .await
+                .map_err(map_error)?,
+        ))
     } else {
-        Mode::Buffered {
-            rows: Buffered::Values(
-                buffer_with_params(&guard.client, sql, &columns, &params).await?,
-            ),
-            at: 0,
+        let (stream, text) = stream_with_params(&guard.client, sql, &columns, &params).await?;
+        Mode::Binary {
+            stream: Box::pin(stream),
+            text,
         }
     };
     Ok(Execution::Rows(Box::new(PgRowStream {
@@ -341,24 +344,27 @@ fn protocol(message: impl std::fmt::Display) -> DriverError {
     DriverError::new(ErrorKind::Protocol, message.to_string())
 }
 
-/// The rows of a row-returning statement with parameters that cannot be a cursor. Those rows
+/// Streams a row-returning statement with parameters that cannot be a cursor. Its rows
 /// arrive in binary format. An `INSERT`/`UPDATE`/`DELETE … RETURNING` is wrapped so that every
 /// column comes back through its type's text output (the same text a cursor fetch yields); any
 /// other statement (a data-modifying `WITH`, `EXPLAIN`, …) is decoded from binary for the
 /// common types.
-async fn buffer_with_params(
+async fn stream_with_params(
     client: &Client,
     sql: &str,
     columns: &[ColumnMeta],
     params: &Params<'_>,
-) -> Result<Vec<Vec<Value>>, DriverError> {
+) -> Result<(tokio_postgres::RowStream, bool), DriverError> {
     let keyword = first_keyword(sql);
     let wrappable = ["INSERT", "UPDATE", "DELETE"]
         .iter()
         .any(|k| keyword.eq_ignore_ascii_case(k));
     if !wrappable {
-        let rows = client.query(sql, params).await.map_err(map_error)?;
-        return rows.iter().map(binary_row).collect();
+        return client
+            .query_raw(sql, params.iter().copied())
+            .await
+            .map(|stream| (stream, false))
+            .map_err(map_error);
     }
     let names: Vec<String> = (1..=columns.len()).map(|i| format!("c{i}")).collect();
     // `bool::text` is `true`/`false`, not the output function's `t`/`f`: read it binary.
@@ -375,8 +381,11 @@ async fn buffer_with_params(
         names.join(", "),
         projection.join(", ")
     );
-    let rows = client.query(&wrapped, params).await.map_err(map_error)?;
-    rows.iter().map(|row| text_row(row, columns)).collect()
+    client
+        .query_raw(wrapped.as_str(), params.iter().copied())
+        .await
+        .map(|stream| (stream, true))
+        .map_err(map_error)
 }
 
 fn get<'a, T: FromSql<'a>>(row: &'a Row, i: usize) -> Result<Option<T>, DriverError> {
@@ -434,41 +443,6 @@ fn binary_row(row: &Row) -> Result<Vec<Value>, DriverError> {
         values.push(value.unwrap_or(Value::Null));
     }
     Ok(values)
-}
-
-/// Rows of a buffered result.
-enum Buffered {
-    /// From the simple protocol: text format.
-    Text(Vec<SimpleQueryRow>),
-    /// Already decoded (statements with parameters).
-    Values(Vec<Vec<Value>>),
-}
-
-impl Buffered {
-    fn len(&self) -> usize {
-        match self {
-            Buffered::Text(rows) => rows.len(),
-            Buffered::Values(rows) => rows.len(),
-        }
-    }
-
-    fn chunk(
-        &self,
-        columns: &Arc<[ColumnMeta]>,
-        range: std::ops::Range<usize>,
-    ) -> Result<ResultChunk, DriverError> {
-        match self {
-            Buffered::Text(rows) => build_chunk(columns, &rows[range]),
-            Buffered::Values(rows) => {
-                let mut builder = ChunkBuilder::new(columns.clone());
-                for row in &rows[range] {
-                    let cells: Vec<Cell<'_>> = row.iter().map(Value::as_cell).collect();
-                    builder.push_row(&cells).map_err(protocol)?;
-                }
-                Ok(builder.finish())
-            }
-        }
-    }
 }
 
 fn build_chunk(
@@ -530,8 +504,15 @@ fn is_cursor_query(sql: &str) -> bool {
 }
 
 enum Mode {
-    Cursor { exhausted: bool },
-    Buffered { rows: Buffered, at: usize },
+    Cursor {
+        exhausted: bool,
+    },
+    Text(Pin<Box<tokio_postgres::SimpleQueryStream>>),
+    Binary {
+        stream: Pin<Box<tokio_postgres::RowStream>>,
+        text: bool,
+    },
+    Closed,
 }
 
 /// Holds the query client until it is closed or dropped; the next `execute` waits for that.
@@ -557,14 +538,53 @@ impl RowStream for PgRowStream {
             mode,
         } = self;
         match mode {
-            Mode::Buffered { rows, at } => {
-                if *at >= rows.len() {
-                    return Ok(None);
+            Mode::Closed => Ok(None),
+            Mode::Text(stream) => {
+                let mut rows = Vec::new();
+                let mut exhausted = false;
+                while rows.len() < max_rows {
+                    match stream.try_next().await.map_err(map_error)? {
+                        Some(SimpleQueryMessage::Row(row)) => rows.push(row),
+                        Some(_) => {}
+                        None => {
+                            exhausted = true;
+                            break;
+                        }
+                    }
                 }
-                let end = (*at + max_rows).min(rows.len());
-                let chunk = rows.chunk(columns, *at..end)?;
-                *at = end;
-                Ok(Some(chunk))
+                if exhausted {
+                    *mode = Mode::Closed;
+                }
+                if rows.is_empty() {
+                    Ok(None)
+                } else {
+                    build_chunk(columns, &rows).map(Some)
+                }
+            }
+            Mode::Binary { stream, text } => {
+                let mut builder = ChunkBuilder::new(columns.clone());
+                let mut exhausted = false;
+                while builder.len() < max_rows {
+                    let Some(row) = stream.try_next().await.map_err(map_error)? else {
+                        exhausted = true;
+                        break;
+                    };
+                    let values = if *text {
+                        text_row(&row, columns)?
+                    } else {
+                        binary_row(&row)?
+                    };
+                    let cells: Vec<_> = values.iter().map(Value::as_cell).collect();
+                    builder.push_row(&cells).map_err(protocol)?;
+                }
+                if exhausted {
+                    *mode = Mode::Closed;
+                }
+                if builder.is_empty() {
+                    Ok(None)
+                } else {
+                    Ok(Some(builder.finish()))
+                }
             }
             Mode::Cursor { exhausted } => {
                 let (false, Some(guard)) = (*exhausted, guard.as_mut()) else {
@@ -597,13 +617,10 @@ impl RowStream for PgRowStream {
     }
 
     async fn close(&mut self) -> Result<(), DriverError> {
-        match &mut self.mode {
-            Mode::Cursor { exhausted } => *exhausted = true,
-            Mode::Buffered { rows, at } => {
-                *rows = Buffered::Values(Vec::new());
-                *at = 0;
-            }
-        }
+        // Dropping a wire stream lets tokio-postgres discard remaining responses with
+        // bounded memory. Do not cancel row-returning writes: their side effects must
+        // complete even when the viewer stops fetching RETURNING rows.
+        self.mode = Mode::Closed;
         // Releasing the guard lets the next `execute` run even if this stream is kept alive.
         if let Some(mut guard) = self.guard.take() {
             guard.finish_cursor().await?;

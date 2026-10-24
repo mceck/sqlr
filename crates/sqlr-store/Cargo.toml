@@ -20,7 +20,6 @@ plist = "1"
 url = "2"
 base64.workspace = true
 getrandom.workspace = true
-fs2.workspace = true
 tempfile.workspace = true
 ring = "0.17"
 zeroize = "1"

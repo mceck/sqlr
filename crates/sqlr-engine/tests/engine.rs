@@ -295,6 +295,71 @@ fn connection_settings_override_the_global_row_cap_and_sessions() {
 }
 
 #[test]
+fn memory_budget_bounds_fetch_more_and_reports_truncation() {
+    let (engine, fake) = connected(FakeScript {
+        rows: 5000,
+        ..Default::default()
+    });
+    engine.set_result_memory_limits(1500, 10_000);
+    let q = engine.execute("c", "SELECT n".into(), 100);
+    assert_eq!(settled(&engine, q).1, 100);
+    engine.fetch_more(q);
+    assert_eq!(
+        settled(&engine, q),
+        (QueryStatus::Ready { more: false }, 100)
+    );
+    let result = engine.result(q).unwrap();
+    let r = result.read();
+    assert!(r.rows.byte_size() <= 1500);
+    assert!(r.cut_short);
+    assert!(r.messages.iter().any(|m| m.text.contains("memory budget")));
+    assert_eq!(fake.closed_streams(), 1);
+}
+
+#[test]
+fn oversized_first_chunk_is_not_retained() {
+    let (engine, fake) = connected(FakeScript {
+        rows: 5000,
+        ..Default::default()
+    });
+    engine.set_result_memory_limits(1, 1);
+    let q = engine.execute("c", "SELECT n".into(), 100);
+    assert_eq!(settled(&engine, q), (QueryStatus::Ready { more: false }, 0));
+    assert!(cut_short(&engine, q));
+    assert_eq!(engine.result(q).unwrap().read().rows.byte_size(), 0);
+    assert_eq!(fake.closed_streams(), 1);
+}
+
+#[test]
+fn global_memory_budget_is_released_when_a_result_is_dropped() {
+    let (engine, _) = connected(FakeScript {
+        rows: 5000,
+        ..Default::default()
+    });
+    engine.set_result_memory_limits(10_000, 1500);
+    let first = engine.execute("c", "SELECT n".into(), 100);
+    assert_eq!(settled(&engine, first).1, 100);
+    let second = engine.execute("c", "SELECT n".into(), 100);
+    assert_eq!(settled(&engine, second).1, 0);
+    engine.close_result(first);
+    let third = engine.execute("c", "SELECT n".into(), 100);
+    assert_eq!(settled(&engine, third).1, 100);
+}
+
+#[test]
+fn zero_memory_limits_allow_unlimited_results() {
+    let (engine, _) = connected(FakeScript {
+        rows: 5000,
+        ..Default::default()
+    });
+    engine.set_result_memory_limits(0, 0);
+    let q = engine.execute("c", "SELECT n".into(), 100);
+    settled(&engine, q);
+    engine.fetch_all(q);
+    assert_eq!(settled(&engine, q).1, 5000);
+}
+
+#[test]
 fn fetch_all_stops_at_row_cap() {
     let (engine, fake) = connected(FakeScript {
         rows: 5000,

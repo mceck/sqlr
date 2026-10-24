@@ -130,13 +130,7 @@ fn main() -> anyhow::Result<()> {
     let rss_ok = native["idle_rss_mb"]
         .as_f64()
         .is_some_and(|n| n > 0.0 && n < 150.0);
-    if std::env::var("SQLR_ENFORCE_RSS_BUDGET").is_ok_and(|v| v == "1") {
-        anyhow::ensure!(rss_ok, "idle RSS budget exceeded");
-    } else if !rss_ok {
-        eprintln!(
-            "Deferred optimization: idle RSS exceeds 150 MB; set SQLR_ENFORCE_RSS_BUDGET=1 to enforce."
-        );
-    }
+    anyhow::ensure!(rss_ok, "idle RSS budget exceeded");
     anyhow::ensure!(
         native["connected"].as_u64() == Some(2),
         "idle fixture did not connect both databases"

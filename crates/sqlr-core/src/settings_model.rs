@@ -613,6 +613,32 @@ fn build_defs() -> Vec<SettingDef> {
             All,
         ),
         def(
+            "grid.result_memory_mib",
+            "Result grid",
+            "Memory per SQL result (MiB)",
+            "Stop loading a SQL result before it exceeds this memory budget; 0 means no limit.",
+            &["ram", "memory", "limit"],
+            K::Int {
+                min: 0,
+                max: 1_048_576,
+            },
+            V::Int(128),
+            GlobalOnly,
+        ),
+        def(
+            "grid.total_memory_mib",
+            "Result grid",
+            "Total SQL result memory (MiB)",
+            "The combined memory budget of loaded SQL results; 0 means no limit. Existing rows are kept.",
+            &["ram", "memory", "limit", "tabs"],
+            K::Int {
+                min: 0,
+                max: 1_048_576,
+            },
+            V::Int(512),
+            GlobalOnly,
+        ),
+        def(
             "grid.null_text",
             "Result grid",
             "NULL text",

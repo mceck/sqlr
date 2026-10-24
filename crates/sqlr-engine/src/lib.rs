@@ -20,6 +20,7 @@ mod operations;
 pub use operations::{OperationId, OperationInfo, OperationKind, OperationState};
 mod registry;
 mod result;
+mod result_memory;
 mod script;
 mod session;
 mod ssh;

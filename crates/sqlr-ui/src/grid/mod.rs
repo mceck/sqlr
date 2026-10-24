@@ -10,6 +10,7 @@ mod edit;
 mod header;
 mod selection;
 mod sort;
+mod sort_worker;
 
 use std::borrow::Cow;
 use std::collections::BTreeSet;
@@ -29,7 +30,7 @@ pub use edit::{EditBuffer, INSERTED_ROW_BASE, RowState, is_inserted_row, parse_h
 use header::{Geometry, HEADER_HEIGHT, Hit};
 use selection::subtract;
 pub use selection::{CopyFormat, Selection};
-use sort::ViewKey;
+use sort::{RowOrder, ViewKey};
 
 use crate::theme::{self, Spacing, icons};
 
@@ -88,7 +89,10 @@ pub struct GridState {
     /// A source row to reveal (select and scroll to) once the view is rebuilt.
     reveal: Option<usize>,
     layout: Option<ColumnLayout>,
-    view: Option<(ViewKey, Vec<usize>)>,
+    view: Option<(ViewKey, RowOrder)>,
+    sort_worker: Option<sort_worker::SortWorker>,
+    sorting: Option<ViewKey>,
+    sort_repaint: Option<egui::Context>,
     editor: Option<CellEditor>,
     /// A sort waiting for "Sort on server".
     server_sort: Option<Vec<(usize, bool)>>,
@@ -180,7 +184,7 @@ impl GridState {
     pub fn view_rows(&self) -> Vec<usize> {
         self.view
             .as_ref()
-            .map(|(_, v)| v.clone())
+            .map(|(_, v)| v.iter().collect())
             .unwrap_or_default()
     }
 
@@ -191,7 +195,7 @@ impl GridState {
         };
         self.selected_view_rows()
             .into_iter()
-            .filter_map(|r| view.get(r).copied())
+            .filter_map(|r| view.get(r))
             .collect()
     }
 
@@ -362,6 +366,7 @@ impl GridState {
         }
         let key = ViewKey {
             loaded: rows.row_count(),
+            revision: rows.revision(),
             inserted: self
                 .edits
                 .as_ref()
@@ -373,32 +378,68 @@ impl GridState {
             },
             columns: h.finish(),
         };
-        let Some((old, view)) = self.view.as_mut() else {
+        if let Some((done_key, order)) = self.sort_worker.as_ref().and_then(|w| w.take())
+            && done_key == key
+        {
+            self.view = Some((key.clone(), RowOrder::Sorted(order)));
+            self.sorting = None;
+            self.extra.clear();
+        }
+        if self.view.as_ref().is_some_and(|(old, _)| *old == key) && self.sorting.is_none() {
+            return;
+        }
+        if key.sort.is_empty() {
+            if self
+                .view
+                .as_ref()
+                .is_some_and(|(old, _)| !old.sort.is_empty())
+            {
+                self.extra.clear();
+            }
+            self.sorting = None;
+            if let Some(worker) = &self.sort_worker {
+                worker.clear();
+            }
+            self.view = Some((
+                key.clone(),
+                RowOrder::Natural {
+                    loaded: key.loaded,
+                    inserted: key.inserted,
+                },
+            ));
+        } else if key.loaded >= sort_worker::BACKGROUND_SORT_ROWS {
+            if self.sorting.as_ref() != Some(&key) {
+                let worker = self
+                    .sort_worker
+                    .get_or_insert_with(|| sort_worker::SortWorker::new(self.sort_repaint.clone()));
+                worker.request(key.clone(), rows.clone());
+                self.sorting = Some(key.clone());
+                // Keep a valid view while the worker computes its replacement.
+                if self
+                    .view
+                    .as_ref()
+                    .is_none_or(|(old, _)| old.loaded != key.loaded || old.columns != key.columns)
+                {
+                    self.view = Some((
+                        key.clone(),
+                        RowOrder::Natural {
+                            loaded: key.loaded,
+                            inserted: key.inserted.clone(),
+                        },
+                    ));
+                }
+            }
+        } else {
+            self.sorting = None;
             let view = sort::compute(rows, &key.sort, true, &key.inserted);
-            self.view = Some((key, view));
-            return;
-        };
-        if *old == key {
-            return;
+            self.extra.clear();
+            self.view = Some((key, RowOrder::Sorted(view)));
         }
-        // A new page with nothing else changed and no local sort: only the new rows are
-        // appended, before the inserted ones.
-        let grew = key.loaded > old.loaded
-            && key.sort.is_empty()
-            && old.sort.is_empty()
-            && key.inserted == old.inserted
-            && key.columns == old.columns;
-        if grew {
-            view.truncate(view.len() - old.inserted.len());
-            view.extend(old.loaded..key.loaded);
-            view.extend(key.inserted.iter().copied());
-            *old = key;
-            return;
-        }
-        let view = sort::compute(rows, &key.sort, true, &key.inserted);
-        // Extra selections are view coordinates; a re-sort or reload invalidates them.
-        self.extra.clear();
-        self.view = Some((key, view));
+    }
+
+    /// Whether the worker is computing a local sort. The old order remains usable.
+    pub fn is_sorting(&self) -> bool {
+        self.sorting.is_some()
     }
 
     fn view_len(&self) -> usize {
@@ -406,11 +447,11 @@ impl GridState {
     }
 
     fn source(&self, view_row: usize) -> Option<usize> {
-        self.view.as_ref()?.1.get(view_row).copied()
+        self.view.as_ref()?.1.get(view_row)
     }
 
     fn view_row_of(&self, source: usize) -> Option<usize> {
-        self.view.as_ref()?.1.iter().position(|&r| r == source)
+        self.view.as_ref()?.1.position(source)
     }
 
     fn select(&mut self, selection: Selection) -> bool {
@@ -622,7 +663,14 @@ pub fn data_grid(ui: &mut egui::Ui, state: &mut GridState, input: &GridInput<'_>
     }
     filter_bar(ui, state);
     server_sort_bar(ui, state);
+    state.sort_repaint = Some(ui.ctx().clone());
     state.refresh_view(rows, !input.more_available);
+    if state.is_sorting() {
+        ui.horizontal(|ui| {
+            ui.spinner();
+            ui.label("Sorting…");
+        });
+    }
     let view_len = state.view_len();
     if let Some(source) = state.reveal.take()
         && let Some(row) = state.view_row_of(source)
@@ -1318,7 +1366,7 @@ fn paint_rows(
     let total_width = geo.gutter + geo.col_x.last().copied().unwrap_or(0.0);
     let editing = state.editor.as_ref().map(|e| (e.row, e.col));
     for vr in paint_rows {
-        let src = view[vr];
+        let src = view.get(vr).expect("visible row");
         let y = geo.origin.y + HEADER_HEIGHT + vr as f32 * ROW_HEIGHT;
         let row_rect = Rect::from_min_max(
             pos2(geo.origin.x, y),
@@ -1606,6 +1654,91 @@ mod format_tests {
 
     fn formats(pairs: &[(&str, SettingValue)]) -> DataFormats {
         DataFormats::from_values(|id| pairs.iter().find(|(k, _)| *k == id).map(|(_, v)| v.clone()))
+    }
+
+    #[test]
+    fn natural_order_does_not_allocate_per_row() {
+        let cols: Arc<[ColumnMeta]> = vec![ColumnMeta::new(
+            "i",
+            "int8",
+            ColumnKind::Int,
+            DisplayHint::Number,
+        )]
+        .into();
+        let mut rows = RowBuffer::new(cols.clone());
+        let mut b = sqlr_core::ChunkBuilder::new(cols);
+        for i in 0..100_000 {
+            b.push_row(&[Cell::Int(i)]).unwrap();
+        }
+        rows.push_chunk(b.finish());
+        let mut state = GridState::default();
+        state.refresh_view(&rows, true);
+        assert_eq!(state.view.as_ref().unwrap().1.capacity(), 0);
+        assert_eq!(state.source(99_999), Some(99_999));
+        assert_eq!(state.view_row_of(99_999), Some(99_999));
+    }
+
+    #[test]
+    fn background_sort_applies_only_the_current_request() {
+        let cols: Arc<[ColumnMeta]> = vec![ColumnMeta::new(
+            "i",
+            "int8",
+            ColumnKind::Int,
+            DisplayHint::Number,
+        )]
+        .into();
+        let mut rows = RowBuffer::new(cols.clone());
+        let mut b = sqlr_core::ChunkBuilder::new(cols);
+        for i in (0..20_000).rev() {
+            b.push_row(&[Cell::Int(i)]).unwrap();
+        }
+        rows.push_chunk(b.finish());
+        let mut state = GridState {
+            sort: vec![(0, false)],
+            ..Default::default()
+        };
+        state.refresh_view(&rows, true);
+        assert!(state.is_sorting());
+        state.sort = vec![(0, true)];
+        state.refresh_view(&rows, true);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while state.is_sorting() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::sleep(std::time::Duration::from_millis(1));
+            state.refresh_view(&rows, true);
+        }
+        assert_eq!(state.source(0), Some(0));
+        state.sort.clear();
+        state.refresh_view(&rows, true);
+        assert_eq!(state.view.as_ref().unwrap().1.capacity(), 0);
+    }
+
+    #[test]
+    fn same_shape_new_result_rebuilds_the_permutation() {
+        let cols: Arc<[ColumnMeta]> = vec![ColumnMeta::new(
+            "i",
+            "int8",
+            ColumnKind::Int,
+            DisplayHint::Number,
+        )]
+        .into();
+        let make = |values: &[i64]| {
+            let mut rows = RowBuffer::new(cols.clone());
+            let mut b = sqlr_core::ChunkBuilder::new(cols.clone());
+            for &v in values {
+                b.push_row(&[Cell::Int(v)]).unwrap();
+            }
+            rows.push_chunk(b.finish());
+            rows
+        };
+        let mut state = GridState {
+            sort: vec![(0, false)],
+            ..Default::default()
+        };
+        state.refresh_view(&make(&[2, 1]), true);
+        assert_eq!(state.source(0), Some(1));
+        state.refresh_view(&make(&[1, 2]), true);
+        assert_eq!(state.source(0), Some(0));
     }
 
     #[test]

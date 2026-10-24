@@ -1087,6 +1087,10 @@ impl SqlrApp {
         self.engine
             .set_connect_timeout(self.settings.connect_timeout_s);
         self.engine.set_row_cap(self.settings.row_cap);
+        self.engine.set_result_memory_limits(
+            self.settings.result_memory_mib.saturating_mul(1 << 20),
+            self.settings.total_memory_mib.saturating_mul(1 << 20),
+        );
         self.formats = Formats::build(&self.layered, &self.connections);
         let global = self.formats.global();
         self.engine

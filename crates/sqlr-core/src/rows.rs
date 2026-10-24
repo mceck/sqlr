@@ -1,13 +1,18 @@
 //! All rows of one result, appended chunk by chunk (spec §7.2).
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_REVISION: AtomicU64 = AtomicU64::new(1);
 
 use crate::chunk::{Cell, ColumnMeta, ResultChunk};
 
 #[derive(Clone, Debug, Default)]
 pub struct RowBuffer {
     columns: Arc<[ColumnMeta]>,
-    chunks: Vec<ResultChunk>,
+    chunks: Vec<Arc<ResultChunk>>,
+    bytes: usize,
+    revision: u64,
     /// `offsets[i]` is the global index of the first row of `chunks[i]`; the last entry is the total.
     offsets: Vec<usize>,
 }
@@ -17,6 +22,8 @@ impl RowBuffer {
         Self {
             columns,
             chunks: Vec::new(),
+            bytes: 0,
+            revision: 0,
             offsets: vec![0],
         }
     }
@@ -35,7 +42,9 @@ impl RowBuffer {
             self.offsets.push(0); // `Default` leaves the leading sentinel out
         }
         let total = self.row_count() + chunk.len();
-        self.chunks.push(chunk);
+        self.revision = NEXT_REVISION.fetch_add(1, Ordering::Relaxed);
+        self.bytes += chunk.byte_size();
+        self.chunks.push(Arc::new(chunk));
         self.offsets.push(total);
     }
 
@@ -53,8 +62,13 @@ impl RowBuffer {
         Some(self.chunks[idx].cell(row - self.offsets[idx], col))
     }
 
+    /// Identity of this immutable snapshot, changed when a chunk is appended.
+    pub fn revision(&self) -> u64 {
+        self.revision
+    }
+
     pub fn byte_size(&self) -> usize {
-        self.chunks.iter().map(ResultChunk::byte_size).sum()
+        self.bytes
     }
 }
 
@@ -93,6 +107,37 @@ mod tests {
         assert_eq!(buf.cell(3, 0), Some(Cell::Int(3)));
         assert_eq!(buf.cell(4, 0), Some(Cell::Int(4)));
         assert_eq!(buf.cell(5, 0), None);
+    }
+
+    #[test]
+    fn snapshots_share_chunk_payload_and_keep_their_rows() {
+        let cols: Arc<[ColumnMeta]> = vec![ColumnMeta::new(
+            "t",
+            "text",
+            ColumnKind::Text,
+            DisplayHint::Plain,
+        )]
+        .into();
+        let mut rows = RowBuffer::new(cols.clone());
+        let mut b = ChunkBuilder::new(cols.clone());
+        b.push_row(&[Cell::Text("shared payload")]).unwrap();
+        rows.push_chunk(b.finish());
+        let snapshot = rows.clone();
+        let (Some(Cell::Text(a)), Some(Cell::Text(b))) = (rows.cell(0, 0), snapshot.cell(0, 0))
+        else {
+            panic!("text cells")
+        };
+        assert_eq!(
+            a.as_ptr(),
+            b.as_ptr(),
+            "snapshots must not copy chunk payloads"
+        );
+        let mut b = ChunkBuilder::new(cols);
+        b.push_row(&[Cell::Text("later")]).unwrap();
+        rows.push_chunk(b.finish());
+        assert_eq!(snapshot.row_count(), 1);
+        assert_eq!(rows.row_count(), 2);
+        assert!(rows.byte_size() > snapshot.byte_size());
     }
 
     #[test]

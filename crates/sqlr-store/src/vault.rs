@@ -9,7 +9,6 @@ use std::sync::Arc;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use fs2::FileExt;
 use parking_lot::Mutex;
 use ring::{aead, digest};
 use zeroize::{Zeroize, Zeroizing};
@@ -94,7 +93,7 @@ impl VaultSecretStore {
         std::fs::create_dir_all(&self.dir)?;
         let lock = lock_file(&self.dir.join("secrets.vault.lock"))?;
         // The OS lock serializes other processes and independently constructed stores.
-        lock.lock_exclusive()?;
+        lock.lock()?;
         let path = self.dir.join("secrets.vault");
         let bytes = match std::fs::read(&path) {
             Ok(bytes) => Some(bytes),

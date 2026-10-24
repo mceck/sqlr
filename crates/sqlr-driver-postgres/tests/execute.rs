@@ -134,7 +134,7 @@ async fn ddl_and_dml_affected() {
 }
 
 #[tokio::test]
-async fn returning_and_show_are_buffered() {
+async fn returning_and_show_stream_in_pages() {
     sqlr_testkit::skip_container_tests!("POSTGRES");
     let (_c, conn) = connect().await;
     affected(&conn, "CREATE TEMP TABLE t(x int)").await;
@@ -585,7 +585,7 @@ async fn execute_with_binds_every_value_kind() {
     assert!(s.next_chunk(500).await.unwrap().is_none());
     s.close().await.unwrap();
 
-    // A data-modifying WITH with parameters is buffered too.
+    // A data-modifying WITH with parameters streams too.
     let mut s = rows_with(
         &conn,
         "WITH d AS (DELETE FROM p WHERE id = $1 RETURNING id, ok) SELECT * FROM d",
@@ -867,5 +867,23 @@ async fn pg_application_name_applied() {
     let chunk = stream.next_chunk(1).await.unwrap().unwrap();
     assert_eq!(chunk.cell(0, 0), Cell::Text("sqlr property test"));
     assert_eq!(chunk.cell(0, 1), Cell::Text("1234ms"));
+    stream.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn non_cursor_statements_stream_without_waiting_for_all_rows() {
+    sqlr_testkit::skip_container_tests!("POSTGRES");
+    let (_c, conn) = connect().await;
+    let mut stream = tokio::time::timeout(
+        Duration::from_secs(2),
+        rows(
+            &conn,
+            "EXPLAIN ANALYZE SELECT g, pg_sleep(0.001) FROM generate_series(1, 3000) g",
+        ),
+    )
+    .await
+    .expect("a non-cursor statement must return its stream before completion");
+    let chunk = stream.next_chunk(20).await.unwrap().unwrap();
+    assert!(!chunk.is_empty());
     stream.close().await.unwrap();
 }

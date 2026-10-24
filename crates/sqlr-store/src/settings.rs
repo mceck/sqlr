@@ -40,6 +40,8 @@ pub struct Settings {
     pub soft_wrap: bool,
     /// "Fetch all" stops at this many rows; 0 means no cap.
     pub row_cap: usize,
+    pub result_memory_mib: usize,
+    pub total_memory_mib: usize,
     /// Minutes a sidecar driver keeps running after its last connection closes, within
     /// [`SIDECAR_IDLE_MINUTES`].
     pub sidecar_idle_minutes: u32,
@@ -78,6 +80,8 @@ impl Default for Settings {
             line_numbers: true,
             soft_wrap: false,
             row_cap: 100_000,
+            result_memory_mib: 128,
+            total_memory_mib: 512,
             sidecar_idle_minutes: 5,
             agents_enabled: false,
             agents_port: DEFAULT_MCP_PORT,
@@ -109,6 +113,8 @@ impl Settings {
             line_numbers: get("editor.line_numbers").as_bool(),
             soft_wrap: get("editor.soft_wrap").as_bool(),
             row_cap: get("grid.row_cap").as_i64() as usize,
+            result_memory_mib: get("grid.result_memory_mib").as_i64() as usize,
+            total_memory_mib: get("grid.total_memory_mib").as_i64() as usize,
             sidecar_idle_minutes: get("drivers.sidecar_idle_minutes").as_i64() as u32,
             agents_enabled: get("agents.enabled").as_bool(),
             agents_port: get("agents.port").as_i64().clamp(1024, 65535) as u16,
@@ -153,6 +159,14 @@ impl Settings {
             ("editor.line_numbers", SettingValue::Bool(self.line_numbers)),
             ("editor.soft_wrap", SettingValue::Bool(self.soft_wrap)),
             ("grid.row_cap", SettingValue::Int(self.row_cap as i64)),
+            (
+                "grid.result_memory_mib",
+                SettingValue::Int(self.result_memory_mib as i64),
+            ),
+            (
+                "grid.total_memory_mib",
+                SettingValue::Int(self.total_memory_mib as i64),
+            ),
             (
                 "drivers.sidecar_idle_minutes",
                 SettingValue::Int(i64::from(self.sidecar_idle_minutes)),
@@ -216,6 +230,21 @@ mod tests {
         let file = format!("version = 2\n[values]\n{text}");
         std::fs::write(dir.path().join("settings.toml"), file).unwrap();
         Settings::load(dir.path()).unwrap()
+    }
+
+    #[test]
+    fn memory_limits_resolve_and_round_trip() {
+        let settings =
+            load_values_with("\"grid.result_memory_mib\" = 64\n\"grid.total_memory_mib\" = 256\n");
+        assert_eq!(settings.result_memory_mib, 64);
+        assert_eq!(settings.total_memory_mib, 256);
+        let dir = tempfile::tempdir().unwrap();
+        settings.save(dir.path()).unwrap();
+        assert_eq!(Settings::load(dir.path()).unwrap(), settings);
+        assert_eq!(
+            load_values_with("\"grid.result_memory_mib\" = 0\n").result_memory_mib,
+            0
+        );
     }
 
     #[test]

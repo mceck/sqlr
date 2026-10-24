@@ -102,15 +102,15 @@ impl TestLock {
             .unwrap_or_else(|e| panic!("open lock {}: {e}", path.display()));
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
         loop {
-            match fs2::FileExt::try_lock_exclusive(&file) {
+            match file.try_lock() {
                 Ok(()) => return Self { file },
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                Err(std::fs::TryLockError::WouldBlock) => {
                     if std::time::Instant::now() >= deadline {
                         panic!("timed out waiting for the `{name}` test lock");
                     }
                     std::thread::sleep(std::time::Duration::from_millis(25));
                 }
-                Err(e) => panic!("lock `{name}`: {e}"),
+                Err(std::fs::TryLockError::Error(e)) => panic!("lock `{name}`: {e}"),
             }
         }
     }
@@ -118,7 +118,7 @@ impl TestLock {
 
 impl Drop for TestLock {
     fn drop(&mut self) {
-        let _ = fs2::FileExt::unlock(&self.file);
+        let _ = self.file.unlock();
     }
 }
 

@@ -9,11 +9,63 @@ use sqlr_core::{Cell, ColumnMeta, DisplayHint, RowBuffer, compare_cells};
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ViewKey {
     pub loaded: usize,
+    pub revision: u64,
     /// The inserted rows' numbers, shown after the loaded rows.
     pub inserted: Vec<usize>,
     pub sort: Vec<(usize, bool)>,
     /// Columns' identity (names and types), so a re-run result is recomputed.
     pub columns: u64,
+}
+
+/// The natural order needs only a count; an explicit permutation exists only after sorting.
+pub(crate) enum RowOrder {
+    Natural { loaded: usize, inserted: Vec<usize> },
+    Sorted(Vec<usize>),
+}
+impl RowOrder {
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Natural { loaded, inserted } => loaded + inserted.len(),
+            Self::Sorted(v) => v.len(),
+        }
+    }
+    pub fn get(&self, i: usize) -> Option<usize> {
+        match self {
+            Self::Natural { loaded, inserted } => {
+                if i < *loaded {
+                    Some(i)
+                } else {
+                    inserted.get(i - loaded).copied()
+                }
+            }
+            Self::Sorted(v) => v.get(i).copied(),
+        }
+    }
+    pub fn iter(&self) -> impl Iterator<Item = usize> + '_ {
+        (0..self.len()).map(|i| self.get(i).expect("view row"))
+    }
+    pub fn position(&self, source: usize) -> Option<usize> {
+        match self {
+            Self::Natural { loaded, inserted } => {
+                if source < *loaded {
+                    Some(source)
+                } else {
+                    inserted
+                        .iter()
+                        .position(|&r| r == source)
+                        .map(|i| loaded + i)
+                }
+            }
+            Self::Sorted(v) => v.iter().position(|&r| r == source),
+        }
+    }
+    #[cfg(test)]
+    pub fn capacity(&self) -> usize {
+        match self {
+            Self::Natural { inserted, .. } => inserted.capacity(),
+            Self::Sorted(v) => v.capacity(),
+        }
+    }
 }
 
 /// Next state of a header click: ascending → descending → none.
@@ -68,19 +120,26 @@ fn compare_decimals(a: &str, b: &str) -> Ordering {
     else {
         return compare_cells(Cell::Text(a), Cell::Text(b));
     };
+    compare_parsed_decimals(&(neg_a, digits_a, exp_a), &(neg_b, digits_b, exp_b))
+}
+
+fn compare_parsed_decimals(
+    (neg_a, digits_a, exp_a): &(bool, String, i128),
+    (neg_b, digits_b, exp_b): &(bool, String, i128),
+) -> Ordering {
     let zero_a = digits_a.is_empty();
     let zero_b = digits_b.is_empty();
     match (zero_a, zero_b) {
         (true, true) => return Ordering::Equal,
         (true, false) => {
-            return if neg_b {
+            return if *neg_b {
                 Ordering::Greater
             } else {
                 Ordering::Less
             };
         }
         (false, true) => {
-            return if neg_a {
+            return if *neg_a {
                 Ordering::Less
             } else {
                 Ordering::Greater
@@ -89,24 +148,24 @@ fn compare_decimals(a: &str, b: &str) -> Ordering {
         (false, false) => {}
     }
     if neg_a != neg_b {
-        return if neg_a {
+        return if *neg_a {
             Ordering::Less
         } else {
             Ordering::Greater
         };
     }
     // The decimal point's position relative to the significant digits: larger is larger.
-    let magnitude_a = digits_a.len() as i128 + exp_a;
-    let magnitude_b = digits_b.len() as i128 + exp_b;
+    let magnitude_a = digits_a.len() as i128 + *exp_a;
+    let magnitude_b = digits_b.len() as i128 + *exp_b;
     let ordinal = magnitude_a.cmp(&magnitude_b).then_with(|| {
         let len = digits_a.len().max(digits_b.len());
         let digit = |digits: &str, i: usize| digits.as_bytes().get(i).copied().unwrap_or(b'0');
         (0..len)
-            .map(|i| digit(&digits_a, i).cmp(&digit(&digits_b, i)))
+            .map(|i| digit(digits_a, i).cmp(&digit(digits_b, i)))
             .find(|o| *o != Ordering::Equal)
             .unwrap_or(Ordering::Equal)
     });
-    if neg_a { ordinal.reverse() } else { ordinal }
+    if *neg_a { ordinal.reverse() } else { ordinal }
 }
 
 /// Typed comparison of two non-NULL cells. Exact decimals carried as text compare as
@@ -149,7 +208,15 @@ pub(crate) fn compute(
         .copied()
         .filter(|(c, _)| *c < columns.len())
         .collect();
-    if local_sort && !keys.is_empty() {
+    // Typed columns need no numeric-text cache. Keep their direct comparison path
+    // small: adding cache dispatch to every comparison penalizes large integer sorts.
+    if local_sort
+        && !keys.is_empty()
+        && !keys.iter().any(|&(c, _)| {
+            columns[c].kind == sqlr_core::ColumnKind::Text
+                && matches!(columns[c].hint, DisplayHint::Decimal | DisplayHint::Number)
+        })
+    {
         view.sort_by(|&a, &b| {
             for &(c, desc) in &keys {
                 let (x, y) = (
@@ -163,6 +230,95 @@ pub(crate) fn compute(
                     (false, false) => {
                         let ord = compare_values(&columns[c], x, y);
                         if desc { ord.reverse() } else { ord }
+                    }
+                };
+                if ord != Ordering::Equal {
+                    return ord;
+                }
+            }
+            Ordering::Equal
+        });
+        view.extend(inserted.iter().copied());
+        return view;
+    }
+    if local_sort && !keys.is_empty() {
+        // Parse numeric text once per row. Ordinary typed columns borrow their values
+        // directly so sorting integers does not allocate a large per-cell key cache.
+        struct NumericKey {
+            number: Option<f64>,
+            decimal: Option<(bool, String, i128)>,
+            null: bool,
+        }
+        let prepared: Vec<_> = keys
+            .iter()
+            .map(|&(c, desc)| {
+                let values = (columns[c].kind == sqlr_core::ColumnKind::Text
+                    && matches!(columns[c].hint, DisplayHint::Decimal | DisplayHint::Number))
+                .then(|| {
+                    (0..loaded)
+                        .map(|r| {
+                            let cell = rows.cell(r, c).unwrap_or(Cell::Null);
+                            let (number, decimal) = match cell {
+                                Cell::Text(t) => (t.trim().parse::<f64>().ok(), parse_decimal(t)),
+                                _ => (None, None),
+                            };
+                            NumericKey {
+                                number,
+                                decimal,
+                                null: cell == Cell::Null,
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                });
+                (c, desc, values)
+            })
+            .collect();
+        view.sort_by(|&a, &b| {
+            for (c, desc, values) in &prepared {
+                let cells = values.is_none().then(|| {
+                    (
+                        rows.cell(a, *c).unwrap_or(Cell::Null),
+                        rows.cell(b, *c).unwrap_or(Cell::Null),
+                    )
+                });
+                let compare = || {
+                    let (x, y) = cells.unwrap_or_else(|| {
+                        (
+                            rows.cell(a, *c).unwrap_or(Cell::Null),
+                            rows.cell(b, *c).unwrap_or(Cell::Null),
+                        )
+                    });
+                    compare_values(&columns[*c], x, y)
+                };
+                let (null_a, null_b) = if let Some(v) = values {
+                    (v[a].null, v[b].null)
+                } else {
+                    let (x, y) = cells.unwrap();
+                    (x == Cell::Null, y == Cell::Null)
+                };
+                let ord = match (null_a, null_b) {
+                    (true, true) => Ordering::Equal,
+                    (true, false) => Ordering::Greater,
+                    (false, true) => Ordering::Less,
+                    (false, false) => {
+                        let ord = if let Some(v) = values {
+                            let (x, y) = (&v[a], &v[b]);
+                            match (x.number, y.number) {
+                                (Some(fx), Some(fy)) => {
+                                    fx.total_cmp(&fy)
+                                        .then_with(|| match (&x.decimal, &y.decimal) {
+                                            (Some(dx), Some(dy)) => compare_parsed_decimals(dx, dy),
+                                            _ => compare(),
+                                        })
+                                }
+                                (Some(_), None) => Ordering::Less,
+                                (None, Some(_)) => Ordering::Greater,
+                                (None, None) => compare(),
+                            }
+                        } else {
+                            compare()
+                        };
+                        if *desc { ord.reverse() } else { ord }
                     }
                 };
                 if ord != Ordering::Equal {

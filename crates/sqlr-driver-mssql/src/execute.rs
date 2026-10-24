@@ -1,4 +1,4 @@
-//! Query execution: results buffered from TDS, row counts and paging.
+//! Query execution: demand-driven, bounded TDS streaming and row counts.
 
 use std::sync::Arc;
 
@@ -8,6 +8,7 @@ use sqlr_core::{
     ResultChunk, RowStream, TokenKind, Value, trim_statement_in,
 };
 use tiberius::{ColumnData, QueryItem, ToSql};
+use tokio::sync::{Mutex, mpsc, oneshot};
 
 use crate::browse::MsClient;
 use crate::dialect::MsDialect;
@@ -16,7 +17,7 @@ use crate::syntax::tsql_syntax;
 use crate::types;
 
 pub(crate) async fn execute(
-    client: &mut MsClient,
+    client: Arc<Mutex<MsClient>>,
     sql: &str,
     params: &[Value],
 ) -> Result<Execution, DriverError> {
@@ -42,6 +43,8 @@ pub(crate) async fn execute(
             || matches!(class, sqlr_core::StatementClass::Transaction(_)))
     {
         client
+            .lock()
+            .await
             .simple_query(sql.as_ref())
             .await
             .map_err(map_error)?
@@ -54,47 +57,187 @@ pub(crate) async fn execute(
         let encoded: Vec<ColumnData<'static>> = params.iter().map(types::encode).collect();
         let refs: Vec<&dyn ToSql> = encoded.iter().map(|v| v as &dyn ToSql).collect();
         let result = client
+            .lock()
+            .await
             .execute(sql.as_ref(), &refs)
             .await
             .map_err(map_error)?;
         return Ok(Execution::Affected(result.total()));
     }
 
-    let encoded: Vec<ColumnData<'static>> = params.iter().map(types::encode).collect();
-    let refs: Vec<&dyn ToSql> = encoded.iter().map(|v| v as &dyn ToSql).collect();
-    let stream = client.query(sql.as_ref(), &refs).await.map_err(map_error)?;
-    let items: Vec<QueryItem> = stream.try_collect().await.map_err(map_error)?;
-
-    let metadata = items.iter().find_map(|item| match item {
-        QueryItem::Metadata(meta) if meta.result_index() == 0 => Some(meta),
-        _ => None,
+    let (send, receive) = mpsc::channel(1);
+    let (initial, metadata) = oneshot::channel();
+    let sql = sql.into_owned();
+    let params = params.to_vec();
+    // The task owns the client guard; its borrowing QueryStream never leaves it. A
+    // request is required for every chunk, so an idle viewer exerts backpressure.
+    tokio::spawn(async move {
+        let mut client = client.lock_owned().await;
+        let cleanup = serve_rows(&mut client, &sql, &params, initial, receive).await;
+        if let Some(reply) = cleanup.close {
+            let _ = reply.send(cleanup.result);
+        }
     });
-    let Some(metadata) = metadata else {
+    let Some(columns) = metadata.await.map_err(|_| stopped())?? else {
         return Ok(Execution::Affected(0));
     };
-    let columns: Arc<[ColumnMeta]> = metadata
-        .columns()
-        .iter()
-        .map(types::column_meta)
-        .collect::<Vec<_>>()
-        .into();
-    let rows: Vec<Vec<Value>> = items
-        .iter()
-        .filter_map(QueryItem::as_row)
-        .filter(|row| row.result_index() == 0)
-        .map(|row| {
-            row.cells()
-                .zip(columns.iter())
-                .map(|((_, data), meta)| types::fit(types::decode(data), meta.kind))
-                .collect()
-        })
-        .collect();
     Ok(Execution::Rows(Box::new(MsRows {
         columns,
-        rows,
-        at: 0,
-        done: false,
+        requests: Some(send),
     })))
+}
+
+type PageReply = oneshot::Sender<Result<Option<ResultChunk>, DriverError>>;
+enum Request {
+    Fetch(usize, PageReply),
+    Close(oneshot::Sender<Result<(), DriverError>>),
+}
+struct Cleanup {
+    result: Result<(), DriverError>,
+    close: Option<oneshot::Sender<Result<(), DriverError>>>,
+}
+
+async fn serve_rows(
+    client: &mut MsClient,
+    sql: &str,
+    params: &[Value],
+    mut initial: oneshot::Sender<Result<Option<Arc<[ColumnMeta]>>, DriverError>>,
+    mut requests: mpsc::Receiver<Request>,
+) -> Cleanup {
+    let encoded: Vec<ColumnData<'static>> = params.iter().map(types::encode).collect();
+    let refs: Vec<&dyn ToSql> = encoded.iter().map(|v| v as &dyn ToSql).collect();
+    if initial.is_closed() {
+        return Cleanup {
+            result: Ok(()),
+            close: None,
+        };
+    }
+    let mut stream = match client.query(sql, &refs).await {
+        Ok(stream) => stream,
+        Err(e) => {
+            let _ = initial.send(Err(map_error(e)));
+            return Cleanup {
+                result: Ok(()),
+                close: None,
+            };
+        }
+    };
+    let columns = loop {
+        let next = tokio::select! {
+            _ = initial.closed() => return Cleanup {result:Ok(()),close:None},
+            item = stream.try_next() => item,
+        };
+        match next {
+            Ok(Some(QueryItem::Metadata(meta))) if meta.result_index() == 0 => {
+                break meta
+                    .columns()
+                    .iter()
+                    .map(types::column_meta)
+                    .collect::<Vec<_>>()
+                    .into();
+            }
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                let _ = initial.send(Ok(None));
+                return Cleanup {
+                    result: Ok(()),
+                    close: None,
+                };
+            }
+            Err(e) => {
+                let _ = initial.send(Err(map_error(e)));
+                return Cleanup {
+                    result: Ok(()),
+                    close: None,
+                };
+            }
+        }
+    };
+    let columns: Arc<[ColumnMeta]> = columns;
+    if initial.send(Ok(Some(columns.clone()))).is_err() {
+        return Cleanup {
+            result: Ok(()),
+            close: None,
+        };
+    }
+    while let Some(request) = requests.recv().await {
+        match request {
+            Request::Close(reply) => {
+                // Draining is bounded and preserves all side effects in a batch. Explicit
+                // query cancellation still uses the connection's existing cancel handle.
+                // Tiberius Attention cannot reliably resynchronise a partial RPC response.
+                let result = async {
+                    while stream.try_next().await.map_err(map_error)?.is_some() {}
+                    Ok(())
+                }
+                .await;
+                return Cleanup {
+                    result,
+                    close: Some(reply),
+                };
+            }
+            Request::Fetch(max, mut reply) => {
+                let mut builder = ChunkBuilder::new(columns.clone());
+                let mut exhausted = false;
+                let page = async {
+                    while builder.len() < max.max(1) {
+                        match stream.try_next().await.map_err(map_error)? {
+                            Some(QueryItem::Row(row)) if row.result_index() == 0 => {
+                                let values: Vec<_> = row
+                                    .cells()
+                                    .zip(columns.iter())
+                                    .map(|((_, data), meta)| {
+                                        types::fit(types::decode(data), meta.kind)
+                                    })
+                                    .collect();
+                                let cells: Vec<Cell<'_>> =
+                                    values.iter().map(Value::as_cell).collect();
+                                builder.push_row(&cells).map_err(|e| {
+                                    DriverError::new(ErrorKind::Protocol, e.to_string())
+                                })?;
+                            }
+                            Some(_) => {}
+                            None => {
+                                exhausted = true;
+                                break;
+                            }
+                        }
+                    }
+                    Ok(if builder.is_empty() {
+                        None
+                    } else {
+                        Some(builder.finish())
+                    })
+                };
+                let result = tokio::select! {
+                    _ = reply.closed() => return Cleanup {result:Ok(()),close:None},
+                    result = page => result,
+                };
+                let failed = result.is_err();
+                if reply.send(result).is_err() || failed {
+                    return Cleanup {
+                        result: Ok(()),
+                        close: None,
+                    };
+                }
+                if exhausted {
+                    return Cleanup {
+                        result: Ok(()),
+                        close: None,
+                    };
+                }
+            }
+        }
+    }
+    // The caller dropped its result without calling close.
+    Cleanup {
+        result: Ok(()),
+        close: None,
+    }
+}
+
+fn stopped() -> DriverError {
+    DriverError::new(ErrorKind::Connection, "SQL Server result worker stopped")
 }
 
 /// The rows `spec.sql` returns between `spec.before` and `spec.after`, all as plain
@@ -171,12 +314,10 @@ fn returns_rows(sql: &str) -> bool {
     })
 }
 
-/// A result set already read from the wire, paged from memory.
+/// A handle to the demand-driven worker; at most one page is in flight.
 struct MsRows {
     columns: Arc<[ColumnMeta]>,
-    rows: Vec<Vec<Value>>,
-    at: usize,
-    done: bool,
+    requests: Option<mpsc::Sender<Request>>,
 }
 
 #[async_trait::async_trait]
@@ -184,31 +325,28 @@ impl RowStream for MsRows {
     fn columns(&self) -> Arc<[ColumnMeta]> {
         self.columns.clone()
     }
-
     async fn next_chunk(&mut self, max_rows: usize) -> Result<Option<ResultChunk>, DriverError> {
-        if self.done || self.at >= self.rows.len() {
-            self.done = true;
+        let Some(requests) = &self.requests else {
+            return Ok(None);
+        };
+        let (reply, receive) = oneshot::channel();
+        if requests
+            .send(Request::Fetch(max_rows, reply))
+            .await
+            .is_err()
+        {
+            self.requests = None;
             return Ok(None);
         }
-        let end = (self.at + max_rows.max(1)).min(self.rows.len());
-        let mut builder = ChunkBuilder::new(self.columns.clone());
-        for row in &self.rows[self.at..end] {
-            let cells: Vec<Cell<'_>> = row.iter().map(Value::as_cell).collect();
-            builder.push_row(&cells).map_err(|e| {
-                DriverError::new(ErrorKind::Other, format!("cannot build result chunk: {e}"))
-            })?;
-        }
-        self.at = end;
-        if self.at >= self.rows.len() {
-            self.done = true;
-        }
-        Ok(Some(builder.finish()))
+        receive.await.map_err(|_| stopped())?
     }
-
     async fn close(&mut self) -> Result<(), DriverError> {
-        self.rows.clear();
-        self.at = 0;
-        self.done = true;
+        if let Some(requests) = self.requests.take() {
+            let (reply, receive) = oneshot::channel();
+            if requests.send(Request::Close(reply)).await.is_ok() {
+                return receive.await.map_err(|_| stopped())?;
+            }
+        }
         Ok(())
     }
 }

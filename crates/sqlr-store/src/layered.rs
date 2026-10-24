@@ -272,6 +272,8 @@ fn read_global(table: &toml::Table) -> Values {
     const OLD: &[(&str, &str)] = &[
         ("page_size", "grid.page_size"),
         ("row_cap", "grid.row_cap"),
+        ("result_memory_mib", "grid.result_memory_mib"),
+        ("total_memory_mib", "grid.total_memory_mib"),
         ("stop_script_on_error", "general.stop_script_on_error"),
         ("theme", "appearance.theme"),
         ("mono_font_size", "editor.font_size"),

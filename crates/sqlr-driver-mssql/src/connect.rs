@@ -9,7 +9,7 @@ use sqlr_core::{
 };
 use tiberius::{AuthMethod, Config, EncryptionLevel};
 use tokio::net::TcpStream;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, MutexGuard, OnceCell};
 use tokio_util::compat::TokioAsyncWriteCompatExt;
 
 use crate::browse::MsClient;
@@ -30,6 +30,7 @@ impl SqlServerDriver {
 
 pub struct MsConnection {
     client: Arc<Mutex<MsClient>>,
+    inspection: OnceCell<Mutex<MsClient>>,
     /// The server address, for the side connection a cancel opens.
     config: Config,
     dial_host: String,
@@ -41,6 +42,23 @@ pub struct MsConnection {
 }
 
 impl MsConnection {
+    /// Keep session-local metadata when the query connection is idle. A partial row
+    /// stream owns it, so explorer/describe work uses a lazy second connection instead.
+    async fn inspection_client(&self) -> Result<MutexGuard<'_, MsClient>, DriverError> {
+        if let Ok(client) = self.client.try_lock() {
+            return Ok(client);
+        }
+        let client = self
+            .inspection
+            .get_or_try_init(|| async {
+                Self::open(self.config.clone(), &self.dial_host, self.port)
+                    .await
+                    .map(Mutex::new)
+            })
+            .await?;
+        Ok(client.lock().await)
+    }
+
     fn encryption(value: &str) -> Result<EncryptionLevel, DriverError> {
         match value {
             "off" => Ok(EncryptionLevel::Off),
@@ -126,6 +144,7 @@ impl Driver for SqlServerDriver {
         };
         Ok(Arc::new(MsConnection {
             client: Arc::new(Mutex::new(client)),
+            inspection: OnceCell::new(),
             config,
             dial_host,
             port,
@@ -139,7 +158,7 @@ impl Driver for SqlServerDriver {
 #[async_trait::async_trait]
 impl Connection for MsConnection {
     async fn ping(&self) -> Result<ServerInfo, DriverError> {
-        let mut client = self.client.lock().await;
+        let mut client = self.inspection_client().await?;
         let stream = client
             .simple_query("SELECT @@VERSION")
             .await
@@ -163,7 +182,7 @@ impl Connection for MsConnection {
     }
 
     async fn browse(&self, path: &NodePath) -> Result<Vec<Node>, DriverError> {
-        let mut client = self.client.lock().await;
+        let mut client = self.inspection_client().await?;
         browse::browse(&mut client, path).await
     }
 
@@ -188,17 +207,15 @@ impl Connection for MsConnection {
 #[async_trait::async_trait]
 impl RelationalConn for MsConnection {
     async fn execute(&self, sql: &str) -> Result<Execution, DriverError> {
-        let mut client = self.client.lock().await;
-        execute::execute(&mut client, sql, &[]).await
+        execute::execute(self.client.clone(), sql, &[]).await
     }
 
     async fn execute_with(&self, sql: &str, params: &[Value]) -> Result<Execution, DriverError> {
-        let mut client = self.client.lock().await;
-        execute::execute(&mut client, sql, params).await
+        execute::execute(self.client.clone(), sql, params).await
     }
 
     async fn describe(&self, table: &TableRef) -> Result<TableInfo, DriverError> {
-        let mut client = self.client.lock().await;
+        let mut client = self.inspection_client().await?;
         describe::describe(&mut client, table).await
     }
 
@@ -251,7 +268,7 @@ impl RelationalConn for MsConnection {
     }
 
     async fn catalog(&self, schema: &str) -> Result<sqlr_core::SchemaCatalog, DriverError> {
-        let mut client = self.client.lock().await;
+        let mut client = self.inspection_client().await?;
         catalog::catalog(&mut client, schema).await
     }
 }
@@ -259,12 +276,12 @@ impl RelationalConn for MsConnection {
 #[async_trait::async_trait]
 impl Introspect for MsConnection {
     async fn load_object(&self, object: &ObjectRef) -> Result<ObjectDef, DriverError> {
-        let mut client = self.client.lock().await;
+        let mut client = self.inspection_client().await?;
         introspect::load_object(&mut client, &self.database, object).await
     }
 
     async fn list_roles(&self) -> Result<Vec<String>, DriverError> {
-        let mut client = self.client.lock().await;
+        let mut client = self.inspection_client().await?;
         introspect::roles(&mut client).await
     }
 
@@ -280,7 +297,7 @@ impl Introspect for MsConnection {
                 "multiple databases are not supported",
             ));
         }
-        let mut client = self.client.lock().await;
+        let mut client = self.inspection_client().await?;
         introspect::load_schema(&mut client, schema).await
     }
 }

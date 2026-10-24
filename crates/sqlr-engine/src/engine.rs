@@ -49,6 +49,9 @@ pub struct ConnectionSettings {
 
 /// Rows a `fetch_all` keeps before it truncates, until the settings say otherwise.
 pub const DEFAULT_ROW_CAP: usize = 100_000;
+const DEFAULT_RESULT_BYTES: usize = 128 << 20;
+const DEFAULT_TOTAL_RESULT_BYTES: usize = 512 << 20;
+const MAX_FETCH_CHUNK_ROWS: usize = 1024;
 
 pub struct Engine {
     drivers: DriverRegistry,
@@ -162,6 +165,8 @@ impl Engine {
             per_tab: AtomicBool::new(true),
             connect_timeout_s: AtomicU64::new(15),
             row_cap: AtomicUsize::new(DEFAULT_ROW_CAP),
+            result_byte_cap: AtomicUsize::new(DEFAULT_RESULT_BYTES),
+            result_budget: crate::result_memory::ResultBudget::new(DEFAULT_TOTAL_RESULT_BYTES),
             conn_settings: Mutex::new(HashMap::new()),
             export_formats: Mutex::new(None),
             ssh: SshContext::default(),
@@ -923,6 +928,23 @@ impl Engine {
         self.shared.row_cap.store(cap, Ordering::Relaxed);
     }
 
+    /// Memory retained by one SQL result and by all SQL results, in bytes. Zero disables
+    /// a limit. Existing rows stay loaded; a later fetch stops before exceeding a limit.
+    pub fn set_result_memory_limits(&self, per_result: usize, total: usize) {
+        self.shared.result_byte_cap.store(
+            if per_result == 0 {
+                usize::MAX
+            } else {
+                per_result
+            },
+            Ordering::Relaxed,
+        );
+        self.shared.result_budget.limit.store(
+            if total == 0 { usize::MAX } else { total },
+            Ordering::Relaxed,
+        );
+    }
+
     /// What one connection overrides of the global session, timeout and row-cap settings;
     /// the default (nothing overridden) clears it. A `row_cap` of `0` means no cap.
     pub fn set_connection_settings(&self, conn_id: &str, settings: ConnectionSettings) {
@@ -1490,6 +1512,7 @@ enum PageEnd {
     /// `page_size` rows arrived; the stream may hold more.
     More,
     Exhausted,
+    MemoryBudget,
     /// Cancel requested or result closed.
     Stopped,
     /// A later query on the session takes the stream over, or the stream was closed under
@@ -1515,6 +1538,8 @@ pub(crate) struct Shared {
     connect_timeout_s: AtomicU64,
     /// Rows a `fetch_all` may keep before it truncates the result.
     row_cap: AtomicUsize,
+    result_byte_cap: AtomicUsize,
+    result_budget: Arc<crate::result_memory::ResultBudget>,
     /// Per-connection overrides of the settings above.
     conn_settings: Mutex<HashMap<String, ConnectionSettings>>,
     /// Display formats for text exports; `None` writes the raw values.
@@ -1633,6 +1658,7 @@ impl Shared {
         slot: &mut StreamSlot,
     ) {
         let result = QueryResult {
+            memory: crate::result_memory::Reservation::new(self.result_budget.clone()),
             sql: text,
             database: None,
             status: QueryStatus::Running,
@@ -1760,6 +1786,7 @@ impl Shared {
                 None => QueryStatus::Failed(not_connected()),
             };
             let result = QueryResult {
+                memory: crate::result_memory::Reservation::new(self.result_budget.clone()),
                 sql,
                 database: database.clone(),
                 status,
@@ -2509,6 +2536,12 @@ impl Shared {
                 PageEnd::More if all => QueryStatus::Running,
                 PageEnd::More => QueryStatus::Ready { more: true },
                 PageEnd::Exhausted => QueryStatus::Ready { more: false },
+                PageEnd::MemoryBudget => {
+                    self.mark_cut_short(q);
+                    self.add_message(q, RunMessage::new(MessageLevel::Warning,
+                        "Result truncated at the memory budget; increase the result memory limits or close other results"));
+                    QueryStatus::Ready { more: false }
+                }
                 PageEnd::CutShort => {
                     self.mark_cut_short(q);
                     QueryStatus::Ready { more: false }
@@ -2570,13 +2603,21 @@ impl Shared {
             if let Some(end) = self.stop(q) {
                 return end;
             }
-            match stream.next_chunk(page_size - fetched).await {
+            match stream
+                .next_chunk((page_size - fetched).min(MAX_FETCH_CHUNK_ROWS))
+                .await
+            {
                 Ok(Some(chunk)) => {
                     if chunk.is_empty() {
                         break;
                     }
-                    fetched += chunk.len();
                     let mut r = result.write();
+                    let bytes = chunk.byte_size();
+                    let cap = self.result_byte_cap.load(Ordering::Relaxed);
+                    if bytes > cap.saturating_sub(r.rows.byte_size()) || !r.memory.grow(bytes) {
+                        return PageEnd::MemoryBudget;
+                    }
+                    fetched += chunk.len();
                     r.rows.push_chunk(chunk);
                     r.elapsed = started.elapsed();
                 }

@@ -9,7 +9,6 @@ license.workspace = true
 sqlr-core = { path = "../sqlr-core" }
 async-trait.workspace = true
 parking_lot.workspace = true
-fs2.workspace = true
 tokio = { workspace = true, features = ["sync", "net", "io-util"] }
 
 [dev-dependencies]
