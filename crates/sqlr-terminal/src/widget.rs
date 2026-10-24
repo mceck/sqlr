@@ -12,6 +12,11 @@ use crate::input::{MouseEvent, encode_events, encode_mouse};
 use crate::screen::{CellView, MouseProtocolMode, ScreenSnapshot, TermColor};
 use crate::session::{SessionConfig, TerminalSession, TerminalStatus};
 
+/// How long a freshly shown canvas waits before starting the shell, in seconds of egui time.
+/// The first frames of a panel can report a provisional width; a TUI spawned on it may then
+/// miss the following SIGWINCH and keep drawing for the wrong size until a manual resize.
+const START_SETTLE: f64 = 0.05;
+
 /// The colours and font the application gives the terminal.
 #[derive(Clone, Debug)]
 pub struct TerminalTheme {
@@ -109,6 +114,8 @@ pub struct TerminalPanel {
     bell_until: Option<Instant>,
     last_rect: Rect,
     last_cells: (u16, u16),
+    /// The egui time when a fresh canvas may spawn its session, once the layout settles.
+    start_at: Option<f64>,
     focus_next: bool,
 }
 
@@ -129,6 +136,7 @@ impl Default for TerminalPanel {
             bell_until: None,
             last_rect: Rect::NOTHING,
             last_cells: (0, 0),
+            start_at: None,
             focus_next: false,
         }
     }
@@ -205,17 +213,34 @@ impl TerminalPanel {
         if let Some(session) = self.session.take() {
             session.kill();
         }
-        self.start(repaint);
+        // Restart from the size the canvas has now: starting at the config default and
+        // resizing in the same frame races the new child's first tty size query.
+        let (cols, rows) = self.start_cells();
+        self.start(repaint, rows, cols);
     }
 
-    fn start(&mut self, repaint: Arc<dyn Fn() + Send + Sync>) {
+    /// The last canvas grid as `(cols, rows)`, or the config default before the first draw.
+    fn start_cells(&self) -> (u16, u16) {
+        match self.last_cells {
+            (0, _) | (_, 0) => (self.config.cols, self.config.rows),
+            (cols, rows) => (cols, rows),
+        }
+    }
+
+    fn start(&mut self, repaint: Arc<dyn Fn() + Send + Sync>, rows: u16, cols: u16) {
         self.started_once = true;
+        self.start_at = None;
         self.scroll = 0;
         self.scroll_pending = 0.0;
         self.mouse_down = None;
         self.last_mouse_cell = None;
         self.selection = None;
-        self.session = Some(TerminalSession::spawn(&self.config, repaint));
+        let config = SessionConfig {
+            rows: rows.max(1),
+            cols: cols.max(1),
+            ..self.config.clone()
+        };
+        self.session = Some(TerminalSession::spawn(&config, repaint));
     }
 
     /// Draws the panel. `copy_config_enabled` controls the header action when MCP is off.
@@ -227,12 +252,9 @@ impl TerminalPanel {
         repaint: Arc<dyn Fn() + Send + Sync>,
     ) -> Vec<TerminalAction> {
         let mut actions = Vec::new();
-        if !self.started_once {
-            self.start(repaint);
-        }
         self.header(ui, copy_config_enabled, &mut actions);
         ui.add_space(4.0);
-        self.canvas(ui, theme);
+        self.canvas(ui, theme, repaint);
         actions
     }
 
@@ -321,13 +343,12 @@ impl TerminalPanel {
         }
     }
 
-    fn canvas(&mut self, ui: &mut egui::Ui, theme: &TerminalTheme) {
-        if self.session.is_none() {
-            ui.centered_and_justified(|ui| {
-                ui.label("The terminal did not start.");
-            });
-            return;
-        }
+    fn canvas(
+        &mut self,
+        ui: &mut egui::Ui,
+        theme: &TerminalTheme,
+        repaint: Arc<dyn Fn() + Send + Sync>,
+    ) {
         let font = theme.font();
         let (char_width, row_height) = ui.ctx().fonts_mut(|fonts| {
             (
@@ -344,7 +365,33 @@ impl TerminalPanel {
         self.last_rect = rect;
         let cols = (rect.width() / char_width).floor().max(1.0) as u16;
         let rows = (rect.height() / row_height).floor().max(1.0) as u16;
-        if (cols, rows) != self.last_cells {
+        if self.session.is_none() {
+            // Spawn at the canvas size, not at the config default: the child reads the tty
+            // size while it starts, and a resize in the same frame can lose the race. A
+            // missed SIGWINCH leaves full-screen agents at 80 columns until a manual resize.
+            // Wait for the panel layout to settle first, because the first frame can report
+            // a provisional width; only then is the spawned size trustworthy.
+            let now = ui.input(|i| i.time);
+            let deadline = *self.start_at.get_or_insert(now + START_SETTLE);
+            self.last_cells = (cols, rows);
+            if now >= deadline {
+                self.start(repaint, rows, cols);
+            } else {
+                tracing::debug!(
+                    target: "sqlr_terminal",
+                    available = ?available,
+                    width = rect.width(),
+                    height = rect.height(),
+                    char_width,
+                    row_height,
+                    cols,
+                    rows,
+                    "terminal canvas measured"
+                );
+                ui.ctx()
+                    .request_repaint_after(Duration::from_secs_f64(deadline - now));
+            }
+        } else if (cols, rows) != self.last_cells {
             self.last_cells = (cols, rows);
             if let Some(session) = &mut self.session {
                 session.resize(rows, cols);
@@ -871,6 +918,19 @@ mod tests {
             ansi: [Color32::BLACK; 16],
             font_size: 13.0,
         }
+    }
+
+    #[test]
+    fn restart_reuses_the_canvas_cell_size() {
+        let mut panel = TerminalPanel {
+            last_cells: (174, 8),
+            ..Default::default()
+        };
+        assert_eq!(panel.start_cells(), (174, 8));
+        panel.last_cells = (0, 0);
+        panel.config.cols = 80;
+        panel.config.rows = 24;
+        assert_eq!(panel.start_cells(), (80, 24));
     }
 
     #[test]

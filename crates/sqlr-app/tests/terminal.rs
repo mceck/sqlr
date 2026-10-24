@@ -223,6 +223,65 @@ fn the_default_terminal_starts_in_the_config_workspace_with_mcp_instructions() {
 
 #[cfg(unix)]
 #[test]
+fn the_shell_starts_at_the_canvas_size() {
+    // `stty size` runs while the child starts, before any later PTY resize could reach it.
+    // A session spawned at the 80x24 default would report 80 columns and leave full-screen
+    // agents drawing in the left half of the panel.
+    let dir = tempfile::tempdir().unwrap();
+    let app = app_with_shell(dir.path(), "stty size > pty-size; sleep 30");
+    let mut harness = Harness::builder()
+        .with_size((1100.0, 760.0))
+        .with_step_dt(0.01)
+        .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    harness.run_steps(3);
+    harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Backtick);
+    wait_for_terminal_canvas(&mut harness);
+    let path = dir.path().join("terminal").join("pty-size");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        harness.step();
+        if let Ok(size) = std::fs::read_to_string(&path) {
+            let cols: u16 = size
+                .split_whitespace()
+                .nth(1)
+                .expect("stty prints rows and columns")
+                .parse()
+                .unwrap();
+            assert!(cols > 80, "the shell started at {size:?}");
+            break;
+        }
+        assert!(Instant::now() < deadline, "the shell reported no size");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn the_workspace_links_claude_guidance_to_agents_md() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(dir.path());
+    let mut harness = Harness::builder()
+        .with_size((1100.0, 760.0))
+        .with_step_dt(0.01)
+        .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    harness.run_steps(3);
+    harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Backtick);
+    wait_for_terminal_canvas(&mut harness);
+    let workspace = dir.path().join("terminal");
+    let link = workspace.join("CLAUDE.md");
+    assert!(std::fs::symlink_metadata(&link).unwrap().is_symlink());
+    assert_eq!(
+        std::fs::read_link(&link).unwrap(),
+        std::path::PathBuf::from("AGENTS.md")
+    );
+    assert_eq!(
+        std::fs::read_to_string(&link).unwrap(),
+        std::fs::read_to_string(workspace.join("AGENTS.md")).unwrap()
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn an_explicit_terminal_directory_is_preserved() {
     let dir = tempfile::tempdir().unwrap();
     let cwd = tempfile::tempdir().unwrap();

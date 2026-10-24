@@ -628,7 +628,9 @@ available egui terminal crates do not support the pinned egui version.
   configuration directory. It is stable across app launches and is prepared on a
   background worker before the shell starts. An explicit `terminal.cwd` is respected.
 - The default terminal directory contains `AGENTS.md`, created only if missing, with
-  MCP setup instructions and the required `get_guide` workflow. `.mcp.json` contains
+  MCP setup instructions and the required `get_guide` workflow. A `CLAUDE.md` symlink to
+  `AGENTS.md` is created when neither is present, so Claude Code reads the same guide;
+  an existing `CLAUDE.md` is never replaced. `.mcp.json` contains
   the active server's client configuration, including the bearer token, and is
   refreshed atomically when the server starts, stops, changes port or rotates its
   token, including while the terminal is hidden. When MCP is disabled, it contains
@@ -645,7 +647,9 @@ available egui terminal crates do not support the pinned egui version.
   batched by style; the font is the app's monospace font and the ANSI palette is derived
   from the active theme. Support bold, dim, italic, underline, reverse video, 16-colour,
   256-colour and truecolour; cursor styles; wide characters; combining characters;
-  alternate screen; scrollback; and resizing with PTY size updates.
+  alternate screen; scrollback; and resizing with PTY size updates. A session is spawned
+  at the cell size computed from the canvas, not at a fixed default, so the child's first
+  tty size query is already correct; later panel resizes update the PTY.
 - Interaction: drag selection, double-click word selection, copy and paste with
   platform-appropriate shortcuts, bracketed paste, mouse-wheel scrollback and a visual
   bell. `Ctrl+C` is always the interrupt when the terminal has focus; copy uses `Cmd+C`

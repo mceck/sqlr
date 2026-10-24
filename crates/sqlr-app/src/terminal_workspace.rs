@@ -182,7 +182,29 @@ fn create_workspace(config_dir: &Path, data_dir: &Path) -> std::io::Result<PathB
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(error) => return Err(error),
     }
+    link_claude_guidance(&directory)?;
     Ok(directory)
+}
+
+/// Claude Code reads `CLAUDE.md`, not `AGENTS.md`: keep one guide, linked under both names.
+/// An existing `CLAUDE.md` (file or link, including a broken one) is never replaced.
+fn link_claude_guidance(directory: &Path) -> std::io::Result<()> {
+    let path = directory.join("CLAUDE.md");
+    match std::fs::symlink_metadata(&path) {
+        Ok(_) => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink("AGENTS.md", &path)
+    }
+    #[cfg(not(unix))]
+    {
+        // Symlinks need a privilege the app usually does not have on Windows; the import
+        // directive gives Claude Code the same content without one.
+        std::fs::write(&path, "@AGENTS.md\n")
+    }
 }
 
 fn write_config(directory: &Path, config: Option<&str>) -> std::io::Result<()> {
@@ -256,6 +278,37 @@ mod tests {
                 .modified()
                 .unwrap(),
             config_modified
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn claude_guidance_links_to_the_agents_file() {
+        let config_dir = tempfile::tempdir().unwrap();
+        let directory = create_workspace(config_dir.path(), config_dir.path()).unwrap();
+        let link = directory.join("CLAUDE.md");
+        assert!(std::fs::symlink_metadata(&link).unwrap().is_symlink());
+        assert_eq!(
+            std::fs::read_link(&link).unwrap(),
+            std::path::PathBuf::from("AGENTS.md")
+        );
+        assert_eq!(
+            std::fs::read_to_string(&link).unwrap(),
+            std::fs::read_to_string(directory.join("AGENTS.md")).unwrap()
+        );
+    }
+
+    #[test]
+    fn an_existing_claude_guidance_file_is_never_replaced() {
+        let config_dir = tempfile::tempdir().unwrap();
+        let directory = config_dir.path().join("terminal");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(directory.join("AGENTS.md"), "guide").unwrap();
+        std::fs::write(directory.join("CLAUDE.md"), "mine").unwrap();
+        create_workspace(config_dir.path(), config_dir.path()).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(directory.join("CLAUDE.md")).unwrap(),
+            "mine"
         );
     }
 
