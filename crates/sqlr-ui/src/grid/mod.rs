@@ -5,9 +5,11 @@
 //! The widget calls no engine: it reads the rows it is given, keeps its own state, and
 //! queues [`GridAction`]s for the caller ([`GridState::take_actions`]).
 
+mod clipboard;
 mod doc_table;
 mod edit;
 mod header;
+mod operations;
 mod selection;
 mod sort;
 mod sort_worker;
@@ -21,10 +23,10 @@ use std::sync::Arc;
 use egui::text::{CCursor, CCursorRange, LayoutJob};
 use egui::{Color32, Event, Key, Modifiers, Rect, RichText, Sense, Stroke, TextEdit, pos2, vec2};
 use sqlr_core::{
-    Cell, ColumnKind, ColumnMeta, CsvOptions, DataFormats, Dialect, DisplayHint, RowBuffer,
-    TextFormat, Value,
+    Cell, ColumnKind, ColumnMeta, DataFormats, Dialect, DisplayHint, RowBuffer, Value,
 };
 
+pub use clipboard::set_grid_clipboard;
 pub use doc_table::{DocTableState, doc_table};
 pub use edit::{EditBuffer, INSERTED_ROW_BASE, RowState, is_inserted_row, parse_hex, parse_input};
 use header::{Geometry, HEADER_HEIGHT, Hit};
@@ -76,6 +78,9 @@ pub struct GridState {
     pub selection: Selection,
     /// Additional rectangles selected with ⌘, in view coordinates.
     extra: Vec<Selection>,
+    history: operations::EditHistory,
+    paste_new_rows: bool,
+    paste_dialog: Option<clipboard::PasteRowsDialog>,
     /// `(column, descending)`; applied locally when the result is complete.
     pub sort: Vec<(usize, bool)>,
     /// The server-side condition typed into the WHERE field.
@@ -143,6 +148,10 @@ pub enum GridAction {
     /// The selection is too large to copy on the UI thread: confirm, then copy through the
     /// engine (see [`GridState::selected_rows`]).
     Copy(CopyFormat),
+    /// Re-run the current read query as a cancellable clipboard job.
+    CopyAll,
+    /// An operation (including undo/redo) replaced the pending edits.
+    EditsChanged,
     /// Edit the cell in the value panel (multi-line, long, JSON or binary values).
     EditCell {
         row: usize,
@@ -227,12 +236,6 @@ impl GridState {
     pub fn whole_columns(&self) -> bool {
         let shown = self.view.as_ref().map_or(0, |(_, v)| v.len());
         self.selected.is_some() && shown > 0 && self.selection.rows() == (0..=shown - 1)
-    }
-
-    /// Whether the selection is one rectangle: copying a large selection through the engine
-    /// needs a rectangle.
-    fn single_selection(&self) -> bool {
-        self.extra.is_empty()
     }
 
     /// The number of selected cells; the rectangles never overlap.
@@ -339,7 +342,9 @@ impl GridState {
         let Some(edits) = &mut self.edits else {
             return;
         };
+        let before = edits.clone();
         let row = edits.add_row();
+        self.record_edits(before);
         self.reveal = Some(row);
         self.actions.push(GridAction::AddRow);
     }
@@ -353,7 +358,9 @@ impl GridState {
         value: Value,
     ) -> Result<(), String> {
         let edits = self.edits.as_mut().ok_or("The result cannot be edited")?;
+        let before = edits.clone();
         edits.set(rows, row, col, value.clone())?;
+        self.record_edits(before);
         self.actions.push(GridAction::SetCell { row, col, value });
         Ok(())
     }
@@ -472,11 +479,13 @@ impl GridState {
         let Some(edits) = &mut self.edits else {
             return;
         };
+        let before = edits.clone();
         let mut doomed = selected.clone();
         doomed.sort_unstable_by(|a, b| b.cmp(a));
         for &row in &doomed {
             edits.delete(row);
         }
+        self.record_edits(before);
         self.actions.push(GridAction::DeleteRows(selected));
     }
 
@@ -640,6 +649,12 @@ pub fn result_grid(
 
 /// A context-menu choice, applied once the menu is drawn.
 enum MenuChoice {
+    Undo,
+    Redo,
+    CopyAll,
+    Paste,
+    PasteRows,
+    RevertCells,
     Copy(CopyFormat),
     Edit,
     SetNull,
@@ -684,7 +699,23 @@ pub fn data_grid(ui: &mut egui::Ui, state: &mut GridState, input: &GridInput<'_>
         state.selected = None;
     } else if state.selected.is_some() {
         state.selection.clamp(view_len, columns.len());
+        state
+            .extra
+            .retain(|area| *area.rows().start() < view_len && *area.cols().start() < columns.len());
+        for area in &mut state.extra {
+            area.clamp(view_len, columns.len());
+        }
         state.sync_selected();
+    }
+    if view_len == 0 && state.edits.is_some() {
+        ui.horizontal(|ui| {
+            ui.label("No rows");
+            if ui.button("Paste as new rows…").clicked() {
+                state.paste_new_rows = true;
+                state.refocus = true;
+                crate::keymap::request_paste(ui.ctx());
+            }
+        });
     }
     if state
         .editor
@@ -785,12 +816,15 @@ pub fn data_grid(ui: &mut egui::Ui, state: &mut GridState, input: &GridInput<'_>
         cell_editor(ui, state, input, &geo, &font);
 
         let mut choice = None;
-        theme::context_menu(&response, |ui| choice = context_menu(ui, state));
+        theme::context_menu(&response, |ui| {
+            choice = context_menu(ui, state, input.dialect.is_some() || input.table.is_some())
+        });
         if let Some(choice) = choice {
             apply_menu(ui, state, input, choice);
         }
     });
 
+    clipboard::mapping_ui(ui, state, input);
     output.need_more =
         input.more_available && state.last_visible_rows.end + NEED_MORE_MARGIN >= rows.row_count();
     output
@@ -971,7 +1005,7 @@ fn keyboard(
 ) -> bool {
     let rows = geo.view_rows;
     let cols = geo.columns();
-    if rows == 0 || cols == 0 {
+    if cols == 0 {
         return false;
     }
     ui.memory_mut(|m| {
@@ -1020,14 +1054,26 @@ fn keyboard(
         let delete = keymap.consume(i, sqlr_core::ActionId::DeleteRows);
         (step, extend, all, edit, copy, paste, delete)
     });
+    let (undo, redo) = ui.input_mut(|i| {
+        (
+            keymap.consume(i, sqlr_core::ActionId::Undo),
+            keymap.consume(i, sqlr_core::ActionId::Redo),
+        )
+    });
+    if undo {
+        state.undo();
+    }
+    if redo {
+        state.redo();
+    }
     let mut changed = false;
-    if all {
+    if all && rows > 0 {
         changed |= state.select(Selection {
             anchor: (0, 0),
             cursor: (rows - 1, cols - 1),
         });
     }
-    if let Some((dr, dc)) = step {
+    if let Some((dr, dc)) = step.filter(|_| rows > 0) {
         let has = state.selected.is_some();
         let (r, c) = if has { state.selection.cursor } else { (0, 0) };
         let next = (
@@ -1057,7 +1103,11 @@ fn keyboard(
         copy_selection(ui.ctx(), state, input, CopyFormat::Tsv);
     }
     if let Some(text) = paste {
-        paste_text(state, input, &text);
+        if std::mem::take(&mut state.paste_new_rows) {
+            clipboard::begin_paste_rows(ui.ctx(), state, input, &text);
+        } else {
+            clipboard::paste_text(ui.ctx(), state, input, &text);
+        }
     }
     if delete {
         state.delete_selected();
@@ -1072,136 +1122,41 @@ fn copy_selection(
     input: &GridInput<'_>,
     format: CopyFormat,
 ) {
-    let rows = input.rows;
-    let cells = state.selected_cells();
-    let total = (rows.row_count() * rows.columns().len()).max(1);
-    let estimate = rows.byte_size() as f64 * cells as f64 / total as f64;
-    // The engine copies a rectangle; a disjoint selection is built here instead.
-    if state.single_selection() && (cells > MAX_COPY_CELLS || estimate > MAX_COPY_BYTES as f64) {
+    let cells = state
+        .selected_view_rows()
+        .len()
+        .saturating_mul(state.selected_cols().len());
+    let source = state.clipboard_source(input.rows);
+    let estimate = input.rows.byte_size() as f64 * cells as f64
+        / (input
+            .rows
+            .row_count()
+            .saturating_mul(input.rows.columns().len()))
+        .max(1) as f64;
+    if cells > MAX_COPY_CELLS || estimate > MAX_COPY_BYTES as f64 {
         state.actions.push(GridAction::Copy(format));
         return;
     }
-    if format == CopyFormat::Tsv
-        && cells == 1
-        && let Some((row, col)) = state.selected
-    {
-        // One cell: its value as it is, without a line break.
-        let value = state.value(rows, row, col).unwrap_or(Value::Null);
-        ctx.copy_text(value.display().into_owned());
-        return;
-    }
-    let view_rows = state.selected_view_rows();
-    let cols = state.selected_cols();
-    let metas: Vec<ColumnMeta> = cols.iter().map(|&c| rows.columns()[c].clone()).collect();
-    let header = state.whole_columns();
-    let values = view_rows.into_iter().filter_map(|view_row| {
-        let row = state.source(view_row)?;
-        Some(
-            cols.iter()
-                .map(|&col| {
-                    if state.is_selected(view_row, col) {
-                        state.value(rows, row, col).unwrap_or(Value::Null)
-                    } else {
-                        Value::Null
-                    }
-                })
-                .collect::<Vec<_>>(),
-        )
-    });
-    let text = selection::encode(
-        format.text_format(header, input.table),
-        &metas,
+    match source.encode(
+        format.text_format(state.whole_columns(), input.table),
         input.dialect,
-        values,
-    );
-    ctx.copy_text(text);
-}
-
-/// Parses the clipboard as TSV and writes it into the edit buffer. A single value fills the
-/// selection; a block starts at its top-left corner. Nothing is written when a value does
-/// not parse for its column.
-fn paste_text(state: &mut GridState, input: &GridInput<'_>, text: &str) {
-    let Some(edits) = state.edits.as_ref() else {
-        state.actions.push(GridAction::PasteFailed(
-            "The result cannot be edited".into(),
-        ));
-        return;
-    };
-    if state.selected.is_none() {
-        return;
-    }
-    let options = CsvOptions {
-        header: false,
-        ..CsvOptions::tsv()
-    };
-    let rows = match sqlr_core::decode(&TextFormat::Csv(options), text) {
-        Ok((_, rows)) => rows,
-        Err(error) => {
-            state.actions.push(GridAction::PasteFailed(error));
-            return;
-        }
-    };
-    if rows.is_empty() {
-        return;
-    }
-    let columns = input.rows.columns();
-    let view_rows = state.view_rows();
-    let start_row = *state.selection.rows().start();
-    let start_col = *state.selection.cols().start();
-    let fill = rows.len() == 1 && rows[0].len() == 1;
-    let fill_rows = state.selected_view_rows();
-    let fill_cols = state.selected_cols();
-    let mut trial = edits.clone();
-    let mut changes = Vec::new();
-    let mut error = None;
-    let mut apply = |row: usize, col: usize, value: Value| -> Result<(), String> {
-        let source = view_rows.get(row).copied().ok_or("No such row")?;
-        let meta = columns.get(col).ok_or("No such column")?;
-        let value = match value {
-            Value::Text(text) => parse_input(meta, &text)?,
-            other => other,
-        };
-        trial.set(input.rows, source, col, value.clone())?;
-        changes.push((source, col, value));
-        Ok(())
-    };
-    if fill {
-        'rows: for row in fill_rows {
-            for &col in &fill_cols {
-                if !state.is_selected(row, col) {
-                    continue;
-                }
-                if let Err(e) = apply(row, col, rows[0][0].clone()) {
-                    error = Some(e);
-                    break 'rows;
-                }
+        |_, _| true,
+    ) {
+        Ok(Some(mut data)) => {
+            if format == CopyFormat::Tsv
+                && state.selected_cells() == 1
+                && let Some(value) = data
+                    .rows
+                    .first()
+                    .and_then(|r| r.first())
+                    .and_then(Option::as_ref)
+            {
+                data.text = value.display().into_owned();
             }
+            clipboard::set_grid_clipboard(ctx, Arc::new(data));
         }
-    } else {
-        'rows: for (dr, values) in rows.iter().enumerate() {
-            let row = start_row + dr;
-            if row >= view_rows.len() {
-                break;
-            }
-            for (dc, value) in values.iter().enumerate() {
-                let col = start_col + dc;
-                if col >= columns.len() {
-                    break;
-                }
-                if let Err(e) = apply(row, col, value.clone()) {
-                    error = Some(e);
-                    break 'rows;
-                }
-            }
-        }
-    }
-    if let Some(error) = error {
-        state.actions.push(GridAction::PasteFailed(error));
-        return;
-    }
-    state.edits = Some(trial);
-    for (row, col, value) in changes {
-        state.actions.push(GridAction::SetCell { row, col, value });
+        Ok(None) => {}
+        Err(error) => state.actions.push(GridAction::PasteFailed(error)),
     }
 }
 
@@ -1495,8 +1450,27 @@ fn copy_format_icon(format: CopyFormat) -> &'static str {
 }
 
 /// The context menu of the selection; returns the item clicked.
-fn context_menu(ui: &mut egui::Ui, state: &GridState) -> Option<MenuChoice> {
+fn context_menu(ui: &mut egui::Ui, state: &GridState, allow_copy_all: bool) -> Option<MenuChoice> {
     let mut choice = None;
+    if ui
+        .add_enabled(state.can_undo(), egui::Button::new("Undo"))
+        .clicked()
+    {
+        choice = Some(MenuChoice::Undo);
+        ui.close();
+    }
+    if ui
+        .add_enabled(state.can_redo(), egui::Button::new("Redo"))
+        .clicked()
+    {
+        choice = Some(MenuChoice::Redo);
+        ui.close();
+    }
+    ui.separator();
+    if allow_copy_all && ui.button("Copy all results").clicked() {
+        choice = Some(MenuChoice::CopyAll);
+        ui.close();
+    }
     if menu_item(ui, true, icons::COPY, "Copy") {
         choice = Some(MenuChoice::Copy(CopyFormat::Tsv));
     }
@@ -1507,6 +1481,23 @@ fn context_menu(ui: &mut egui::Ui, state: &GridState) -> Option<MenuChoice> {
             }
         }
     });
+    if ui
+        .add_enabled(state.edits.is_some(), egui::Button::new("Paste"))
+        .clicked()
+    {
+        choice = Some(MenuChoice::Paste);
+        ui.close();
+    }
+    if ui
+        .add_enabled(
+            state.edits.is_some(),
+            egui::Button::new("Paste as new rows…"),
+        )
+        .clicked()
+    {
+        choice = Some(MenuChoice::PasteRows);
+        ui.close();
+    }
     ui.separator();
     let rows = state.selected_rows();
     let (_, col) = state.selection.cursor;
@@ -1517,7 +1508,14 @@ fn context_menu(ui: &mut egui::Ui, state: &GridState) -> Option<MenuChoice> {
     if menu_item(ui, writable, icons::EDIT, "Edit cell") {
         choice = Some(MenuChoice::Edit);
     }
-    let set_null = icons::menu_item_enabled(ui, writable && !not_null, icons::NULL, "Set NULL")
+    let can_null = state.edits.as_ref().is_some_and(|e| {
+        state.selected.is_some()
+            && state
+                .selected_cols()
+                .iter()
+                .all(|&c| e.writable(c) && !e.not_null(c))
+    });
+    let set_null = icons::menu_item_enabled(ui, can_null, icons::NULL, "Set NULL")
         .on_disabled_hover_text(if not_null {
             "The column is NOT NULL"
         } else {
@@ -1529,9 +1527,9 @@ fn context_menu(ui: &mut egui::Ui, state: &GridState) -> Option<MenuChoice> {
     }
     if menu_item(
         ui,
-        editable && rows.len() == 1,
+        editable && !rows.is_empty(),
         icons::DUPLICATE,
-        "Duplicate row",
+        &format!("Duplicate row{plural}"),
     ) {
         choice = Some(MenuChoice::Duplicate);
     }
@@ -1545,6 +1543,16 @@ fn context_menu(ui: &mut egui::Ui, state: &GridState) -> Option<MenuChoice> {
         &format!("Delete row{plural}"),
     ) {
         choice = Some(MenuChoice::Delete);
+    }
+    if ui
+        .add_enabled(
+            editable && state.selected.is_some(),
+            egui::Button::new("Revert selected cells"),
+        )
+        .clicked()
+    {
+        choice = Some(MenuChoice::RevertCells);
+        ui.close();
     }
     let changed = state
         .edits
@@ -1564,46 +1572,73 @@ fn context_menu(ui: &mut egui::Ui, state: &GridState) -> Option<MenuChoice> {
 }
 
 fn apply_menu(ui: &egui::Ui, state: &mut GridState, input: &GridInput<'_>, choice: MenuChoice) {
+    state.refocus = true;
     let rows = input.rows;
     let selected = state.selected_rows();
-    let Some((row, col)) = state.selected else {
-        if let MenuChoice::AddRow = choice
-            && let Some(edits) = &mut state.edits
-        {
-            edits.add_row();
-            state.actions.push(GridAction::AddRow);
+    match choice {
+        MenuChoice::Undo => {
+            state.undo();
+            return;
         }
+        MenuChoice::Redo => {
+            state.redo();
+            return;
+        }
+        MenuChoice::CopyAll => {
+            state.actions.push(GridAction::CopyAll);
+            return;
+        }
+        MenuChoice::Paste | MenuChoice::PasteRows => {
+            state.paste_new_rows = matches!(choice, MenuChoice::PasteRows);
+            crate::keymap::request_paste(ui.ctx());
+            state.refocus = true;
+            return;
+        }
+        MenuChoice::AddRow => {
+            state.add_row();
+            return;
+        }
+        _ => {}
+    }
+    let Some((row, col)) = state.selected else {
         return;
     };
     match choice {
+        MenuChoice::Undo
+        | MenuChoice::Redo
+        | MenuChoice::CopyAll
+        | MenuChoice::Paste
+        | MenuChoice::PasteRows
+        | MenuChoice::AddRow => {}
         MenuChoice::Copy(format) => copy_selection(ui.ctx(), state, input, format),
         MenuChoice::Edit => {
             let (vr, c) = state.selection.cursor;
             open_editor(state, input, vr, c);
         }
-        MenuChoice::SetNull => {
-            let _ = state.set_cell(rows, row, col, Value::Null);
-        }
+        MenuChoice::SetNull => state.set_selected_null(rows),
+        MenuChoice::RevertCells => state.revert_selected_cells(),
         MenuChoice::Duplicate => {
             if let Some(edits) = &mut state.edits {
-                edits.duplicate(rows, row);
-                state.actions.push(GridAction::DuplicateRow(row));
-            }
-        }
-        MenuChoice::AddRow => {
-            if let Some(edits) = &mut state.edits {
-                edits.add_row();
-                state.actions.push(GridAction::AddRow);
+                let before = edits.clone();
+                for &source in &selected {
+                    edits.duplicate(rows, source);
+                }
+                state.record_edits(before);
+                state
+                    .actions
+                    .extend(selected.into_iter().map(GridAction::DuplicateRow));
             }
         }
         MenuChoice::Delete => state.delete_selected(),
         MenuChoice::Revert => {
             if let Some(edits) = &mut state.edits {
+                let before = edits.clone();
                 let mut undone = selected.clone();
                 undone.sort_unstable_by(|a, b| b.cmp(a));
                 for &r in &undone {
                     edits.revert(r);
                 }
+                state.record_edits(before);
                 state.actions.push(GridAction::RevertRows(selected));
             }
         }

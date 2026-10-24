@@ -333,3 +333,65 @@ fn generate_data_preview_then_run() {
     }
     wait_for_label_containing(&mut h, "Wrote 100 rows");
 }
+
+#[test]
+fn grid_clipboard_transfers_between_databases_with_mapping_and_new_ids() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(dir.path());
+    let b_path = dir.path().join("b.db");
+    rusqlite::Connection::open(&b_path).unwrap().execute_batch(
+        "DROP TABLE src; CREATE TABLE src (id INTEGER PRIMARY KEY AUTOINCREMENT, score REAL, name TEXT NOT NULL);
+         INSERT INTO src VALUES (100, 0, 'seed'); DELETE FROM src;"
+    ).unwrap();
+    h.get_by_label("Expand db-a").click();
+    wait_for_label(&mut h, "Expand main");
+    h.get_by_label("Expand main").click();
+    wait_for_label(&mut h, "Expand tables");
+    h.get_by_label("Expand tables").click();
+    wait_for_label(&mut h, "src");
+    context_menu(&mut h, "src", "Open data");
+    wait_for_label(&mut h, "ann");
+    context_menu(&mut h, "ann", "Copy all results");
+    wait_for_label(&mut h, "Copied 3 rows");
+    // The native paste event carries text; sqlr keeps its typed counterpart in the context.
+    let text = "id\tname\tscore\n1\tann\t1.5\n2\tbob\t\n3\tcy\t3\n";
+    h.get_by_label("Collapse db-a").click();
+    h.run_steps(2);
+    h.get_by_label("Expand db-b").click();
+    wait_for_label(&mut h, "Expand main");
+    h.get_by_label("Expand main").click();
+    wait_for_label(&mut h, "Expand tables");
+    h.get_by_label("Expand tables").click();
+    wait_for_label(&mut h, "src");
+    context_menu(&mut h, "src", "Open data");
+    wait_for_label(&mut h, "Paste as new rows…");
+    h.get_by_label("Paste as new rows…").click();
+    h.run_steps(2);
+    h.event(egui::Event::Paste(text.into()));
+    wait_for_label(&mut h, "Add pending rows");
+    h.get_by_label("Add pending rows").click();
+    wait_for_label(&mut h, "3 pending changes");
+    let db = rusqlite::Connection::open(&b_path).unwrap();
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM src", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+    h.get_by_label("Apply").click();
+    wait_for_label(&mut h, "Applied 3 changes");
+    let actual: Vec<(i64, String, Option<f64>)> = db
+        .prepare("SELECT id, name, score FROM src ORDER BY id")
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(
+        actual,
+        vec![
+            (101, "ann".into(), Some(1.5)),
+            (102, "bob".into(), None),
+            (103, "cy".into(), Some(3.0))
+        ]
+    );
+}

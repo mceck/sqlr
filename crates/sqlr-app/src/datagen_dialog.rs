@@ -58,6 +58,7 @@ fn initial_columns(def: &TableDef) -> Vec<ColumnGen> {
                 matches!(k, ConstraintDef::ForeignKey { columns, .. } if columns.contains(&c.name))
             });
             let column = TableColumn {
+                automatic: c.identity.is_some(),
                 name: c.name.clone(),
                 type_name: c.type_name.clone(),
                 nullable: c.nullable,

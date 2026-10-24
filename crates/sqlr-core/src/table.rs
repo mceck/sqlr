@@ -18,6 +18,9 @@ pub struct TableColumn {
     pub default: Option<String>,
     /// Computed by the server; never written.
     pub generated: bool,
+    /// The server can generate this value when omitted (identity, sequence, rowid).
+    #[serde(default)]
+    pub automatic: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -59,6 +62,7 @@ mod tests {
 
     fn col(name: &str, nullable: bool) -> TableColumn {
         TableColumn {
+            automatic: false,
             name: name.into(),
             type_name: "text".into(),
             nullable,

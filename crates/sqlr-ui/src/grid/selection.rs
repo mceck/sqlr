@@ -2,7 +2,7 @@
 
 use std::ops::RangeInclusive;
 
-use sqlr_core::{Cell, ColumnMeta, CsvOptions, Dialect, Encoder, TextFormat, Value};
+use sqlr_core::{CsvOptions, TextFormat};
 
 /// A rectangle of cells between `anchor` (where it started) and `cursor` (the cell the
 /// keyboard moves), as `(view row, column)`.
@@ -125,24 +125,6 @@ impl CopyFormat {
             CopyFormat::Markdown => TextFormat::Markdown,
         }
     }
-}
-
-/// `rows` (each a row's values for `columns`) encoded in `format`.
-pub(crate) fn encode(
-    format: TextFormat,
-    columns: &[ColumnMeta],
-    dialect: Option<&dyn Dialect>,
-    rows: impl Iterator<Item = Vec<Value>>,
-) -> String {
-    let mut encoder = Encoder::new(format, columns, dialect).with_spreadsheet_safe();
-    let mut out = String::new();
-    encoder.header(&mut out);
-    for row in rows {
-        let cells: Vec<Cell<'_>> = row.iter().map(Value::as_cell).collect();
-        encoder.row(&cells, &mut out);
-    }
-    encoder.footer(&mut out);
-    out
 }
 
 #[cfg(test)]

@@ -656,3 +656,90 @@ fn export_rerun_refuses_a_statement_that_writes() {
     assert_eq!(fake.executed().len(), before, "nothing ran");
     assert!(!path.exists());
 }
+
+#[test]
+fn copy_all_results_reads_beyond_the_loaded_page() {
+    let (engine, _) = fake_engine(FakeScript {
+        rows: 2500,
+        ..Default::default()
+    });
+    let q = engine.execute("c", "SELECT * FROM t".into(), 10);
+    assert!(wait_until(TIMEOUT, || engine.result(q).is_some_and(
+        |r| matches!(r.read().status, QueryStatus::Ready { .. })
+    )));
+    assert_eq!(engine.result(q).unwrap().read().rows.row_count(), 10);
+    let job = engine.copy_query(&SessionKey::meta("c"), None, "SELECT * FROM t".into());
+    let JobOutcome::GridCopied(data) = finished(&engine, job) else {
+        panic!("expected typed clipboard");
+    };
+    assert_eq!(data.rows.len(), 2500);
+    assert_eq!(data.rows[2499][0], Some(Value::Int(2499)));
+    assert_eq!(engine.job(job).unwrap().progress.rows, 2500);
+}
+
+#[test]
+fn copy_all_results_never_reruns_a_writing_statement() {
+    let (engine, fake) = fake_engine(FakeScript::default());
+    let before = fake.executed().len();
+    let job = engine.copy_query(
+        &SessionKey::meta("c"),
+        None,
+        "SELECT 1; DELETE FROM t".into(),
+    );
+    let JobOutcome::Failed(error) = finished(&engine, job) else {
+        panic!("expected read-only validation");
+    };
+    assert!(error.message.contains("only reads"));
+    assert_eq!(fake.executed().len(), before);
+}
+
+#[test]
+fn copying_all_results_can_be_cancelled_while_fetching() {
+    let (engine, fake) = fake_engine(FakeScript {
+        rows: 10,
+        block_on_fetch: true,
+        ..Default::default()
+    });
+    let job = engine.copy_query(&SessionKey::meta("c"), None, "SELECT * FROM t".into());
+    assert!(wait_until(TIMEOUT, || !fake.executed().is_empty()));
+    engine.cancel_job(job);
+    assert_eq!(finished(&engine, job), JobOutcome::Cancelled);
+}
+
+#[test]
+fn background_grid_copy_keeps_pending_values_and_selection_order() {
+    let (engine, _) = fake_engine(FakeScript {
+        rows: 5,
+        ..Default::default()
+    });
+    let q = run(&engine, "c", "SELECT * FROM t");
+    let rows = engine.result(q).unwrap().read().rows.clone();
+    let source = sqlr_core::ClipboardSource {
+        rows,
+        order: vec![(0, 4), (1, 0)],
+        cols: vec![0],
+        regions: vec![sqlr_core::ClipboardRegion {
+            rows: 0..=1,
+            cols: 0..=0,
+        }],
+        overrides: [((4, 0), Value::Int(99))].into(),
+    };
+    let job = engine.copy_grid(
+        q,
+        source,
+        TextFormat::Csv(CsvOptions {
+            header: false,
+            ..CsvOptions::tsv()
+        }),
+    );
+    let JobOutcome::GridCopied(data) = finished(&engine, job) else {
+        panic!("expected typed clipboard");
+    };
+    assert_eq!(data.text, "99\n0\n");
+    assert_eq!(
+        data.rows,
+        vec![vec![Some(Value::Int(99))], vec![Some(Value::Int(0))]]
+    );
+    assert_eq!(engine.job(job).unwrap().progress.rows, 2);
+    assert_eq!(engine.job(job).unwrap().total, Some(2));
+}

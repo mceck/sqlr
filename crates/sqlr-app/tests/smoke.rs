@@ -840,6 +840,7 @@ fn orders_table_script() -> FakeScript {
         ))
     };
     let table_column = |name: &str, nullable| TableColumn {
+        automatic: false,
         name: name.into(),
         type_name: "int8".into(),
         nullable,

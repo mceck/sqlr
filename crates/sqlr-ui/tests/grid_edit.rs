@@ -794,3 +794,293 @@ fn struck(h: &Harness<'static, App>, text: &str) -> Option<bool> {
     }
     found
 }
+
+#[test]
+fn pasted_blocks_tile_and_undo_as_one_operation() {
+    let mut h = harness_with(sequential(6), false, editable());
+    click(&mut h, "name 0");
+    for _ in 0..3 {
+        press(&mut h, Modifiers::SHIFT, Key::ArrowDown);
+    }
+    h.event(Event::Paste("alpha\nbeta".into()));
+    h.run_steps(2);
+    for row in 0..4 {
+        assert_eq!(
+            h.state()
+                .state
+                .edits
+                .as_ref()
+                .unwrap()
+                .value(&h.state().rows, row, 1),
+            Some(Value::Text(
+                if row % 2 == 0 { "alpha" } else { "beta" }.into()
+            ))
+        );
+    }
+    press(&mut h, Modifiers::COMMAND, Key::Z);
+    assert_eq!(h.state().state.edits.as_ref().unwrap().pending(), 0);
+    press(&mut h, Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
+    assert_eq!(h.state().state.edits.as_ref().unwrap().pending(), 4);
+}
+
+#[test]
+fn pasted_block_repeats_at_each_disjoint_anchor_with_legacy_fallback() {
+    let mut h = harness_with(sequential(6), false, editable());
+    click(&mut h, "name 0");
+    h.get_by_label("name 3").click_modifiers(Modifiers::COMMAND);
+    h.run_steps(2);
+    h.event(Event::Paste("alpha\nbeta".into()));
+    h.run_steps(2);
+    for (row, text) in [(0, "alpha"), (1, "beta"), (3, "alpha"), (4, "beta")] {
+        assert_eq!(
+            h.state()
+                .state
+                .edits
+                .as_ref()
+                .unwrap()
+                .value(&h.state().rows, row, 1),
+            Some(Value::Text(text.into()))
+        );
+    }
+    assert_eq!(h.state().state.edits.as_ref().unwrap().pending(), 4);
+}
+
+#[test]
+fn set_null_and_duplicate_apply_to_all_selected_rows() {
+    let mut h = harness_with(sequential(5), false, editable());
+    click(&mut h, "name 0");
+    h.get_by_label("name 2").click_modifiers(Modifiers::COMMAND);
+    h.run_steps(2);
+    menu(&mut h, "name 2", "Set NULL");
+    let edits = h.state().state.edits.as_ref().unwrap();
+    assert_eq!(edits.value(&h.state().rows, 0, 1), Some(Value::Null));
+    assert_eq!(edits.value(&h.state().rows, 2, 1), Some(Value::Null));
+    press(&mut h, Modifiers::COMMAND, Key::Z);
+    menu(&mut h, "name 2", "Duplicate rows");
+    assert_eq!(h.state().state.edits.as_ref().unwrap().inserted_rows(), 2);
+    press(&mut h, Modifiers::COMMAND, Key::Z);
+    assert_eq!(h.state().state.edits.as_ref().unwrap().inserted_rows(), 0);
+}
+
+#[test]
+fn revert_selected_cells_preserves_other_edits_in_the_row() {
+    let mut h = harness_with(sequential(3), false, editable());
+    click(&mut h, "0");
+    h.event(Event::Paste("42\tchanged".into()));
+    h.run_steps(2);
+    menu(&mut h, "changed", "Revert selected cells");
+    let edits = h.state().state.edits.as_ref().unwrap();
+    assert_eq!(edits.value(&h.state().rows, 0, 0), Some(Value::Int(42)));
+    assert_eq!(
+        edits.value(&h.state().rows, 0, 1),
+        Some(Value::Text("name 0".into()))
+    );
+    press(&mut h, Modifiers::COMMAND, Key::Z);
+    assert_eq!(
+        h.state()
+            .state
+            .edits
+            .as_ref()
+            .unwrap()
+            .value(&h.state().rows, 0, 1),
+        Some(Value::Text("changed".into()))
+    );
+}
+
+#[test]
+fn typed_copy_does_not_paste_unselected_holes_as_null() {
+    let mut h = harness_with(sequential(5), false, editable());
+    click(&mut h, "0");
+    h.get_by_label("name 1").click_modifiers(Modifiers::COMMAND);
+    h.run_steps(2);
+    h.event(Event::Copy);
+    h.step();
+    let text = copied(&h).unwrap();
+    click(&mut h, "2");
+    h.event(Event::Paste(text));
+    h.run_steps(2);
+    let edits = h.state().state.edits.as_ref().unwrap();
+    assert_eq!(edits.value(&h.state().rows, 2, 0), Some(Value::Int(0)));
+    assert_eq!(
+        edits.value(&h.state().rows, 2, 1),
+        Some(Value::Text("name 2".into()))
+    );
+    assert_eq!(edits.value(&h.state().rows, 3, 0), Some(Value::Int(3)));
+    assert_eq!(
+        edits.value(&h.state().rows, 3, 1),
+        Some(Value::Text("name 1".into()))
+    );
+}
+
+#[test]
+fn paste_as_new_rows_matches_names_and_can_be_undone() {
+    let mut h = harness_with(sequential(4), false, editable());
+    click(&mut h, "name 0");
+    press(&mut h, Modifiers::SHIFT, Key::ArrowDown);
+    h.event(Event::Copy);
+    h.step();
+    let text = copied(&h).unwrap();
+    menu(&mut h, "name 1", "Paste as new rows…");
+    h.event(Event::Paste(text));
+    h.run_steps(2);
+    h.get_by_label("Add pending rows").click();
+    h.run_steps(3);
+    let edits = h.state().state.edits.as_ref().unwrap();
+    assert_eq!(edits.inserted_rows(), 2);
+    for (i, row) in edits.inserted_row_numbers().into_iter().enumerate() {
+        assert_eq!(edits.value(&h.state().rows, row, 0), None);
+        assert_eq!(
+            edits.value(&h.state().rows, row, 1),
+            Some(Value::Text(format!("name {i}")))
+        );
+    }
+    press(&mut h, Modifiers::COMMAND, Key::Z);
+    assert_eq!(h.state().state.edits.as_ref().unwrap().inserted_rows(), 0);
+    press(&mut h, Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
+    assert_eq!(h.state().state.edits.as_ref().unwrap().inserted_rows(), 2);
+}
+
+#[test]
+fn an_invalid_cell_in_a_later_paste_area_leaves_every_area_unchanged() {
+    let mut h = harness_with(sequential(4), false, editable());
+    click(&mut h, "name 0");
+    h.get_by_label("2").click_modifiers(Modifiers::COMMAND);
+    h.run_steps(2);
+    h.event(Event::Paste("one\ntwo".into()));
+    h.run_steps(2);
+    assert_eq!(h.state().state.edits.as_ref().unwrap().pending(), 0);
+    assert!(!h.state().state.can_undo());
+}
+
+#[test]
+fn a_new_edit_clears_redo_and_empty_history_does_not_remove_editability() {
+    let mut h = harness_with(sequential(4), false, editable());
+    h.state_mut().state.undo();
+    assert!(h.state().state.edits.is_some());
+    click(&mut h, "name 0");
+    h.event(Event::Paste("first".into()));
+    h.run_steps(2);
+    press(&mut h, Modifiers::COMMAND, Key::Z);
+    assert!(h.state().state.can_redo());
+    h.event(Event::Paste("second".into()));
+    h.run_steps(2);
+    assert!(!h.state().state.can_redo());
+}
+
+#[test]
+fn typed_paste_into_an_empty_grid_adds_rows_without_overwriting_generated_columns() {
+    let mut h = harness_with(sequential(0), false, editable());
+    let text = "name\tid\nAda\t42\n";
+    sqlr_ui::set_grid_clipboard(
+        &h.ctx,
+        Arc::new(sqlr_core::GridClipboard {
+            columns: vec![columns()[1].clone(), columns()[0].clone()],
+            rows: vec![vec![Some(Value::Text("Ada".into())), Some(Value::Int(42))]],
+            text: text.into(),
+        }),
+    );
+    h.get_by_label("Paste as new rows…").click();
+    h.run_steps(2);
+    h.event(Event::Paste(text.into()));
+    h.run_steps(2);
+    h.get_by_label("Add pending rows").click();
+    h.run_steps(3);
+    let edits = h.state().state.edits.as_ref().unwrap();
+    assert_eq!(edits.inserted_rows(), 1);
+    let row = edits.inserted_row_numbers()[0];
+    assert_eq!(edits.value(&h.state().rows, row, 0), None);
+    assert_eq!(
+        edits.value(&h.state().rows, row, 1),
+        Some(Value::Text("Ada".into()))
+    );
+}
+
+#[test]
+fn typed_copy_keeps_null_empty_text_and_binary_values_distinct() {
+    let cols: Arc<[ColumnMeta]> = Arc::from(vec![ColumnMeta::new(
+        "value",
+        "blob",
+        ColumnKind::Mixed,
+        DisplayHint::Plain,
+    )]);
+    let mut b = ChunkBuilder::new(cols.clone());
+    for value in [
+        Cell::Null,
+        Cell::Text(""),
+        Cell::Bytes(&[0, 255]),
+        Cell::Text("NULL"),
+        Cell::Text("=1+1"),
+    ] {
+        b.push_row(&[value]).unwrap();
+    }
+    let mut rows = RowBuffer::new(cols);
+    rows.push_chunk(b.finish());
+    let mut h = harness_with(
+        rows,
+        false,
+        Some(EditBuffer::new(vec![], vec![true], vec![false])),
+    );
+    h.get_by_label("Row 1").click();
+    h.run_steps(2);
+    for source in 0..5 {
+        h.state_mut().state.selection = sqlr_ui::Selection::cell(source, 0);
+        h.state_mut().state.selected = Some((source, 0));
+        h.run_steps(2);
+        h.event(Event::Copy);
+        h.step();
+        let text = copied(&h).unwrap();
+        h.state_mut().state.selection = sqlr_ui::Selection::cell(0, 0);
+        h.state_mut().state.selected = Some((0, 0));
+        h.event(Event::Paste(text));
+        h.run_steps(2);
+        assert_eq!(
+            h.state()
+                .state
+                .edits
+                .as_ref()
+                .unwrap()
+                .value(&h.state().rows, 0, 0),
+            h.state().rows.cell(source, 0).map(Value::from_cell)
+        );
+    }
+}
+
+#[test]
+fn a_large_new_row_paste_is_prepared_in_background_and_undoes_once() {
+    let mut h = harness_with(sequential(0), false, editable());
+    let text = "large typed clipboard";
+    sqlr_ui::set_grid_clipboard(
+        &h.ctx,
+        Arc::new(sqlr_core::GridClipboard {
+            columns: vec![columns()[1].clone()],
+            rows: (0..1500)
+                .map(|i| vec![Some(Value::Text(format!("entry {i}")))])
+                .collect(),
+            text: text.into(),
+        }),
+    );
+    h.get_by_label("Paste as new rows…").click();
+    h.run_steps(2);
+    h.event(Event::Paste(text.into()));
+    h.run_steps(2);
+    h.get_by_label("Add pending rows").click();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while h.state().state.edits.as_ref().unwrap().inserted_rows() == 0 {
+        h.step();
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::yield_now();
+    }
+    h.run_steps(2);
+    let edits = h.state().state.edits.as_ref().unwrap();
+    assert_eq!(edits.inserted_rows(), 1500);
+    assert_eq!(
+        edits.value(
+            &h.state().rows,
+            *edits.inserted_row_numbers().last().unwrap(),
+            1
+        ),
+        Some(Value::Text("entry 1499".into()))
+    );
+    press(&mut h, Modifiers::COMMAND, Key::Z);
+    assert_eq!(h.state().state.edits.as_ref().unwrap().inserted_rows(), 0);
+}

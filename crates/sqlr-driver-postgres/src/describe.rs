@@ -108,6 +108,10 @@ pub(crate) async fn describe(
         .map(|c| {
             let generated = !c.generated.is_empty();
             TableColumn {
+                automatic: !c.identity.is_empty()
+                    || c.expression
+                        .as_deref()
+                        .is_some_and(|d| d.contains("nextval(")),
                 name: c.name,
                 type_name: c.type_name,
                 nullable: !c.not_null,

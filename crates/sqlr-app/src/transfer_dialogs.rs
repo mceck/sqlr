@@ -1180,6 +1180,11 @@ impl SqlrApp {
                     ToastKind::Success,
                     format!("Exported {rows} rows to {}", path.display()),
                 ),
+                (JobOutcome::GridCopied(data), Some(_)) => {
+                    let rows = data.rows.len();
+                    sqlr_ui::set_grid_clipboard(ctx, data);
+                    (ToastKind::Success, format!("Copied {rows} rows"))
+                }
                 (JobOutcome::Copied(text), Some(cells)) => {
                     ctx.copy_text(text);
                     (ToastKind::Success, format!("Copied {cells} cells"))
@@ -1198,7 +1203,12 @@ impl SqlrApp {
         let state = self.engine.job(job.id)?;
         let text = match job.what {
             JobWhat::Export => format!("Exporting… {} rows", state.progress.rows),
-            JobWhat::Copy { cells } => format!("Copying {cells} cells…"),
+            JobWhat::Copy { cells: 0 } => {
+                format!("Copying all results… {} rows", state.progress.rows)
+            }
+            JobWhat::Copy { cells } => {
+                format!("Copying {cells} cells… {} rows", state.progress.rows)
+            }
         };
         Some((text, job.id))
     }

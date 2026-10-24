@@ -152,12 +152,19 @@ final class Meta {
                 } catch (SQLException ignored) {
                     // not reported
                 }
+                String automatic = "";
+                try {
+                    automatic = rs.getString("IS_AUTOINCREMENT");
+                } catch (SQLException ignored) {
+                    // not reported
+                }
                 columns.add(MsgPack.map(
                         "name", rs.getString("COLUMN_NAME"),
                         "type_name", rs.getString("TYPE_NAME"),
                         "nullable", rs.getInt("NULLABLE") != DatabaseMetaData.columnNoNulls,
                         "default", rs.getString("COLUMN_DEF"),
-                        "generated", "YES".equalsIgnoreCase(generated)));
+                        "generated", "YES".equalsIgnoreCase(generated),
+                        "automatic", "YES".equalsIgnoreCase(automatic)));
             }
         }
         List<String[]> pk = new ArrayList<>();

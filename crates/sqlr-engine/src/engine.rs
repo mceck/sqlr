@@ -1425,7 +1425,7 @@ impl Engine {
     }
 
     /// The I/O handle of a live session.
-    fn live_io(&self, key: &SessionKey) -> Option<Arc<SessionIo>> {
+    pub(crate) fn live_io(&self, key: &SessionKey) -> Option<Arc<SessionIo>> {
         let inner = self.shared.inner.lock();
         inner
             .sessions

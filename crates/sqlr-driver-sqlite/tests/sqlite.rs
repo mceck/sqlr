@@ -710,3 +710,44 @@ async fn sqlite_pragmas_applied() {
         vec![vec![Value::Int(1234)]]
     );
 }
+
+#[tokio::test]
+async fn descriptions_distinguish_generated_rowids_from_manual_primary_keys() {
+    let (_dir, conn) = temp_db().await;
+    for (name, definition, automatic) in [
+        ("normal", "id INTEGER PRIMARY KEY", true),
+        ("auto_key", "id INTEGER PRIMARY KEY AUTOINCREMENT", true),
+        ("descending", "id INTEGER PRIMARY KEY DESC", false),
+        ("manual_int", "id INT PRIMARY KEY", false),
+        ("manual_text", "id TEXT PRIMARY KEY", false),
+    ] {
+        affected(&conn, &format!("CREATE TABLE {name} ({definition})")).await;
+        let table = TableRef {
+            database: None,
+            schema: Some("main".into()),
+            name: name.into(),
+        };
+        let info = conn.relational().unwrap().describe(&table).await.unwrap();
+        assert_eq!(info.columns[0].automatic, automatic, "{name}");
+    }
+    affected(
+        &conn,
+        "CREATE TABLE no_rowid (id INTEGER PRIMARY KEY) WITHOUT ROWID",
+    )
+    .await;
+    let table = TableRef {
+        database: None,
+        schema: Some("main".into()),
+        name: "no_rowid".into(),
+    };
+    assert!(
+        !conn
+            .relational()
+            .unwrap()
+            .describe(&table)
+            .await
+            .unwrap()
+            .columns[0]
+            .automatic
+    );
+}

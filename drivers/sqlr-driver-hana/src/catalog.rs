@@ -67,6 +67,7 @@ pub(crate) async fn describe(
             columns = found
                 .into_iter()
                 .map(|r| TableColumn {
+                    automatic: false,
                     name: r[0].clone(),
                     type_name: r[1].clone(),
                     nullable: r[2] == "TRUE",

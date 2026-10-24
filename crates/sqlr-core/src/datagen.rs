@@ -247,7 +247,8 @@ pub fn default_generator(column: &TableColumn, fk: Option<&ConstraintDef>) -> Ge
     let defaulted = column.default.as_deref().is_some_and(|d| {
         let d = d.to_ascii_lowercase();
         d.contains("nextval") || d.contains("auto_increment") || d.contains("identity")
-    }) || column.generated;
+    }) || column.generated
+        || column.automatic;
     if defaulted {
         return Generator::Default;
     }
@@ -559,6 +560,7 @@ mod tests {
 
     fn col(name: &str, ty: &str, default: Option<&str>) -> TableColumn {
         TableColumn {
+            automatic: false,
             name: name.into(),
             type_name: ty.into(),
             nullable: true,
