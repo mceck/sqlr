@@ -90,6 +90,9 @@ pub struct ImportBatch {
     pub connections: Vec<ConnectionConfig>,
     pub credentials: std::collections::BTreeMap<usize, sqlr_core::Secrets>,
     pub warnings: Vec<String>,
+    /// The client each connection comes from, parallel to `connections`; empty when the
+    /// whole batch comes from one known format.
+    pub origins: Vec<String>,
 }
 
 pub struct ExportDocument {

@@ -151,6 +151,7 @@ pub fn decode(format: ClientFormat, bytes: &[u8]) -> Result<ImportBatch, String>
                         connections: configs,
                         credentials,
                         warnings: vec![],
+                        origins: vec![],
                     })
                 }
                 ClientFormat::Dbeaver => dbeaver(&v),

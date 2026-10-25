@@ -11,11 +11,19 @@ use crate::app::SqlrApp;
 use crate::store_worker::{MigrationRequest, MigrationResult, StoreOp};
 use crate::transfer_dialogs::FileAsk;
 
+/// A reason to review an imported connection: `badge` is the short chip, `detail` its tooltip.
+struct Note {
+    badge: &'static str,
+    detail: &'static str,
+}
+
 struct Row {
+    /// The client this connection is read from; empty when exporting.
+    origin: String,
     config: ConnectionConfig,
     selected: bool,
     disabled: Option<String>,
-    note: Option<String>,
+    notes: Vec<Note>,
     credentials: sqlr_core::Secrets,
 }
 
@@ -36,6 +44,131 @@ pub(crate) struct MigrationDialog {
     paste_pending: bool,
     include_credentials: bool,
     secret_fields: std::collections::BTreeMap<String, Vec<String>>,
+}
+
+/// `host · database · group`, skipping what the source did not provide.
+fn connection_detail(c: &ConnectionConfig) -> String {
+    [
+        c.values.get("host").or_else(|| c.values.get("path")),
+        c.values.get("database"),
+        c.group.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|v| !v.is_empty())
+    .map(String::as_str)
+    .collect::<Vec<_>>()
+    .join("  ·  ")
+}
+
+fn chip(ui: &mut egui::Ui, text: &str, fg: egui::Color32, bg: egui::Color32) -> egui::Response {
+    let galley =
+        ui.painter()
+            .layout_no_wrap(text.to_string(), egui::FontId::proportional(11.0), fg);
+    let size = galley.size() + egui::vec2(16.0, 6.0);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
+    ui.painter().rect_filled(rect, 10, bg);
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, fg);
+    response
+}
+
+/// A framed button with a leading icon; its accessible name is `label` alone.
+fn action_button(ui: &mut egui::Ui, icon: &str, label: &str) -> egui::Response {
+    let glyph = theme::icons::text(ui, icon, theme::icons::SIZE);
+    let response = ui.add(egui::Button::new((glyph, label)));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    response
+}
+
+/// One connection of the preview as a card: checkbox, driver icon tile, name with its
+/// address, and chips for the driver, security settings and anything to review.
+fn connection_row(ui: &mut egui::Ui, p: &theme::Palette, index: usize, r: &mut Row) {
+    let disabled = r.disabled.is_some();
+    let on = r.selected && !disabled;
+    let c = &r.config;
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 58.0), egui::Sense::click());
+    let (fill, stroke) = if on {
+        (p.accent_soft, p.accent)
+    } else if response.hovered() && !disabled {
+        (p.hover, p.border_input)
+    } else {
+        (p.bg_subtle, p.border)
+    };
+    ui.painter().rect(
+        rect,
+        8,
+        fill,
+        egui::Stroke::new(1.0, stroke),
+        egui::StrokeKind::Inside,
+    );
+    let (name_color, detail_color) = if disabled {
+        (p.text_disabled, p.text_disabled)
+    } else {
+        (p.text, p.text_muted)
+    };
+    let inner = rect.shrink2(egui::vec2(12.0, 0.0));
+    let mut toggle = false;
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .id_salt(("migration-row", index))
+            .max_rect(inner)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        |ui| {
+            toggle = ui
+                .add_enabled(!disabled, egui::Checkbox::without_text(&mut r.selected))
+                .changed();
+            ui.add_space(Spacing::S);
+            let (tile, _) = ui.allocate_exact_size(egui::vec2(36.0, 36.0), egui::Sense::hover());
+            ui.painter().rect_filled(tile, 8, p.bg_input);
+            theme::icons::paint_database_at(ui, tile.shrink(6.0), &c.driver);
+            ui.add_space(Spacing::M);
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+                ui.add_space(9.0);
+                ui.label(
+                    RichText::new(&c.name)
+                        .font(theme::semibold(ui.ctx(), 14.0))
+                        .color(name_color),
+                );
+                let detail = connection_detail(c);
+                let detail = if detail.is_empty() {
+                    "No address in the source".to_string()
+                } else {
+                    detail
+                };
+                ui.label(RichText::new(detail).small().color(detail_color));
+            });
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if let Some(reason) = &r.disabled {
+                    chip(ui, reason, p.text_muted, p.bg_input);
+                    return;
+                }
+                if !r.origin.is_empty() {
+                    chip(ui, &format!("from {}", r.origin), p.accent, p.bg_input);
+                }
+                for note in &r.notes {
+                    chip(ui, note.badge, p.warning, p.bg_input).on_hover_text(note.detail);
+                }
+                let ssh = c.values.get("ssh_enabled").is_some_and(|v| v == "true");
+                for tag in [
+                    ssh.then_some("SSH"),
+                    c.values.contains_key("ssl_mode").then_some("TLS"),
+                    c.profile.as_deref(),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    chip(ui, tag, p.success, p.bg_input);
+                }
+                chip(ui, &c.driver, p.text_muted, p.bg_input);
+            });
+        },
+    );
+    if response.clicked() && !disabled && !toggle {
+        r.selected = !r.selected;
+    }
 }
 
 impl MigrationDialog {
@@ -84,6 +217,11 @@ impl MigrationDialog {
     ) {
         self.warnings = batch.warnings;
         self.rows.clear();
+        let default_origin = if self.source != 0 {
+            self.format.label().to_string()
+        } else {
+            String::new()
+        };
         for (index, config) in batch.connections.into_iter().enumerate() {
             let duplicate = existing.iter().any(|c| same_connection(c, &config))
                 || self
@@ -92,19 +230,30 @@ impl MigrationDialog {
                     .any(|r| same_connection(&r.config, &config));
             let mut notes = Vec::new();
             if drivers.get(&config.driver).is_none() {
-                notes.push("Driver installation required on connect");
+                notes.push(Note {
+                    badge: "Driver needed",
+                    detail: "Driver installation required on connect",
+                });
             }
             if config.driver != "sqlite" && config.values.get("user").is_none_or(String::is_empty) {
-                notes.push("Username unavailable in source; review connection settings");
+                notes.push(Note {
+                    badge: "No username",
+                    detail: "Username unavailable in source; review connection settings",
+                });
             }
-            let note = (!notes.is_empty()).then(|| notes.join(" · "));
             let credentials = batch.credentials.get(&index).cloned().unwrap_or_default();
+            let origin = batch
+                .origins
+                .get(index)
+                .cloned()
+                .unwrap_or_else(|| default_origin.clone());
             self.rows.push(Row {
+                origin,
                 credentials,
                 config,
                 selected: !duplicate,
                 disabled: duplicate.then(|| "Already saved / duplicate".into()),
-                note,
+                notes,
             });
         }
     }
@@ -243,189 +392,225 @@ impl MigrationDialog {
             "Move connections to another client or save a portable backup"
         };
         // The connection list scrolls within the window; the body scrolls past it if needed.
-        let list_height = (ctx.content_rect().height() - 460.0).max(110.0);
+        let list_height = (ctx.content_rect().height() - 400.0).max(110.0);
         let response = theme::Dialog::new("client_migration", icon, title)
             .subtitle(subtitle)
             .width(820.0)
             .show(ctx, |d| {
             d.body(|ui| {
                 if let Some(done) = &self.done {
-                    ui.label(RichText::new("3. Done").color(p.accent).strong());
-                    ui.add_space(Spacing::M);
-                    ui.label(done);
-                    if !self.importing {
+                    ui.add_space(Spacing::XL);
+                    ui.vertical_centered(|ui| {
+                        ui.label(
+                            theme::icons::text(ui, theme::icons::SUCCESS, 36.0).color(p.success),
+                        );
                         ui.add_space(Spacing::M);
-                        ui.label(self.format.export_help());
-                    }
+                        ui.label(RichText::new(done).font(theme::semibold(ctx, 15.0)));
+                        if !self.importing {
+                            ui.add_space(Spacing::M);
+                            ui.label(RichText::new(self.format.export_help()).color(p.text_muted));
+                        }
+                    });
+                    ui.add_space(Spacing::L);
                     self.warning_ui(ui);
                     return;
                 }
-                ui.label(
-                    RichText::new(if self.importing {
-                        "1. Source  ›  2. Choose connections  ›  3. Import"
-                    } else {
-                        "1. Destination  ›  2. Choose connections  ›  3. Export"
-                    })
-                    .color(p.text_muted),
+                theme::section_title(
+                    ui,
+                    if self.importing { "Source" } else { "Destination" },
                 );
-                ui.add_space(Spacing::M);
-                ui.add_enabled_ui(!waiting,|ui| {
-                    if self.importing {
-                        ui.horizontal(|ui| {
-                            let before = self.source;
-                            ComboBox::from_id_salt("migration-source").width(430.0)
-                                .selected_text(&self.source_label).show_ui(ui,|ui| {
-                                    ui.selectable_value(&mut self.source,0,"All detected sources");
-                                    for (i,s) in self.sources.iter().enumerate() {
-                                        ui.selectable_value(&mut self.source,i+1,format!("{} · {}",s.format.label(),s.path.display()));
+                ui.add_space(Spacing::S);
+                egui::Frame::new()
+                    .fill(p.bg_subtle)
+                    .stroke(egui::Stroke::new(1.0, p.border))
+                    .corner_radius(egui::CornerRadius::same(Spacing::RADIUS_S))
+                    .inner_margin(egui::Margin::same(12))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.add_enabled_ui(!waiting, |ui| {
+                            if self.importing {
+                                ui.horizontal(|ui| {
+                                    let before = self.source;
+                                    ComboBox::from_id_salt("migration-source")
+                                        .width((ui.available_width() - 300.0).max(180.0))
+                                        .selected_text(&self.source_label)
+                                        .show_ui(ui, |ui| {
+                                            ui.selectable_value(&mut self.source, 0, "All detected sources");
+                                            for (i, s) in self.sources.iter().enumerate() {
+                                                ui.selectable_value(
+                                                    &mut self.source,
+                                                    i + 1,
+                                                    format!("{} · {}", s.format.label(), s.path.display()),
+                                                );
+                                            }
+                                        });
+                                    if before != self.source {
+                                        if self.source == 0 {
+                                            request = Some(MigrationRequest::Discover);
+                                        } else if let Some(s) = self.sources.get(self.source - 1) {
+                                            self.source_label =
+                                                format!("{} · {}", s.format.label(), s.path.display());
+                                            request = Some(MigrationRequest::Read(s.path.clone()));
+                                        }
+                                    }
+                                    if action_button(ui, theme::icons::OPEN, "Choose file…").clicked() {
+                                        self.ask = Some(FileAsk::open(
+                                            answer,
+                                            "Import connections",
+                                            &["json", "xml", "plist", "txt", "db", "tableplusconnection"],
+                                        ));
+                                    }
+                                    if action_button(ui, theme::icons::PASTE, "Paste from clipboard").clicked() {
+                                        self.paste_pending = true;
+                                        sqlr_ui::keymap::request_paste(ctx);
+                                        ctx.request_repaint();
                                     }
                                 });
-                            if before != self.source {
-                                if self.source == 0 { request = Some(MigrationRequest::Discover); }
-                                else if let Some(s) = self.sources.get(self.source-1) {
-                                    self.source_label = format!("{} · {}",s.format.label(),s.path.display());
-                                    request = Some(MigrationRequest::Read(s.path.clone()));
-                                }
-                            }
-                            if ui.button("Choose file…").clicked() {
-                                self.ask = Some(FileAsk::open(answer,"Import connections",&["json","xml","plist","txt","db","tableplusconnection"]));
-                            }
-                        });
-                        ui.horizontal(|ui| {
-                            if ui.button("Paste from clipboard").clicked() {
-                                self.paste_pending = true;
-                                sqlr_ui::keymap::request_paste(ctx);
-                                ctx.request_repaint();
-                            }
-                            ui.small("Or drop a connection file here.");
-                        });
-                        if self.source == usize::MAX { ui.small(format!("Recognized format: {}",self.format.label())); }
-                        if self.rows.is_empty() && !self.busy {
-                            ui.label("Choose a client connection file. Its format is detected automatically.");
-                            ui.collapsing("Where to find connection files",|ui| {
-                                ui.label("DBeaver: <workspace>/<project>/.dbeaver/data-sources.json");
-                                ui.label("DataGrip: <project>/.idea/dataSources.xml, or save Copy Data Source XML to a file.");
-                                ui.label("TablePlus: Connections.plist, or connection URLs saved to a text file. Encrypted archives are not supported.");
-                                ui.label("Beekeeper Studio: exported connection JSON files, or app.db in the beekeeper-studio application data folder.");
-                                ui.label("Tabularis: Connections → Export → Plain text, or connections.json in the tabularis application data folder.");
-                                ui.label("pgAdmin: Tools → Import/Export Servers → Export.");
-                            });
-                        }
-                    } else {
-                        let before = self.format;
-                        ui.horizontal(|ui| {
-                            ui.label("Export to");
-                            ComboBox::from_id_salt("migration-format").selected_text(self.format.label()).show_ui(ui,|ui| {
-                                for f in ClientFormat::ALL { ui.selectable_value(&mut self.format,f,f.label()); }
-                            });
-                        });
-                        if before != self.format { self.refresh_export(); self.include_credentials = false; }
-                        ui.add_enabled(self.format.supports_credentials(), egui::Checkbox::new(&mut self.include_credentials, "Include credentials"));
-                        if self.include_credentials {
-                            ui.colored_label(p.warning, "Credentials will be saved in plaintext. Store the export securely.");
-                        } else if !self.format.supports_credentials() {
-                            ui.small("This format does not support exporting credentials.");
-                        }
-                        ui.label(self.format.export_help());
-                        if self.format != ClientFormat::Sqlr { ui.small("Portable connection settings only. Custom profiles and client preferences may need to be recreated."); }
-                    }
-                });
-                ui.add_space(Spacing::S);
-                if self.importing && self.rows.iter().any(|r| !r.credentials.0.is_empty()) {
-                    ui.small("This backup includes credentials. Importing will save them in sqlr's credential store.");
-                } else if !self.include_credentials {
-                    ui.label(RichText::new("Passwords stay in each client's credential store. Enter them when connecting in the destination client.").small().color(p.text_muted));
-                }
-                ui.add_space(Spacing::S);
-                theme::hairline(ui);
-                ui.add_space(Spacing::S);
-                ui.add_enabled_ui(!waiting, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.add(
-                            TextEdit::singleline(&mut self.filter)
-                                .hint_text("Filter connections…")
-                                .desired_width(260.0),
-                        );
-                        if ui.button("Select all").clicked() {
-                            for r in &mut self.rows {
-                                r.selected = r.disabled.is_none();
-                            }
-                        }
-                        if ui.button("Select none").clicked() {
-                            for r in &mut self.rows {
-                                r.selected = false;
-                            }
-                        }
-                        let selected = self
-                            .rows
-                            .iter()
-                            .filter(|r| r.selected && r.disabled.is_none())
-                            .count();
-                        ui.label(format!("{selected} selected / {} found", self.rows.len()));
-                    });
-                    let filter = self.filter.to_lowercase();
-                    egui::ScrollArea::vertical()
-                        .id_salt("migration-connections")
-                        .max_height(list_height)
-                        .auto_shrink([false, false])
-                        .show(ui, |ui| {
-                            for (i, r) in self.rows.iter_mut().enumerate() {
-                                let c = &r.config;
-                                let detail = format!(
-                                    "{}  ·  {}  ·  {}  ·  {}",
-                                    c.driver,
-                                    c.values
-                                        .get("host")
-                                        .or_else(|| c.values.get("path"))
-                                        .map_or("", String::as_str),
-                                    c.values.get("database").map_or("", String::as_str),
-                                    c.group.as_deref().unwrap_or("")
+                                ui.add_space(Spacing::S);
+                                let recognized = if self.source == usize::MAX {
+ format!("  Recognized format: {}.", self.format.label())
+ } else {
+ String::new()
+ };
+                                ui.label(
+                                    RichText::new(format!(
+                                        "Pick a detected client, choose a file or drop one here.{recognized}"
+                                    ))
+                                    .small()
+                                    .color(p.text_muted),
                                 );
-                                if !filter.is_empty()
-                                    && !format!("{} {detail}", c.name)
-                                        .to_lowercase()
-                                        .contains(&filter)
-                                {
-                                    continue;
-                                }
-                                ui.push_id(i, |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.add_enabled(
-                                            r.disabled.is_none(),
-                                            egui::Checkbox::new(&mut r.selected, &c.name),
-                                        );
-                                        if let Some(reason) = &r.disabled {
-                                            ui.label(
-                                                RichText::new(reason).small().color(p.text_muted),
-                                            );
-                                        }
-                                    });
-                                    ui.indent("connection-detail", |ui| {
-                                        ui.label(RichText::new(detail).small().color(p.text_muted));
-                                        let settings = [
-                                            c.values.contains_key("ssl_mode").then_some("TLS"),
-                                            c.values
-                                                .get("ssh_enabled")
-                                                .is_some_and(|v| v == "true")
-                                                .then_some("SSH"),
-                                            c.profile.as_deref(),
-                                        ]
-                                        .into_iter()
-                                        .flatten()
-                                        .collect::<Vec<_>>()
-                                        .join(" · ");
-                                        if !settings.is_empty() {
-                                            ui.small(settings);
-                                        }
-                                        if let Some(note) = &r.note {
-                                            ui.small(note);
-                                        }
-                                    });
-                                    ui.add_space(Spacing::XS);
+                            } else {
+                                let before = self.format;
+                                ui.horizontal(|ui| {
+                                    ui.label("Export to");
+                                    ComboBox::from_id_salt("migration-format")
+                                        .selected_text(self.format.label())
+                                        .show_ui(ui, |ui| {
+                                            for f in ClientFormat::ALL {
+                                                ui.selectable_value(&mut self.format, f, f.label());
+                                            }
+                                        });
                                 });
+                                if before != self.format {
+                                    self.refresh_export();
+                                    self.include_credentials = false;
+                                }
+                                ui.add_space(Spacing::S);
+                                ui.add_enabled(
+                                    self.format.supports_credentials(),
+                                    egui::Checkbox::new(&mut self.include_credentials, "Include credentials"),
+                                );
+                                if self.include_credentials {
+                                    ui.colored_label(
+                                        p.warning,
+                                        "Credentials will be saved in plaintext. Store the export securely.",
+                                    );
+                                } else if !self.format.supports_credentials() {
+                                    ui.small("This format does not support exporting credentials.");
+                                }
+                                ui.add_space(Spacing::S);
+                                ui.label(self.format.export_help());
+                                if self.format != ClientFormat::Sqlr {
+                                    ui.small("Portable connection settings only. Custom profiles and client preferences may need to be recreated.");
+                                }
                             }
                         });
-                });
+                        if self.importing && self.rows.iter().any(|r| !r.credentials.0.is_empty()) {
+                            ui.add_space(Spacing::S);
+                            ui.small("This backup includes credentials. Importing will save them in sqlr's credential store.");
+                        } else if !self.include_credentials {
+                            ui.add_space(Spacing::S);
+                            ui.label(
+                                RichText::new("Passwords stay in each client's credential store. Enter them when connecting in the destination client.")
+                                .small()
+                                .color(p.text_muted),
+                            );
+                        }
+                    });
+                ui.add_space(Spacing::L);
+                if self.importing && self.rows.is_empty() {
+                    if waiting {
+                        ui.add_space(Spacing::XL);
+                        ui.vertical_centered(|ui| {
+                            ui.spinner();
+                            ui.add_space(Spacing::M);
+                            ui.label(RichText::new("Looking for connections…").color(p.text_muted));
+                        });
+                    } else {
+                        theme::empty_panel(
+                            ui,
+                            theme::icons::IMPORT,
+                            "No connections yet",
+                            "Choose a client connection file. Its format is detected automatically.",
+                        );
+                        ui.collapsing("Where to find connection files", |ui| {
+                            ui.label("DBeaver: <workspace>/<project>/.dbeaver/data-sources.json");
+                            ui.label("DataGrip: <project>/.idea/dataSources.xml, or save Copy Data Source XML to a file.");
+                            ui.label("TablePlus: Connections.plist, or connection URLs saved to a text file. Encrypted archives are not supported.");
+                            ui.label("Beekeeper Studio: exported connection JSON files, or app.db in the beekeeper-studio application data folder.");
+                            ui.label("Tabularis: Connections → Export → Plain text, or connections.json in the tabularis application data folder.");
+                            ui.label("pgAdmin: Tools → Import/Export Servers → Export.");
+                        });
+                    }
+                }
+                if !self.rows.is_empty() {
+                    theme::section_title(ui, "Connections");
+                    ui.add_space(Spacing::S);
+                    ui.add_enabled_ui(!waiting, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                TextEdit::singleline(&mut self.filter)
+                                    .hint_text("Search connections…")
+                                    .desired_width(240.0),
+                            );
+                            if ui.button("Select all").clicked() {
+                                for r in &mut self.rows {
+                                    r.selected = r.disabled.is_none();
+                                }
+                            }
+                            if ui.button("Select none").clicked() {
+                                for r in &mut self.rows {
+                                    r.selected = false;
+                                }
+                            }
+                            let selected = self
+                                .rows
+                                .iter()
+                                .filter(|r| r.selected && r.disabled.is_none())
+                                .count();
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(
+                                    RichText::new(format!("{selected} of {} selected", self.rows.len()))
+                                        .color(p.text_muted),
+                                );
+                            });
+                        });
+                        ui.add_space(Spacing::S);
+                        let filter = self.filter.to_lowercase();
+                        egui::ScrollArea::vertical()
+                            .id_salt("migration-connections")
+                            .max_height(list_height)
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.spacing_mut().item_spacing.y = 2.0;
+                                for (i, r) in self.rows.iter_mut().enumerate() {
+                                    if !filter.is_empty()
+                                        && !format!(
+                                            "{} {} {}",
+                                            r.config.name,
+                                            connection_detail(&r.config),
+                                            r.origin
+                                        )
+                                            .to_lowercase()
+                                            .contains(&filter)
+                                    {
+                                        continue;
+                                    }
+                                    connection_row(ui, &p, i, r);
+                                }
+                            });
+                    });
+                }
                 self.warning_ui(ui);
                 if let Some(error) = &self.error {
                     ui.colored_label(p.error, error);
@@ -529,10 +714,11 @@ impl SqlrApp {
             .connections
             .iter()
             .map(|c| Row {
+                origin: String::new(),
                 config: c.clone(),
                 selected: true,
                 disabled: None,
-                note: None,
+                notes: vec![],
                 credentials: Default::default(),
             })
             .collect();
@@ -741,6 +927,17 @@ mod tests {
         h.state_mut()
             .dialog
             .load(batch, &[], &DriverRegistry::default());
+        let mut other = h.state().dialog.rows[0].config.clone();
+        other.name = "Analytics".into();
+        other.driver = "redis".into();
+        h.state_mut().dialog.rows.push(Row {
+            origin: "DBeaver".into(),
+            config: other,
+            selected: false,
+            disabled: None,
+            notes: vec![],
+            credentials: Default::default(),
+        });
         h.run_steps(8);
         h.render()
             .unwrap()

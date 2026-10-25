@@ -434,6 +434,10 @@ fn migrate(repo: &ConnectionRepo, request: MigrationRequest) -> Result<Migration
                 match client_migration::read_source(&source.path) {
                     Ok((_, mut batch)) => {
                         let offset = combined.connections.len();
+                        combined.origins.extend(std::iter::repeat_n(
+                            source.format.label().to_string(),
+                            batch.connections.len(),
+                        ));
                         combined
                             .credentials
                             .extend(batch.credentials.into_iter().map(|(i, s)| (i + offset, s)));
