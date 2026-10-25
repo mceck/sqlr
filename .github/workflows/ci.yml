@@ -22,3 +22,16 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: python3 scripts/check-dependencies.py
+  tests:
+    runs-on: ubuntu-latest
+    env:
+      SQLR_SKIP_CONTAINER_TESTS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxi-dev libxcursor-dev libxrandr-dev pkg-config xvfb mesa-vulkan-drivers
+      - name: cargo test --workspace (no containers)
+        run: xvfb-run -a cargo test --workspace
