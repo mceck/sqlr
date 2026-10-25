@@ -65,22 +65,83 @@ impl SqlrApp {
             }
         }
         if self.cancel_all_operations {
-            egui::Window::new("Cancel all operations?")
-                .collapsible(false)
-                .show(ui.ctx(), |ui| {
-                    ui.label("Interrupt all running client operations?");
-                    ui.horizontal(|ui| {
-                        if ui.button("Keep running").clicked() {
-                            self.cancel_all_operations = false;
-                        }
-                        if ui.button("Cancel all").clicked() {
-                            for op in self.engine.operations() {
-                                self.engine.cancel_operation(op.id);
-                            }
-                            self.cancel_all_operations = false;
-                        }
-                    });
-                });
+            let names: Vec<String> = operations
+                .iter()
+                .filter(|o| matches!(o.state, OperationState::Running) && o.cancelable)
+                .map(|o| o.label.clone())
+                .collect();
+            let prompt = stop_all_prompt(&names);
+            let spec = crate::confirm::ConfirmSpec::new(
+                egui::Id::new("cancel_all_operations"),
+                sqlr_ui::theme::icons::STOP,
+                "Stop running operations",
+                "Stop all",
+            )
+            .dismiss("Keep running");
+            let answer = crate::confirm::confirm_modal(
+                ui.ctx(),
+                spec,
+                |ui| {
+                    ui.label(prompt);
+                },
+                |_| {},
+            );
+            match answer {
+                Some(true) => {
+                    for op in self.engine.operations() {
+                        self.engine.cancel_operation(op.id);
+                    }
+                    self.cancel_all_operations = false;
+                }
+                Some(false) => self.cancel_all_operations = false,
+                None => {}
+            }
         }
+    }
+}
+
+/// "Stop 3 running operations: Dump Northwind, Export orders and 1 more?"
+fn stop_all_prompt(names: &[String]) -> String {
+    const LISTED: usize = 3;
+    match names {
+        [] => "Stop every running operation?".to_string(),
+        [one] => format!("Stop the running operation \"{one}\"?"),
+        _ => {
+            let listed = names
+                .iter()
+                .take(LISTED)
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join(", ");
+            let more = names.len().saturating_sub(LISTED);
+            let tail = if more > 0 {
+                format!(" and {more} more")
+            } else {
+                String::new()
+            };
+            format!("Stop {} running operations: {listed}{tail}?", names.len())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stop_all_prompt;
+
+    #[test]
+    fn the_stop_all_prompt_names_the_operations() {
+        assert_eq!(stop_all_prompt(&[]), "Stop every running operation?");
+        assert_eq!(
+            stop_all_prompt(&["Dump Northwind".into()]),
+            "Stop the running operation \"Dump Northwind\"?"
+        );
+        let names: Vec<String> = ["Dump Northwind", "Export orders", "Connect", "Import"]
+            .into_iter()
+            .map(String::from)
+            .collect();
+        assert_eq!(
+            stop_all_prompt(&names),
+            "Stop 4 running operations: Dump Northwind, Export orders, Connect and 1 more?"
+        );
     }
 }

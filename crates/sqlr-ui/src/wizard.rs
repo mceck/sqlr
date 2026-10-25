@@ -1,16 +1,30 @@
-//! The frame of a multi-step wizard (the data transfer wizard, saved-task editing): a step
-//! strip, the step's body and a Cancel / Back / Next bar. The caller owns the steps and
-//! the current index and acts on the returned [`WizardAction`].
+//! The parts of a multi-step wizard shown in a [`theme::Dialog`] (the data transfer wizard,
+//! saved-task editing): the step strip ([`wizard_steps`], in the dialog's top band) and the
+//! Cancel / Back / Next actions ([`wizard_footer`], in its footer). The caller owns the
+//! steps and the current index and acts on the returned [`WizardAction`].
 
-use egui::{Align, Layout, RichText};
+use egui::RichText;
 
 use crate::theme::{self, Spacing};
 
-/// One step of a wizard. `valid` says whether the user may move past it.
+/// One step of a wizard. `valid` says whether the user may move past it; `reason` says
+/// what is missing when it is not.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WizardStep {
     pub title: String,
     pub valid: bool,
+    pub reason: Option<String>,
+}
+
+impl WizardStep {
+    /// A step that may be left once `missing` is `None`; otherwise `missing` says why not.
+    pub fn new(title: impl Into<String>, missing: Option<String>) -> Self {
+        Self {
+            title: title.into(),
+            valid: missing.is_none(),
+            reason: missing,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22,20 +36,9 @@ pub enum WizardAction {
     SaveAsTask,
 }
 
-/// Draws the step strip, `body` and the button bar; returns the button the user clicked.
-/// Next is disabled until the current step is valid; on the last step it becomes Finish
-/// (also gated on validity) and "Save as task" appears.
-pub fn wizard_frame(
-    ui: &mut egui::Ui,
-    steps: &[WizardStep],
-    current: usize,
-    body: impl FnOnce(&mut egui::Ui),
-) -> Option<WizardAction> {
+/// The step strip: "1. Source › 2. Target › …", the current step highlighted.
+pub fn wizard_steps(ui: &mut egui::Ui, steps: &[WizardStep], current: usize) {
     let p = theme::palette(ui.ctx());
-    let last = current + 1 >= steps.len();
-    let valid = steps.get(current).is_some_and(|s| s.valid);
-    let mut action = None;
-
     ui.horizontal_wrapped(|ui| {
         for (i, step) in steps.iter().enumerate() {
             let text = RichText::new(format!("{}. {}", i + 1, step.title));
@@ -60,52 +63,40 @@ pub fn wizard_frame(
             }
         }
     });
-    theme::hairline(ui);
-    ui.add_space(Spacing::M);
+}
 
-    // The bar sits under the body, so reserve its height first.
-    // Over-reserved on purpose: a window that grows to fit would grow on every frame.
-    let bar_height = 56.0;
-    let body_height = (ui.available_height() - bar_height - Spacing::M).max(0.0);
-    egui::ScrollArea::vertical()
-        .id_salt("wizard-body")
-        .max_height(body_height)
-        .auto_shrink([false, false])
-        .show(ui, body);
-
-    ui.add_space(Spacing::M);
-    theme::hairline(ui);
-    ui.add_space(Spacing::XS);
-    ui.horizontal(|ui| {
-        if ui.button("Cancel").clicked() {
-            action = Some(WizardAction::Cancel);
-        }
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if last {
-                let finish = ui.add_enabled(
-                    valid,
-                    theme::primary_button_state(ui.ctx(), valid, "Finish"),
-                );
-                if finish.clicked() {
-                    action = Some(WizardAction::Finish);
-                }
-            } else {
-                let next =
-                    ui.add_enabled(valid, theme::primary_button_state(ui.ctx(), valid, "Next"));
-                if next.clicked() {
-                    action = Some(WizardAction::Next);
-                }
-            }
-            if ui
-                .add_enabled(current > 0, egui::Button::new("Back"))
-                .clicked()
-            {
-                action = Some(WizardAction::Back);
-            }
-            if last && ui.button("Save as task").clicked() {
-                action = Some(WizardAction::SaveAsTask);
-            }
-        });
-    });
+/// The wizard's actions in a dialog footer: "Save as task" on the left of the last step,
+/// then Cancel, Back and Next on the right. Next is disabled, with the step's reason,
+/// until the current step is valid; on the last step it becomes Finish.
+pub fn wizard_footer(
+    f: &mut theme::DialogFooter,
+    steps: &[WizardStep],
+    current: usize,
+) -> Option<WizardAction> {
+    let last = current + 1 >= steps.len();
+    let step = steps.get(current);
+    let blocked = match step {
+        Some(s) if s.valid => None,
+        Some(s) => Some(s.reason.as_deref().unwrap_or("")),
+        None => Some(""),
+    };
+    let mut action = None;
+    if last && f.secondary("Save as task", true) {
+        action = Some(WizardAction::SaveAsTask);
+    }
+    let (label, forward) = if last {
+        ("Finish", WizardAction::Finish)
+    } else {
+        ("Next", WizardAction::Next)
+    };
+    if f.primary(label, blocked) {
+        action = Some(forward);
+    }
+    if f.button("Back", current > 0) {
+        action = Some(WizardAction::Back);
+    }
+    if f.cancel() {
+        action = Some(WizardAction::Cancel);
+    }
     action
 }

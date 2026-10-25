@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 
-use egui::{Align2, Frame, Id, Margin, RichText, ScrollArea, vec2};
+use egui::{Align2, Frame, Id, Margin, RichText, ScrollArea};
 use sqlr_engine::{OperationState, SessionKey, SessionStatus, TxPhase};
 use sqlr_ui::theme::{self, Spacing, icons};
 
@@ -270,7 +270,7 @@ impl SqlrApp {
     }
 
     fn diagnostics_window_ui(&mut self, ctx: &egui::Context) {
-        let mut open = self.diagnostics_ui.open;
+        let open = self.diagnostics_ui.open;
         let mut close = false;
         let mut copy_bundle = false;
         let mut save_bundle = false;
@@ -283,46 +283,32 @@ impl SqlrApp {
         let mut level_change: Option<LogLevel> = None;
         let mut sql_change: Option<bool> = None;
 
-        egui::Window::new("Diagnostics")
-            .open(&mut open)
-            .title_bar(false)
-            .collapsible(false)
-            .resizable(true)
-            .default_size(vec2(820.0, 620.0))
-            .min_width(620.0)
-            .frame(Frame::window(&ctx.global_style()).inner_margin(Margin::ZERO))
-            .show(ctx, |ui| {
-                if theme::dialog_header(
-                    ui,
-                    icons::WARNING,
-                    "Diagnostics",
-                    Some("Local reports and logs; nothing leaves this machine unless you share it"),
-                ) {
-                    close = true;
-                }
-                Frame::new()
-                    .inner_margin(Margin::symmetric(Spacing::L as i8, Spacing::M as i8))
-                    .show(ui, |ui| {
-                        ScrollArea::vertical()
-                            .auto_shrink([false, false])
-                            .max_height(ctx.content_rect().height() - 160.0)
-                            .show(ui, |ui| {
-                                self.diagnostics_body(
-                                    ui,
-                                    &mut copy_bundle,
-                                    &mut save_bundle,
-                                    &mut issue_bundle,
-                                    &mut copy_incident,
-                                    &mut save_incident,
-                                    &mut issue_incident,
-                                    &mut open_logs,
-                                    &mut new_report,
-                                    &mut level_change,
-                                    &mut sql_change,
-                                )
-                            });
-                    });
+        // A viewer that sits next to the work: it leaves the window usable behind it.
+        let response = theme::Dialog::new("diagnostics", icons::WARNING, "Diagnostics")
+            .subtitle("Local reports and logs; nothing leaves this machine unless you share it")
+            .width(840.0)
+            .non_modal()
+            .show(ctx, |d| {
+                d.body(|ui| {
+                    self.diagnostics_body(
+                        ui,
+                        &mut copy_bundle,
+                        &mut save_bundle,
+                        &mut issue_bundle,
+                        &mut copy_incident,
+                        &mut save_incident,
+                        &mut issue_incident,
+                        &mut open_logs,
+                        &mut new_report,
+                        &mut level_change,
+                        &mut sql_change,
+                    )
+                });
+                d.footer(|f| f.cancel_as("Close"));
             });
+        if response.closed {
+            close = true;
+        }
         self.diagnostics_ui.open = open && !close;
 
         if let Some(level) = level_change {
@@ -687,68 +673,42 @@ impl SqlrApp {
         let Some(mut dialog) = self.diagnostics_ui.report.take() else {
             return;
         };
-        let mut open = true;
-        let mut close = false;
         let mut create_copy = false;
         let mut create_save = false;
         let mut create_issue = false;
-        egui::Window::new("Report a Problem")
-            .open(&mut open)
-            .title_bar(false)
-            .collapsible(false)
-            .resizable(true)
-            .default_size(vec2(620.0, 460.0))
-            .frame(Frame::window(&ctx.global_style()).inner_margin(Margin::ZERO))
-            .show(ctx, |ui| {
-                if theme::dialog_header(
-                    ui,
-                    icons::WARNING,
-                    "Report a Problem",
-                    Some("Saved locally and listed with the other incidents"),
-                ) {
-                    close = true;
-                }
-                Frame::new()
-                    .inner_margin(Margin::symmetric(Spacing::L as i8, Spacing::M as i8))
-                    .show(ui, |ui| {
-                        ui.label("What were you doing when the problem happened?");
-                        ui.add(
-                            egui::TextEdit::multiline(&mut dialog.note)
-                                .desired_rows(6)
-                                .desired_width(f32::INFINITY),
-                        );
-                        ui.add_space(Spacing::S);
-                        ui.add_enabled_ui(self.settings.include_sql_in_diagnostics, |ui| {
-                            ui.checkbox(&mut dialog.include_sql, "Include SQL statements");
-                        });
-                        ui.checkbox(&mut dialog.include_titles, "Include open tab titles");
-                        ui.add_space(Spacing::S);
-                        theme::hint(
-                            ui,
-                            "Passwords, passphrases, tokens and vault values are never included. \
-                             A GitHub issue opens only after you review the full report.",
-                        );
-                        ui.add_space(Spacing::M);
-                        ui.horizontal_wrapped(|ui| {
-                            if ui
-                                .add(theme::primary_button(ui.ctx(), "Create report and copy"))
-                                .clicked()
-                            {
-                                create_copy = true;
-                            }
-                            if ui.button("Create report and save…").clicked() {
-                                create_save = true;
-                            }
-                            if ui.button("Create report for GitHub…").clicked() {
-                                create_issue = true;
-                            }
-                            if ui.button("Cancel").clicked() {
-                                close = true;
-                            }
-                        });
+        let include_sql_allowed = self.settings.include_sql_in_diagnostics;
+        let response = theme::Dialog::new("report_problem", icons::WARNING, "Report a Problem")
+            .subtitle("Saved locally and listed with the other incidents")
+            .width(660.0)
+            .show(ctx, |d| {
+                d.body(|ui| {
+                    ui.label("What were you doing when the problem happened?");
+                    ui.add(
+                        egui::TextEdit::multiline(&mut dialog.note)
+                            .desired_rows(6)
+                            .desired_width(f32::INFINITY),
+                    );
+                    ui.add_space(Spacing::S);
+                    ui.add_enabled_ui(include_sql_allowed, |ui| {
+                        ui.checkbox(&mut dialog.include_sql, "Include SQL statements");
                     });
+                    ui.checkbox(&mut dialog.include_titles, "Include open tab titles");
+                    ui.add_space(Spacing::S);
+                    theme::hint(
+                        ui,
+                        "Passwords, passphrases, tokens and vault values are never included. \
+                         A GitHub issue opens only after you review the full report.",
+                    );
+                });
+                d.footer(|f| {
+                    create_save = f.secondary("Save report…", true);
+                    create_issue = f.secondary("Prepare GitHub issue…", true);
+                    create_copy = f.primary("Copy report", None);
+                    f.cancel();
+                });
             });
-        if open && !close && !create_copy && !create_save && !create_issue {
+        let close = response.closed;
+        if !close && !create_copy && !create_save && !create_issue {
             self.diagnostics_ui.report = Some(dialog);
             return;
         }
@@ -881,17 +841,18 @@ impl SqlrApp {
         if !self.diagnostics_ui.preview_open {
             return;
         }
-        let mut open = true;
         let mut copy = false;
         let mut save = false;
         let mut issue = false;
-        egui::Window::new("Review diagnostics bundle")
-            .open(&mut open)
-            .default_size(vec2(760.0, 560.0))
-            .show(ctx, |ui| {
-                ui.label(
-                    "Review this local report before sharing it. Nothing is sent automatically.",
-                );
+        let response = theme::Dialog::new(
+            "review_diagnostics_bundle",
+            icons::WARNING,
+            "Review diagnostics bundle",
+        )
+        .subtitle("Review this local report before sharing it. Nothing is sent automatically.")
+        .width(780.0)
+        .show(ctx, |d| {
+            d.body(|ui| {
                 ScrollArea::vertical().max_height(400.0).show(ui, |ui| {
                     if let Some(text) = &self.diagnostics_ui.preview {
                         ui.add(
@@ -902,6 +863,7 @@ impl SqlrApp {
                     }
                 });
                 if let Some(draft) = &self.diagnostics_ui.issue {
+                    ui.add_space(Spacing::S);
                     theme::hint(
                         ui,
                         if draft.paste_required {
@@ -913,26 +875,15 @@ impl SqlrApp {
                         },
                     );
                 }
-                ui.horizontal(|ui| {
-                    if ui
-                        .add(theme::primary_button(
-                            ctx,
-                            "Open GitHub issue with this report",
-                        ))
-                        .on_hover_text("Open a prefilled public issue in your browser")
-                        .clicked()
-                    {
-                        issue = true;
-                    }
-                    if ui.button("Copy reviewed bundle").clicked() {
-                        copy = true;
-                    }
-                    if ui.button("Save reviewed bundle…").clicked() {
-                        save = true;
-                    }
-                });
             });
-        self.diagnostics_ui.preview_open = open;
+            d.footer(|f| {
+                copy = f.secondary("Copy reviewed bundle", true);
+                save = f.secondary("Save reviewed bundle…", true);
+                issue = f.primary("Open GitHub issue with this report", None);
+                f.cancel_as("Close");
+            });
+        });
+        self.diagnostics_ui.preview_open = !response.closed;
         if issue {
             self.open_issue(ctx);
         }

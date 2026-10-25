@@ -9,7 +9,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::hash::{Hash, Hasher};
 
-use egui::{Id, Key, RichText, Sense, TextEdit, WidgetInfo, WidgetType, vec2};
+use egui::{Key, RichText, Sense, TextEdit, WidgetInfo, WidgetType, vec2};
 use sqlr_core::{KeyInfo, KeyType, display_key};
 
 use crate::theme::{self, Palette, Spacing, icons};
@@ -526,10 +526,10 @@ fn key_row(
 fn delete_confirmation(ctx: &egui::Context, state: &mut KeyBrowserState) -> Option<Vec<Vec<u8>>> {
     let doomed = state.confirm.clone()?;
     let p = theme::palette(ctx);
-    let mut answer = None;
-    let response = egui::Modal::new(Id::new("kv_delete_keys")).show(ctx, |ui| {
-        ui.set_max_width(480.0);
-        let n = doomed.len();
+    let n = doomed.len();
+    let title = if n == 1 { "Delete key" } else { "Delete keys" };
+    let dialog = theme::Dialog::new("kv_delete_keys", theme::icons::DELETE, title).width(480.0);
+    let answer = theme::confirm(ctx, dialog, "Delete", |ui| {
         ui.label(if n == 1 {
             "Delete this key?".to_string()
         } else {
@@ -546,21 +546,7 @@ fn delete_confirmation(ctx: &egui::Context, state: &mut KeyBrowserState) -> Opti
         if n > LISTED {
             ui.label(RichText::new(format!("…and {} more", n - LISTED)).color(p.text_muted));
         }
-        ui.add_space(Spacing::L);
-        ui.horizontal(|ui| {
-            let delete =
-                egui::Button::new(RichText::new("Delete").color(p.accent_text)).fill(p.error);
-            if ui.add(delete).clicked() {
-                answer = Some(true);
-            }
-            if ui.button("Cancel").clicked() {
-                answer = Some(false);
-            }
-        });
     });
-    if answer.is_none() && response.should_close() {
-        answer = Some(false);
-    }
     match answer {
         Some(yes) => {
             state.confirm = None;

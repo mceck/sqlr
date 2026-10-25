@@ -12,7 +12,7 @@ use sqlr_core::{
 };
 use sqlr_engine::{Engine, JobId, JobOutcome, JobProgress, SessionKey, SessionStatus, SourceProbe};
 use sqlr_ui::theme::{self, Spacing};
-use sqlr_ui::{WizardAction, WizardStep, mapping_table, wizard_frame};
+use sqlr_ui::{WizardAction, WizardStep, mapping_table, wizard_footer, wizard_steps};
 
 use crate::app::SqlrApp;
 use crate::database_tools::human_bytes;
@@ -623,35 +623,65 @@ impl TransferWizard {
 
     fn steps(&self, engine: &Engine) -> Vec<WizardStep> {
         let mut steps = vec![
-            WizardStep {
-                title: "Source".into(),
-                valid: self.probe_is_current(),
-            },
-            WizardStep {
-                title: "Target".into(),
-                valid: self.target_endpoint().is_some(),
-            },
+            WizardStep::new("Source", self.source_missing()),
+            WizardStep::new("Target", self.target_missing()),
         ];
         if self.table_target() {
-            steps.push(WizardStep {
-                title: "Mapping".into(),
-                valid: self.target_columns(engine).is_some()
-                    && self.mapping.iter().any(|m| m.target.is_some()),
-            });
+            let missing = if self.target_columns(engine).is_none() {
+                Some("Loading the target table's columns…".to_string())
+            } else if !self.mapping.iter().any(|m| m.target.is_some()) {
+                Some("Map at least one column".to_string())
+            } else {
+                None
+            };
+            steps.push(WizardStep::new("Mapping", missing));
         }
-        steps.push(WizardStep {
-            title: "Options".into(),
-            valid: self.options.batch > 0,
-        });
-        steps.push(WizardStep {
-            title: "Review".into(),
-            valid: self.spec().is_ok(),
-        });
-        steps.push(WizardStep {
-            title: "Run".into(),
-            valid: self.run.is_none() && self.outcome.is_none() && self.spec().is_ok(),
-        });
+        steps.push(WizardStep::new(
+            "Options",
+            (self.options.batch == 0).then(|| "Rows per batch must be at least 1".to_string()),
+        ));
+        steps.push(WizardStep::new("Review", self.spec().err()));
+        let run_missing = if self.run.is_some() {
+            // Running: Finish waits without a reason; the progress says enough.
+            Some(String::new())
+        } else if self.outcome.is_some() {
+            Some("The transfer has run".to_string())
+        } else {
+            self.spec().err()
+        };
+        steps.push(WizardStep::new("Run", run_missing));
         steps
+    }
+
+    /// What the Source step still needs, if anything.
+    fn source_missing(&self) -> Option<String> {
+        if self.probe_is_current() {
+            return None;
+        }
+        let missing = match self.source_kind {
+            SourceKind::File if self.s_path.trim().is_empty() => "Choose a source file",
+            SourceKind::Table | SourceKind::Query if self.s_conn.is_empty() => {
+                "Choose a source connection"
+            }
+            SourceKind::Table if self.s_table.trim().is_empty() => "Enter the source table",
+            SourceKind::Query if self.s_sql.trim().is_empty() => "Enter the source query",
+            _ if self.probe_job.is_some() => "Loading the preview…",
+            _ => "Load the preview to continue",
+        };
+        Some(missing.to_string())
+    }
+
+    /// What the Target step still needs, if anything.
+    fn target_missing(&self) -> Option<String> {
+        if self.target_endpoint().is_some() {
+            return None;
+        }
+        let missing = match self.target_kind {
+            TargetKind::File => "Choose a target file",
+            _ if self.t_conn.is_empty() => "Choose a target connection",
+            _ => "Enter the target table",
+        };
+        Some(missing.to_string())
     }
 
     /// Returns what the app should do.
@@ -678,18 +708,16 @@ impl TransferWizard {
         self.step = self.step.min(steps.len() - 1);
         let mut event = WizardEvent::None;
         let mut open = true;
-        let mut action = None;
-        theme::tool_dialog(
-            ctx,
-            &mut open,
-            "Transfer data",
-            theme::icons::ROWS,
-            "Choose a source and destination, review the mapping, then start the transfer",
-            860.0,
-            |ui| {
-                ui.set_height((ctx.content_rect().height() - 260.0).clamp(200.0, 520.0));
+        let response = theme::Dialog::new("transfer_wizard", theme::icons::ROWS, "Transfer data")
+            .subtitle(
+                "Choose a source and destination, review the mapping, then start the transfer",
+            )
+            .width(860.0)
+            .min_body_height(280.0)
+            .show(ctx, |d| {
+                d.top(|ui| wizard_steps(ui, &steps, self.step));
                 let title = steps[self.step].title.clone();
-                action = wizard_frame(ui, &steps, self.step, |ui| match title.as_str() {
+                d.body(|ui| match title.as_str() {
                     "Source" => self.source_ui(ui, engine, conns, answer),
                     "Target" => self.target_ui(ui, engine, conns, answer),
                     "Mapping" => self.mapping_ui(ui, engine),
@@ -697,8 +725,12 @@ impl TransferWizard {
                     "Review" => self.review_ui(ui, engine, conns),
                     _ => self.run_ui(ui),
                 });
-            },
-        );
+                d.footer(|f| wizard_footer(f, &steps, self.step))
+            });
+        let action = response.inner;
+        if response.closed {
+            open = false;
+        }
         match action {
             Some(WizardAction::Back) => self.step = self.step.saturating_sub(1),
             Some(WizardAction::Next) => self.step += 1,

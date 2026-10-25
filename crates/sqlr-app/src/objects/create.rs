@@ -1,14 +1,14 @@
 //! "New ▸ <kind>": a dialog asks for the name (and the table of an index or trigger), then
 //! an object tab opens in "new" mode, where the rest is edited in the same forms.
 
-use egui::{ComboBox, Id, TextEdit};
+use egui::{ComboBox, TextEdit};
 use sqlr_core::{
     DatabaseDef, IndexDef, NodePath, ObjectDef, ObjectKind, RoutineDef, SchemaDef, SequenceDef,
     TableDef, TableRef, TriggerDef, ViewDef,
 };
 use sqlr_ui::kind_label;
 use sqlr_ui::text_edit;
-use sqlr_ui::theme::{self, Spacing};
+use sqlr_ui::theme::{self};
 
 pub(crate) struct CreateDialog {
     pub conn: String,
@@ -58,21 +58,46 @@ impl CreateDialog {
         matches!(self.kind, ObjectKind::Index | ObjectKind::Trigger)
     }
 
-    fn valid(&self) -> bool {
-        !self.name.trim().is_empty() && (!self.needs_table() || !self.table.is_empty())
+    /// Why Create is disabled, if it is.
+    fn blocked(&self) -> Option<&'static str> {
+        if self.name.trim().is_empty() {
+            Some("Enter a name")
+        } else if self.needs_table() && self.table.is_empty() {
+            Some("Choose a table")
+        } else {
+            None
+        }
     }
 
     /// Draws the dialog: `Some(true)` to create, `Some(false)` to cancel.
     pub fn show(&mut self, ctx: &egui::Context) -> Option<bool> {
-        let mut answer = None;
         let title = format!("New {}", kind_label(self.kind).to_lowercase());
-        let response = egui::Modal::new(Id::new("create_object")).show(ctx, |ui| {
-            ui.set_width(380.0);
-            ui.label(egui::RichText::new(&title).font(theme::semibold(ui.ctx(), 15.0)));
-            if let Some(schema) = &self.schema {
-                theme::field_label(ui, &format!("In {schema}"));
-            }
-            ui.add_space(Spacing::S);
+        let subtitle = self.schema.as_ref().map(|s| format!("In {s}"));
+        let mut dialog =
+            theme::Dialog::new("create_object", theme::icons::CREATE, &title).width(420.0);
+        if let Some(subtitle) = &subtitle {
+            dialog = dialog.subtitle(subtitle);
+        }
+        let response = dialog.show(ctx, |d| {
+            d.body(|ui| self.form(ui));
+            let blocked = self.blocked();
+            d.footer(|f| {
+                let create = f.primary("Create", blocked);
+                f.cancel();
+                create
+            })
+        });
+        if response.inner {
+            Some(true)
+        } else if response.closed {
+            Some(false)
+        } else {
+            None
+        }
+    }
+
+    fn form(&mut self, ui: &mut egui::Ui) {
+        {
             let label = ui.label("Name");
             let field = text_edit(
                 ui,
@@ -91,7 +116,7 @@ impl CreateDialog {
                 };
                 ComboBox::from_id_salt("create_object_table")
                     .selected_text(text)
-                    .width(360.0)
+                    .width(ui.available_width())
                     .show_ui(ui, |ui| {
                         if self.tables.is_empty() {
                             ui.label("Loading tables…");
@@ -101,24 +126,7 @@ impl CreateDialog {
                         }
                     });
             }
-            ui.add_space(Spacing::L);
-            ui.horizontal(|ui| {
-                let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-                let create = ui
-                    .add_enabled(self.valid(), theme::primary_button(ui.ctx(), "Create"))
-                    .clicked();
-                if create || (enter && self.valid()) {
-                    answer = Some(true);
-                }
-                if ui.button("Cancel").clicked() {
-                    answer = Some(false);
-                }
-            });
-        });
-        if answer.is_none() && response.should_close() {
-            answer = Some(false);
         }
-        answer
     }
 
     /// The definition the object tab starts from; `None` for roles, which are created in

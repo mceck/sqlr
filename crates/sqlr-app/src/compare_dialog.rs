@@ -153,29 +153,58 @@ impl CompareDialog {
     ) -> CompareEvent {
         self.poll(engine);
         let mut event = CompareEvent::None;
-        let mut open = true;
-        theme::tool_dialog(
-            ctx,
-            &mut open,
-            "Compare schemas",
-            theme::icons::SCHEMA,
-            "Compare a reference schema with the schema you want to update",
-            900.0,
-            |ui| {
-                self.header(ui, engine, conns);
-                if let Some(e) = &self.error {
-                    ui.colored_label(theme::palette(ui.ctx()).error, e);
-                }
-                if self.diffs.is_some() {
-                    ui.add_space(Spacing::M);
-                    event = self.results(ui, engine);
-                }
-            },
-        );
-        if !open {
+        let response =
+            theme::Dialog::new("compare_dialog", theme::icons::SCHEMA, "Compare schemas")
+                .subtitle("Compare a reference schema with the schema you want to update")
+                .width(900.0)
+                .show(ctx, |d| {
+                    d.body(|ui| {
+                        self.header(ui, engine, conns);
+                        if let Some(e) = &self.error {
+                            ui.colored_label(theme::palette(ui.ctx()).error, e);
+                        }
+                        if self.diffs.is_some() {
+                            ui.add_space(Spacing::M);
+                            event = self.results(ui, engine);
+                        }
+                    });
+                    let blocked = self.compare_blocked();
+                    d.footer(|f| {
+                        if f.primary("Compare", blocked) {
+                            self.error = None;
+                            self.diffs = None;
+                            self.job = Some(engine.compare_schemas(
+                                Self::side(&self.s_conn, &self.s_database, &self.s_schema),
+                                Self::side(&self.t_conn, &self.t_database, &self.t_schema),
+                            ));
+                        }
+                        f.cancel_as("Close");
+                        if self.job.is_some() {
+                            f.right().spinner();
+                        }
+                    });
+                });
+        if response.closed {
             return CompareEvent::Close;
         }
         event
+    }
+
+    /// Why Compare is disabled, if it is.
+    fn compare_blocked(&self) -> Option<&'static str> {
+        if self.job.is_some() {
+            Some("Comparing…")
+        } else if self.s_conn.is_empty() {
+            Some("Choose the source connection")
+        } else if self.s_schema.trim().is_empty() {
+            Some("Enter the source schema")
+        } else if self.t_conn.is_empty() {
+            Some("Choose the target connection")
+        } else if self.t_schema.trim().is_empty() {
+            Some("Enter the target schema")
+        } else {
+            None
+        }
     }
 
     fn header(&mut self, ui: &mut egui::Ui, engine: &Engine, conns: &[ConnChoice]) {
@@ -232,32 +261,12 @@ impl CompareDialog {
                     });
             }
         });
-        ui.add_space(Spacing::L);
-        ui.add_space(Spacing::S);
-        ui.horizontal_wrapped(|ui| {
-            let ready = !self.s_conn.is_empty()
-                && !self.t_conn.is_empty()
-                && !self.s_schema.trim().is_empty()
-                && !self.t_schema.trim().is_empty()
-                && self.job.is_none();
-            let button = theme::primary_button_state(ui.ctx(), ready, "Compare");
-            if ui.add_enabled(ready, button).clicked() {
-                self.error = None;
-                self.diffs = None;
-                self.job = Some(engine.compare_schemas(
-                    Self::side(&self.s_conn, &self.s_database, &self.s_schema),
-                    Self::side(&self.t_conn, &self.t_database, &self.t_schema),
-                ));
-            }
-            if self.job.is_some() {
-                ui.spinner();
-            }
-            ui.label(
-                RichText::new("Compare only reads: the migration script opens in an editor.")
-                    .small()
-                    .color(muted),
-            );
-        });
+        ui.add_space(Spacing::M);
+        ui.label(
+            RichText::new("Compare only reads: the migration script opens in an editor.")
+                .small()
+                .color(muted),
+        );
     }
 
     fn results(&mut self, ui: &mut egui::Ui, engine: &Engine) -> CompareEvent {
@@ -297,7 +306,8 @@ impl CompareDialog {
             }
         });
         ui.add_space(Spacing::S);
-        let height = ui.available_height().max(240.0);
+        // A scrolled body has no height limit: size the panes from the window.
+        let height = (ui.ctx().content_rect().height() * 0.45).clamp(240.0, 480.0);
         ui.horizontal_top(|ui| {
             ui.allocate_ui(egui::vec2(300.0, height), |ui| {
                 ui.set_width(300.0);

@@ -608,23 +608,25 @@ fn delete_confirm(ui: &mut egui::Ui, d: &mut DocTab, tab: u64, commands: &mut Ve
         return;
     };
     let n = *n;
-    let mut answer = None;
-    let modal = egui::Modal::new(egui::Id::new(("doc_delete", tab))).show(ui.ctx(), |ui| {
-        let noun = if n == 1 { "document" } else { "documents" };
-        ui.label(format!("Delete {n} {noun}?"));
-        ui.add_space(Spacing::L);
-        ui.horizontal(|ui| {
-            if ui.button("Delete").clicked() {
-                answer = Some(true);
-            }
-            if ui.button("Cancel").clicked() {
-                answer = Some(false);
-            }
-        });
-    });
-    if answer.is_none() && modal.should_close() {
-        answer = Some(false);
-    }
+    let noun = if n == 1 { "document" } else { "documents" };
+    let spec = crate::confirm::ConfirmSpec::new(
+        egui::Id::new(("doc_delete", tab)),
+        sqlr_ui::theme::icons::DELETE,
+        if n == 1 {
+            "Delete document"
+        } else {
+            "Delete documents"
+        },
+        "Delete",
+    );
+    let answer = crate::confirm::confirm_modal(
+        ui.ctx(),
+        spec,
+        |ui| {
+            ui.label(format!("Delete {n} {noun}?"));
+        },
+        |_| {},
+    );
     let Some(yes) = answer else {
         return;
     };

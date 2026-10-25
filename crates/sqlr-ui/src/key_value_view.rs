@@ -5,7 +5,7 @@
 
 use std::ops::Range;
 
-use egui::{Id, Key, RichText, TextEdit, vec2};
+use egui::{Key, RichText, TextEdit, vec2};
 use sqlr_core::{
     KeyInfo, KeyType, KvEdit, KvPage, display_key, parse_key_name, pretty_json, quote_bytes,
 };
@@ -349,30 +349,16 @@ fn header(
         }
     }
     if state.confirm_delete {
-        let mut answer = None;
-        let response = egui::Modal::new(Id::new("kv_delete_key")).show(ui.ctx(), |ui| {
-            ui.set_max_width(480.0);
+        let dialog =
+            theme::Dialog::new("kv_delete_key", theme::icons::DELETE, "Delete key").width(480.0);
+        let answer = theme::confirm(ui.ctx(), dialog, "Delete", |ui| {
             ui.label("Delete this key?");
             ui.label(
                 RichText::new(display_key(&key.name))
                     .monospace()
                     .color(p.text_muted),
             );
-            ui.add_space(Spacing::L);
-            ui.horizontal(|ui| {
-                let delete =
-                    egui::Button::new(RichText::new("Delete").color(p.accent_text)).fill(p.error);
-                if ui.add(delete).clicked() {
-                    answer = Some(true);
-                }
-                if ui.button("Cancel").clicked() {
-                    answer = Some(false);
-                }
-            });
         });
-        if answer.is_none() && response.should_close() {
-            answer = Some(false);
-        }
         if let Some(yes) = answer {
             state.confirm_delete = false;
             if yes {

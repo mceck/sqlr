@@ -3,18 +3,19 @@
 //! frame.
 
 mod apply;
+mod dialog;
 pub mod fonts;
 pub mod icons;
 mod tokens;
 
 pub use apply::{apply, dock_style, monospace, palette};
+pub use dialog::{Dialog, DialogFooter, DialogResponse, DialogUi, confirm, scroll_body};
 pub use fonts::{install_fonts, semibold};
 pub use sqlr_core::ThemePref;
 pub use tokens::{EditorColors, Palette, Spacing, contrast_ratio};
 
 use egui::{
-    Align2, CornerRadius, FontId, Layout, Margin, Response, RichText, Sense, Stroke, TextStyle,
-    WidgetInfo, WidgetType, vec2,
+    FontId, Margin, Response, RichText, Sense, Stroke, TextStyle, WidgetInfo, WidgetType, vec2,
 };
 
 /// A context menu styled like the rest of the app: roomier than egui's compact default and a
@@ -122,107 +123,10 @@ pub fn empty_panel(ui: &mut egui::Ui, icon: &str, title: &str, description: &str
         });
 }
 
-/// Shared chrome for the operational tools: centered, bounded, with a clear heading and
-/// scrollable contents on small displays. Closing retains each caller's cleanup semantics.
-pub fn tool_dialog<R>(
-    ctx: &egui::Context,
-    open: &mut bool,
-    title: &str,
-    icon: &str,
-    description: &str,
-    width: f32,
-    body: impl FnOnce(&mut egui::Ui) -> R,
-) -> Option<R> {
-    let screen = ctx.content_rect();
-    let width = width.min((screen.width() - 32.0).max(240.0));
-    let mut close = false;
-    let response = egui::Window::new(format!("{title} dialog"))
-        .id(egui::Id::new(title))
-        .open(open)
-        .title_bar(false)
-        .collapsible(false)
-        .resizable(true)
-        .default_width(width)
-        .default_height((screen.height() - 160.0).max(160.0))
-        .min_width(320.0_f32.min(width))
-        .default_pos(egui::pos2(
-            screen.center().x - width / 2.0,
-            screen.top() + (screen.height() * 0.12).min(96.0),
-        ))
-        .constrain_to(screen.shrink(8.0))
-        .frame(egui::Frame::window(&ctx.global_style()).inner_margin(Margin::ZERO))
-        .show(ctx, |ui| {
-            close = dialog_header(ui, icon, title, Some(description));
-            egui::Frame::new()
-                .inner_margin(Margin::same(16))
-                .show(ui, |ui| {
-                    egui::ScrollArea::vertical()
-                        .id_salt((title, "body"))
-                        .max_height((screen.height() - 180.0).max(100.0))
-                        .auto_shrink([false, true])
-                        .show(ui, body)
-                        .inner
-                })
-                .inner
-        });
-    if close {
-        *open = false;
-    }
-    response.and_then(|response| response.inner)
-}
-
 /// The default height of a query editor above its results: about a fifth of the tab, so the
 /// result grid gets the larger share. Bounded so both panes stay usable on any window.
 pub fn editor_split_height(available: f32) -> f32 {
     (available * 0.2).clamp(80.0, 180.0)
-}
-
-/// The custom title bar shared by the app's dialogs: an accent badge with `icon`, `title`,
-/// an optional subtitle and a close button. It paints the window's rounded top corners and
-/// closes with a hairline, so dialogs use a frame with no inner margin and no native title
-/// bar. Returns `true` when the close button was clicked.
-pub fn dialog_header(ui: &mut egui::Ui, icon: &str, title: &str, subtitle: Option<&str>) -> bool {
-    let p = palette(ui.ctx());
-    let mut close = false;
-    egui::Frame::new()
-        .fill(p.bg_panel)
-        .corner_radius(CornerRadius {
-            nw: Spacing::RADIUS_M,
-            ne: Spacing::RADIUS_M,
-            sw: 0,
-            se: 0,
-        })
-        .inner_margin(Margin::symmetric(16, 12))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = Spacing::M;
-                let (rect, _) = ui.allocate_exact_size(vec2(34.0, 34.0), Sense::hover());
-                ui.painter()
-                    .circle_filled(rect.center(), 16.0, p.accent_soft);
-                ui.painter().text(
-                    rect.center(),
-                    Align2::CENTER_CENTER,
-                    icon,
-                    icons::font(ui, 17.0),
-                    p.accent,
-                );
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    ui.label(RichText::new(title).font(semibold(ui.ctx(), 15.0)));
-                    if let Some(subtitle) = subtitle {
-                        ui.label(RichText::new(subtitle).small().color(p.text_muted));
-                    }
-                });
-                ui.with_layout(Layout::right_to_left(egui::Align::Center), |ui| {
-                    let label = format!("Close {title}");
-                    if icons::icon_button(ui, icons::CLOSE, Some(p.text_muted), &label).clicked() {
-                        close = true;
-                    }
-                });
-            });
-        });
-    hairline(ui);
-    close
 }
 
 /// A muted, smaller line: hints, descriptions, empty states.

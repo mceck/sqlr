@@ -8,7 +8,7 @@ pub(crate) mod tab;
 
 pub use tab::ObjectTab;
 
-use egui::{Id, RichText};
+use egui::Id;
 use sqlr_core::{
     CatalogNeed, Node, NodeKind, NodePath, ObjectEditing, ObjectKind, ObjectRef, RelationKind,
     SchemaChange, SqlSyntax, SqlTemplate, script,
@@ -19,7 +19,7 @@ use sqlr_ui::theme::{self, Spacing};
 use sqlr_ui::{ObjectEditorAction, TreeAction, kind_label, sql_view, template_label};
 
 use crate::app::{SqlrApp, tab_mut};
-use crate::confirm::{confirm_modal, confirmation, prompt_lines};
+use crate::confirm::{ConfirmSpec, confirm_modal, confirmation, prompt_lines};
 use create::CreateDialog;
 
 /// Where an apply's outcome goes.
@@ -65,6 +65,9 @@ struct ConfirmDdl {
 /// Drop or truncate: always asked first, with the statements shown.
 struct DestructiveDialog {
     conn: String,
+    /// The dialog's title ("Drop table orders").
+    heading: String,
+    /// The question in its body.
     title: String,
     statements: Vec<String>,
     /// The statements with `CASCADE`, when the dialect has it, and whether it is checked.
@@ -78,6 +81,7 @@ struct DestructiveDialog {
 
 /// The texts of a drop or truncate confirmation.
 struct Destructive {
+    heading: String,
     title: String,
     cascade_label: &'static str,
     done: String,
@@ -340,6 +344,7 @@ impl SqlrApp {
             cascade,
         };
         let dialog = Destructive {
+            heading: format!("Drop {what} {}", node.name),
             title: format!("Drop {what} {}?", node.name),
             cascade_label: "Cascade: also drop the objects that depend on it",
             done: format!("Dropped {what} {}", node.name),
@@ -358,6 +363,7 @@ impl SqlrApp {
             cascade,
         };
         let dialog = Destructive {
+            heading: format!("Truncate {}", node.name),
             title: format!("Delete every row of {}?", node.name),
             cascade_label: "Cascade: also empty the tables that reference it",
             done: format!("Truncated {}", node.name),
@@ -391,6 +397,7 @@ impl SqlrApp {
             .map(|c| (c, false));
         self.objects.destructive = Some(DestructiveDialog {
             conn: conn.to_string(),
+            heading: dialog.heading,
             title: dialog.title,
             statements: plain,
             cascade,
@@ -692,11 +699,13 @@ impl SqlrApp {
         };
         let answer = confirm_modal(
             ctx,
-            Id::new("discard_object_edits"),
-            "Discard",
-            "Cancel",
+            ConfirmSpec::new(
+                Id::new("discard_object_edits"),
+                theme::icons::UNDO,
+                "Discard changes",
+                "Discard",
+            ),
             |ui| {
-                ui.set_max_width(460.0);
                 ui.label(format!("Discard the pending changes of {name}?"));
             },
             |_| {},
@@ -830,14 +839,17 @@ impl SqlrApp {
             .get(&dialog.conn)
             .map_or_else(SqlSyntax::ansi, |d| d.syntax());
         let verb = dialog.verb;
+        let heading = dialog.heading.clone();
+        let icon = if verb == "Drop" {
+            theme::icons::DROP
+        } else {
+            theme::icons::TRUNCATE
+        };
         let answer = confirm_modal(
             ctx,
-            Id::new("destructive_object"),
-            verb,
-            "Cancel",
+            ConfirmSpec::new(Id::new("destructive_object"), icon, &heading, verb).width(560.0),
             |ui| {
-                ui.set_width(520.0);
-                ui.label(RichText::new(&dialog.title).font(theme::semibold(ui.ctx(), 15.0)));
+                ui.label(&dialog.title);
                 ui.add_space(Spacing::S);
                 if let Some((_, on)) = &mut dialog.cascade {
                     ui.checkbox(on, dialog.cascade_label);
@@ -877,14 +889,17 @@ impl SqlrApp {
         let mut show_all = false;
         let answer = confirm_modal(
             ctx,
-            Id::new("confirm_ddl"),
-            "Apply",
-            "Cancel",
+            ConfirmSpec::new(
+                Id::new("confirm_ddl"),
+                theme::icons::SQL,
+                "Apply DDL",
+                "Apply",
+            )
+            .width(560.0),
             |ui| prompt_lines(ui, &pending.prompt, &pending.lines),
-            |ui| {
+            |f| {
                 // The lines above are cut: the whole script is one click away.
-                if matches!(pending.then, AfterApply::Tab(_))
-                    && ui.button("Show full DDL").clicked()
+                if matches!(pending.then, AfterApply::Tab(_)) && f.secondary("Show full DDL", true)
                 {
                     show_all = true;
                 }
@@ -928,38 +943,30 @@ impl SqlrApp {
         let Some((_, statements)) = &self.objects.preview else {
             return;
         };
-        let mut close = false;
         let mut apply = false;
-        let response = egui::Modal::new(Id::new("preview_ddl")).show(ctx, |ui| {
-            ui.set_width(640.0);
-            ui.label(RichText::new("Pending DDL").font(theme::semibold(ui.ctx(), 15.0)));
-            ui.add_space(Spacing::S);
-            match statements {
-                Ok(statements) => {
-                    let text = script(statements);
-                    sql_view(ui, "preview_sql", &text, &syntax, 360.0);
-                    ui.add_space(Spacing::L);
-                    ui.horizontal(|ui| {
-                        if ui.add(theme::primary_button(ui.ctx(), "Apply")).clicked() {
-                            apply = true;
-                        }
-                        if ui.button("Copy").clicked() {
-                            ui.ctx().copy_text(text.clone());
-                        }
-                        if ui.button("Close").clicked() {
-                            close = true;
-                        }
-                    });
-                }
-                Err(e) => {
-                    ui.colored_label(theme::palette(ui.ctx()).error, e);
-                    if ui.button("Close").clicked() {
-                        close = true;
+        let text = statements.as_ref().ok().map(|s| script(s));
+        let response = theme::Dialog::new("preview_ddl", theme::icons::SQL, "Pending DDL")
+            .subtitle("The statements Apply runs")
+            .width(680.0)
+            .show(ctx, |d| {
+                d.body(|ui| match (&text, statements) {
+                    (Some(text), _) => sql_view(ui, "preview_sql", text, &syntax, 360.0),
+                    (None, Err(e)) => {
+                        ui.colored_label(theme::palette(ui.ctx()).error, e);
                     }
-                }
-            }
-        });
-        if close || apply || response.should_close() {
+                    (None, Ok(_)) => {}
+                });
+                d.footer(|f| {
+                    if let Some(text) = &text {
+                        if f.secondary("Copy", true) {
+                            f.left().ctx().copy_text(text.clone());
+                        }
+                        apply = f.primary("Apply", None);
+                    }
+                    f.cancel_as("Close");
+                });
+            });
+        if apply || response.closed {
             self.objects.preview = None;
         }
         if apply {

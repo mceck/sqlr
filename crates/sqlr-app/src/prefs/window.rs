@@ -169,114 +169,53 @@ impl PrefsWindow {
             }
         }
         let p = theme::palette(ctx);
-        let mut open = true;
-        let mut cancel = false;
-        egui::Window::new("Preferences")
-            .open(&mut open)
-            .title_bar(false)
-            .collapsible(false)
-            .resizable(true)
-            .default_size(vec2(
-                820.0_f32.min(ctx.content_rect().width() - 32.0),
-                560.0_f32.min(ctx.content_rect().height() - 32.0),
-            ))
-            .default_pos(
-                ctx.content_rect().center()
-                    - vec2(
-                        410.0_f32.min((ctx.content_rect().width() - 32.0) / 2.0),
-                        280.0_f32.min((ctx.content_rect().height() - 32.0) / 2.0),
-                    ),
-            )
-            .min_width(600.0)
-            .min_height(400.0)
-            .frame(Frame::window(&ctx.global_style()).inner_margin(Margin::ZERO))
-            .show(ctx, |ui| {
-                if self.saving.is_some() {
-                    ui.disable();
-                }
-                ui.set_min_width(600.0_f32.min(ctx.content_rect().width() - 32.0));
-                ui.set_min_height(400.0_f32.min(ctx.content_rect().height() - 32.0));
-                if theme::dialog_header(
-                    ui,
-                    icons::SETTINGS,
-                    "Preferences",
-                    Some("Application, editor and per-connection preferences"),
-                ) {
-                    cancel = true;
-                }
-
-                egui::Panel::bottom(Id::new("prefs_footer"))
-                    .frame(
-                        Frame::new()
-                            .fill(p.bg_panel)
-                            .inner_margin(Margin::symmetric(16, 12)),
-                    )
-                    .show(ui, |ui| {
-                        ui.painter().hline(
-                            ui.max_rect().x_range(),
-                            ui.max_rect().top() - 0.5,
-                            Stroke::new(1.0, p.border),
-                        );
-                        ui.horizontal(|ui| {
-                            if let Some(error) = &self.error {
-                                ui.colored_label(p.error, error);
-                            }
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                ui.spacing_mut().item_spacing.x = Spacing::M;
-                                let save =
-                                    ui.add(theme::primary_button(ui.ctx(), "Save")).clicked();
-                                let apply = ui
-                                    .button("Apply")
-                                    .on_hover_text("Save the settings without closing")
-                                    .clicked();
-                                if (save || apply) && self.saving.is_none() {
-                                    self.persist_all(live, config_dir, keymap, save, ui.ctx());
-                                }
-                                if ui.button("Cancel").clicked() {
-                                    cancel = true;
-                                }
-                            });
-                        });
-                        if self.saving.is_some() {
-                            ui.label("Saving preferences…");
-                        }
-                    });
-
-                egui::Panel::left(Id::new("prefs_sections"))
-                    .resizable(false)
-                    .exact_size(196.0)
-                    .frame(
-                        Frame::new()
-                            .fill(p.bg_subtle)
-                            .inner_margin(Margin::symmetric(12, 14)),
-                    )
-                    .show(ui, |ui| {
-                        ui.spacing_mut().item_spacing.y = Spacing::XS;
-                        let search = egui::TextEdit::singleline(&mut self.query)
-                            .hint_text("Search settings")
-                            .desired_width(f32::INFINITY);
-                        let search = sqlr_ui::text_edit(ui, search);
-                        if std::mem::take(&mut self.focus_search) {
-                            search.request_focus();
-                        }
-                        ui.add_space(Spacing::M);
-                        for section in SECTIONS {
-                            let active = self.query.trim().is_empty() && self.section == *section;
-                            if nav_item(ui, section_icon(section), section, active).clicked() {
-                                self.section = section;
-                                self.query.clear();
-                            }
-                        }
-                    });
-
-                egui::CentralPanel::no_frame().show(ui, |ui| {
-                    Frame::new()
-                        .fill(p.bg_raised)
-                        .inner_margin(Margin::symmetric(28, 22))
+        let saving = self.saving.is_some();
+        let response = theme::Dialog::new("preferences", icons::SETTINGS, "Preferences")
+            .subtitle("Application, editor and per-connection preferences")
+            .width(880.0)
+            .body_height(600.0)
+            .min_body_height(260.0)
+            .body_margin(Margin::ZERO)
+            .show(ctx, |d| {
+                d.body(|ui| {
+                    if saving {
+                        ui.disable();
+                    }
+                    egui::Panel::left(Id::new("prefs_sections"))
+                        .resizable(false)
+                        .exact_size(196.0)
+                        .frame(
+                            Frame::new()
+                                .fill(p.bg_subtle)
+                                .inner_margin(Margin::symmetric(12, 14)),
+                        )
                         .show(ui, |ui| {
-                            egui::ScrollArea::vertical()
-                                .auto_shrink([false, false])
-                                .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = Spacing::XS;
+                            let search = egui::TextEdit::singleline(&mut self.query)
+                                .hint_text("Search settings")
+                                .desired_width(f32::INFINITY);
+                            let search = sqlr_ui::text_edit(ui, search);
+                            if std::mem::take(&mut self.focus_search) {
+                                search.request_focus();
+                            }
+                            ui.add_space(Spacing::M);
+                            for section in SECTIONS {
+                                let active =
+                                    self.query.trim().is_empty() && self.section == *section;
+                                if nav_item(ui, section_icon(section), section, active).clicked() {
+                                    self.section = section;
+                                    self.query.clear();
+                                }
+                            }
+                        });
+
+                    egui::CentralPanel::no_frame().show(ui, |ui| {
+                        Frame::new()
+                            .fill(p.bg_raised)
+                            .inner_margin(Margin::symmetric(28, 22))
+                            .show(ui, |ui| {
+                                let height = ui.available_height();
+                                theme::scroll_body(ui, "prefs_page", height, height, |ui| {
                                     if self.section == "Keymap" && self.query.trim().is_empty() {
                                         self.keymap_editor.show(
                                             ui,
@@ -287,10 +226,25 @@ impl PrefsWindow {
                                         self.page(ui, live, scopes, agent_rows);
                                     }
                                 });
-                        });
+                            });
+                    });
+                });
+                d.footer(|f| {
+                    if let Some(error) = &self.error {
+                        f.left().colored_label(p.error, error);
+                    } else if saving {
+                        f.left().label("Saving preferences…");
+                    }
+                    let blocked = saving.then_some("");
+                    let save = f.primary("Save", blocked);
+                    let apply = f.button("Apply", !saving);
+                    if (save || apply) && self.saving.is_none() {
+                        self.persist_all(live, config_dir, keymap, save, ctx);
+                    }
+                    f.cancel();
                 });
             });
-        if (cancel || !open) && self.saving.is_none() {
+        if response.closed && self.saving.is_none() {
             *live = self.original.clone();
             if let Some(original) = &self.keymap {
                 *keymap = original.clone();

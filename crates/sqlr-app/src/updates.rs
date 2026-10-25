@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Sender, channel};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use egui::{Id, RichText};
+use egui::RichText;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -1206,52 +1206,56 @@ fn modal(flow: &UpdateFlow, ctx: &egui::Context) -> Action {
         UpdateFlow::Idle => Action::None,
         UpdateFlow::Available { latest, error } => {
             let install = target();
-            let response = egui::Modal::new(Id::new("update_available")).show(ctx, |ui| {
-                ui.set_max_width(460.0);
-                let p = theme::palette(ui.ctx());
-                ui.label(format!(
-                    "sqlr {} is available (you are running {}).",
-                    latest.version,
-                    env!("CARGO_PKG_VERSION")
-                ));
-                if ui
-                    .hyperlink_to("Release notes", latest.url.as_str())
-                    .clicked()
-                {
-                    action = Action::OpenNotes;
-                }
-                if let Some(error) = error {
-                    ui.label(
-                        RichText::new(format!("The update did not install: {error}"))
-                            .color(p.error),
-                    );
-                }
-                if let Err(why) = &install {
-                    ui.label(RichText::new(*why).color(p.text_muted));
-                }
-                ui.add_space(Spacing::L);
-                ui.horizontal(|ui| {
+            let response = theme::Dialog::new(
+                "update_available",
+                theme::icons::REFRESH,
+                "Update available",
+            )
+            .width(480.0)
+            .show(ctx, |d| {
+                d.body(|ui| {
+                    let p = theme::palette(ui.ctx());
+                    ui.label(format!(
+                        "sqlr {} is available (you are running {}).",
+                        latest.version,
+                        env!("CARGO_PKG_VERSION")
+                    ));
+                    if ui
+                        .hyperlink_to("Release notes", latest.url.as_str())
+                        .clicked()
+                    {
+                        action = Action::OpenNotes;
+                    }
+                    if let Some(error) = error {
+                        ui.label(
+                            RichText::new(format!("The update did not install: {error}"))
+                                .color(p.error),
+                        );
+                    }
+                    if let Err(why) = &install {
+                        ui.label(RichText::new(*why).color(p.text_muted));
+                    }
+                });
+                d.footer(|f| {
+                    if f.secondary("Skip this version", true) {
+                        action = Action::Skip;
+                    }
                     match &install {
                         Ok(_) => {
-                            if ui.add(theme::primary_button(ui.ctx(), "Install")).clicked() {
+                            if f.primary("Install", None) {
                                 action = Action::Install;
                             }
                         }
                         Err(_) => {
-                            if ui
-                                .add(theme::primary_button(ui.ctx(), "Open release page"))
-                                .clicked()
-                            {
+                            if f.primary("Open release page", None) {
                                 action = Action::OpenPage;
                             }
                         }
                     }
-                    if ui.button("Skip this version").clicked() {
-                        action = Action::Skip;
-                    }
+                    f.cancel_as("Later");
                 });
             });
-            if action == Action::None && response.should_close() {
+            if action == Action::None && response.closed {
                 action = Action::Dismiss;
             }
             action
@@ -1262,54 +1266,47 @@ fn modal(flow: &UpdateFlow, ctx: &egui::Context) -> Action {
             done,
             total,
         } => {
-            let response = egui::Modal::new(Id::new("update_installing")).show(ctx, |ui| {
-                ui.set_max_width(460.0);
-                ui.label(format!("Installing sqlr {}…", latest.version));
-                let fraction = if *total > 0 {
-                    (*done as f32 / *total as f32).clamp(0.0, 1.0)
-                } else {
-                    0.0
-                };
-                ui.add(
-                    egui::ProgressBar::new(fraction)
-                        .show_percentage()
-                        .desired_width(380.0),
-                );
-                ui.label(RichText::new(name).color(theme::palette(ui.ctx()).text_muted));
-                ui.add_space(Spacing::L);
-                ui.horizontal(|ui| {
-                    if ui.button("Cancel").clicked() {
-                        action = Action::Cancel;
-                    }
+            let title = format!("Installing sqlr {}", latest.version);
+            let response = theme::Dialog::new("update_installing", theme::icons::REFRESH, &title)
+                .width(480.0)
+                .show(ctx, |d| {
+                    d.body(|ui| {
+                        let fraction = if *total > 0 {
+                            (*done as f32 / *total as f32).clamp(0.0, 1.0)
+                        } else {
+                            0.0
+                        };
+                        ui.add(
+                            egui::ProgressBar::new(fraction)
+                                .show_percentage()
+                                .desired_width(ui.available_width()),
+                        );
+                        ui.add_space(Spacing::S);
+                        ui.label(RichText::new(name).color(theme::palette(ui.ctx()).text_muted));
+                    });
+                    d.footer(|f| f.cancel());
                 });
-            });
-            if action == Action::None && response.should_close() {
+            if response.closed {
                 action = Action::Cancel;
             }
             action
         }
         UpdateFlow::Installed { version } => {
-            let response = egui::Modal::new(Id::new("update_installed")).show(ctx, |ui| {
-                ui.set_max_width(460.0);
-                ui.label(format!("sqlr {version} is installed."));
-                ui.label(
-                    RichText::new("Restart sqlr to start using it.")
-                        .color(theme::palette(ui.ctx()).text_muted),
-                );
-                ui.add_space(Spacing::L);
-                ui.horizontal(|ui| {
-                    if ui
-                        .add(theme::primary_button(ui.ctx(), "Restart now"))
-                        .clicked()
-                    {
-                        action = Action::Restart;
-                    }
-                    if ui.button("Later").clicked() {
-                        action = Action::Dismiss;
-                    }
+            let title = format!("sqlr {version} is installed");
+            let response = theme::Dialog::new("update_installed", theme::icons::SUCCESS, &title)
+                .width(480.0)
+                .show(ctx, |d| {
+                    d.body(|ui| {
+                        ui.label("Restart sqlr to start using it.");
+                    });
+                    d.footer(|f| {
+                        if f.primary("Restart now", None) {
+                            action = Action::Restart;
+                        }
+                        f.cancel_as("Later");
+                    });
                 });
-            });
-            if action == Action::None && response.should_close() {
+            if action == Action::None && response.closed {
                 action = Action::Dismiss;
             }
             action

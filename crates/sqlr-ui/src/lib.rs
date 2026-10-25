@@ -109,4 +109,4 @@ pub use tree::{
 };
 pub use value_panel::{ValueEdit, ValueEditAction, ValueEditMode, value_editor, value_panel};
 pub use welcome::{DriverCard, RecentItem, WelcomeAction, welcome};
-pub use wizard::{WizardAction, WizardStep, wizard_frame};
+pub use wizard::{WizardAction, WizardStep, wizard_footer, wizard_steps};

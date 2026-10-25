@@ -397,24 +397,25 @@ pub(super) fn mapping_ui(ui: &mut egui::Ui, state: &mut GridState, input: &GridI
             Err(mpsc::TryRecvError::Empty) => {}
         }
     }
-    let mut open = true;
-    let mut apply = false;
-    let mut cancel = false;
-    egui::Window::new("Paste as new rows")
-        .id(ui.id().with("paste_rows_mapping"))
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(true)
-        .default_width(580.0)
-        .show(ui.ctx(), |ui| {
+    let working = dialog.work.is_some();
+    let response = crate::theme::Dialog::new(
+        ui.id().with("paste_rows_mapping"),
+        crate::theme::icons::PASTE,
+        "Paste as new rows",
+    )
+    .subtitle("Match source columns to destination columns")
+    .width(620.0)
+    .show(ui.ctx(), |d| {
+        d.body(|ui| {
             if let Some(work) = &dialog.work {
-                ui.spinner();
-                ui.label(format!(
-                    "Preparing {} of {} rows…",
-                    work.processed.load(Ordering::Relaxed),
-                    dialog.data.rows.len() - usize::from(dialog.header)
-                ));
-                cancel = ui.button("Cancel").clicked();
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(format!(
+                        "Preparing {} of {} rows…",
+                        work.processed.load(Ordering::Relaxed),
+                        dialog.data.rows.len() - usize::from(dialog.header)
+                    ));
+                });
                 return;
             }
             ui.label(format!(
@@ -540,11 +541,14 @@ pub(super) fn mapping_ui(ui: &mut egui::Ui, state: &mut GridState, input: &GridI
             if let Some(error) = &dialog.error {
                 ui.colored_label(crate::theme::palette(ui.ctx()).error, error);
             }
-            ui.horizontal(|ui| {
-                apply = ui.button("Add pending rows").clicked();
-                cancel = ui.button("Cancel").clicked();
-            });
         });
+        d.footer(|f| {
+            let apply = !working && f.primary("Add pending rows", None);
+            f.cancel();
+            apply
+        })
+    });
+    let (apply, cancel) = (response.inner, response.closed);
     if apply && dialog.data.rows.len() > 1000 {
         if let Some(edits) = &state.edits {
             dialog.start(ui.ctx(), edits, input.rows);
@@ -558,7 +562,7 @@ pub(super) fn mapping_ui(ui: &mut egui::Ui, state: &mut GridState, input: &GridI
             Err(error) => dialog.error = Some(error),
         }
     }
-    if open && !cancel {
+    if !cancel {
         state.paste_dialog = Some(dialog);
     }
 }

@@ -5,7 +5,7 @@
 //! (`createIndex`, `PUT /index`, …), run as jobs; creating follows the profile's
 //! confirmation, dropping always asks.
 
-use egui::{ComboBox, RichText, TextEdit, WidgetInfo, WidgetType};
+use egui::{ComboBox, TextEdit, WidgetInfo, WidgetType};
 use sqlr_core::{
     DocTarget, IndexDirection, MongoIndexSpec, Node, NodeKind, NodePath, ObjectKind, QueryLanguage,
     es_create_index, es_drop_index, mongo_create_index, mongo_drop_index,
@@ -144,8 +144,7 @@ impl CreateDialog {
     }
 
     /// Draws the form; `Some(true)` on "Create", `Some(false)` on "Cancel".
-    fn ui(&mut self, ui: &mut egui::Ui) -> Option<bool> {
-        let mut answer = None;
+    fn ui(&mut self, ui: &mut egui::Ui) {
         match &mut self.form {
             Form::Mongo {
                 keys,
@@ -218,18 +217,6 @@ impl CreateDialog {
         if let Some(e) = &self.error {
             ui.colored_label(theme::palette(ui.ctx()).error, e);
         }
-        ui.add_space(Spacing::L);
-        theme::hairline(ui);
-        ui.add_space(Spacing::M);
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.add(theme::primary_button(ui.ctx(), "Create")).clicked() {
-                answer = Some(true);
-            }
-            if ui.button("Cancel").clicked() {
-                answer = Some(false);
-            }
-        });
-        answer
     }
 }
 
@@ -344,20 +331,24 @@ impl SqlrApp {
                 Form::Mongo { target, .. } => format!("New index on {}", target.collection),
                 Form::Es { .. } => "New index".to_string(),
             };
-            let mut answer = None;
-            let mut open = true;
-            theme::tool_dialog(
-                ctx,
-                &mut open,
-                &title,
-                theme::icons::KEY,
-                "Choose the indexed fields and review optional index settings",
-                560.0,
-                |ui| answer = dialog.ui(ui),
-            );
-            if !open {
-                answer = Some(false);
-            }
+            let response = theme::Dialog::new("create_index", theme::icons::KEY, &title)
+                .subtitle("Choose the indexed fields and review optional index settings")
+                .width(580.0)
+                .show(ctx, |d| {
+                    d.body(|ui| dialog.ui(ui));
+                    d.footer(|f| {
+                        let create = f.primary("Create", None);
+                        f.cancel();
+                        create
+                    })
+                });
+            let answer = if response.inner {
+                Some(true)
+            } else if response.closed {
+                Some(false)
+            } else {
+                None
+            };
             match answer {
                 Some(false) => self.index_admin.create = None,
                 Some(true) => match dialog.statement() {
@@ -377,25 +368,20 @@ impl SqlrApp {
             }
         }
         if let Some(dialog) = &self.index_admin.drop {
-            let mut answer = None;
-            let modal = egui::Modal::new(egui::Id::new("drop_index")).show(ctx, |ui| {
-                ui.label(&dialog.title);
-                ui.add_space(Spacing::L);
-                ui.horizontal(|ui| {
-                    let p = theme::palette(ui.ctx());
-                    let drop =
-                        egui::Button::new(RichText::new("Drop").color(p.accent_text)).fill(p.error);
-                    if ui.add(drop).clicked() {
-                        answer = Some(true);
-                    }
-                    if ui.button("Cancel").clicked() {
-                        answer = Some(false);
-                    }
-                });
-            });
-            if answer.is_none() && modal.should_close() {
-                answer = Some(false);
-            }
+            let spec = crate::confirm::ConfirmSpec::new(
+                egui::Id::new("drop_index"),
+                theme::icons::DROP,
+                "Drop index",
+                "Drop",
+            );
+            let answer = crate::confirm::confirm_modal(
+                ctx,
+                spec,
+                |ui| {
+                    ui.label(&dialog.title);
+                },
+                |_| {},
+            );
             if let Some(yes) = answer
                 && let Some(dialog) = self.index_admin.drop.take()
                 && yes

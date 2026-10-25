@@ -1,5 +1,5 @@
 //! Fast connection migration: automatic discovery and selection, one explicit write.
-use egui::{Align, ComboBox, Layout, RichText, TextEdit};
+use egui::{ComboBox, RichText, TextEdit};
 use sqlr_core::ConnectionConfig;
 use sqlr_engine::DriverRegistry;
 use sqlr_store::client_migration::{
@@ -232,22 +232,23 @@ impl MigrationDialog {
         } else {
             "Export connections"
         };
-        theme::tool_dialog(
-            ctx,
-            &mut open,
-            title,
-            if self.importing {
-                theme::icons::IMPORT
-            } else {
-                theme::icons::EXPORT
-            },
-            if self.importing {
-                "Bring your saved connections into sqlr"
-            } else {
-                "Move connections to another client or save a portable backup"
-            },
-            820.0,
-            |ui| {
+        let icon = if self.importing {
+            theme::icons::IMPORT
+        } else {
+            theme::icons::EXPORT
+        };
+        let subtitle = if self.importing {
+            "Bring your saved connections into sqlr"
+        } else {
+            "Move connections to another client or save a portable backup"
+        };
+        // The connection list scrolls within the window; the body scrolls past it if needed.
+        let list_height = (ctx.content_rect().height() - 460.0).max(110.0);
+        let response = theme::Dialog::new("client_migration", icon, title)
+            .subtitle(subtitle)
+            .width(820.0)
+            .show(ctx, |d| {
+            d.body(|ui| {
                 if let Some(done) = &self.done {
                     ui.label(RichText::new("3. Done").color(p.accent).strong());
                     ui.add_space(Spacing::M);
@@ -257,10 +258,6 @@ impl MigrationDialog {
                         ui.label(self.format.export_help());
                     }
                     self.warning_ui(ui);
-                    ui.add_space(Spacing::M);
-                    if ui.button("Done").clicked() {
-                        close = true;
-                    }
                     return;
                 }
                 ui.label(
@@ -339,13 +336,9 @@ impl MigrationDialog {
                 } else if !self.include_credentials {
                     ui.label(RichText::new("Passwords stay in each client's credential store. Enter them when connecting in the destination client.").small().color(p.text_muted));
                 }
+                ui.add_space(Spacing::S);
                 theme::hairline(ui);
-                if waiting {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label("Reading / saving connection settings…");
-                    });
-                }
+                ui.add_space(Spacing::S);
                 ui.add_enabled_ui(!waiting, |ui| {
                     ui.horizontal(|ui| {
                         ui.add(
@@ -373,7 +366,7 @@ impl MigrationDialog {
                     let filter = self.filter.to_lowercase();
                     egui::ScrollArea::vertical()
                         .id_salt("migration-connections")
-                        .max_height((ui.available_height() - 130.0).max(110.0))
+                        .max_height(list_height)
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             for (i, r) in self.rows.iter_mut().enumerate() {
@@ -437,45 +430,55 @@ impl MigrationDialog {
                 if let Some(error) = &self.error {
                     ui.colored_label(p.error, error);
                 }
-                theme::hairline(ui);
-                ui.horizontal(|ui| {
-                    if ui
-                        .add_enabled(!waiting, egui::Button::new("Cancel"))
-                        .clicked()
-                    {
+            });
+            d.footer(|f| {
+                if self.done.is_some() {
+                    if f.primary("Done", None) {
                         close = true;
                     }
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let selected = self
-                            .rows
-                            .iter()
-                            .filter(|r| r.selected && r.disabled.is_none())
-                            .count();
-                        let label = format!(
-                            "{} {selected} connection{}{}",
-                            if self.importing { "Import" } else { "Export" },
-                            if selected == 1 { "" } else { "s" },
-                            if self.importing { "" } else { "…" }
-                        );
-                        let enabled = !waiting && selected > 0;
-                        if ui
-                            .add_enabled(enabled, theme::primary_button_state(ctx, enabled, &label))
-                            .clicked()
-                        {
-                            if self.importing {
-                                request = Some(MigrationRequest::Import(self.selected_import()));
-                            } else {
-                                self.ask = Some(FileAsk::save(
-                                    answer,
-                                    "Export connections",
-                                    self.format.filename(),
-                                ));
-                            }
-                        }
-                    });
-                });
-            },
-        );
+                    return;
+                }
+                if waiting {
+                    f.left().spinner();
+                    f.left().label("Reading / saving connection settings…");
+                }
+                let selected = self
+                    .rows
+                    .iter()
+                    .filter(|r| r.selected && r.disabled.is_none())
+                    .count();
+                let label = format!(
+                    "{} {selected} connection{}{}",
+                    if self.importing { "Import" } else { "Export" },
+                    if selected == 1 { "" } else { "s" },
+                    if self.importing { "" } else { "…" }
+                );
+                let blocked = if waiting {
+                    Some("")
+                } else if selected == 0 {
+                    Some("Select at least one connection")
+                } else {
+                    None
+                };
+                if f.primary(&label, blocked) {
+                    if self.importing {
+                        request = Some(MigrationRequest::Import(self.selected_import()));
+                    } else {
+                        self.ask = Some(FileAsk::save(
+                            answer,
+                            "Export connections",
+                            self.format.filename(),
+                        ));
+                    }
+                }
+                if f.cancel() {
+                    close = true;
+                }
+            });
+            });
+        if response.closed {
+            close = true;
+        }
         // A write stays visible until its reply arrives. Reading may be dismissed safely.
         if self.busy {
             open = true;
