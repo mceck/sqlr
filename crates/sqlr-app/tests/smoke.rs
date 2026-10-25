@@ -2498,16 +2498,36 @@ fn missing_driver_offers_install() {
     wait_for_label(&mut h, "ghost-conn");
     wait_for_label(&mut h, "Driver ghost is not installed");
     h.get_by_label("driver missing");
+    h.state_mut().answer_driver_file(None);
     h.get_by_label("Install…").click();
-    // The Driver Manager opens, where the driver installs from a local file.
-    step_until(&mut h, "the file-install guidance", |h| {
-        h.state()
+    // The Drivers window opens, where the driver installs from a local file.
+    wait_for_label(&mut h, "Install from file…");
+    h.get_by_label("ghost-conn");
+}
+
+#[test]
+fn a_dismissed_driver_install_does_not_block_the_next_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness_missing_driver(&dir);
+    wait_for_label(&mut h, "Driver ghost is not installed");
+    for _ in 0..2 {
+        // The file dialog is dismissed and the Drivers window closed, twice in a row.
+        h.state_mut().answer_driver_file(None);
+        h.get_by_label("Install…").click();
+        wait_for_label(&mut h, "Install from file…");
+        h.get_by_label("Close").click_accesskit();
+        step_until(&mut h, "the Drivers window to close", |h| {
+            h.query_by_label("Install from file…").is_none()
+        });
+    }
+    assert!(
+        !h.state()
             .toast_texts()
             .iter()
-            .any(|t| t.contains("Install the ghost driver from a file"))
-    });
-    h.get_by_label("Install from file…");
-    h.get_by_label("ghost-conn");
+            .any(|t| t.contains("Wait for the driver") || t.contains("Another driver")),
+        "{:?}",
+        h.state().toast_texts()
+    );
 }
 
 #[test]
@@ -2515,15 +2535,11 @@ fn connecting_a_connection_without_its_driver_offers_the_install() {
     let dir = tempfile::tempdir().unwrap();
     let mut h = harness_missing_driver(&dir);
     wait_for_label(&mut h, "Driver ghost is not installed");
+    h.state_mut().answer_driver_file(None);
     h.get_by_label("ghost-conn").click_secondary();
     h.run_steps(2);
     h.get_by_label("Connect").click();
-    step_until(&mut h, "the install prompt", |h| {
-        h.state()
-            .toast_texts()
-            .iter()
-            .any(|t| t.contains("Install the ghost driver from a file"))
-    });
+    wait_for_label(&mut h, "Install from file…");
 }
 
 #[test]

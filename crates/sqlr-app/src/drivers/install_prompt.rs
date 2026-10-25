@@ -1,18 +1,24 @@
 //! "Install from file…" wherever a driver is missing: the new-connection catalog, a saved
 //! connection from another machine, the tree's inline row.
 
-use sqlr_engine::DriverJobState;
+use sqlr_engine::{DriverJobState, ManualState};
 use sqlr_ui::ToastKind;
 
 use super::PendingInstall;
 use crate::app::SqlrApp;
 
 impl SqlrApp {
-    /// Asks for the local driver file. With `known` set, the new-connection form for that
-    /// database opens once the driver is installed.
+    /// Asks for the local driver file: opens the Drivers window on `driver` and its file
+    /// picker. With `known` set, the new-connection form for that database opens once the
+    /// driver is installed. A request left behind (its picker dismissed, its window closed)
+    /// never blocks a new one; only an install that is really under way does.
     pub(crate) fn request_driver_install(&mut self, driver: &str, known: Option<&'static str>) {
-        if self.drivers_ui.pending.is_some() {
-            self.notify_as(ToastKind::Info, "Another driver is installing".to_string());
+        if self.driver_install_busy() {
+            self.open_driver_manager();
+            self.notify_as(
+                ToastKind::Info,
+                "Wait for the driver being installed to finish, then try again".to_string(),
+            );
             return;
         }
         self.drivers_ui.pending = Some(PendingInstall {
@@ -20,10 +26,31 @@ impl SqlrApp {
             known,
         });
         self.open_driver_manager();
-        self.notify_as(
-            ToastKind::Info,
-            format!("Install the {driver} driver from a file: Drivers… → Install from file…"),
-        );
+        if let Some(manager) = &mut self.drivers_ui.manager {
+            manager.selected = Some(driver.to_string());
+        }
+        if self.drivers_ui.pick.is_none() {
+            self.drivers_ui.pick =
+                Some(super::ManualPick::open(self.drivers_ui.file_answer.clone()));
+        }
+    }
+
+    /// Answers the next driver file dialog with `path` (`None`: dismissed), for tests.
+    #[doc(hidden)]
+    pub fn answer_driver_file(&mut self, path: Option<std::path::PathBuf>) {
+        self.drivers_ui.file_answer = Some(path);
+    }
+
+    /// Whether a driver install is under way: its file picker is open, its file is being
+    /// reviewed, or an install job is running.
+    pub(crate) fn driver_install_busy(&self) -> bool {
+        self.drivers_ui.pick.is_some()
+            || !matches!(self.engine.manual_install(), ManualState::None)
+            || self
+                .engine
+                .driver_jobs()
+                .iter()
+                .any(|(_, state)| matches!(state, DriverJobState::Running { .. }))
     }
 
     /// A sidecar driver's dialect is known only after its first connection: give it to the

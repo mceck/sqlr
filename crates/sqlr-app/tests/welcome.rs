@@ -439,14 +439,10 @@ fn value_sidebar_starts_closed_and_can_be_opened() {
 fn welcome_clickhouse_card_offers_driver_installation() {
     let dir = tempfile::tempdir().unwrap();
     let mut h = harness(dir.path());
+    h.state_mut().answer_driver_file(None);
     h.get_by_label("ClickHouse").click();
     h.run_steps(3);
+    // The Drivers window opens on the driver and asks for its file at once.
     h.get_by_label("Install from file…");
     assert!(h.state().conn_dialog_form().is_none());
-    assert!(
-        h.state()
-            .toast_texts()
-            .iter()
-            .any(|text| text.contains("jdbc-clickhouse"))
-    );
 }

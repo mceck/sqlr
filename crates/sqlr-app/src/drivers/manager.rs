@@ -136,7 +136,12 @@ impl SqlrApp {
                 action
             });
         let action = response.inner;
-        if !response.closed {
+        if response.closed {
+            // Closing the window gives up an install the user did not start.
+            if !self.driver_install_busy() {
+                self.drivers_ui.pending = None;
+            }
+        } else {
             self.drivers_ui.manager = Some(state);
         }
         match action {
@@ -155,7 +160,8 @@ impl SqlrApp {
             }
             Some(DriverManagerAction::InstallFromFile) => {
                 if self.drivers_ui.pick.is_none() {
-                    self.drivers_ui.pick = Some(ManualPick::open());
+                    self.drivers_ui.pick =
+                        Some(ManualPick::open(self.drivers_ui.file_answer.clone()));
                 }
             }
             Some(DriverManagerAction::ClearJob(id)) => self.engine.clear_driver_job(&id),

@@ -11,18 +11,25 @@ use std::task::{Context, Poll, Waker};
 
 use sqlr_ui::DriverManagerState;
 
-/// An open file dialog for "Install from file…".
+/// An open file dialog for "Install from file…", or the answer a test gave in advance.
 pub(crate) struct ManualPick {
-    file: Pin<Box<dyn Future<Output = Option<rfd::FileHandle>>>>,
+    file: Pin<Box<dyn Future<Output = Option<std::path::PathBuf>>>>,
 }
 
 impl ManualPick {
-    pub(crate) fn open() -> Self {
+    /// The native dialog, unless `answer` holds the choice already.
+    pub(crate) fn open(answer: Option<Option<std::path::PathBuf>>) -> Self {
+        if let Some(answer) = answer {
+            return Self {
+                file: Box::pin(async move { answer }),
+            };
+        }
         let dialog = rfd::AsyncFileDialog::new()
             .set_title("Choose a driver archive")
             .add_filter("Driver archive", &["gz", "tgz"]);
+        let pick = dialog.pick_file();
         Self {
-            file: Box::pin(dialog.pick_file()),
+            file: Box::pin(async move { pick.await.map(|f| f.path().to_path_buf()) }),
         }
     }
 
@@ -30,7 +37,7 @@ impl ManualPick {
     pub(crate) fn poll(&mut self) -> Option<Option<std::path::PathBuf>> {
         let mut cx = Context::from_waker(Waker::noop());
         match self.file.as_mut().poll(&mut cx) {
-            Poll::Ready(file) => Some(file.map(|f| f.path().to_path_buf())),
+            Poll::Ready(file) => Some(file),
             Poll::Pending => None,
         }
     }
@@ -55,6 +62,8 @@ pub(crate) struct DriversUi {
     pub(crate) confirm_remove: Option<String>,
     /// `Engine::drivers_revision` last seen, to refresh what depends on the drivers.
     pub(crate) seen_revision: u64,
+    /// The driver file a test chose in advance, in place of the native dialog.
+    pub(crate) file_answer: Option<Option<std::path::PathBuf>>,
 }
 
 #[cfg(test)]
@@ -63,16 +72,14 @@ mod tests {
 
     #[test]
     fn a_dismissed_file_pick_is_reported_once() {
-        let mut pick = ManualPick {
-            file: Box::pin(async { None }),
-        };
+        let mut pick = ManualPick::open(Some(None));
         assert_eq!(pick.poll(), Some(None));
     }
 
     #[test]
     fn a_pending_file_pick_keeps_waiting() {
         let mut pick = ManualPick {
-            file: Box::pin(std::future::pending::<Option<rfd::FileHandle>>()),
+            file: Box::pin(std::future::pending::<Option<std::path::PathBuf>>()),
         };
         assert_eq!(pick.poll(), None);
     }
