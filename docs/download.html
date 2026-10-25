@@ -84,8 +84,35 @@
   }
   .release-meta .sep { color: var(--dim); }
 
+  /* Terminal install */
+  .quick-install { padding: 0 0 34px; }
+  .quick-install h2 { margin: 0 0 4px; font-size: 25px; letter-spacing: -0.015em; }
+  .quick-install .sub { margin: 0 0 16px; color: var(--muted); font-size: 14.5px; }
+  .terminal {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 14px 14px 18px; border: 1px solid rgba(79, 209, 165, 0.5); border-radius: 14px;
+    background: var(--bg-soft); box-shadow: inset 0 0 0 1px rgba(79, 209, 165, 0.1);
+  }
+  .terminal pre {
+    flex: 1; min-width: 0; margin: 0; overflow-x: auto;
+    font-family: var(--mono); font-size: 14px; line-height: 1.5; color: var(--text);
+  }
+  .terminal pre .prompt { color: var(--accent); user-select: none; }
+  .terminal .btn { flex: 0 0 auto; }
+  .quick-install .hint code {
+    font-family: var(--mono); font-size: 12.5px; color: var(--blue);
+    background: var(--bg-soft); border: 1px solid var(--line);
+    border-radius: 5px; padding: 1px 5px;
+  }
+  .or-manual {
+    display: flex; align-items: center; gap: 14px; margin: 0 0 18px;
+    color: var(--dim); font-family: var(--mono); font-size: 12px;
+    letter-spacing: 0.14em; text-transform: uppercase;
+  }
+  .or-manual::before, .or-manual::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
   /* Detection banner */
-  .detect-section { padding: 6px 0 30px; }
+  .detect-section { padding: 0 0 30px; }
   .detect {
     display: flex; align-items: center; justify-content: space-between;
     gap: 18px; flex-wrap: wrap;
@@ -283,6 +310,21 @@
 
 <main class="wrap">
 
+<section class="quick-install" aria-labelledby="quick-title">
+  <h2 id="quick-title">Install from the terminal</h2>
+  <p class="sub">Linux and macOS: downloads the latest release for your system and architecture, verifies its checksum and installs it.</p>
+  <div class="terminal">
+    <pre><span class="prompt">$ </span><code id="install-command">curl -fsSL https://raw.githubusercontent.com/mceck/sqlr/main/scripts/get-sqlr.sh | sh</code></pre>
+    <button type="button" class="btn" id="copy-command" aria-label="Copy the install command">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+      <span>Copy</span>
+    </button>
+  </div>
+  <p class="hint">Linux installs to <code>~/.local</code> (<code>SQLR_PREFIX</code> changes it), macOS to <code>/Applications</code>. <code>SQLR_VERSION=0.2.0</code> picks a specific version. On Windows, download the build below.</p>
+</section>
+
+<p class="or-manual">Or download manually</p>
+
 <section class="detect-section" aria-labelledby="detect-title">
   <div class="detect">
     <div class="detect-copy">
@@ -322,12 +364,6 @@
 <section class="install-notes" aria-labelledby="install-title">
   <h2 id="install-title">Install notes</h2>
   <p class="sub">sqlr is a portable app: no service, no background daemon, no runtime to install.</p>
-  <div class="card" style="margin-bottom:14px">
-    <h3>Install from the terminal (Linux and macOS)</h3>
-    <p>Downloads the latest release for your system and architecture, verifies its checksum and installs it:</p>
-    <p><code>curl -fsSL https://raw.githubusercontent.com/mceck/sqlr/main/scripts/get-sqlr.sh | sh</code></p>
-    <p>Linux goes to <code>~/.local</code> (<code>SQLR_PREFIX</code> changes it), macOS to <code>/Applications</code>. <code>SQLR_VERSION=0.2.0</code> picks a specific version.</p>
-  </div>
   <div class="cards">
     <div class="card">
       <h3>macOS</h3>
@@ -831,8 +867,24 @@
       });
   }
 
+  function bindCopyButton() {
+    var button = document.getElementById("copy-command");
+    var label = button.querySelector("span");
+    var command = document.getElementById("install-command").textContent;
+    var timer = null;
+    button.addEventListener("click", function () {
+      if (!navigator.clipboard) return;
+      navigator.clipboard.writeText(command).then(function () {
+        label.textContent = "Copied";
+        clearTimeout(timer);
+        timer = setTimeout(function () { label.textContent = "Copy"; }, 1600);
+      }).catch(function () {});
+    });
+  }
+
   function init() {
     bindPlatformButtons();
+    bindCopyButton();
 
     var os = detectOs();
     state.detectedOs = os;
