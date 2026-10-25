@@ -91,6 +91,7 @@ pub(crate) struct DocTab {
 pub(crate) fn doc_editor(editor: &mut EditorState, language: QueryLanguage) {
     editor.set_language(language);
     editor.set_completion(false);
+    editor.set_snippet_menu(true);
 }
 
 impl DocTab {
@@ -199,7 +200,10 @@ pub(crate) fn doc_ui(
         .min_size(60.0)
         .frame(egui::Frame::NONE.fill(p.bg_editor))
         .show(ui, |ui| {
-            sqlr_ui::query_editor(ui, editor, &sqlr_ui::NoCatalog);
+            let output = sqlr_ui::query_editor(ui, editor, &sqlr_ui::NoCatalog);
+            if output.save_snippet {
+                commands.push(TabCommand::SaveSnippet(tab));
+            }
         });
     doc_results_ui(ui, tab, d, engine, commands, show_value_panel);
 }

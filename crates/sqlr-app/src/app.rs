@@ -823,6 +823,12 @@ impl SqlrApp {
             .collect()
     }
 
+    /// Opens a new query tab, as the toolbar's New query does.
+    #[doc(hidden)]
+    pub fn new_query_tab_for_tests(&mut self) -> u64 {
+        self.new_tab(None, None, "")
+    }
+
     // ----- panels -----
 
     /// Moves File, Edit, View, Query and Help into the macOS menu bar. Called by the
@@ -1061,6 +1067,7 @@ impl SqlrApp {
         for command in std::mem::take(&mut viewer.commands) {
             match command {
                 TabCommand::FetchMore(q) => self.engine.fetch_more(q),
+                TabCommand::SaveSnippet(key) => self.save_as_snippet_for(key),
                 TabCommand::RequestClose(key) => self.request_close_tab(key),
                 TabCommand::RevealConnection(key) => self.reveal_tab_connection(key),
                 TabCommand::ChangeDatabase { tab, database } => {

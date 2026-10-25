@@ -5,6 +5,7 @@
 
 use egui::{
     Align, Button, FontId, Id, KeyboardShortcut, Layout, PopupCloseBehavior, Stroke, TextStyle,
+    WidgetInfo, WidgetType,
 };
 use sqlr_core::ConnectionConfig;
 use sqlr_engine::SessionStatus;
@@ -44,7 +45,11 @@ fn command_item(
     } else {
         button
     };
-    if ui.add(button).clicked() {
+    let response = ui.add(button);
+    // The shortcut is decoration: the menu entry keeps its plain label for accessibility
+    // and for tests.
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, label));
+    if response.clicked() {
         app.run_command(command, ui.ctx());
     }
 }

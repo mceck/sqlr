@@ -57,7 +57,7 @@ Every statement you run is recorded with the connection, the time, how long it t
 
 ## Snippets
 
-Save a query you use often as a snippet with **Save as snippet** from the Query menu or the palette. A snippet can belong to one connection or be available everywhere, and it can live in a folder. Find snippets again through the palette.
+Save a query you use often as a snippet with **Save as snippet** from the editor's right-click menu, the Query menu, the palette, or ⇧⌘S. With text selected, the snippet holds just the selection; with no selection it holds the whole editor, and an empty editor does nothing. The dialog suggests a name from the SQL, defaults to a global snippet, and lets you tie it to the tab's connection instead. A snippet can also live in a folder. Find snippets again through the palette.
 
 ## Explain
 

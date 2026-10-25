@@ -93,6 +93,7 @@ Shortcuts below use the default keymap, with macOS keys. On Windows and Linux us
 | Toggle line comment | ⌘/ |
 | Duplicate line or selection | ⌘D |
 | Format SQL | ⌥⌘L |
+| Save the selection (or the whole editor) as a snippet | ⇧⌘S |
 | Complete | Ctrl+Space |
 | Undo, redo | ⌘Z, ⇧⌘Z or ⌘Y |
 | Indent, outdent | Tab, ⇧Tab |

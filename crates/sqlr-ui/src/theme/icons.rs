@@ -313,6 +313,25 @@ pub fn menu_item_enabled(ui: &mut Ui, enabled: bool, icon: &str, label: &str) ->
     response
 }
 
+/// [`menu_item`] with its keyboard shortcut shown on the right; `label` stays its
+/// accessible name.
+pub fn menu_item_shortcut(
+    ui: &mut Ui,
+    icon: &str,
+    label: &str,
+    shortcut: Option<String>,
+) -> Response {
+    let color = super::palette(ui.ctx()).text_muted;
+    let glyph = text(ui, icon, SIZE).color(color);
+    let mut button = Button::new((glyph, label));
+    if let Some(shortcut) = shortcut {
+        button = button.shortcut_text(shortcut);
+    }
+    let response = ui.add(button);
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, label));
+    response
+}
+
 /// A submenu entry with `icon` before `label`; `label` is its accessible name, followed by
 /// egui's menu arrow.
 pub fn menu_button<R>(

@@ -1,9 +1,10 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use egui::accesskit::Role;
 use egui::{Key, Modifiers};
 use egui_kittest::Harness;
-use egui_kittest::kittest::{NodeT, Queryable};
+use egui_kittest::kittest::{By, NodeT, Queryable};
 use sqlr_app::{AppDeps, SqlrApp};
 use sqlr_core::{
     CatalogColumn, CatalogRelation, ConnectionConfig, DriverError, ErrorKind, HistoryEntry,
@@ -554,6 +555,7 @@ fn snippet_save_and_insert() {
     h.run_steps(2);
     h.get_by_label("Save as snippet…").click();
     h.run_steps(3);
+    // The suggested name is selected: typing replaces it.
     type_text(&mut h, "mine");
     h.get_by_label("Save").click();
     h.run_steps(2);
@@ -563,6 +565,83 @@ fn snippet_save_and_insert() {
     h.run_steps(2);
     let text = h.state_mut().active_text().unwrap();
     assert_eq!(text.matches("select 42").count(), 2, "{text:?}");
+}
+
+/// The text input holding `value`.
+fn text_field(value: &str) -> By<'_> {
+    By::new().role(Role::TextInput).value(value)
+}
+
+#[test]
+fn snippet_context_menu_uses_the_editor_text_and_a_suggested_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(&dir);
+    replace_text(&mut h, "select 42");
+    h.run_steps(2);
+    h.get_by_label("SQL editor").click_secondary();
+    wait_for_label(&mut h, "Save as snippet…");
+    h.get_by_label("Save as snippet…").click();
+    h.run_steps(3);
+    h.get(text_field("select 42"));
+    h.get_by_label("Cancel").click();
+    h.run_steps(2);
+}
+
+#[test]
+fn snippet_context_menu_saves_only_the_selection() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(&dir);
+    replace_text(&mut h, "select 42");
+    press(&mut h, Modifiers::SHIFT, Key::ArrowLeft);
+    press(&mut h, Modifiers::SHIFT, Key::ArrowLeft);
+    h.get_by_label("SQL editor").click_secondary();
+    wait_for_label(&mut h, "Save as snippet…");
+    h.get_by_label("Save as snippet…").click();
+    h.run_steps(3);
+    // The name starts from the selection.
+    let values: Vec<String> = h
+        .get_all(By::new().role(Role::TextInput))
+        .filter_map(|node| node.value())
+        .collect();
+    assert!(
+        values.iter().any(|value| value == "42"),
+        "the selection did not reach the snippet dialog: {values:?}"
+    );
+    assert!(
+        !values.iter().any(|value| value == "select 42"),
+        "the whole editor text reached the snippet dialog: {values:?}"
+    );
+    h.get_by_label("Cancel").click();
+    h.run_steps(2);
+}
+
+#[test]
+fn snippet_shortcut_opens_the_dialog() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(&dir);
+    replace_text(&mut h, "select 42");
+    press(&mut h, Modifiers::COMMAND | Modifiers::SHIFT, Key::S);
+    h.run_steps(3);
+    h.get(text_field("select 42"));
+    h.get_by_label("Cancel").click();
+    h.run_steps(2);
+}
+
+#[test]
+fn saving_a_snippet_from_an_empty_editor_does_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(&dir);
+    focus_editor_end(&mut h);
+    press(&mut h, Modifiers::COMMAND, Key::A);
+    press(&mut h, Modifiers::NONE, Key::Backspace);
+    h.get_by_label("SQL editor").click_secondary();
+    wait_for_label(&mut h, "Save as snippet…");
+    h.get_by_label("Save as snippet…").click();
+    h.run_steps(3);
+    assert!(
+        h.query_by_label("Cancel").is_none(),
+        "an empty editor opened the snippet dialog"
+    );
 }
 
 #[test]
@@ -1908,7 +1987,12 @@ fn chrome_fits_small_window() {
     ];
     let mut rects = Vec::new();
     for label in labels {
-        let rect = h.get_by_label(label).rect();
+        // The toolbar chip and the breadcrumb share this label: the chip is the ComboBox.
+        let rect = if label == "No connection" {
+            h.get_by_role_and_label(Role::ComboBox, label).rect()
+        } else {
+            h.get_by_label(label).rect()
+        };
         assert!(
             window.contains_rect(rect),
             "{label} at {rect:?} leaves the window"
@@ -1932,10 +2016,8 @@ fn chrome_fits_small_window() {
     }
 
     // The status bar with a connection, a transaction, a result and the fetch controls.
-    // The explorer and the value panel at their default widths leave no room for the
-    // editor in a 533-point-wide window: hide the value panel.
-    h.get_by_label("Toggle value panel").click();
-    h.run_steps(2);
+    // The explorer and the value panel at their default widths would leave no room for
+    // the editor in a 533-point-wide window, but the panel starts hidden.
     open_orders(&mut h);
     replace_text(&mut h, "select 1;\nsele");
     h.get_by_label_contains("Transaction: 1 statement");

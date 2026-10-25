@@ -96,6 +96,7 @@ pub use result_bar::{
 };
 pub use snippets::{
     DraftResult, SnippetAction, SnippetDraft, SnippetsState, snippet_dialog, snippets_panel,
+    suggest_snippet_name,
 };
 pub use tasks_panel::{RunningTask, TasksAction, tasks_panel};
 pub use text::first_line;

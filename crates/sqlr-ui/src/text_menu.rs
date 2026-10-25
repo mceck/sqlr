@@ -46,6 +46,11 @@ pub fn text_edit_secret(ui: &mut Ui, edit: TextEdit<'_>) -> Response {
 /// Attaches the classic menu to an already drawn text widget, such as the query editor's
 /// custom-painted field or an inline grid cell editor.
 pub fn text_edit_menu(response: &Response, mode: TextMenuMode) {
+    text_edit_menu_with(response, mode, |_| {});
+}
+
+/// [`text_edit_menu`], with `extra` entries appended after the classic ones.
+pub fn text_edit_menu_with(response: &Response, mode: TextMenuMode, extra: impl FnOnce(&mut Ui)) {
     preserve_selection(response);
     let enabled = response.enabled();
     let writable = enabled && mode != TextMenuMode::ReadOnly;
@@ -82,6 +87,7 @@ pub fn text_edit_menu(response: &Response, mode: TextMenuMode) {
             command(response, Key::A, Modifiers::COMMAND);
             ui.close();
         }
+        extra(ui);
     });
 }
 

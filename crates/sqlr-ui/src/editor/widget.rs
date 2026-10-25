@@ -77,6 +77,8 @@ pub struct EditorOutput {
     pub changed: bool,
     /// Catalog pieces completion wants loaded (each at most once per popup session).
     pub needs: Vec<CatalogNeed>,
+    /// "Save as snippet…" was chosen from the context menu.
+    pub save_snippet: bool,
 }
 
 /// A laid-out visible line of the last frame.
@@ -154,6 +156,8 @@ pub struct EditorState {
     scratch: Vec<Token>,
     /// Whether Ctrl+Space and typed prefixes open the completion popup.
     completion: bool,
+    /// Whether the context menu offers "Save as snippet…".
+    snippet_menu: bool,
     completion_options: CompletionOptions,
     completion_pending: Option<(f64, bool)>,
     format_options: sqlr_core::FormatOptions,
@@ -202,6 +206,7 @@ impl EditorState {
             stats: FrameStats::default(),
             scratch: Vec::new(),
             completion: true,
+            snippet_menu: false,
             completion_options: Default::default(),
             completion_pending: None,
             format_options: Default::default(),
@@ -228,6 +233,11 @@ impl EditorState {
         if !on {
             self.popup.close();
         }
+    }
+
+    /// Whether the context menu offers "Save as snippet…".
+    pub fn set_snippet_menu(&mut self, on: bool) {
+        self.snippet_menu = on;
     }
 
     /// Wraps long logical lines at the editor's width instead of scrolling horizontally.
@@ -1263,11 +1273,36 @@ pub fn query_editor(
     stats.galley_misses = state.cache.misses() - misses0;
     stats.lexed_lines = state.syntax.lexed_lines() - lexed0;
     state.stats = stats;
-    crate::text_menu::text_edit_menu(&response, crate::text_menu::TextMenuMode::Editable);
+    let snippet_menu = state.snippet_menu;
+    let mut save_snippet = false;
+    crate::text_menu::text_edit_menu_with(
+        &response,
+        crate::text_menu::TextMenuMode::Editable,
+        |ui| {
+            if !snippet_menu {
+                return;
+            }
+            ui.separator();
+            let shortcut =
+                crate::keymap::ui_keymap(ui.ctx()).label(sqlr_core::ActionId::SaveSnippet);
+            if crate::theme::icons::menu_item_shortcut(
+                ui,
+                crate::theme::icons::SNIPPET,
+                "Save as snippet…",
+                shortcut,
+            )
+            .clicked()
+            {
+                save_snippet = true;
+                ui.close();
+            }
+        },
+    );
     EditorOutput {
         response,
         changed,
         needs,
+        save_snippet,
     }
 }
 

@@ -36,6 +36,53 @@ impl SnippetDraft {
     }
 }
 
+/// The longest suggested name, in characters, before it is clipped.
+const SUGGESTED_NAME_CHARS: usize = 48;
+
+/// A starting name for a snippet, taken from the first line of its SQL that is not blank or
+/// a comment. Whitespace is collapsed and long lines are clipped, so the name stays readable
+/// in the panel and the palette.
+pub fn suggest_snippet_name(sql: &str) -> String {
+    let line = first_content_line(sql);
+    let collapsed = line.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.is_empty() {
+        return "Snippet".to_string();
+    }
+    clip_name(&collapsed)
+}
+
+/// The first line of `sql` outside leading `--`, `//`, `#` and `/* … */` comments.
+fn first_content_line(sql: &str) -> &str {
+    let mut rest = sql;
+    loop {
+        rest = rest.trim_start();
+        if let Some(after) = rest.strip_prefix("--").or_else(|| rest.strip_prefix("//")) {
+            rest = after.split_once('\n').map_or("", |(_, rest)| rest);
+        } else if let Some(after) = rest.strip_prefix('#') {
+            rest = after.split_once('\n').map_or("", |(_, rest)| rest);
+        } else if let Some(after) = rest.strip_prefix("/*") {
+            rest = after.split_once("*/").map_or("", |(_, rest)| rest);
+        } else {
+            return rest.lines().next().unwrap_or("").trim();
+        }
+    }
+}
+
+/// `name`, shortened to [`SUGGESTED_NAME_CHARS`] at a word boundary when one is close enough.
+fn clip_name(name: &str) -> String {
+    if name.chars().count() <= SUGGESTED_NAME_CHARS {
+        return name.to_string();
+    }
+    let mut clipped: String = name.chars().take(SUGGESTED_NAME_CHARS - 1).collect();
+    if let Some(space) = clipped.rfind(' ')
+        && space >= SUGGESTED_NAME_CHARS / 2
+    {
+        clipped.truncate(space);
+    }
+    clipped.push('…');
+    clipped
+}
+
 #[derive(Default)]
 pub struct SnippetsState {
     /// Case-insensitive substring filter over snippet names.
@@ -315,6 +362,10 @@ pub fn snippet_dialog(
                     );
                     if just_opened {
                         name.request_focus();
+                        // A suggested name is a starting point: typing replaces it.
+                        if draft.id.is_none() && !draft.name.is_empty() {
+                            select_all(ctx, name.id, draft.name.chars().count());
+                        }
                     }
                     theme::field_label(ui, "Folder");
                     crate::text_menu::text_edit(
@@ -385,4 +436,45 @@ pub fn snippet_dialog(
         result = DraftResult::Cancel;
     }
     result
+}
+
+/// Selects the whole text of the field `id`, so typing replaces it.
+fn select_all(ctx: &egui::Context, id: Id, chars: usize) {
+    let mut state = egui::text_edit::TextEditState::load(ctx, id).unwrap_or_default();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::two(
+            egui::text::CCursor::new(0),
+            egui::text::CCursor::new(chars),
+        )));
+    state.store(ctx, id);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn suggested_names_come_from_the_first_content_line() {
+        assert_eq!(suggest_snippet_name("  SELECT *\nFROM users"), "SELECT *");
+        assert_eq!(
+            suggest_snippet_name("-- a note\n// another\n\nselect 1;"),
+            "select 1;"
+        );
+        assert_eq!(
+            suggest_snippet_name("/* header */  SELECT  1\nFROM t"),
+            "SELECT 1"
+        );
+        assert_eq!(suggest_snippet_name("/* only a comment */"), "Snippet");
+        assert_eq!(suggest_snippet_name("   \n\t"), "Snippet");
+    }
+
+    #[test]
+    fn suggested_names_are_clipped_at_a_word_boundary() {
+        let long = format!("SELECT {}", "column_name ".repeat(10));
+        let name = suggest_snippet_name(&long);
+        assert!(name.chars().count() <= SUGGESTED_NAME_CHARS, "{name:?}");
+        assert!(name.ends_with('…'), "{name:?}");
+        assert!(!name.ends_with(" …"), "{name:?}");
+    }
 }

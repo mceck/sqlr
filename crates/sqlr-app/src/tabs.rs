@@ -227,12 +227,14 @@ impl QueryTab {
         syntax: Arc<SqlSyntax>,
         page_size: usize,
     ) -> Self {
+        let mut editor = EditorState::new(sql, syntax);
+        editor.set_snippet_menu(true);
         Self {
             key,
             title,
             conn,
             database: None,
-            editor: EditorState::new(sql, syntax),
+            editor,
             run: None,
             grids: HashMap::new(),
             edits: HashMap::new(),
@@ -546,6 +548,8 @@ pub enum TabCommand {
     },
     /// The tab's close button: the app asks first when its transaction is open.
     RequestClose(u64),
+    /// "Save as snippet…" from the tab's editor context menu.
+    SaveSnippet(u64),
     /// The breadcrumb's connection or database: select the tab's connection in the explorer.
     RevealConnection(u64),
     /// Selects the database used by this query tab.
@@ -792,6 +796,9 @@ impl egui_dock::TabViewer for Viewer<'_> {
             .show(ui, |ui| {
                 let output = query_editor(ui, &mut tab.editor, &catalog);
                 tab.dirty |= output.changed;
+                if output.save_snippet {
+                    self.commands.push(TabCommand::SaveSnippet(tab.key));
+                }
                 if let Some(conn) = conn {
                     for need in output.needs {
                         self.engine.load_catalog_in(conn, database, need);

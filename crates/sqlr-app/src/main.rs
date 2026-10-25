@@ -275,6 +275,8 @@ mod tests {
             started: None,
             budget: None,
         };
+        // Startup shows the homepage; list_query_tabs needs an editor tab.
+        shell.app.new_query_tab_for_tests();
         let mut frame = eframe::Frame::_new_kittest();
         let mut input = egui::RawInput::default();
         input

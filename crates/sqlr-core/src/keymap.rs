@@ -304,6 +304,7 @@ const SQLR: Table = &[
     (A::NextTab, &["Ctrl+Tab"]),
     (A::PreviousTab, &["Ctrl+Shift+Tab"]),
     (A::ApplyObject, &["Cmd+S"]),
+    (A::SaveSnippet, &["Cmd+Shift+S"]),
     (A::OpenObject, &["Cmd+P"]),
     (A::Commands, &["Cmd+Shift+P"]),
     (A::Settings, &["Cmd+Comma"]),

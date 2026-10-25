@@ -10,7 +10,7 @@ use sqlr_engine::{HistoryChannel, LoadState};
 use sqlr_store::Db;
 use sqlr_ui::{
     DraftResult, HistoryAction, HistoryPanelState, SnippetAction, SnippetDraft, SnippetsState,
-    ToastKind, history_panel, snippet_dialog, snippets_panel, theme,
+    ToastKind, history_panel, snippet_dialog, snippets_panel, suggest_snippet_name, theme,
 };
 
 use crate::app::SqlrApp;
@@ -176,16 +176,29 @@ impl SqlrApp {
 
     /// Opens the snippet dialog on the active editor's selection, or its whole text.
     pub(crate) fn save_as_snippet(&mut self) {
-        let Some(tab) = self.active_tab() else {
+        let Some(key) = self.active_key() else {
+            return;
+        };
+        self.save_as_snippet_for(key);
+    }
+
+    /// [`save_as_snippet`](Self::save_as_snippet) for one tab, whose editor asked for it.
+    /// Nothing happens when the editor is empty.
+    pub(crate) fn save_as_snippet_for(&mut self, key: u64) {
+        let Some(tab) = self.tab(key) else {
             return;
         };
         let selected = tab.editor.model().selected_text();
-        let sql = if selected.is_empty() {
+        let sql = if selected.trim().is_empty() {
             tab.editor.text()
         } else {
             selected
         };
+        if sql.trim().is_empty() {
+            return;
+        }
         self.library.draft = Some(SnippetDraft {
+            name: suggest_snippet_name(&sql),
             sql,
             ..SnippetDraft::default()
         });

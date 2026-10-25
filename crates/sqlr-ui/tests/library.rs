@@ -361,3 +361,15 @@ fn snippet_dialog_focuses_name() {
     h.run_steps(2);
     assert_eq!(h.state().draft.name, "mine");
 }
+
+#[test]
+fn snippet_dialog_selects_a_suggested_name() {
+    let mut h = dialog_harness(SnippetDraft {
+        name: "select 42".into(),
+        sql: "select 42".into(),
+        ..Default::default()
+    });
+    h.event(egui::Event::Text("mine".into()));
+    h.run_steps(2);
+    assert_eq!(h.state().draft.name, "mine");
+}
