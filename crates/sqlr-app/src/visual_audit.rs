@@ -18,6 +18,10 @@ use crate::transfer_dialogs::{ExportDialog, ImportDialog};
 use crate::{AppDeps, SqlrApp};
 
 fn fixture(dir: &Path, theme: ThemePref) -> SqlrApp {
+    fixture_with(dir, theme, true)
+}
+
+fn fixture_with(dir: &Path, theme: ThemePref, connections: bool) -> SqlrApp {
     let file = dir.join("northwind.db");
     rusqlite::Connection::open(&file).unwrap().execute_batch(
         "PRAGMA foreign_keys=ON;
@@ -32,10 +36,15 @@ fn fixture(dir: &Path, theme: ThemePref) -> SqlrApp {
     drivers.register(sqlr_driver_sqlite::SqliteDriver::new());
     let engine = Engine::new(drivers, Arc::new(|| {}));
     let repo = ConnectionRepo::open(dir, Box::new(MemorySecretStore::default())).unwrap();
-    for (id, name) in [
-        ("northwind", "Northwind · Development"),
-        ("archive", "Northwind · Archive"),
-    ] {
+    let seeded: &[(&str, &str)] = if connections {
+        &[
+            ("northwind", "Northwind · Development"),
+            ("archive", "Northwind · Archive"),
+        ]
+    } else {
+        &[]
+    };
+    for &(id, name) in seeded {
         let cfg = ConnectionConfig {
             id: id.into(),
             name: name.into(),
@@ -51,10 +60,12 @@ fn fixture(dir: &Path, theme: ThemePref) -> SqlrApp {
         engine.connect(cfg, Secrets::default(), ConnectionProfile::development());
     }
     let deadline = Instant::now() + Duration::from_secs(5);
-    while !matches!(
-        engine.session_status("northwind"),
-        Some(SessionStatus::Connected(_))
-    ) {
+    while connections
+        && !matches!(
+            engine.session_status("northwind"),
+            Some(SessionStatus::Connected(_))
+        )
+    {
         assert!(Instant::now() < deadline, "SQLite fixture did not connect");
         std::thread::sleep(Duration::from_millis(5));
     }
@@ -333,5 +344,162 @@ fn configuration_dialogs_fit_a_small_display() {
                 .contains_rect(close),
             "{title} close action outside display: {close:?}"
         );
+    }
+}
+
+fn settle(h: &mut Harness<'static, SqlrApp>, rounds: usize) {
+    for _ in 0..rounds {
+        h.step();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn leftmost<'h>(
+    h: &'h Harness<'static, SqlrApp>,
+    label: &'h str,
+) -> Option<egui_kittest::Node<'h>> {
+    h.query_all_by_label(label)
+        .min_by(|a, b| a.rect().left().total_cmp(&b.rect().left()))
+}
+
+fn harness(app: SqlrApp, size: (f32, f32)) -> Harness<'static, SqlrApp> {
+    let h = Harness::builder()
+        .with_size(size)
+        .with_step_dt(0.01)
+        .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    sqlr_ui::theme::install_fonts(&h.ctx, &[]);
+    h
+}
+
+/// Stateful screens: results, errors, context menus, empty and failed connections, and the
+/// main screens on a small display.
+#[test]
+#[ignore = "renders the visual audit states; requires a GPU adapter"]
+fn visual_audit_states() {
+    let out = std::env::var_os("SQLR_AUDIT_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/media/screenshots/audit")
+        });
+    std::fs::create_dir_all(&out).unwrap();
+    for (theme, suffix) in [(ThemePref::Dark, "dark"), (ThemePref::Light, "light")] {
+        // Empty app: no connections at all.
+        let dir = tempfile::tempdir().unwrap();
+        let mut h = harness(fixture_with(dir.path(), theme, false), (1400.0, 900.0));
+        settle(&mut h, 20);
+        capture(&mut h, &out, "state-empty-no-connections", suffix);
+
+        // Failed connection.
+        let dir = tempfile::tempdir().unwrap();
+        let bad = ConnectionConfig {
+            id: "broken".into(),
+            name: "Broken · Unreachable".into(),
+            driver: "sqlite".into(),
+            group: None,
+            color: None,
+            values: [("path".into(), "/nonexistent-dir/x/y.db".into())].into(),
+            profile: None,
+            save_secrets: false,
+            agent_access: Default::default(),
+        };
+        ConnectionRepo::open(dir.path(), Box::new(MemorySecretStore::default()))
+            .unwrap()
+            .save(&bad, &Secrets::default())
+            .unwrap();
+        let mut app = fixture(dir.path(), theme);
+        app.reload_connections();
+        app.engine
+            .connect(bad, Secrets::default(), ConnectionProfile::development());
+        let mut h = harness(app, (1400.0, 900.0));
+        settle(&mut h, 40);
+        capture(&mut h, &out, "state-connection-failed", suffix);
+
+        // Query error, then a result with the cell menu and the history.
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = fixture(dir.path(), theme);
+        let key = app.new_tab(None, Some("northwind".into()), "SELEC * FROM nowhere;");
+        app.focus_tab(key);
+        app.run_tab(key);
+        let mut h = harness(app, (1400.0, 900.0));
+        settle(&mut h, 40);
+        capture(&mut h, &out, "state-query-error", suffix);
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = fixture(dir.path(), theme);
+        let key = app.new_tab(
+            None,
+            Some("northwind".into()),
+            "SELECT o.id, c.name, o.total, o.status FROM orders o JOIN customers c ON c.id = o.customer_id;",
+        );
+        app.focus_tab(key);
+        app.run_tab(key);
+        let mut h = harness(app, (1400.0, 900.0));
+        settle(&mut h, 40);
+        capture(&mut h, &out, "state-query-result", suffix);
+        if let Some(cell) = leftmost(&h, "Ada Lovelace") {
+            cell.click();
+            settle(&mut h, 5);
+            capture(&mut h, &out, "state-grid-cell-selected", suffix);
+            leftmost(&h, "Ada Lovelace").unwrap().click_secondary();
+            settle(&mut h, 5);
+            capture(&mut h, &out, "state-grid-cell-menu", suffix);
+        }
+
+        // Explorer context menus.
+        let dir = tempfile::tempdir().unwrap();
+        let app = fixture(dir.path(), theme);
+        let mut h = harness(app, (1400.0, 900.0));
+        settle(&mut h, 20);
+        if let Some(n) = leftmost(&h, "Northwind · Development") {
+            n.click_secondary();
+            settle(&mut h, 5);
+            capture(&mut h, &out, "state-menu-connection", suffix);
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let app = fixture(dir.path(), theme);
+        let mut h = harness(app, (1400.0, 900.0));
+        settle(&mut h, 20);
+        if let Some(n) = leftmost(&h, "Northwind · Development") {
+            n.click();
+            settle(&mut h, 30);
+            capture(&mut h, &out, "state-explorer-expanded", suffix);
+            for label in ["main", "Tables"] {
+                if let Some(n) = leftmost(&h, label) {
+                    n.click();
+                    settle(&mut h, 20);
+                }
+            }
+            if let Some(n) = leftmost(&h, "orders") {
+                n.click_secondary();
+                settle(&mut h, 5);
+                capture(&mut h, &out, "state-menu-table", suffix);
+            }
+        }
+    }
+
+    // Main screens on a small display (dark only, as agreed).
+    for case in ["welcome", "query", "connection", "preferences", "objects", "history"] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = fixture(dir.path(), ThemePref::Dark);
+        match case {
+            "query" => {
+                let key = app.new_tab(None, Some("northwind".into()), "SELECT * FROM orders;");
+                app.focus_tab(key);
+                app.run_tab(key);
+            }
+            "connection" => {
+                let manifest = app.manifest("sqlite").expect("SQLite manifest");
+                app.conn_dialog = Some(crate::dialogs::ConnDialog::create(&manifest));
+            }
+            "preferences" => {
+                app.prefs = Some(crate::prefs::PrefsWindow::new(&app.layered, Level::Global))
+            }
+            "objects" => app.open_palette(sqlr_ui::PaletteMode::Objects),
+            "history" => app.show_history = true,
+            _ => {}
+        }
+        let mut h = harness(app, (1024.0, 680.0));
+        settle(&mut h, 40);
+        capture(&mut h, &out, &format!("small-{case}"), "dark");
     }
 }
