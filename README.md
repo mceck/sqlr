@@ -5,6 +5,15 @@
 A universal database client: native Rust, egui, no webview. One app for relational, document and key-value databases and any other database you add through a driver you write in Rust. MIT licensed.
 
 
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mceck/sqlr/main/scripts/get-sqlr.sh | sh
+```
+
+Or get it from the [download page](https://mceck.github.io/sqlr/download.html)
+
+
 ## What it does
 
 Link to [documentation](https://mceck.github.io/sqlr/usage/README.html).

@@ -51,7 +51,10 @@ img{max-width:100%}
 <main>
 <h1 id="getting-started">Getting started</h1>
 <h2 id="install">Install</h2>
-<p>You build sqlr from source with a recent Rust toolchain (1.98 or newer):</p>
+<p>On Linux and macOS one command installs the latest release for your system:</p>
+<pre><code>curl -fsSL https://raw.githubusercontent.com/mceck/sqlr/main/scripts/get-sqlr.sh | sh</code></pre>
+<p>It picks the build for your architecture (Linux x86_64 or aarch64, macOS Apple Silicon or Intel), checks it against the release checksums and installs it: on Linux to <code>~/.local/bin/sqlr</code>, on macOS to <code>/Applications/sqlr.app</code>. Set <code>SQLR_VERSION=0.2.0</code> for a specific version, or <code>SQLR_PREFIX=/usr/local</code> to change the Linux prefix. Windows builds and AppImages are on the download page.</p>
+<p>Or you build sqlr from source with a recent Rust toolchain (1.98 or newer):</p>
 <pre><code>cargo build --release -p sqlr-app
 cargo run --release -p sqlr-app</code></pre>
 <p>On macOS you can wrap the release binary in a normal app:</p>

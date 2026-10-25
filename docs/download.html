@@ -322,6 +322,12 @@
 <section class="install-notes" aria-labelledby="install-title">
   <h2 id="install-title">Install notes</h2>
   <p class="sub">sqlr is a portable app: no service, no background daemon, no runtime to install.</p>
+  <div class="card" style="margin-bottom:14px">
+    <h3>Install from the terminal (Linux and macOS)</h3>
+    <p>Downloads the latest release for your system and architecture, verifies its checksum and installs it:</p>
+    <p><code>curl -fsSL https://raw.githubusercontent.com/mceck/sqlr/main/scripts/get-sqlr.sh | sh</code></p>
+    <p>Linux goes to <code>~/.local</code> (<code>SQLR_PREFIX</code> changes it), macOS to <code>/Applications</code>. <code>SQLR_VERSION=0.2.0</code> picks a specific version.</p>
+  </div>
   <div class="cards">
     <div class="card">
       <h3>macOS</h3>
@@ -368,7 +374,7 @@
 
   // Asset names come from .github/workflows/release.yml:
   //   sqlr_<version>_macos-{arm64,x86_64}.dmg
-  //   sqlr_<version>_linux-x86_64.{tar.gz,AppImage}
+  //   sqlr_<version>_linux-{x86_64,aarch64}.{tar.gz,AppImage}
   //   sqlr_<version>_windows-x86_64.zip
   var PLATFORMS = {
     macos: { label: "macOS", order: ["arm64", "x86_64"] },
@@ -502,7 +508,10 @@
       return list.find(function (a) { return a.arch === "arm64"; }) || list[0];
     }
     if (os === "linux") {
-      return list.find(function (a) { return a.format === "appimage"; }) || list[0];
+      var linuxArch = currentArch();
+      var ofArch = linuxArch ? list.filter(function (a) { return a.arch === linuxArch; }) : list;
+      if (!ofArch.length) ofArch = list;
+      return ofArch.find(function (a) { return a.format === "appimage"; }) || ofArch[0];
     }
     if (os === "windows") {
       var wanted = currentArch();
@@ -548,7 +557,7 @@
       return "Not sure which Mac you have? Choose Apple menu → About This Mac; an M-series chip needs the Apple Silicon build, an Intel chip needs the Intel build.";
     }
     if (os === "linux") {
-      return "The Linux builds target x86_64 and are built on Ubuntu 22.04 for an older glibc.";
+      return "Builds for x86_64 and arm64 (aarch64), made on Ubuntu 22.04 for an older glibc.";
     }
     if (os === "windows") {
       return "Windows 10 or later. The executable is unsigned, so SmartScreen may ask for confirmation on first launch.";

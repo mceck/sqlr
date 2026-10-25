@@ -2,7 +2,15 @@
 
 ## Install
 
-You build sqlr from source with a recent Rust toolchain (1.98 or newer):
+On Linux and macOS one command installs the latest release for your system:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mceck/sqlr/main/scripts/get-sqlr.sh | sh
+```
+
+It picks the build for your architecture (Linux x86_64 or aarch64, macOS Apple Silicon or Intel), checks it against the release checksums and installs it: on Linux to `~/.local/bin/sqlr`, on macOS to `/Applications/sqlr.app`. Set `SQLR_VERSION=0.2.0` for a specific version, or `SQLR_PREFIX=/usr/local` to change the Linux prefix. Windows builds and AppImages are on the download page.
+
+Or you build sqlr from source with a recent Rust toolchain (1.98 or newer):
 
 ```sh
 cargo build --release -p sqlr-app
