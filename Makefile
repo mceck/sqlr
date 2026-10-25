@@ -1,6 +1,6 @@
 
 
-.PHONY: test test-docker test-fast test-services test-services-docker test-services-reset test-services-reset-docker check-nextest macos install install-fast coverage coverage-fast coverage-open
+.PHONY: test test-docker test-fast test-services test-services-docker test-services-reset test-services-reset-docker check-nextest macos install install-fast bump coverage coverage-fast coverage-open
 
 $(shell mkdir -p dist)
 
@@ -73,8 +73,14 @@ coverage-open:
 macos:
 	scripts/package-macos.sh
 
-install: macos
-	cp -R dist/sqlr.app /Applications/
+# Builds and installs for this platform: /Applications on macOS, ~/.local on Linux, cargo install elsewhere.
+install:
+	scripts/install.sh
+
+# Aligns every crate version: make bump V=0.2.0 (or V=patch|minor|major; default patch).
+V ?= patch
+bump:
+	scripts/bump-version.sh $(V)
 
 # Keep release behavior while favoring compilation speed over runtime performance.
 install-fast: export CARGO_PROFILE_RELEASE_OPT_LEVEL = 0
