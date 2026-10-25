@@ -94,7 +94,8 @@ fn estimated_plans_explain_how_to_get_measured_times() {
         false,
         false,
     );
-    h.get_by_label("Run Explain Analyze for real timings.");
+    h.get_by_label("Costs are estimates, not measured times.");
+    h.get_by_label("Explain Analyze");
     assert!(h.query_by_label_contains("self 0").is_none());
 }
 
@@ -167,11 +168,11 @@ fn a_subtree_collapses_and_expands() {
 #[test]
 fn the_raw_plan_is_one_toggle_away_and_can_be_copied() {
     let mut h = harness();
-    h.get_by_label("Raw").click();
+    h.get_by_label("Raw plan").click();
     h.run_steps(2);
     h.get_by_label_contains("\"Node Type\"");
     h.state_mut().actions.clear();
-    h.get_by_label("Copy raw plan").click();
+    h.get_by_label("Copy").click();
     h.run_steps(2);
     assert_eq!(h.state().actions, vec![PlanAction::CopyRaw]);
 }
@@ -186,7 +187,7 @@ fn a_changed_statement_offers_a_recompute() {
 }
 
 #[test]
-fn an_estimated_plan_says_so_and_lists_the_note() {
+fn an_estimated_plan_says_so_once() {
     let h = harness_with(
         parse_pg_json(ESTIMATED).unwrap(),
         "SELECT * FROM t",
@@ -194,7 +195,11 @@ fn an_estimated_plan_says_so_and_lists_the_note() {
         false,
     );
     h.get_by_label("Estimated");
-    h.get_by_label_contains("Estimated plan: row counts and costs are estimates");
+    // The chip and one hint say it; the long note is not repeated under the header.
+    assert!(
+        h.query_by_label_contains("Estimated plan: row counts and costs are estimates")
+            .is_none()
+    );
     h.get_by_label("1 operator");
     // Without timings there is no hot path worth drawing for a single node.
     assert!(h.query_by_label("SELF COST").is_none());

@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use egui::{ComboBox, DragValue, RichText, TextEdit};
+use egui::{ComboBox, DragValue, RichText, TextEdit, vec2};
 use sqlr_core::{DumpFormat, DumpOptions, NodePath, RestoreOptions};
 use sqlr_engine::{Engine, JobId, JobOutcome, JobProgress};
 use sqlr_ui::theme::{self, Spacing};
@@ -218,15 +218,58 @@ fn contents(ui: &mut egui::Ui, schema: &mut bool, data: &mut bool) {
     } else {
         0
     };
-    ui.horizontal(|ui| {
-        ui.label("Contents");
-        for (value, label) in [(0, "Everything"), (1, "Schema only"), (2, "Data only")] {
-            if ui.radio_value(&mut choice, value, label).changed() {
-                *schema = choice == 1;
-                *data = choice == 2;
-            }
+    for (value, label) in [
+        (0, "Everything"),
+        (1, "Schema only (no rows)"),
+        (2, "Data only (no definitions)"),
+    ] {
+        if ui.radio_value(&mut choice, value, label).changed() {
+            *schema = choice == 1;
+            *data = choice == 2;
         }
+    }
+}
+
+/// One group of options: its name in a left column, its controls stacked on the right.
+fn option_group(ui: &mut egui::Ui, name: &str, add: impl FnOnce(&mut egui::Ui)) {
+    ui.add_space(Spacing::S);
+    ui.horizontal_top(|ui| {
+        ui.allocate_ui_with_layout(
+            vec2(110.0, ui.spacing().interact_size.y),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.set_min_width(110.0);
+                ui.label(RichText::new(name).color(theme::palette(ui.ctx()).text_muted));
+            },
+        );
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = Spacing::XS;
+            add(ui);
+        });
     });
+}
+
+/// An option that only applies when the one above it is on: indented and enabled with it.
+fn dependent(ui: &mut egui::Ui, enabled: bool, add: impl FnOnce(&mut egui::Ui)) {
+    ui.horizontal(|ui| {
+        ui.add_space(22.0);
+        ui.add_enabled_ui(enabled, add);
+    });
+}
+
+/// A text field for the encoding, empty meaning the server's.
+fn encoding_field(ui: &mut egui::Ui, encoding: &mut Option<String>) {
+    let mut text = encoding.clone().unwrap_or_default();
+    if ui
+        .add(
+            TextEdit::singleline(&mut text)
+                .hint_text("Server default (UTF-8)")
+                .desired_width(200.0),
+        )
+        .changed()
+    {
+        *encoding = (!text.trim().is_empty()).then_some(text);
+    }
 }
 
 fn confirm_tool(ctx: &egui::Context, state: &ToolDialog, restore: bool) -> Option<bool> {
@@ -423,112 +466,110 @@ impl DumpDialog {
     }
 
     fn postgres_options(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
+        let error = theme::palette(ui.ctx()).error;
+        option_group(ui, "Contents", |ui| {
             contents(
                 ui,
                 &mut self.options.schema_only,
                 &mut self.options.data_only,
             );
+        });
+        option_group(ui, "Statements", |ui| {
             ui.checkbox(
                 &mut self.options.clean,
-                RichText::new("Add DROP statements").color(theme::palette(ui.ctx()).error),
-            );
-            ui.add_enabled_ui(self.options.clean, |ui| {
-                ui.checkbox(&mut self.options.if_exists, "Use IF EXISTS");
+                RichText::new("Add DROP statements").color(error),
+            )
+            .on_hover_text("Restoring the backup drops each object before creating it again");
+            let clean = self.options.clean;
+            dependent(ui, clean, |ui| {
+                ui.checkbox(&mut self.options.if_exists, "Use IF EXISTS")
+                    .on_hover_text("The DROP statements skip objects that do not exist");
             });
+            ui.checkbox(&mut self.options.create, "Include CREATE DATABASE");
         });
-        ui.horizontal_wrapped(|ui| {
-            ui.checkbox(&mut self.options.create, "Create the database");
-            ui.checkbox(&mut self.options.no_owner, "No owner");
-            ui.checkbox(&mut self.options.no_privileges, "No privileges");
+        option_group(ui, "Ownership", |ui| {
+            ui.checkbox(&mut self.options.no_owner, "Leave out owners")
+                .on_hover_text("No ALTER … OWNER: restored objects belong to whoever restores");
+            ui.checkbox(&mut self.options.no_privileges, "Leave out privileges")
+                .on_hover_text("No GRANT or REVOKE statements");
         });
-        ui.horizontal_wrapped(|ui| {
-            ui.label("Encoding");
-            let mut encoding = self.options.encoding.clone().unwrap_or_default();
-            if ui
-                .add(
-                    TextEdit::singleline(&mut encoding)
-                        .hint_text("Server default (UTF-8)")
-                        .desired_width(200.0),
-                )
-                .changed()
-            {
-                self.options.encoding = (!encoding.trim().is_empty()).then_some(encoding);
-            }
-            if self.options.format == DumpFormat::Custom
-                || self.options.format == DumpFormat::Directory
-            {
-                ui.label("Compression");
-                let mut enabled = self.options.compression.is_some();
-                ui.checkbox(&mut enabled, "");
-                if enabled {
-                    let mut level = self.options.compression.unwrap_or(6);
-                    if ui.add(DragValue::new(&mut level).range(0..=9)).changed() {
-                        self.options.compression = Some(level);
+        option_group(ui, "Encoding", |ui| {
+            encoding_field(ui, &mut self.options.encoding);
+        });
+        let compressed = self.options.format == DumpFormat::Custom
+            || self.options.format == DumpFormat::Directory;
+        if compressed {
+            option_group(ui, "Compression", |ui| {
+                ui.horizontal(|ui| {
+                    let mut enabled = self.options.compression.is_some();
+                    ui.checkbox(&mut enabled, "Compress, level");
+                    if enabled {
+                        let mut level = self.options.compression.unwrap_or(6);
+                        if ui.add(DragValue::new(&mut level).range(0..=9)).changed() {
+                            self.options.compression = Some(level);
+                        }
+                    } else {
+                        self.options.compression = None;
                     }
-                } else {
-                    self.options.compression = None;
-                }
-            }
-            if self.options.format == DumpFormat::Directory {
-                ui.label("Jobs");
+                });
+            });
+        }
+        if self.options.format == DumpFormat::Directory {
+            option_group(ui, "Parallel jobs", |ui| {
                 let mut jobs = self.options.jobs.unwrap_or(1);
                 if ui.add(DragValue::new(&mut jobs).range(1..=64)).changed() {
                     self.options.jobs = Some(jobs);
                 }
-            }
-        });
+            });
+        }
     }
 
     fn mysql_options(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
+        let error = theme::palette(ui.ctx()).error;
+        option_group(ui, "Contents", |ui| {
             contents(
                 ui,
                 &mut self.options.schema_only,
                 &mut self.options.data_only,
             );
+        });
+        option_group(ui, "Statements", |ui| {
             ui.checkbox(
                 &mut self.options.clean,
-                RichText::new("Add DROP statements").color(theme::palette(ui.ctx()).error),
-            );
+                RichText::new("Add DROP statements").color(error),
+            )
+            .on_hover_text("Restoring the backup drops each table before creating it again");
+            ui.checkbox(&mut self.options.create, "Include CREATE DATABASE");
         });
-        ui.horizontal_wrapped(|ui| {
-            ui.checkbox(&mut self.options.create, "Create the database");
-            ui.label("Encoding");
-            let mut encoding = self.options.encoding.clone().unwrap_or_default();
-            if ui
-                .add(
-                    TextEdit::singleline(&mut encoding)
-                        .hint_text("Server default (UTF-8)")
-                        .desired_width(200.0),
-                )
-                .changed()
-            {
-                self.options.encoding = (!encoding.trim().is_empty()).then_some(encoding);
-            }
-        });
-        ui.horizontal_wrapped(|ui| {
+        option_group(ui, "Objects", |ui| {
             ui.checkbox(&mut self.options.mysql_routines, "Routines");
             ui.checkbox(&mut self.options.mysql_events, "Events");
             ui.checkbox(&mut self.options.mysql_triggers, "Triggers");
+        });
+        option_group(ui, "Consistency", |ui| {
             ui.checkbox(
                 &mut self.options.mysql_single_transaction,
-                "Consistent snapshot (transactional tables)",
+                "Consistent snapshot",
+            )
+            .on_hover_text(
+                "Reads every transactional (InnoDB) table as of one moment, without locking",
             );
+        });
+        option_group(ui, "Encoding", |ui| {
+            encoding_field(ui, &mut self.options.encoding);
         });
     }
 
     fn sqlite_options(&mut self, ui: &mut egui::Ui) {
         if self.options.format == DumpFormat::SqliteBinary {
-            ui.label(
-                RichText::new("Writes a consistent copy of the database file with .backup.")
-                    .small()
-                    .color(theme::palette(ui.ctx()).text_muted),
+            theme::hint(
+                ui,
+                "Writes a consistent copy of the database file, even while it is in use.",
             );
             return;
         }
-        ui.horizontal_wrapped(|ui| {
-            ui.checkbox(&mut self.options.schema_only, "Schema only");
+        option_group(ui, "Contents", |ui| {
+            ui.checkbox(&mut self.options.schema_only, "Schema only (no rows)");
         });
     }
 
@@ -721,15 +762,12 @@ impl RestoreDialog {
     }
 
     fn psql_options(&mut self, ui: &mut egui::Ui) {
-        ui.label(
-            RichText::new(
-                "A plain SQL file runs through psql: DROP/CREATE statements come from the \
-                 file itself.",
-            )
-            .small()
-            .color(theme::palette(ui.ctx()).text_muted),
+        theme::hint(
+            ui,
+            "A plain SQL file runs through psql: DROP and CREATE statements come from the \
+             file itself.",
         );
-        ui.horizontal_wrapped(|ui| {
+        option_group(ui, "Execution", |ui| {
             ui.checkbox(
                 &mut self.options.single_transaction,
                 "Single transaction (all or nothing)",
@@ -739,49 +777,53 @@ impl RestoreDialog {
     }
 
     fn postgres_options(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
-            ui.checkbox(
-                &mut self.options.clean,
-                RichText::new("Clean (drop before restore)").color(theme::palette(ui.ctx()).error),
-            );
-            ui.add_enabled_ui(self.options.clean, |ui| {
-                ui.checkbox(&mut self.options.if_exists, "Use IF EXISTS");
-            });
-            ui.checkbox(&mut self.options.create, "Create the database");
-        });
-        ui.horizontal_wrapped(|ui| {
+        let error = theme::palette(ui.ctx()).error;
+        option_group(ui, "Contents", |ui| {
             contents(
                 ui,
                 &mut self.options.schema_only,
                 &mut self.options.data_only,
             );
-            ui.checkbox(&mut self.options.no_owner, "No owner");
-            ui.checkbox(&mut self.options.no_privileges, "No privileges");
         });
-        ui.horizontal_wrapped(|ui| {
+        option_group(ui, "Existing objects", |ui| {
+            ui.checkbox(
+                &mut self.options.clean,
+                RichText::new("Drop them before restoring").color(error),
+            )
+            .on_hover_text("Objects in the backup replace the ones of the same name");
+            let clean = self.options.clean;
+            dependent(ui, clean, |ui| {
+                ui.checkbox(&mut self.options.if_exists, "Use IF EXISTS")
+                    .on_hover_text("The drops skip objects that do not exist");
+            });
+            ui.checkbox(&mut self.options.create, "Create the database");
+            if self.options.create {
+                theme::hint(
+                    ui,
+                    "Connects to postgres and lets the backup create its own database.",
+                );
+            }
+        });
+        option_group(ui, "Ownership", |ui| {
+            ui.checkbox(&mut self.options.no_owner, "Leave out owners");
+            ui.checkbox(&mut self.options.no_privileges, "Leave out privileges");
+        });
+        option_group(ui, "Execution", |ui| {
             ui.checkbox(
                 &mut self.options.single_transaction,
                 "Single transaction (all or nothing)",
             );
             ui.checkbox(&mut self.options.exit_on_error, "Stop at the first error");
             if !self.options.single_transaction && !self.options.create {
-                ui.label("Jobs");
-                let mut jobs = self.options.jobs.unwrap_or(1);
-                if ui.add(DragValue::new(&mut jobs).range(1..=64)).changed() {
-                    self.options.jobs = Some(jobs);
-                }
+                ui.horizontal(|ui| {
+                    ui.label("Parallel jobs");
+                    let mut jobs = self.options.jobs.unwrap_or(1);
+                    if ui.add(DragValue::new(&mut jobs).range(1..=64)).changed() {
+                        self.options.jobs = Some(jobs);
+                    }
+                });
             }
         });
-        if self.options.create {
-            ui.label(
-                RichText::new(
-                    "Create the database connects to postgres and lets the archive create \
-                     its own database.",
-                )
-                .small()
-                .color(theme::palette(ui.ctx()).text_muted),
-            );
-        }
     }
 
     fn advanced(&mut self, ui: &mut egui::Ui) {

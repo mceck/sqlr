@@ -1,5 +1,5 @@
 //! Catalog-backed suggestions for schema and table names, with a typed fallback.
-use egui::{ComboBox, TextEdit};
+use egui::TextEdit;
 use sqlr_core::CatalogNeed;
 use sqlr_engine::{Engine, LoadState};
 
@@ -48,26 +48,42 @@ pub(crate) fn name(
             .changed();
             let filter = value.to_lowercase();
             let exact = names.iter().any(|n| n.eq_ignore_ascii_case(value));
-            ComboBox::from_id_salt("suggestions")
-                .selected_text("▾")
-                .width(24.0)
-                .show_ui(ui, |ui| {
-                    let mut found = false;
-                    for item in names.iter().filter(|n| {
-                        exact || filter.is_empty() || n.to_lowercase().contains(&filter)
-                    }) {
-                        found = true;
-                        if ui.selectable_label(item == value, item).clicked() {
-                            *value = item.clone();
-                            changed = true;
-                        }
-                    }
-                    if !found {
-                        ui.label("No matches — enter a name in the field");
-                    }
-                })
-                .response
-                .on_hover_text("Browse catalog names");
+            // The field's own drop-down: a caret beside it lists the catalog's names.
+            let browse = sqlr_ui::theme::icons::icon_button(
+                ui,
+                sqlr_ui::theme::icons::CARET_DOWN,
+                None,
+                "Browse catalog names",
+            );
+            egui::Popup::menu(&browse)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
+                .show(|ui| {
+                    ui.set_min_width(width.min(320.0));
+                    egui::ScrollArea::vertical()
+                        .max_height(260.0)
+                        .show(ui, |ui| {
+                            let mut found = false;
+                            for item in names.iter().filter(|n| {
+                                exact || filter.is_empty() || n.to_lowercase().contains(&filter)
+                            }) {
+                                found = true;
+                                if ui.selectable_label(item == value, item).clicked() {
+                                    *value = item.clone();
+                                    changed = true;
+                                }
+                            }
+                            if !found {
+                                sqlr_ui::theme::hint(
+                                    ui,
+                                    if names.is_empty() {
+                                        "Loading names… or type one in the field"
+                                    } else {
+                                        "No matches: type a name in the field"
+                                    },
+                                );
+                            }
+                        });
+                });
         });
     });
     changed

@@ -225,7 +225,7 @@ impl TransferWizard {
             confirm_run: false,
             probe: None,
             preview_rows: None,
-            preview_grid: sqlr_ui::GridState::default(),
+            preview_grid: sqlr_ui::GridState::preview(),
             preview_for: String::new(),
             probe_error: None,
             mapping: Vec::new(),
@@ -571,7 +571,7 @@ impl TransferWizard {
             SourceKind::Table if self.s_table.trim().is_empty() => "Enter the source table",
             SourceKind::Query if self.s_sql.trim().is_empty() => "Enter the source query",
             _ if self.probe_job.is_some() => "Loading the preview…",
-            _ => "Load the preview to continue",
+            _ => "Reading the source preview…",
         };
         Some(missing.to_string())
     }
@@ -1290,20 +1290,105 @@ impl TransferWizard {
     }
 
     fn review_ui(&mut self, ui: &mut egui::Ui, engine: &Engine, conns: &[ConnChoice]) {
-        let muted = theme::palette(ui.ctx()).text_muted;
-        ui.label(RichText::new(describe(self.source_endpoint().as_ref(), conns)).strong());
-        ui.label(RichText::new("↓").color(muted));
-        ui.label(RichText::new(describe(self.target_endpoint().as_ref(), conns)).strong());
-        if self.table_target() {
-            let mapped = self.mapping.iter().filter(|m| m.target.is_some()).count();
-            ui.label(format!("{mapped} of {} columns mapped", self.mapping.len()));
-        }
-        if let Some((_, probe)) = &self.probe {
-            ui.label(format!(
-                "Sample: {} rows · {} columns. The transfer reads all source rows.",
-                probe.rows.len(),
-                probe.columns.len()
-            ));
+        let p = theme::palette(ui.ctx());
+        // From → to, the one thing to check before starting.
+        egui::Frame::new()
+            .fill(p.bg_subtle)
+            .stroke(egui::Stroke::new(1.0, p.border))
+            .corner_radius(Spacing::RADIUS_M)
+            .inner_margin(egui::Margin::same(12))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                let endpoint = |ui: &mut egui::Ui, caption: &str, text: String| {
+                    ui.label(RichText::new(caption).small().color(p.text_muted));
+                    ui.label(RichText::new(text).strong());
+                };
+                endpoint(ui, "FROM", describe(self.source_endpoint().as_ref(), conns));
+                ui.add_space(Spacing::XS);
+                ui.label(
+                    sqlr_ui::theme::icons::text(ui, sqlr_ui::theme::icons::MOVE_DOWN, 14.0)
+                        .color(p.accent),
+                );
+                ui.add_space(Spacing::XS);
+                endpoint(ui, "TO", describe(self.target_endpoint().as_ref(), conns));
+            });
+        ui.add_space(Spacing::M);
+        egui::Grid::new("tw-review")
+            .num_columns(2)
+            .min_col_width(130.0)
+            .spacing([Spacing::L, Spacing::S])
+            .show(ui, |ui| {
+                let muted = |ui: &mut egui::Ui, text: &str| {
+                    ui.label(RichText::new(text).color(p.text_muted));
+                };
+                if self.table_target() {
+                    let mapped = self.mapping.iter().filter(|m| m.target.is_some()).count();
+                    muted(ui, "Columns");
+                    ui.label(format!("{mapped} of {} mapped", self.mapping.len()));
+                    ui.end_row();
+                }
+                if let Some((_, probe)) = &self.probe {
+                    muted(ui, "Rows");
+                    ui.label(format!(
+                        "Every source row (previewed {} of them)",
+                        probe.rows.len()
+                    ));
+                    ui.end_row();
+                }
+                muted(ui, "Batches");
+                ui.label(format!(
+                    "{} rows each, {}",
+                    self.options.batch,
+                    if self.options.commit_per_batch {
+                        "committed one by one (done batches stay if it stops)"
+                    } else {
+                        "committed once at the end"
+                    }
+                ));
+                ui.end_row();
+                if self.upsert {
+                    muted(ui, "Existing rows");
+                    ui.label(format!("Updated by key: {}", self.upsert_text));
+                    ui.end_row();
+                }
+                if self.options.skip_bad_rows {
+                    muted(ui, "Bad rows");
+                    ui.label("Skipped and reported");
+                    ui.end_row();
+                }
+                if !self.rejected_path.is_empty() {
+                    muted(ui, "Rejected rows file");
+                    ui.label(&self.rejected_path);
+                    ui.end_row();
+                }
+                if self.source_kind == SourceKind::File {
+                    muted(ui, "Encoding");
+                    ui.label(if self.s_encoding.is_empty() {
+                        "Detected (UTF-8 by default)"
+                    } else {
+                        &self.s_encoding
+                    });
+                    ui.end_row();
+                }
+            });
+        // The options that destroy or bypass something, impossible to miss.
+        for (on, text) in [
+            (
+                self.options.truncate_first,
+                "Every row already in the target is deleted before loading",
+            ),
+            (
+                self.options.disable_constraints,
+                "Foreign key checks are off while loading",
+            ),
+        ] {
+            if on {
+                ui.add_space(Spacing::S);
+                ui.horizontal(|ui| {
+                    sqlr_ui::theme::icons::paint(ui, sqlr_ui::theme::icons::WARNING, p.error);
+                    ui.colored_label(p.error, text);
+                });
+            }
         }
         if self.target_kind == TargetKind::New {
             let key = format!(
@@ -1314,10 +1399,11 @@ impl TransferWizard {
                 self.generate_ddl(engine, conns);
                 self.ddl_for = key;
             }
-            ui.add_space(Spacing::S);
-            ui.label(RichText::new("Table definition (editable)").strong());
+            ui.add_space(Spacing::M);
+            theme::section_title(ui, "New table");
+            theme::hint(ui, "The statement that creates it; edit it if you need to.");
             for w in &self.warnings {
-                ui.colored_label(theme::palette(ui.ctx()).warning, w);
+                ui.colored_label(p.warning, w);
             }
             let edit = ui.add(
                 TextEdit::multiline(&mut self.ddl)
@@ -1328,45 +1414,6 @@ impl TransferWizard {
             if edit.changed() {
                 self.ddl_edited = true;
             }
-        }
-        ui.add_space(Spacing::M);
-        theme::section_title(ui, "Transfer options");
-        ui.label(format!("Rows per batch: {}", self.options.batch));
-        ui.label(if self.options.commit_per_batch {
-            "Commit after each batch — completed batches remain if stopped"
-        } else {
-            "Commit once at the end"
-        });
-        if self.options.truncate_first {
-            ui.colored_label(
-                theme::palette(ui.ctx()).error,
-                "Delete all existing target rows before loading",
-            );
-        }
-        if self.options.disable_constraints {
-            ui.colored_label(
-                theme::palette(ui.ctx()).error,
-                "Disable foreign key checks during loading",
-            );
-        }
-        if self.upsert {
-            ui.label(format!("Update existing rows by key: {}", self.upsert_text));
-        }
-        if self.options.skip_bad_rows {
-            ui.label("Skip and report rows that fail");
-        }
-        if !self.rejected_path.is_empty() {
-            ui.label(format!("Rejected rows: {}", self.rejected_path));
-        }
-        if self.source_kind == SourceKind::File {
-            ui.label(format!(
-                "Encoding: {}",
-                if self.s_encoding.is_empty() {
-                    "Auto-detect (UTF-8 default)"
-                } else {
-                    &self.s_encoding
-                }
-            ));
         }
     }
 

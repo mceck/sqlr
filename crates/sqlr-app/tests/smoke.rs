@@ -386,7 +386,7 @@ fn new_connection_dialog_validates() {
     h.run_steps(2);
     let save = h.get_by_label("Save");
     assert!(save.accesskit_node().is_disabled());
-    // The footer says why Save is disabled, beside the button (as well as under the form).
+    // The footer says why Save is disabled, beside the button.
     let save = save.rect();
     assert!(
         h.get_all_by_label("Name is required").any(|n| {
@@ -1217,7 +1217,7 @@ fn export_of_a_writing_statement_offers_only_loaded_rows() {
     h.get_by_label("Loaded rows (500)");
     assert!(h.query_by_label("Whole result (re-run)").is_none());
     let runs = driver.executed().len();
-    h.get_by_label("Export").click();
+    h.get_by_label("Export").click_accesskit();
     step_until(&mut h, "the export", |_| path.exists());
     assert_eq!(
         driver.executed().len(),
@@ -1239,14 +1239,14 @@ fn export_of_a_complete_result_defaults_to_loaded_rows() {
     h.run_steps(2);
     // Offered, with the note that it runs on another session; not the default.
     assert!(h.query_by_label_contains("separate session").is_none());
-    h.get_by_label("Whole result (re-run)").click();
+    h.get_by_label("Whole result (re-run)").click_accesskit();
     h.run_steps(2);
     h.get_by_label_contains("separate session");
-    h.get_by_label("Loaded rows (2)").click();
+    h.get_by_label("Loaded rows (2)").click_accesskit();
     h.run_steps(2);
     assert!(h.query_by_label_contains("separate session").is_none());
     let runs = driver.executed().len();
-    h.get_by_label("Export").click();
+    h.get_by_label("Export").click_accesskit();
     step_until(&mut h, "the export", |_| path.exists());
     assert_eq!(
         driver.executed().len(),

@@ -86,6 +86,8 @@ pub struct GridState {
     pub sort: Vec<(usize, bool)>,
     /// The server-side condition typed into the WHERE field.
     pub where_filter: String,
+    /// No WHERE field: the rows come from a file or a fixed sample, not a query to re-run.
+    pub hide_filter: bool,
     /// Pending edits; `Some` when the result can be edited.
     pub edits: Option<EditBuffer>,
     /// Rows inside the viewport during the last frame (without overscan).
@@ -185,6 +187,14 @@ pub struct GridOutput {
 }
 
 impl GridState {
+    /// A grid of rows that no query produced (a file preview, a sample): no WHERE field.
+    pub fn preview() -> Self {
+        Self {
+            hide_filter: true,
+            ..Self::default()
+        }
+    }
+
     /// The actions queued since the last call.
     pub fn take_actions(&mut self) -> Vec<GridAction> {
         std::mem::take(&mut self.actions)
@@ -744,7 +754,9 @@ pub fn data_grid(ui: &mut egui::Ui, state: &mut GridState, input: &GridInput<'_>
     if columns.is_empty() {
         return output;
     }
-    filter_bar(ui, state);
+    if !state.hide_filter {
+        filter_bar(ui, state);
+    }
     server_sort_bar(ui, state);
     state.sort_repaint = Some(ui.ctx().clone());
     state.refresh_view(rows, !input.more_available);

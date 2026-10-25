@@ -616,7 +616,13 @@ pub fn connection_form_body(
         });
     }
 
-    let errors = state.validate(manifest);
+    // Missing required fields are marked with "*" and named beside Save; only values that
+    // are wrong as typed are listed here, so a fresh form does not open on a wall of red.
+    let errors: Vec<String> = state
+        .validate(manifest)
+        .into_iter()
+        .filter(|e| !e.ends_with(" is required"))
+        .collect();
     if !errors.is_empty() {
         ui.add_space(Spacing::M);
         let error = theme::palette(ui.ctx()).error;
@@ -675,6 +681,10 @@ pub fn connection_form(
             }
             if ui.button("Cancel").clicked() {
                 action = FormAction::Cancel;
+            }
+            // Why Save is disabled, beside it.
+            if let Some(reason) = errors.first() {
+                theme::hint(ui, reason);
             }
         });
     });

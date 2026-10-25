@@ -156,37 +156,86 @@ impl CsvFields {
         }
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, write: bool) {
-        egui::Grid::new(ui.id().with("csv_options"))
-            .num_columns(2)
-            .spacing([Spacing::M, Spacing::S])
-            .show(ui, |ui| {
-                ui.label("Delimiter");
-                text_edit(
-                    ui,
-                    TextEdit::singleline(&mut self.delimiter).desired_width(80.0),
-                )
-                .on_hover_text("One character; \\t for a tab");
-                ui.end_row();
-                ui.label("Quote");
-                text_edit(
-                    ui,
-                    TextEdit::singleline(&mut self.quote).desired_width(80.0),
-                );
-                ui.end_row();
-                ui.label("NULL as");
-                text_edit(
-                    ui,
-                    TextEdit::singleline(&mut self.null_text).desired_width(80.0),
-                )
-                .on_hover_text("Unquoted fields with this text are NULL (default: empty)");
-                ui.end_row();
-            });
-        ui.checkbox(&mut self.header, "Header row");
+    /// The CSV rows of a form grid (label, then control): the delimiter as presets with a
+    /// custom field, the quote, the NULL text and the header and line-ending switches.
+    fn grid_rows(&mut self, ui: &mut egui::Ui, write: bool) {
+        ui.label("Delimiter");
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = Spacing::XS;
+            for (value, label) in [
+                (",", "Comma"),
+                (";", "Semicolon"),
+                ("\\t", "Tab"),
+                ("|", "Pipe"),
+            ] {
+                if theme::segment(ui, self.delimiter == value, label).clicked() {
+                    self.delimiter = value.to_string();
+                }
+            }
+            ui.add_space(Spacing::S);
+            text_edit(
+                ui,
+                TextEdit::singleline(&mut self.delimiter)
+                    .desired_width(36.0)
+                    .horizontal_align(egui::Align::Center),
+            )
+            .on_hover_text("Any one character; \\t for a tab");
+        });
+        ui.end_row();
+        ui.label("Quote");
+        text_edit(
+            ui,
+            TextEdit::singleline(&mut self.quote)
+                .desired_width(36.0)
+                .horizontal_align(egui::Align::Center),
+        );
+        ui.end_row();
+        ui.label("NULL as");
+        text_edit(
+            ui,
+            TextEdit::singleline(&mut self.null_text)
+                .hint_text("empty")
+                .desired_width(120.0),
+        )
+        .on_hover_text("Unquoted fields with this text are NULL (default: empty)");
+        ui.end_row();
+        ui.label("");
+        ui.checkbox(&mut self.header, "First row holds the column names");
+        ui.end_row();
         if write {
+            ui.label("");
             ui.checkbox(&mut self.crlf, "Windows line endings (CRLF)");
+            ui.end_row();
         }
     }
+
+    fn ui(&mut self, ui: &mut egui::Ui, write: bool) {
+        form_grid(ui, "csv_options", |ui| self.grid_rows(ui, write));
+    }
+}
+
+/// A two-column form: muted labels on the left in one aligned column, controls on the right.
+fn form_grid<R>(ui: &mut egui::Ui, id: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    egui::Grid::new(ui.id().with(id))
+        .num_columns(2)
+        .min_col_width(96.0)
+        .spacing([Spacing::L, Spacing::M])
+        .show(ui, add)
+        .inner
+}
+
+/// `text` in a sunken, bordered monospace box: a sample of what a file will hold.
+fn sample_box(ui: &mut egui::Ui, text: &str) {
+    let p = theme::palette(ui.ctx());
+    egui::Frame::new()
+        .fill(p.bg_input)
+        .stroke(egui::Stroke::new(1.0, p.border))
+        .corner_radius(Spacing::RADIUS_S)
+        .inner_margin(egui::Margin::same(8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.add(egui::Label::new(RichText::new(text).monospace()).wrap());
+        });
 }
 
 /// `name` reduced to letters, digits, `_` and `-`.
@@ -398,10 +447,14 @@ impl ExportDialog {
         let title = format!("Export {}", self.name);
         let response = theme::Dialog::new("export_dialog", theme::icons::EXPORT, &title)
             .subtitle("Choose the rows and format; a save dialog follows Export")
-            .width(560.0)
-            .body_height(480.0)
+            .width(600.0)
             .show(ctx, |d| {
                 d.body(|ui| {
+                    let scoped = self.loaded.is_some() || self.rerun.is_some();
+                    if scoped || self.endpoint.is_some() {
+                        theme::section_title(ui, "Rows");
+                        ui.add_space(Spacing::S);
+                    }
                     if let Some((_, rows)) = self.loaded {
                         ui.radio_value(&mut self.whole, false, format!("Loaded rows ({rows})"));
                     }
@@ -423,45 +476,66 @@ impl ExportDialog {
                     if self.rerun.is_some() {
                         ui.radio_value(&mut self.whole, true, "Whole result (re-run)");
                         if self.whole {
-                            ui.label(
-                                RichText::new(
-                                    "Runs the statement again on a separate session: rows this tab \
+                            theme::hint(
+                                ui,
+                                "Runs the statement again on a separate session: rows this tab \
                                  has not committed and its session settings are not seen.",
-                                )
-                                .color(theme::palette(ui.ctx()).text_muted),
                             );
                         }
                     }
-                    ui.add_space(Spacing::L);
-                    theme::section_title(ui, "File format");
-                    ui.add_space(Spacing::M);
-                    ui.label("Format");
-                    ComboBox::from_id_salt("export_format")
-                        .selected_text(self.format.label())
-                        .show_ui(ui, |ui| {
-                            for f in ExportFormat::ALL {
-                                ui.selectable_value(&mut self.format, f, f.label());
-                            }
-                        });
-                    ui.label("Encoding: UTF-8");
-                    match self.format {
-                        ExportFormat::Csv => self.csv.ui(ui, true),
-                        ExportFormat::SqlInsert => {
-                            ui.horizontal(|ui| {
-                                ui.label("Table");
-                                ui.text_edit_singleline(&mut self.table);
-                            });
-                        }
-                        _ => {}
+                    if scoped || self.endpoint.is_some() {
+                        ui.add_space(Spacing::L);
                     }
-                    ui.add_space(Spacing::M);
-                    ui.label(if self.sample.is_some() {
-                        "Output sample (first rows, long values shortened)"
-                    } else {
-                        "Format example"
+                    theme::section_title(ui, "File format");
+                    ui.add_space(Spacing::S);
+                    form_grid(ui, "export_form", |ui| {
+                        ui.label("Format");
+                        ComboBox::from_id_salt("export_format")
+                            .selected_text(self.format.label())
+                            .width(160.0)
+                            .show_ui(ui, |ui| {
+                                for f in ExportFormat::ALL {
+                                    ui.selectable_value(&mut self.format, f, f.label());
+                                }
+                            });
+                        ui.end_row();
+                        ui.label("Encoding");
+                        ui.label(RichText::new("UTF-8").color(theme::palette(ui.ctx()).text_muted));
+                        ui.end_row();
+                        match self.format {
+                            ExportFormat::Csv => self.csv.grid_rows(ui, true),
+                            ExportFormat::SqlInsert => {
+                                ui.label("Table");
+                                text_edit(
+                                    ui,
+                                    TextEdit::singleline(&mut self.table).desired_width(220.0),
+                                )
+                                .on_hover_text("The table the INSERT statements name");
+                                ui.end_row();
+                            }
+                            _ => {}
+                        }
                     });
+                    ui.add_space(Spacing::L);
+                    theme::section_title(
+                        ui,
+                        if self.sample.is_some() {
+                            "Preview"
+                        } else {
+                            "Example"
+                        },
+                    );
+                    theme::hint(
+                        ui,
+                        if self.sample.is_some() {
+                            "The first rows as they will be written; long values are shortened."
+                        } else {
+                            "How the format lays out rows."
+                        },
+                    );
+                    ui.add_space(Spacing::S);
                     let sample = self.sample_text();
-                    ui.add(egui::Label::new(RichText::new(sample).monospace()).wrap());
+                    sample_box(ui, &sample);
                 });
                 d.footer(|f| {
                     let waiting = self.ask.is_some();
@@ -559,7 +633,7 @@ impl Preview {
         Self {
             columns,
             rows: buffer,
-            grid: GridState::default(),
+            grid: GridState::preview(),
         }
     }
 }
@@ -713,40 +787,51 @@ impl ImportDialog {
             .show(ctx, |d| {
                 d.body(|ui| {
                     {
-                        ui.horizontal(|ui| {
-                            ui.label("File");
-                            let shown = self
-                                .path
-                                .as_ref()
-                                .and_then(|p| p.file_name())
-                                .map_or("No file chosen".to_string(), |n| {
-                                    n.to_string_lossy().into_owned()
-                                });
-                            ui.add(egui::Label::new(shown).truncate()).on_hover_text(
-                                self.path
-                                    .as_ref()
-                                    .map_or(String::new(), |p| p.display().to_string()),
-                            );
-                            if ui
-                                .add_enabled(self.run.is_none(), egui::Button::new("Choose file…"))
-                                .clicked()
-                            {
-                                self.ask = Some(FileAsk::open(
-                                    answer,
-                                    "Import from",
-                                    &["csv", "tsv", "json", "jsonl", "ndjson", "txt"],
-                                ));
-                            }
-                        });
                         let before = (self.format, self.csv.options());
-                        ui.label("Format");
-                        ComboBox::from_id_salt("import_format")
-                            .selected_text(self.format.label())
-                            .show_ui(ui, |ui| {
-                                for f in ImportFormat::ALL {
-                                    ui.selectable_value(&mut self.format, f, f.label());
+                        form_grid(ui, "import_form", |ui| {
+                            ui.label("File");
+                            ui.horizontal(|ui| {
+                                let shown = self
+                                    .path
+                                    .as_ref()
+                                    .and_then(|p| p.file_name())
+                                    .map(|n| n.to_string_lossy().into_owned());
+                                let muted = theme::palette(ui.ctx()).text_muted;
+                                let label = match &shown {
+                                    Some(name) => RichText::new(name),
+                                    None => RichText::new("No file chosen").color(muted),
+                                };
+                                ui.add(egui::Label::new(label).truncate()).on_hover_text(
+                                    self.path
+                                        .as_ref()
+                                        .map_or(String::new(), |p| p.display().to_string()),
+                                );
+                                if ui
+                                    .add_enabled(
+                                        self.run.is_none(),
+                                        egui::Button::new("Choose file…"),
+                                    )
+                                    .clicked()
+                                {
+                                    self.ask = Some(FileAsk::open(
+                                        answer,
+                                        "Import from",
+                                        &["csv", "tsv", "json", "jsonl", "ndjson", "txt"],
+                                    ));
                                 }
                             });
+                            ui.end_row();
+                            ui.label("Format");
+                            ComboBox::from_id_salt("import_format")
+                                .selected_text(self.format.label())
+                                .width(160.0)
+                                .show_ui(ui, |ui| {
+                                    for f in ImportFormat::ALL {
+                                        ui.selectable_value(&mut self.format, f, f.label());
+                                    }
+                                });
+                            ui.end_row();
+                        });
                         if self.format == ImportFormat::Csv {
                             egui::CollapsingHeader::new("CSV options")
                                 .id_salt("import-csv-options")
@@ -1023,11 +1108,22 @@ fn mapping_ui(
     targets: Option<&[String]>,
 ) {
     let Some(targets) = targets else {
-        ui.spinner();
+        ui.horizontal(|ui| {
+            ui.spinner();
+            theme::hint(ui, "Reading the table's columns…");
+        });
         return;
     };
+    theme::section_title(ui, "Columns");
+    theme::hint(
+        ui,
+        "Where each column of the file goes; skipped ones are not imported.",
+    );
+    ui.add_space(Spacing::S);
     egui::Grid::new("import_mapping")
         .num_columns(2)
+        .striped(true)
+        .min_col_width(160.0)
         .spacing([Spacing::L, Spacing::S])
         .show(ui, |ui| {
             ui.label(RichText::new("File column").strong());
@@ -1053,16 +1149,32 @@ fn mapping_ui(
 
 /// `table`: the target is a table (a collection has no transaction and is not emptied).
 fn options_ui(ui: &mut egui::Ui, options: &mut ImportOptions, table: bool) {
-    ui.horizontal(|ui| {
+    let p = theme::palette(ui.ctx());
+    form_grid(ui, "import_options", |ui| {
         ui.label("Rows per batch");
         ui.add(DragValue::new(&mut options.batch).range(1..=100_000));
+        ui.end_row();
     });
+    ui.add_space(Spacing::S);
     if table {
         ui.checkbox(&mut options.commit_per_batch, "Commit after each batch");
+        theme::hint(
+            ui,
+            "Rows already written stay if a later batch fails; off, a failure leaves the \
+             table as it was.",
+        );
     }
     ui.checkbox(&mut options.skip_bad_rows, "Skip bad rows and report them");
     if table {
-        ui.checkbox(&mut options.truncate_first, "Delete the table's rows first");
+        ui.add_space(Spacing::XS);
+        ui.checkbox(
+            &mut options.truncate_first,
+            RichText::new("Delete the table's rows first").color(p.error),
+        );
+        theme::hint(
+            ui,
+            "Every row now in the table is deleted before the import starts.",
+        );
     }
 }
 

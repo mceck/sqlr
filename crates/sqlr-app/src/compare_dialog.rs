@@ -247,17 +247,16 @@ impl CompareDialog {
                         theme::field_label(ui, "Connection");
                         Self::conn_combo(ui, id, conns, conn);
                         Self::status(ui, engine, conn);
-                        let label = ui.label(
-                            egui::RichText::new(format!("{title} database (optional)"))
-                                .small()
-                                .color(muted),
-                        );
+                        theme::field_label(ui, "Database");
                         ui.add(
                             TextEdit::singleline(database)
-                                .hint_text("Connection default")
+                                .hint_text("The connection's default")
                                 .desired_width(f32::INFINITY),
                         )
-                        .labelled_by(label.id);
+                        .on_hover_text(format!(
+                            "Optional: the {} database, when the server has several",
+                            title.to_lowercase()
+                        ));
                         theme::field_label(ui, "Schema");
                         let names = crate::catalog_picker::schema_names(
                             engine,

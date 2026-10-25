@@ -637,8 +637,9 @@ impl PrefsWindow {
     fn section_actions(&mut self, ui: &mut egui::Ui) {
         match self.section {
             "General" => {
-                ui.add_space(Spacing::M);
+                ui.add_space(Spacing::S);
                 ui.horizontal(|ui| {
+                    ui.add_space(9.0 + 2.0 * Spacing::M);
                     if ui
                         .button("Check for updates now")
                         .on_hover_text("Asks GitHub for the latest stable release")

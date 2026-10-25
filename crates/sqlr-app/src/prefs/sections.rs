@@ -19,25 +19,47 @@ pub(super) struct Editing<'a> {
     pub error: &'a mut Option<String>,
 }
 
+/// The group title a setting is listed under inside its section ("" for none).
+fn group_of(def: &SettingDef) -> &'static str {
+    match def.section {
+        "General" if def.id.starts_with("updates.") => "Updates",
+        "General" if def.id.starts_with("diagnostics.") => "Privacy & diagnostics",
+        "General" if def.id.starts_with("operations.") => "Operations",
+        "General" => "Execution",
+        "Drivers" if def.id.starts_with("drivers.postgres.") => "PostgreSQL",
+        "Drivers" if def.id.starts_with("drivers.mysql.") => "MySQL",
+        "Drivers" if def.id.starts_with("drivers.sqlite.") => "SQLite",
+        "Drivers" => "All drivers",
+        _ => "",
+    }
+}
+
 impl Editing<'_> {
     /// Whether the setting can be edited at the level being edited.
     pub(super) fn applies(&self, def: &SettingDef) -> bool {
         *self.scope == Level::Global || def.levels == Levels::All
     }
 
-    /// The rows of `defs` that apply here.
+    /// The rows of `defs` that apply here, under their group titles. The rows of a group are
+    /// kept together, in the order the group first appears.
     pub(super) fn rows(&mut self, ui: &mut egui::Ui, defs: &[&'static SettingDef]) {
-        let mut group = "";
+        let mut groups: Vec<&str> = Vec::new();
         for def in defs {
-            let next = match def.section {
-                "General" if def.id.starts_with("updates.") => "Updates",
-                "General" if def.id.starts_with("diagnostics.") => "Privacy & diagnostics",
-                "General" if def.id.starts_with("operations.") => "Operations",
-                "General" => "Execution",
-                "Drivers" if def.id.starts_with("drivers.postgres.") => "PostgreSQL",
-                "Drivers" if def.id.starts_with("drivers.mysql.") => "MySQL",
-                _ => "",
-            };
+            let g = group_of(def);
+            if !groups.contains(&g) {
+                groups.push(g);
+            }
+        }
+        // Updates go last in General, next to the "Check for updates now" that follows them.
+        if let Some(i) = groups.iter().position(|g| *g == "Updates") {
+            let updates = groups.remove(i);
+            groups.push(updates);
+        }
+        let mut ordered: Vec<&'static SettingDef> = defs.to_vec();
+        ordered.sort_by_key(|def| groups.iter().position(|g| *g == group_of(def)));
+        let mut group = "";
+        for def in ordered {
+            let next = group_of(def);
             if next != group {
                 group = next;
                 ui.add_space(Spacing::M);
@@ -169,7 +191,10 @@ impl Editing<'_> {
             };
             if def.id != "formats.use_for_export" {
                 let meta = sqlr_core::ColumnMeta::new("sample", type_name, kind, hint);
-                theme::hint(ui, &format!("Preview → {}", formats.format(&meta, sample)));
+                ui.horizontal(|ui| {
+                    ui.add_space(9.0 + 2.0 * Spacing::M);
+                    theme::hint(ui, &format!("Preview → {}", formats.format(&meta, sample)));
+                });
             }
         }
         ui.add_space(Spacing::S);

@@ -222,7 +222,7 @@ fn matrix(ui: &mut egui::Ui, filter: &str, drivers: &HashSet<String>) -> Option<
     let mut picked = None;
     let palette = theme::palette(ui.ctx());
     // The header cells share the full width, so the table and its stripes span the dialog.
-    let shares = [0.27, 0.15, 0.28, 0.17, 0.13];
+    let shares = [0.24, 0.13, 0.33, 0.17, 0.13];
     let room = ui.available_width() - Spacing::L * (shares.len() - 1) as f32 - Spacing::M;
     egui::Grid::new("databases_matrix")
         .striped(true)
@@ -264,11 +264,10 @@ fn matrix(ui: &mut egui::Ui, filter: &str, drivers: &HashSet<String>) -> Option<
                     }
                     _ => ("Driver missing".to_string(), palette.warning),
                 };
-                ui.label(RichText::new(support).color(color))
-                    .on_hover_text(db.notes);
-                ui.label(db.driver().unwrap_or("—"));
+                // The support, and right beside it the way to get what is missing.
                 ui.horizontal(|ui| {
-                    ui.label(db.default_port.map_or("—".to_string(), |p| p.to_string()));
+                    ui.label(RichText::new(support).color(color))
+                        .on_hover_text(db.notes);
                     if let KnownStatus::Installable { driver } = db.status
                         && !drivers.contains(driver)
                         && ui.small_button("Install…").clicked()
@@ -278,9 +277,15 @@ fn matrix(ui: &mut egui::Ui, filter: &str, drivers: &HashSet<String>) -> Option<
                     if db.driver().is_some_and(|d| !drivers.contains(d))
                         && !matches!(db.status, KnownStatus::Installable { .. })
                     {
-                        ui.hyperlink_to("Get sqlr", "https://github.com/mceck/sqlr/releases");
+                        ui.hyperlink_to(
+                            "Get the full build",
+                            "https://github.com/mceck/sqlr/releases",
+                        )
+                        .on_hover_text("This build of sqlr does not include the driver");
                     }
                 });
+                ui.label(db.driver().unwrap_or("—"));
+                ui.label(db.default_port.map_or("—".to_string(), |p| p.to_string()));
                 ui.end_row();
             }
         });

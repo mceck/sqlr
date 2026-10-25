@@ -108,7 +108,8 @@ fn context_menu(h: &mut Harness<'static, SqlrApp>, label: &str, item: &str) {
         .unwrap_or_else(|| panic!("no node labeled {label}"))
         .click_secondary();
     wait_for_label(h, item);
-    h.get_by_label(item).click();
+    // The menu settles its position over a frame or two: click it through accesskit.
+    h.get_by_label(item).click_accesskit();
     h.run_steps(2);
 }
 
@@ -162,7 +163,7 @@ fn transfer_wizard_end_to_end_sqlite() {
     h.run_steps(3);
     h.get_by_label("Next").click();
     h.run_steps(3);
-    wait_for_label_containing(&mut h, "3 of 3 columns mapped");
+    wait_for_label_containing(&mut h, "3 of 3 mapped");
     h.get_by_label("Run transfer").click();
     wait_for_label(&mut h, "Read 3 rows, wrote 3, rejected 0");
 

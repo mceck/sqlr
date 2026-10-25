@@ -107,11 +107,12 @@ fn header(
 ) -> Option<PlanAction> {
     let mut action = None;
     let line = chrome.sql.lines().next().unwrap_or_default().trim();
+    // Row 1: what was explained, its state, and the view's tools on the right.
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = Spacing::S;
-        let sql_w = (ui.available_width() - HEADER_ACTIONS_W).max(80.0);
+        let sql_w = (ui.available_width() - HEADER_ACTIONS_W - 120.0).max(80.0);
         ui.allocate_ui_with_layout(
-            vec2(sql_w, 20.0),
+            vec2(sql_w, 22.0),
             Layout::left_to_right(Align::Center),
             |ui| {
                 icons::paint(ui, icons::PLAN, p.accent);
@@ -133,9 +134,53 @@ fn header(
                 p.warning.gamma_multiply(0.14),
             );
         }
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = Spacing::XS;
+            if ui
+                .add(egui::Button::new("Copy").small())
+                .on_hover_text("Copy the raw plan")
+                .clicked()
+            {
+                action = Some(PlanAction::CopyRaw);
+            }
+            if ui
+                .add(
+                    egui::Button::new("Raw plan")
+                        .small()
+                        .selected(state.show_raw),
+                )
+                .on_hover_text("Show the plan as the database printed it")
+                .clicked()
+            {
+                state.show_raw = !state.show_raw;
+            }
+            if !state.show_raw {
+                let label = if state.collapsed.is_empty() {
+                    "Collapse all"
+                } else {
+                    "Expand all"
+                };
+                if ui.add(egui::Button::new(label).small()).clicked() {
+                    if state.collapsed.is_empty() {
+                        collapse_all(plan, state);
+                    } else {
+                        state.collapsed.clear();
+                    }
+                }
+            }
+            if chrome.stale
+                && ui
+                    .add(egui::Button::new("Recompute").small())
+                    .on_hover_text("Explain the current statement again")
+                    .clicked()
+            {
+                action = Some(PlanAction::Recompute);
+            }
+        });
     });
 
-    ui.add_space(Spacing::XS);
+    // Row 2: the measures, and the way to real timings while the plan is an estimate.
+    ui.add_space(Spacing::S);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = Spacing::L;
         if let Some(execution) = plan.execution_ms {
@@ -171,51 +216,26 @@ fn header(
                 .color(p.warning),
             );
         }
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if icons::button(ui, true, icons::COPY, None, "Copy raw plan").clicked() {
-                action = Some(PlanAction::CopyRaw);
-            }
-            if ui.selectable_label(state.show_raw, "Raw").clicked() {
-                state.show_raw = !state.show_raw;
-            }
-            if !state.show_raw {
-                let label = if state.collapsed.is_empty() {
-                    "Collapse all"
-                } else {
-                    "Expand all"
-                };
-                if ui.small_button(label).clicked() {
-                    if state.collapsed.is_empty() {
-                        collapse_all(plan, state);
-                    } else {
-                        state.collapsed.clear();
-                    }
+        composition(ui, p, insights);
+        if !insights.timed {
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let analyze = ui
+                    .add_enabled(
+                        !chrome.running,
+                        theme::primary_button_state(ui.ctx(), !chrome.running, "Explain Analyze"),
+                    )
+                    .on_hover_text(
+                        "Run the statement to measure real timings and row counts. It really \
+                         executes, so a write changes data.",
+                    );
+                if analyze.clicked() {
+                    action = Some(PlanAction::Analyze);
                 }
-            }
-            if chrome.stale
-                && icons::button(ui, true, icons::REFRESH, Some(p.warning), "Recompute")
-                    .on_hover_text("Recompute the plan for the current statement")
-                    .clicked()
-            {
-                action = Some(PlanAction::Recompute);
-            }
-        });
+                theme::hint(ui, "Costs are estimates, not measured times.");
+            });
+        }
     });
 
-    if !insights.timed {
-        ui.horizontal(|ui| {
-            theme::hint(ui, "Run Explain Analyze for real timings.");
-            if ui
-                .add_enabled(!chrome.running, egui::Button::new("Explain Analyze"))
-                .clicked()
-            {
-                action = Some(PlanAction::Analyze);
-            }
-        });
-    }
-
-    ui.add_space(Spacing::S);
-    composition(ui, p, insights);
     issues(ui, p, insights);
     ui.add_space(Spacing::S);
     hot_path(ui, p, plan, insights, state);
@@ -227,20 +247,22 @@ fn header(
 fn state_chip(ui: &mut Ui, timed: bool) {
     let p = theme::palette(ui.ctx());
     if timed {
-        chip(ui, "Analyzed", p.success, p.success.gamma_multiply(0.15));
+        chip(ui, "Analyzed", p.success, p.success.gamma_multiply(0.15))
+            .on_hover_text("Measured: the statement ran, timings and row counts are real");
     } else {
         chip(
             ui,
             "Estimated",
             p.text_muted,
             p.text_muted.gamma_multiply(0.15),
-        );
+        )
+        .on_hover_text("Estimated plan: row counts and costs are estimates, not measured times");
     }
 }
 
 /// Composition chips: what the plan is made of, in one line.
 fn composition(ui: &mut Ui, p: &Palette, insights: &PlanInsights) {
-    ui.horizontal_wrapped(|ui| {
+    ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = Spacing::S;
         chip(
             ui,
@@ -316,17 +338,6 @@ fn issues(ui: &mut Ui, p: &Palette, insights: &PlanInsights) {
     let hidden = warnings.len().saturating_sub(SUMMARY_WARNINGS);
     if hidden > 0 {
         theme::hint(ui, &format!("+{hidden} more in the node details"));
-    }
-    for issue in insights
-        .issues
-        .iter()
-        .filter(|i| i.level == PlanIssueLevel::Note)
-    {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = Spacing::S;
-            icons::paint(ui, icons::MORE, p.text_muted);
-            ui.label(RichText::new(&issue.message).small().color(p.text_muted));
-        });
     }
 }
 
@@ -477,7 +488,15 @@ fn draw_node(
     let selected = state.selected.as_deref() == Some(path.as_slice());
     let collapsed = state.collapsed.contains(path);
 
-    let width = (ui.available_width() - 20.0).clamp(180.0, CARD_W);
+    // Sized to what the card says: a short operator gets a short card.
+    let measure =
+        |text: String, font: egui::FontId| ui.painter().layout_no_wrap(text, font, p.text).size().x;
+    let title_w = measure(node.title(), theme::semibold(ui.ctx(), 12.5)) + 70.0;
+    let detail_w = measure(rows_text(node), egui::FontId::proportional(11.0)) + 190.0;
+    let width = title_w
+        .max(detail_w)
+        .clamp(220.0, CARD_W)
+        .min((ui.available_width() - 20.0).max(180.0));
     let stroke = if selected {
         Stroke::new(1.5, p.accent)
     } else if rank == Some(0) {
@@ -814,14 +833,13 @@ fn metric(ui: &mut Ui, p: &Palette, name: &str, value: String) {
     });
 }
 
-fn chip(ui: &mut Ui, text: &str, fg: Color32, bg: Color32) {
+fn chip(ui: &mut Ui, text: &str, fg: Color32, bg: Color32) -> egui::Response {
     Frame::new()
         .fill(bg)
         .corner_radius(CornerRadius::same(3))
         .inner_margin(Margin::symmetric(5, 1))
-        .show(ui, |ui| {
-            ui.label(RichText::new(text).small().color(fg));
-        });
+        .show(ui, |ui| ui.label(RichText::new(text).small().color(fg)))
+        .inner
 }
 
 fn total_weight(plan: &PlanTree) -> f64 {

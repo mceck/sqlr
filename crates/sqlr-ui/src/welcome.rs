@@ -161,16 +161,18 @@ fn key_hints(ui: &mut egui::Ui) {
     .into_iter()
     .filter_map(|(action, label)| Some((crate::keymap::shortcut(ui.ctx(), action)?, label)))
     .collect();
-    ui.vertical(|ui| {
+    // Right-aligned rows, the key caps last: they line up on the column's right edge.
+    ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
+        ui.spacing_mut().item_spacing.y = Spacing::S;
         for (keys, label) in hints {
-            ui.horizontal(|ui| {
-                ui.allocate_ui_with_layout(
-                    vec2(108.0, 22.0),
-                    egui::Layout::right_to_left(egui::Align::Center),
-                    |ui| crate::keymap_editor::keycaps(ui, &[keys]),
-                );
-                ui.label(RichText::new(label).size(12.0).color(palette.text_muted));
-            });
+            ui.allocate_ui_with_layout(
+                vec2(ui.available_width(), 22.0),
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| {
+                    crate::keymap_editor::keycaps(ui, &[keys]);
+                    ui.label(RichText::new(label).size(12.0).color(palette.text_muted));
+                },
+            );
         }
     });
 }
@@ -202,7 +204,11 @@ fn header(ui: &mut egui::Ui, width: f32) {
         });
         if width >= 480.0 {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.vertical(key_hints);
+                ui.allocate_ui_with_layout(
+                    vec2(220.0, 52.0),
+                    egui::Layout::top_down(egui::Align::Max),
+                    key_hints,
+                );
             });
         }
     });
