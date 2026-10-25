@@ -287,7 +287,9 @@ async fn idle_sidecar_stops() {
         .with_writer(capture.clone())
         .with_ansi(false)
         .finish();
-    let _ = tracing::subscriber::set_global_default(subscriber);
+    // A thread-local default: the sidecar tasks run on this test's current-thread runtime,
+    // and tests running in parallel in the same process must not capture each other's logs.
+    let _subscriber = tracing::subscriber::set_default(subscriber);
     let mut spec = echo_spec();
     spec.idle_timeout = Duration::from_millis(150);
     let (driver, _) = SidecarDriver::probe(spec).await.unwrap();
@@ -354,8 +356,10 @@ async fn secrets_redacted_in_protocol_log() {
         .with_writer(capture.clone())
         .with_ansi(false)
         .finish();
-    // Events come from the client's spawned tasks, so the subscriber must be global.
-    let _ = tracing::subscriber::set_global_default(subscriber);
+    // Events come from the client's spawned tasks, which the current-thread test runtime
+    // polls on this thread; a global subscriber would also capture the tests running in
+    // parallel in this process.
+    let _subscriber = tracing::subscriber::set_default(subscriber);
 
     let driver = echo().await;
     let secrets = Secrets([("password".to_string(), "hunter2-correct-horse".to_string())].into());
