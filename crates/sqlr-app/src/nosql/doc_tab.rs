@@ -221,10 +221,7 @@ fn doc_results_ui(
     let p = theme::palette(ui.ctx());
     if d.results.is_empty() {
         ui.add_space(Spacing::M);
-        theme::hint(
-            ui,
-            "Run the statement at the caret with ⌘↵, or the script with ⇧⌘↵",
-        );
+        theme::hint(ui, &crate::tabs::run_hint(ui.ctx()));
         return;
     }
     // Panes: one per result, then Messages; the view switch on the right.

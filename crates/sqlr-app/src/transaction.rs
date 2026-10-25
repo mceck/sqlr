@@ -229,8 +229,13 @@ impl SqlrApp {
             None,
             read_only,
             "Read-only",
+        );
+        let toggled = theme::tooltip(
+            toggled,
+            "Read-only session",
+            None,
+            Some("Refuse statements that modify data"),
         )
-        .on_hover_text("Read-only session: refuse statements that modify data")
         .clicked();
         if !transactions {
             if let (Some(key), true) = (&key, toggled) {
@@ -246,12 +251,22 @@ impl SqlrApp {
             Some(palette.success),
             false,
             "Commit",
+        );
+        let commit = theme::tooltip_for(
+            commit,
+            "Commit",
+            sqlr_core::ActionId::Commit,
+            Some("Make the open transaction's changes permanent"),
         )
-        .on_hover_text("Commit the transaction");
-        let commit = commit.clicked();
-        let rollback = icons::toolbar_button(ui, open, icons::ROLLBACK, None, false, "Rollback")
-            .on_hover_text("Roll back the transaction");
-        let rollback = rollback.clicked();
+        .clicked();
+        let rollback = icons::toolbar_button(ui, open, icons::ROLLBACK, None, false, "Rollback");
+        let rollback = theme::tooltip_for(
+            rollback,
+            "Rollback",
+            sqlr_core::ActionId::Rollback,
+            Some("Discard the open transaction's changes"),
+        )
+        .clicked();
         let savepoints = tx
             .as_ref()
             .map(|t| t.savepoints.clone())
@@ -264,8 +279,13 @@ impl SqlrApp {
             None,
             false,
             "Savepoint",
+        );
+        let savepoint = theme::tooltip(
+            savepoint,
+            "Savepoint",
+            None,
+            Some("Mark a point in the transaction to roll back to"),
         )
-        .on_hover_text("Create a savepoint")
         .clicked();
         let mut rollback_to = None;
         let can_rollback_to = open && !savepoints.is_empty();
@@ -285,7 +305,7 @@ impl SqlrApp {
         menu.widget_info(|| {
             WidgetInfo::labeled(WidgetType::Button, can_rollback_to, "Rollback to savepoint")
         });
-        menu.on_hover_text("Roll back to a savepoint");
+        theme::tooltip(menu, "Roll back to a savepoint", None, None);
         let Some(key) = key else {
             return;
         };

@@ -1107,7 +1107,16 @@ fn folder_row(
         }
         toggle |= response.double_clicked();
         theme::row_context_menu(&response, |ui| {
-            if menu::item(ui, icons::CONNECTION, "New connection", None).clicked() {
+            let new_connection =
+                crate::keymap::shortcut(ui.ctx(), sqlr_core::ActionId::NewConnection);
+            if menu::item(
+                ui,
+                icons::CONNECTION,
+                "New connection",
+                new_connection.as_deref(),
+            )
+            .clicked()
+            {
                 actions.push(TreeAction::NewConnectionIn(path.to_string()));
                 ui.close();
             }

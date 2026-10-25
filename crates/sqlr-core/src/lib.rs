@@ -74,7 +74,7 @@ pub use error::*;
 pub use es_request::*;
 pub use formats::DataFormats;
 pub use generate::*;
-pub use keymap::{ActionId, Chord, Keymap, Mods, PRESETS, Scope};
+pub use keymap::{ActionId, Chord, GROUPS as ACTION_GROUPS, Keymap, Mods, PRESETS, Scope};
 pub use known::*;
 pub use kv::*;
 pub use lang::*;

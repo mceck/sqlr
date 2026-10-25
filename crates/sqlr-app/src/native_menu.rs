@@ -76,7 +76,10 @@ impl NativeMenu {
         )?;
 
         // File.
+        // Items whose accelerator comes from the keymap get none here: `sync_keymap` sets it.
+        let item = |label: &str| MenuItem::new(label, true, None);
         let new_tab = MenuItem::new("New query tab", true, cmd(Code::KeyT));
+        let new_tab_on_connection = item("New query tab on the current connection");
         let close_tab = MenuItem::new("Close tab", true, cmd(Code::KeyW));
         let new_connection = MenuItem::new("New connection", true, None);
         let profiles = MenuItem::new("Connection profiles…", true, None);
@@ -88,6 +91,7 @@ impl NativeMenu {
             true,
             &[
                 &new_tab,
+                &new_tab_on_connection,
                 &close_tab,
                 &PredefinedMenuItem::separator(),
                 &new_connection,
@@ -110,6 +114,12 @@ impl NativeMenu {
         let paste = MenuItem::new("Paste", true, cmd(Code::KeyV));
         let delete = MenuItem::new("Delete", true, None);
         let select_all = MenuItem::new("Select All", true, cmd(Code::KeyA));
+        let find = item("Find…");
+        let replace = item("Find and replace…");
+        let comment = item("Toggle line comment");
+        let duplicate = item("Duplicate line or selection");
+        let rename = item("Rename…");
+        let delete_rows = item("Delete selected rows");
         let edit = Submenu::with_items(
             "Edit",
             true,
@@ -123,6 +133,14 @@ impl NativeMenu {
                 &delete,
                 &PredefinedMenuItem::separator(),
                 &select_all,
+                &PredefinedMenuItem::separator(),
+                &find,
+                &replace,
+                &comment,
+                &duplicate,
+                &PredefinedMenuItem::separator(),
+                &rename,
+                &delete_rows,
             ],
         )?;
 
@@ -131,14 +149,22 @@ impl NativeMenu {
         let history_item = CheckMenuItem::new("History", true, history, None);
         let terminal_item = CheckMenuItem::new("Terminal", true, terminal, None);
         let soft_wrap_item = CheckMenuItem::new("Soft wrap", true, soft_wrap, None);
+        let commands = item("Command palette…");
+        let open_object = item("Go to a table or view…");
+        let tasks = item("Tasks");
         let view = Submenu::with_items(
             "View",
             true,
             &[
+                &commands,
+                &open_object,
+                &PredefinedMenuItem::separator(),
                 &value_panel_item,
                 &history_item,
                 &terminal_item,
                 &soft_wrap_item,
+                &PredefinedMenuItem::separator(),
+                &tasks,
             ],
         )?;
 
@@ -146,6 +172,11 @@ impl NativeMenu {
         let run = MenuItem::new("Run statement", true, cmd(Code::Enter));
         let run_script = MenuItem::new("Run script", true, cmd_shift(Code::Enter));
         let stop = MenuItem::new("Stop", true, None);
+        let explain = item("Explain");
+        let explain_analyze = item("Explain analyze");
+        let commit = item("Commit");
+        let rollback = item("Rollback");
+        let format = item("Format SQL");
         let save_snippet = MenuItem::new("Save as snippet…", true, None);
         let query = Submenu::with_items(
             "Query",
@@ -156,6 +187,13 @@ impl NativeMenu {
                 &PredefinedMenuItem::separator(),
                 &stop,
                 &PredefinedMenuItem::separator(),
+                &explain,
+                &explain_analyze,
+                &PredefinedMenuItem::separator(),
+                &commit,
+                &rollback,
+                &PredefinedMenuItem::separator(),
+                &format,
                 &save_snippet,
             ],
         )?;
@@ -184,7 +222,26 @@ impl NativeMenu {
 
         // The AppKit callback only knows the item id, so the ids are mapped to commands
         // once, here.
+        use sqlr_core::ActionId as A;
         let actions: Vec<(MenuId, AppCommand)> = vec![
+            (
+                new_tab_on_connection.id().clone(),
+                AppCommand::NewTabOnConnection,
+            ),
+            (find.id().clone(), AppCommand::Key(A::Find)),
+            (replace.id().clone(), AppCommand::Key(A::Replace)),
+            (comment.id().clone(), AppCommand::Key(A::ToggleComment)),
+            (duplicate.id().clone(), AppCommand::Key(A::DuplicateLine)),
+            (rename.id().clone(), AppCommand::Key(A::RenameSelection)),
+            (delete_rows.id().clone(), AppCommand::Key(A::DeleteRows)),
+            (commands.id().clone(), AppCommand::Commands),
+            (open_object.id().clone(), AppCommand::OpenObject),
+            (tasks.id().clone(), AppCommand::ShowTasks),
+            (explain.id().clone(), AppCommand::Explain),
+            (explain_analyze.id().clone(), AppCommand::ExplainAnalyze),
+            (commit.id().clone(), AppCommand::Commit),
+            (rollback.id().clone(), AppCommand::Rollback),
+            (format.id().clone(), AppCommand::Key(A::FormatSql)),
             (about.id().clone(), AppCommand::About),
             (settings.id().clone(), AppCommand::Settings),
             (quit.id().clone(), AppCommand::Quit),
@@ -226,8 +283,24 @@ impl NativeMenu {
         let pending: Arc<Mutex<Vec<AppCommand>>> = Arc::new(Mutex::new(Vec::new()));
         let queue = Arc::clone(&pending);
         let ctx = ctx.clone();
-        use sqlr_core::ActionId as A;
         let key_items = vec![
+            (new_tab_on_connection.clone(), A::NewTabOnConnection),
+            (find.clone(), A::Find),
+            (replace.clone(), A::Replace),
+            (comment.clone(), A::ToggleComment),
+            (duplicate.clone(), A::DuplicateLine),
+            (rename.clone(), A::RenameSelection),
+            (delete_rows.clone(), A::DeleteRows),
+            (commands.clone(), A::Commands),
+            (open_object.clone(), A::OpenObject),
+            (tasks.clone(), A::ShowTasks),
+            (explain.clone(), A::Explain),
+            (explain_analyze.clone(), A::ExplainAnalyze),
+            (commit.clone(), A::Commit),
+            (rollback.clone(), A::Rollback),
+            (format.clone(), A::FormatSql),
+            // Not Stop: its Esc would be taken from every popup and dialog.
+            (save_snippet.clone(), A::SaveSnippet),
             (settings.clone(), A::Settings),
             (new_tab.clone(), A::NewTab),
             (close_tab.clone(), A::CloseTab),

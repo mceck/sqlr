@@ -26,6 +26,7 @@ mod palette;
 mod plan_view;
 mod prefs_widgets;
 mod result_bar;
+pub mod shortcuts;
 mod snippets;
 mod tasks_panel;
 mod text;

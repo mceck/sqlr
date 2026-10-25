@@ -54,6 +54,18 @@ pub const PLAN: &str = ph::TREE_STRUCTURE;
 pub const CONNECTION: &str = ph::PLUGS_CONNECTED;
 /// Agent access (the MCP server).
 pub const MCP: &str = ph::ROBOT;
+// Commands (the palette and menus).
+pub const TERMINAL: &str = ph::TERMINAL_WINDOW;
+pub const TRANSFER: &str = ph::ARROWS_LEFT_RIGHT;
+pub const COMPARE: &str = ph::GIT_DIFF;
+pub const PROFILES: &str = ph::SHIELD_CHECK;
+pub const TASKS: &str = ph::LIST_CHECKS;
+pub const UPDATES: &str = ph::ARROW_CIRCLE_UP;
+pub const DRIVERS: &str = ph::PUZZLE_PIECE;
+pub const QUIT: &str = ph::SIGN_OUT;
+pub const SOFT_WRAP: &str = ph::TEXT_ALIGN_LEFT;
+pub const FORMAT: &str = ph::MAGIC_WAND;
+pub const GO_TO: &str = ph::LIST_MAGNIFYING_GLASS;
 // Status bar and outcomes.
 pub const DOT: &str = ph::CIRCLE;
 pub const ROWS: &str = ph::ROWS;

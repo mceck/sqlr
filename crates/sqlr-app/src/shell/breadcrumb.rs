@@ -47,10 +47,10 @@ pub(crate) fn tab_breadcrumb(
         Some(c) => session_commit_mode(engine, &engine.session(c, Some(tab.key)), profile_mode),
         None => CommitMode::default(),
     };
-    let run = sqlr_ui::keymap::ui_keymap(ui.ctx())
-        .label(sqlr_core::ActionId::RunStatement)
-        .unwrap_or_default();
-    let right = format!("{} · {run} run", mode_name(mode));
+    let right = match sqlr_ui::keymap::shortcut(ui.ctx(), sqlr_core::ActionId::RunStatement) {
+        Some(run) => format!("{} · {run} to run", mode_name(mode)),
+        None => mode_name(mode).to_string(),
+    };
     let has_database = database.is_some();
     let crumbs = crumbs(tab, name, database.clone());
     let mut action = None;

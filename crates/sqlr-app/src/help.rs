@@ -1,20 +1,29 @@
 //! The Help > Keyboard Shortcuts window.
 
-use egui::{Context, Frame, Grid, Margin, RichText, ScrollArea, Window, vec2};
-use sqlr_ui::theme::{self, Spacing};
+use egui::{Context, Frame, Margin, Window, vec2};
+use sqlr_core::Keymap;
+use sqlr_ui::shortcuts::{ShortcutsAction, ShortcutsView};
+use sqlr_ui::theme;
 
-/// The window's open flag; the app owns it and draws the window from `dialogs`.
+/// The window's open flag and its list; the app owns it and draws the window from `dialogs`.
 #[derive(Default)]
 pub struct ShortcutsDialog {
     pub open: bool,
+    view: ShortcutsView,
 }
 
 impl ShortcutsDialog {
-    pub fn show(&mut self, ctx: &Context) {
+    /// Draws the window over `keymap` (the active one, `preset` its preset id).
+    pub fn show(
+        &mut self,
+        ctx: &Context,
+        keymap: &Keymap,
+        preset: &str,
+    ) -> Option<ShortcutsAction> {
         if !self.open {
-            return;
+            return None;
         }
-        let palette = theme::palette(ctx);
+        let mut action = None;
         let mut open = self.open;
         let mut close = false;
         Window::new("Keyboard shortcuts")
@@ -38,21 +47,11 @@ impl ShortcutsDialog {
                 Frame::new()
                     .inner_margin(Margin::symmetric(16, 14))
                     .show(ui, |ui| {
-                        ScrollArea::vertical()
-                            .auto_shrink([false, false])
-                            .show(ui, |ui| {
-                                let map=sqlr_ui::keymap::ui_keymap(ctx);
-                                Grid::new("resolved_shortcuts").num_columns(2).spacing([Spacing::L*2.0,Spacing::S]).show(ui,|ui| {
-                                    for action in sqlr_core::ActionId::ALL {
-                                        ui.label(action.label());ui.label(RichText::new(map.label(*action).unwrap_or_else(||"Unbound".into())).monospace().color(palette.text_muted));ui.end_row();
-                                    }
-                                });
-                                ui.add_space(Spacing::L);
-                                ui.label("Fixed text input: characters, Backspace, Delete, arrows. Dialog confirmation and dismissal: Enter / Escape.");
-                            });
+                        action = self.view.show(ui, keymap, preset);
                     });
             });
-        self.open = open && !close;
+        self.open = open && !close && action.is_none();
+        action
     }
 }
 
@@ -62,7 +61,10 @@ mod tests {
 
     fn frame(dialog: &mut ShortcutsDialog) {
         let ctx = Context::default();
-        let mut out = ctx.run_ui(Default::default(), |ui| dialog.show(ui.ctx()));
+        let keymap = Keymap::preset("sqlr").unwrap();
+        let mut out = ctx.run_ui(Default::default(), |ui| {
+            dialog.show(ui.ctx(), &keymap, "sqlr");
+        });
         // No renderer consumes the font atlas upload here.
         out.textures_delta.clear();
     }
@@ -76,7 +78,10 @@ mod tests {
 
     #[test]
     fn an_open_dialog_lists_every_action_and_its_keys() {
-        let mut dialog = ShortcutsDialog { open: true };
+        let mut dialog = ShortcutsDialog {
+            open: true,
+            ..Default::default()
+        };
         frame(&mut dialog);
         frame(&mut dialog);
         assert!(dialog.open);

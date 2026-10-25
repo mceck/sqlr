@@ -707,7 +707,11 @@ fn object_editor_body(
             action = Some(ObjectEditorAction::Preview);
         }
         let apply = icons::button(ui, can_apply, icons::SUCCESS, Some(p.success), "Apply")
-            .on_hover_text("Apply the pending changes (⌘S)");
+            .on_hover_text(crate::keymap::tooltip(
+                ui.ctx(),
+                "Apply the pending changes",
+                sqlr_core::ActionId::ApplyObject,
+            ));
         let apply = match ctx.apply_blocked {
             Some(reason) => apply.on_disabled_hover_text(reason),
             None => apply,

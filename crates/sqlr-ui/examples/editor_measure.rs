@@ -814,6 +814,8 @@ fn palette_phase() -> PhaseOut {
             detail: format!("schema_{:02}", i % 40),
             group: PaletteGroup::Object,
             fuzzy: true,
+            icon: None,
+            shortcut: None,
         })
         .collect();
     let query = "user_ev";

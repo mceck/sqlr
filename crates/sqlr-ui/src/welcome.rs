@@ -164,6 +164,24 @@ fn connection_header(ui: &mut egui::Ui, width: f32) -> bool {
     }
 }
 
+/// The palettes' shortcuts, from the keymap: everything else is a search away.
+fn key_hints(ui: &mut egui::Ui) {
+    let palette = theme::palette(ui.ctx());
+    ui.spacing_mut().item_spacing.y = Spacing::XS;
+    for (action, label) in [
+        (sqlr_core::ActionId::Commands, "Commands"),
+        (sqlr_core::ActionId::OpenObject, "Go to a table"),
+    ] {
+        let Some(keys) = crate::keymap::shortcut(ui.ctx(), action) else {
+            continue;
+        };
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(RichText::new(label).size(12.0).color(palette.text_muted));
+            crate::keymap_editor::keycaps(ui, &[keys]);
+        });
+    }
+}
+
 /// A compact brand header that leaves the connection choices in focus.
 fn header(ui: &mut egui::Ui, width: f32) {
     let palette = theme::palette(ui.ctx());
@@ -188,6 +206,11 @@ fn header(ui: &mut egui::Ui, width: f32) {
                     .color(palette.text_muted),
             );
         });
+        if width >= 480.0 {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.vertical(key_hints);
+            });
+        }
     });
     ui.add_space(20.0);
     let (line, _) = ui.allocate_exact_size(vec2(width, 1.0), Sense::hover());

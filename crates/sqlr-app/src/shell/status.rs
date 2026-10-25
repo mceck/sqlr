@@ -121,6 +121,8 @@ pub enum StatusAction {
     /// Cancel the running job.
     CancelJob,
     OpenAgents,
+    /// Open the command palette.
+    OpenCommands,
 }
 
 #[derive(Default)]
@@ -260,6 +262,25 @@ pub fn status_bar(
     // The right group first, so the left one gets what is left and never runs under it.
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         ui.spacing_mut().item_spacing.x = Spacing::S;
+        // The palette's shortcut, in view so it is learned; the first to go in a narrow window.
+        if let Some(keys) = sqlr_ui::keymap::shortcut(ui.ctx(), sqlr_core::ActionId::Commands)
+            .filter(|_| fits(ui, 900.0))
+        {
+            let response = ui
+                .add(
+                    Button::new(
+                        RichText::new(format!("{keys}  Commands"))
+                            .small()
+                            .color(palette.text_muted),
+                    )
+                    .frame(false),
+                )
+                .on_hover_text("Open the command palette");
+            if response.clicked() {
+                action = Some(StatusAction::OpenCommands);
+            }
+            ui.separator();
+        }
         if let Some(mcp) = view.mcp.as_ref().filter(|_| fits(ui, 90.0)) {
             let (dot, word) = if mcp.running {
                 (palette.success, "MCP")

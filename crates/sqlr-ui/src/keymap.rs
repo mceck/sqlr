@@ -127,8 +127,38 @@ impl UiKeymap {
 
     /// How `action`'s first chord reads on this platform.
     pub fn label(&self, action: ActionId) -> Option<String> {
-        self.keymap.chord_for(action).map(|c| c.label(self.mac))
+        self.keymap.label(action, self.mac)
     }
+
+    /// Every chord of `action`, as it reads on this platform.
+    pub fn labels(&self, action: ActionId) -> Vec<String> {
+        self.keymap.labels(action, self.mac)
+    }
+
+    /// Whether hints use the macOS notation.
+    pub fn mac(&self) -> bool {
+        self.mac
+    }
+}
+
+/// The hint for `action` in this context's keymap (user changes and preset included), in the
+/// platform's notation; `None` while it is unbound. Every shortcut shown in the UI comes from
+/// here or from [`UiKeymap::label`].
+pub fn shortcut(ctx: &Context, action: ActionId) -> Option<String> {
+    ui_keymap(ctx).label(action)
+}
+
+/// `label` followed by its shortcut, `"Run  ⌘↵"`, for tooltips; `label` alone when unbound.
+pub fn with_shortcut(label: &str, shortcut: Option<&str>) -> String {
+    match shortcut {
+        Some(keys) => format!("{label}  {keys}"),
+        None => label.to_string(),
+    }
+}
+
+/// [`with_shortcut`] with `action`'s current hint.
+pub fn tooltip(ctx: &Context, label: &str, action: ActionId) -> String {
+    with_shortcut(label, shortcut(ctx, action).as_deref())
 }
 
 fn data_id() -> egui::Id {
@@ -276,5 +306,47 @@ mod tests {
             Some(ActionId::Find)
         );
         assert_eq!(ui.label(ActionId::Find).as_deref(), Some("⌥⌘J"));
+    }
+
+    #[test]
+    fn tooltips_take_the_context_keymap() {
+        let ctx = Context::default();
+        ctx.set_os(egui::os::OperatingSystem::Mac);
+        assert_eq!(tooltip(&ctx, "Run", ActionId::RunStatement), "Run  ⌘↵");
+        let mut keymap = Keymap::preset("sqlr").unwrap();
+        keymap.set_chords(ActionId::RunStatement, vec![Chord::parse("F5").unwrap()]);
+        keymap.unbind(ActionId::Commit);
+        set_ui_keymap(&ctx, keymap);
+        assert_eq!(tooltip(&ctx, "Run", ActionId::RunStatement), "Run  F5");
+        assert_eq!(tooltip(&ctx, "Commit", ActionId::Commit), "Commit");
+
+        let ctx = Context::default();
+        ctx.set_os(egui::os::OperatingSystem::Windows);
+        assert_eq!(
+            shortcut(&ctx, ActionId::RunScript).as_deref(),
+            Some("Ctrl+Shift+Enter")
+        );
+    }
+
+    /// Every hint of both presets draws with the bundled fonts: no tofu or stray glyphs.
+    #[test]
+    fn every_hint_has_glyphs_in_the_ui_font() {
+        let ctx = Context::default();
+        crate::theme::install_fonts(&ctx, &[]);
+        let mut out = ctx.run_ui(Default::default(), |_| {});
+        out.textures_delta.clear();
+        let font = egui::FontId::proportional(12.0);
+        for (preset, _) in sqlr_core::PRESETS {
+            let keymap = Keymap::preset(preset).unwrap();
+            for mac in [true, false] {
+                for (_, chord) in keymap.bindings() {
+                    let hint = chord.label(mac);
+                    assert!(
+                        ctx.fonts_mut(|f| f.has_glyphs(&font, &hint)),
+                        "{hint:?} ({preset}, mac: {mac})"
+                    );
+                }
+            }
+        }
     }
 }

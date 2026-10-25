@@ -3,7 +3,7 @@
 //! The widget only ranks and shows the items it is given and reports which one was chosen; the
 //! caller keeps whatever each item stands for in a parallel list.
 
-use egui::{Align2, Id, Key, Modifiers, RichText, TextEdit, vec2};
+use egui::{Align, Align2, Id, Key, Layout, Modifiers, RichText, TextEdit, vec2};
 use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
 use nucleo_matcher::{Config, Matcher, Utf32Str};
 
@@ -38,6 +38,11 @@ pub struct PaletteItem {
     pub group: PaletteGroup,
     /// `false`: already filtered by the caller; listed after the fuzzy matches, in order.
     pub fuzzy: bool,
+    /// The row's icon; `None` uses the group's.
+    pub icon: Option<&'static str>,
+    /// The keyboard shortcut, right-aligned in its own column (see
+    /// [`crate::keymap::shortcut`]).
+    pub shortcut: Option<String>,
 }
 
 #[derive(Default)]
@@ -158,10 +163,17 @@ pub fn palette(
                 .inner_margin(Spacing::M)
                 .show(ui, |ui| {
                     ui.set_width(WIDTH);
-                    let hint = match state.mode {
-                        Some(PaletteMode::Objects) => "Go to table or view",
-                        _ => "Run a command, insert a snippet, search history",
+                    // The placeholder names the palette's own shortcut, so it is learned here.
+                    let (hint, action) = match state.mode {
+                        Some(PaletteMode::Objects) => {
+                            ("Go to a table or view", sqlr_core::ActionId::OpenObject)
+                        }
+                        _ => (
+                            "Run a command, insert a snippet, search history",
+                            sqlr_core::ActionId::Commands,
+                        ),
                     };
+                    let hint = crate::keymap::tooltip(ctx, hint, action);
                     let field = crate::text_menu::text_edit(
                         ui,
                         TextEdit::singleline(&mut state.query)
@@ -197,25 +209,7 @@ pub fn palette(
                                     selected,
                                     Spacing::ROW_TREE,
                                     egui::Sense::click(),
-                                    |ui| {
-                                        ui.add_space(Spacing::XS);
-                                        let (icon, color) = group_icon(item.group);
-                                        icons::paint(ui, icon, color(&colors));
-                                        ui.add(
-                                            egui::Label::new(&item.label)
-                                                .selectable(false)
-                                                .truncate(),
-                                        );
-                                        ui.add(
-                                            egui::Label::new(
-                                                RichText::new(&item.detail)
-                                                    .small()
-                                                    .color(colors.text_muted),
-                                            )
-                                            .selectable(false)
-                                            .truncate(),
-                                        );
-                                    },
+                                    |ui| item_row(ui, item, &colors),
                                 )
                                 .response;
                                 if selected && (up || down) {
@@ -239,11 +233,39 @@ pub fn palette(
     output
 }
 
+/// One row: icon, label and detail on the left, the shortcut right-aligned in its own
+/// column.
+fn item_row(ui: &mut egui::Ui, item: &PaletteItem, colors: &Palette) {
+    ui.add_space(Spacing::XS);
+    let (icon, color) = group_icon(item.group);
+    icons::paint(ui, item.icon.unwrap_or(icon), color(colors));
+    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+        // Clear of the overlaid scroll bar.
+        ui.add_space(Spacing::L);
+        if let Some(keys) = &item.shortcut {
+            ui.add(
+                egui::Label::new(RichText::new(keys).color(colors.text_muted)).selectable(false),
+            );
+            ui.add_space(Spacing::L);
+        }
+        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+            ui.add(egui::Label::new(&item.label).selectable(false).truncate());
+            if !item.detail.is_empty() {
+                ui.add(
+                    egui::Label::new(RichText::new(&item.detail).small().color(colors.text_muted))
+                        .selectable(false)
+                        .truncate(),
+                );
+            }
+        });
+    });
+}
+
 /// The icon of a palette group and its color.
 fn group_icon(group: PaletteGroup) -> (&'static str, fn(&Palette) -> egui::Color32) {
     match group {
         PaletteGroup::Object => (icons::TABLE, |p| p.icon_table),
-        PaletteGroup::Command => (icons::COMMAND, |p| p.warning),
+        PaletteGroup::Command => (icons::COMMAND, |p| p.text_muted),
         PaletteGroup::Snippet => (icons::SNIPPET, |p| p.icon_function),
         PaletteGroup::History => (icons::HISTORY, |p| p.text_muted),
     }

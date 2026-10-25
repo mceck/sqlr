@@ -134,7 +134,63 @@ impl AppCommand {
             Self::Undo => A::Undo,
             Self::Redo => A::Redo,
             Self::SelectAll => A::SelectAll,
+            Self::NewTabOnConnection => A::NewTabOnConnection,
+            Self::OpenObject => A::OpenObject,
+            Self::Commands => A::Commands,
+            Self::Key(action) => *action,
             _ => return None,
         })
+    }
+}
+
+impl AppCommand {
+    /// The icon the command palette and menus show for the command.
+    pub(crate) fn icon(&self) -> &'static str {
+        use sqlr_ui::theme::icons as i;
+        match self {
+            Self::NewTab | Self::NewTabOnConnection => i::QUERY,
+            Self::CloseTab => i::CLOSE,
+            Self::NewConnection | Self::Connect(_) => i::CONNECTION,
+            Self::Disconnect(_) => i::DISCONNECT,
+            Self::ImportConnections => i::IMPORT,
+            Self::ExportConnections | Self::ExportResult => i::EXPORT,
+            Self::Settings => i::SETTINGS,
+            Self::DriverManager => i::DRIVERS,
+            Self::Quit => i::QUIT,
+            Self::About | Self::Diagnostics | Self::ReportProblem => i::WARNING,
+            Self::Run => i::RUN,
+            Self::RunScript => i::RUN_SCRIPT,
+            Self::Stop => i::STOP,
+            Self::ToggleValuePanel => i::PANEL,
+            Self::ToggleTerminal => i::TERMINAL,
+            Self::ToggleHistory => i::HISTORY,
+            Self::ToggleSoftWrap => i::SOFT_WRAP,
+            Self::SaveSnippet => i::SNIPPET,
+            Self::Commit => i::COMMIT,
+            Self::Rollback => i::ROLLBACK,
+            Self::Profiles => i::PROFILES,
+            Self::NewObject(_, kind) => i::for_object(*kind),
+            Self::EditSelected(..) => i::EDIT,
+            Self::OpenAdmin(..) => i::SESSIONS,
+            Self::TransferData => i::TRANSFER,
+            Self::ShowTasks => i::TASKS,
+            Self::ShowOperations => i::TIMER,
+            Self::CompareSchemas => i::COMPARE,
+            Self::Explain => i::PLAN,
+            Self::ExplainAnalyze => i::TIMER,
+            Self::Undo => i::UNDO,
+            Self::Redo => i::REDO,
+            Self::Cut => i::CUT,
+            Self::Copy => i::COPY,
+            Self::Paste => i::PASTE,
+            Self::Delete => i::DELETE,
+            Self::SelectAll => i::SELECT_ALL,
+            Self::Shortcuts => i::KEYBOARD,
+            Self::CheckUpdates => i::UPDATES,
+            Self::NewIndex(..) => i::KEY,
+            Self::OpenObject => i::GO_TO,
+            Self::Commands => i::COMMAND,
+            Self::Key(_) => i::COMMAND,
+        }
     }
 }

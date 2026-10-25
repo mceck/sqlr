@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use egui::{Key, KeyboardShortcut, Margin, Modifiers};
+use egui::Margin;
 use egui_dock::{DockArea, DockState};
 use sqlr_core::{
     ConnectionConfig, ConnectionProfile, Dialect, DriverManifest, Node, Secrets, SqlSyntax,
@@ -43,20 +43,6 @@ use crate::store_worker::{Listing, StoreOp, StoreReply};
 use crate::tabs::{QueryTab, TabCommand, Viewer};
 use crate::transaction::PendingEnd;
 use crate::tree_snapshot::TreeSnapshot;
-
-pub(crate) const RUN: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Enter);
-pub(crate) const RUN_SCRIPT: KeyboardShortcut =
-    KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::Enter);
-pub(crate) const NEW_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::T);
-pub(crate) const CLOSE_TAB: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::W);
-pub(crate) const SETTINGS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Comma);
-pub(crate) const UNDO: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Z);
-pub(crate) const REDO: KeyboardShortcut =
-    KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::Z);
-pub(crate) const CUT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::X);
-pub(crate) const COPY: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::C);
-pub(crate) const PASTE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::V);
-pub(crate) const SELECT_ALL: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::A);
 
 /// The store's sibling position for a tree drop target.
 fn move_target(target: TreeDrop) -> MoveTarget {
@@ -627,7 +613,12 @@ impl SqlrApp {
         self.tasks_windows(ui.ctx());
         self.database_tools_ui(ui.ctx());
         self.index_admin_ui(ui.ctx());
-        self.shortcuts.show(ui.ctx());
+        if let Some(sqlr_ui::shortcuts::ShortcutsAction::OpenKeymap) =
+            self.shortcuts
+                .show(ui.ctx(), &self.keymap.keymap, &self.keymap.preset)
+        {
+            self.open_preferences_section("Keymap");
+        }
         self.diagnostics_ui(ui.ctx());
         self.update_ui(ui.ctx());
         self.toasts.show(ui.ctx());
@@ -859,6 +850,15 @@ impl SqlrApp {
             .map(NativeMenu::drain)
             .unwrap_or_default();
         for command in commands {
+            // While Preferences is open the keys are its own (the keymap editor records
+            // them): an accelerator goes back to being its key press.
+            // Clipboard commands stay events: text fields take those, not keys.
+            use crate::palette::AppCommand as C;
+            let clipboard = matches!(command, C::Copy | C::Cut | C::Paste);
+            let command = match command.action_id() {
+                Some(action) if self.prefs.is_some() && !clipboard => C::Key(action),
+                _ => command,
+            };
             self.run_command(command, ctx);
         }
         if let Some(menu) = &self.native_menu {
@@ -961,6 +961,9 @@ impl SqlrApp {
             }
             Some(StatusAction::OpenAgents) => {
                 self.open_preferences_section("Agents");
+            }
+            Some(StatusAction::OpenCommands) => {
+                self.open_palette(sqlr_ui::PaletteMode::Commands);
             }
             None => {}
         }

@@ -103,6 +103,15 @@ pub enum AppCommand {
     ReportProblem,
     /// "New index…" on the collection (or Indices folder) selected in the explorer.
     NewIndex(String, NodePath),
+    /// A query tab on the active tab's connection, else the explorer's selected one.
+    NewTabOnConnection,
+    /// Opens ⌘P.
+    OpenObject,
+    /// Opens ⌘⇧P.
+    Commands,
+    /// Presses the action's current shortcut for the focused widget: the editor, grid and
+    /// explorer actions that have no command of their own (Format SQL, Find, Rename…).
+    Key(sqlr_core::ActionId),
 }
 
 /// Kinds "New …" offers in ⌘⇧P, in this order.
@@ -209,7 +218,8 @@ impl SqlrApp {
         let active_conn = self.active_tab().and_then(|t| t.conn.clone());
         let revision = self.palette_revision(mode, active_conn.as_deref());
         if self.palette.built != Some(revision) {
-            let (items, targets) = self.palette_items(mode, active_conn.as_deref());
+            let mac = ctx.os() == egui::os::OperatingSystem::Mac;
+            let (items, targets) = self.palette_items(mode, active_conn.as_deref(), mac);
             self.palette.items = items;
             self.palette.targets = targets;
             self.palette.built = Some(revision);
@@ -277,19 +287,25 @@ impl SqlrApp {
         h.finish()
     }
 
-    fn palette_items(
+    /// The items of `mode`; shortcut hints in the macOS notation when `mac`.
+    pub(crate) fn palette_items(
         &self,
         mode: PaletteMode,
         active_conn: Option<&str>,
+        mac: bool,
     ) -> (Vec<PaletteItem>, Vec<PaletteTarget>) {
-        let mut items = Vec::new();
+        let mut items: Vec<PaletteItem> = Vec::new();
         let mut targets = Vec::new();
+        // Icon and shortcut of each command, in order; set once the items are built.
+        let mut command_meta = Vec::new();
         let mut push = |label: String, detail: String, group, fuzzy, target| {
             items.push(PaletteItem {
                 label,
                 detail,
                 group,
                 fuzzy,
+                icon: None,
+                shortcut: None,
             });
             targets.push(target);
         };
@@ -354,44 +370,41 @@ impl SqlrApp {
             }
             PaletteMode::Commands => {
                 let command = |label: &str, detail: &str, c: AppCommand| {
-                    let detail = c
-                        .action_id()
-                        .map(|a| {
-                            self.keymap
-                                .keymap
-                                .chord_for(a)
-                                .map(|c| c.label(cfg!(target_os = "macos")))
-                                .unwrap_or_default()
-                        })
-                        .unwrap_or_else(|| detail.to_string());
-                    (label.to_string(), detail, c)
+                    (label.to_string(), detail.to_string(), c)
                 };
                 let mut commands = vec![
-                    command("New query tab", "⌘T", AppCommand::NewTab),
+                    command("New query tab", "", AppCommand::NewTab),
+                    command(
+                        "New query tab on the current connection",
+                        "",
+                        AppCommand::NewTabOnConnection,
+                    ),
+                    command("Go to a table or view…", "", AppCommand::OpenObject),
                     command("New connection", "", AppCommand::NewConnection),
                     command("Import connections…", "", AppCommand::ImportConnections),
                     command("Export connections…", "", AppCommand::ExportConnections),
                     command("Settings…", "", AppCommand::Settings),
+                    command("Keyboard shortcuts", "", AppCommand::Shortcuts),
                     command("Check for updates…", "", AppCommand::CheckUpdates),
                     command("Driver Manager…", "", AppCommand::DriverManager),
-                    command("Run statement", "⌘↵", AppCommand::Run),
-                    command("Run script", "⇧⌘↵", AppCommand::RunScript),
+                    command("Run statement", "", AppCommand::Run),
+                    command("Run script", "", AppCommand::RunScript),
                     command("Stop", "", AppCommand::Stop),
+                    command("Explain", "", AppCommand::Explain),
+                    command("Explain analyze", "", AppCommand::ExplainAnalyze),
+                    command("Commit", "", AppCommand::Commit),
+                    command("Rollback", "", AppCommand::Rollback),
                     command("Toggle value panel", "", AppCommand::ToggleValuePanel),
-                    command("Terminal (Ctrl+Backtick)", "", AppCommand::ToggleTerminal),
+                    command("Toggle terminal", "", AppCommand::ToggleTerminal),
                     command("Toggle history panel", "", AppCommand::ToggleHistory),
                     command("Toggle soft wrap", "", AppCommand::ToggleSoftWrap),
                     command("Save as snippet…", "", AppCommand::SaveSnippet),
-                    command("Commit", "", AppCommand::Commit),
-                    command("Rollback", "", AppCommand::Rollback),
                     command("Connection profiles…", "", AppCommand::Profiles),
                     command("Export result…", "", AppCommand::ExportResult),
                     command("Transfer data…", "", AppCommand::TransferData),
                     command("Operations", "", AppCommand::ShowOperations),
                     command("Tasks", "", AppCommand::ShowTasks),
                     command("Compare schemas…", "", AppCommand::CompareSchemas),
-                    command("Explain", "⌥⌘E", AppCommand::Explain),
-                    command("Explain Analyze", "⌥⇧⌘E", AppCommand::ExplainAnalyze),
                 ];
                 // Object editors: create on the active tab's connection, edit the selection.
                 if let Some(conn) = active_conn.filter(|c| self.is_live(c))
@@ -460,6 +473,8 @@ impl SqlrApp {
                     });
                 }
                 for (label, detail, c) in commands {
+                    let shortcut = c.action_id().and_then(|a| self.keymap.keymap.label(a, mac));
+                    command_meta.push((c.icon(), shortcut));
                     push(
                         label,
                         detail,
@@ -496,6 +511,13 @@ impl SqlrApp {
                     }
                 }
             }
+        }
+        let commands = items
+            .iter_mut()
+            .filter(|item| item.group == PaletteGroup::Command);
+        for (item, (icon, shortcut)) in commands.zip(command_meta) {
+            item.icon = Some(icon);
+            item.shortcut = shortcut;
         }
         (items, targets)
     }
@@ -642,6 +664,20 @@ impl SqlrApp {
                     self.settings.include_sql_in_diagnostics,
                 ));
             }
+            AppCommand::NewTabOnConnection => self.new_editor_tab(),
+            AppCommand::OpenObject => self.open_palette(PaletteMode::Objects),
+            AppCommand::Commands => self.open_palette(PaletteMode::Commands),
+            AppCommand::Key(action) => {
+                let mac = ctx.os() == egui::os::OperatingSystem::Mac;
+                if let Some(shortcut) = self
+                    .keymap
+                    .keymap
+                    .chord_for(action)
+                    .and_then(|c| sqlr_ui::keymap::chord_shortcut(&c, mac))
+                {
+                    send_key(ctx, shortcut.logical_key, shortcut.modifiers);
+                }
+            }
             AppCommand::NewIndex(conn, path) => {
                 let parent =
                     NodePath(path.segments()[..path.segments().len().saturating_sub(1)].to_vec());
@@ -676,4 +712,81 @@ fn send_key(ctx: &egui::Context, key: egui::Key, modifiers: egui::Modifiers) {
 fn send_event(ctx: &egui::Context, event: egui::Event) {
     ctx.input_mut(|i| i.events.push(event));
     ctx.request_repaint();
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use std::sync::Arc;
+
+    use sqlr_core::{ActionId, Chord, Keymap};
+    use sqlr_engine::{DriverRegistry, Engine};
+    use sqlr_store::{ConnectionRepo, MemorySecretStore, Settings};
+    use sqlr_ui::{PaletteMode, theme::icons};
+
+    use crate::{AppDeps, SqlrApp};
+
+    /// An app with no connections and no drivers.
+    pub(crate) fn bare_app() -> (SqlrApp, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let repo =
+            ConnectionRepo::open(dir.path(), Box::new(MemorySecretStore::default())).unwrap();
+        let deps = AppDeps {
+            check_updates: false,
+            engine: Engine::new(DriverRegistry::default(), Arc::new(|| {})),
+            repo,
+            settings: Settings::default(),
+            config_dir: dir.path().to_path_buf(),
+            data_dir: None,
+            startup_notice: None,
+            storage_warning: None,
+            mcp_token_store: None,
+            diagnostics: None,
+            diagnostics_warning: None,
+        };
+        (SqlrApp::new(deps, &egui::Context::default()), dir)
+    }
+
+    fn hint(app: &SqlrApp, label: &str, mac: bool) -> Option<String> {
+        let (items, _) = app.palette_items(PaletteMode::Commands, None, mac);
+        let item = items.iter().find(|i| i.label == label).expect(label);
+        item.shortcut.clone()
+    }
+
+    #[test]
+    fn command_hints_come_from_the_keymap_in_platform_notation() {
+        let (mut app, _dir) = bare_app();
+        assert_eq!(hint(&app, "Explain", true).as_deref(), Some("⌥⌘E"));
+        assert_eq!(hint(&app, "Explain", false).as_deref(), Some("Ctrl+Alt+E"));
+        assert_eq!(hint(&app, "Stop", true).as_deref(), Some("Esc"));
+        assert_eq!(hint(&app, "Toggle terminal", true).as_deref(), Some("⌃`"));
+        assert_eq!(
+            hint(&app, "Toggle terminal", false).as_deref(),
+            Some("Ctrl+`")
+        );
+        // A user change shows at once; an unbound command has no hint.
+        app.keymap
+            .keymap
+            .set_chords(ActionId::Explain, vec![Chord::parse("F7").unwrap()]);
+        app.keymap.keymap.unbind(ActionId::Commit);
+        assert_eq!(hint(&app, "Explain", true).as_deref(), Some("F7"));
+        assert_eq!(hint(&app, "Commit", true), None);
+        // Labels never carry a key of their own.
+        let (items, _) = app.palette_items(PaletteMode::Commands, None, true);
+        assert!(items.iter().all(|i| !i.label.contains("Ctrl")));
+        // The VS Code preset's keys.
+        app.keymap.keymap = Keymap::preset("vscode").unwrap();
+        assert_eq!(hint(&app, "Operations", true).as_deref(), Some("⇧⌘U"));
+    }
+
+    #[test]
+    fn commands_have_icons_by_category() {
+        let (app, _dir) = bare_app();
+        let (items, _) = app.palette_items(PaletteMode::Commands, None, true);
+        let icon = |label: &str| items.iter().find(|i| i.label == label).unwrap().icon;
+        assert_eq!(icon("Run statement"), Some(icons::RUN));
+        assert_eq!(icon("Commit"), Some(icons::COMMIT));
+        assert_eq!(icon("Settings…"), Some(icons::SETTINGS));
+        let distinct: std::collections::HashSet<_> = items.iter().map(|i| i.icon).collect();
+        assert!(distinct.len() > 15, "{} icons", distinct.len());
+    }
 }

@@ -17,6 +17,10 @@ use crate::database_tools::{DumpDialog, RestoreDialog};
 use crate::transfer_dialogs::{ExportDialog, ImportDialog};
 use crate::{AppDeps, SqlrApp};
 
+/// The platform the screenshots show (shortcut notation, menus): the one the audit runs on,
+/// where kittest would otherwise report Linux.
+const AUDIT_OS: egui::os::OperatingSystem = egui::os::OperatingSystem::from_target_os();
+
 fn fixture(dir: &Path, theme: ThemePref) -> SqlrApp {
     fixture_with(dir, theme, true)
 }
@@ -232,6 +236,7 @@ fn visual_audit() {
             }
             let mut h = Harness::builder()
                 .with_size((1400.0, 900.0))
+                .with_os(AUDIT_OS)
                 .with_step_dt(0.01)
                 .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
             sqlr_ui::theme::install_fonts(&h.ctx, &[]);
@@ -365,6 +370,7 @@ fn leftmost<'h>(
 fn harness(app: SqlrApp, size: (f32, f32)) -> Harness<'static, SqlrApp> {
     let h = Harness::builder()
         .with_size(size)
+        .with_os(AUDIT_OS)
         .with_step_dt(0.01)
         .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
     sqlr_ui::theme::install_fonts(&h.ctx, &[]);

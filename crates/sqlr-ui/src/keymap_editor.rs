@@ -12,13 +12,29 @@ const CAP_HEIGHT: f32 = 22.0;
 /// The room the Remove and Reset buttons keep at the end of a row, shown or not.
 const ACTIONS_WIDTH: f32 = 2.0 * 20.0 + Spacing::S;
 
+/// The VS Code preset's id.
+pub const VSCODE: &str = "vscode";
+
+/// "Using VS Code? <link>" in muted text; true when the link was clicked.
+pub fn vscode_hint(ui: &mut egui::Ui, link: &str) -> bool {
+    let p = theme::palette(ui.ctx());
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = Spacing::S;
+        icons::paint(ui, icons::KEYBOARD, p.text_muted);
+        ui.label(RichText::new("Using VS Code?").color(p.text_muted));
+        ui.link(link).clicked()
+    })
+    .inner
+}
+
 #[derive(Default)]
 pub struct KeymapEditor {
     query: String,
     recording: Option<ActionId>,
 }
 
-/// The keys of a chord label as separate caps: `⇧⌘↵` is three, `Ctrl+Shift+Enter` too.
+/// The keys of a chord label as separate caps: `⇧⌘↵` is three, `Ctrl+Shift+Enter` too,
+/// `⌘Esc` two (the modifier glyphs, then the key whole).
 fn caps(label: &str) -> Vec<String> {
     if label.chars().count() > 1 && label.contains('+') {
         let mut parts: Vec<String> = label.split('+').map(str::to_string).collect();
@@ -31,10 +47,16 @@ fn caps(label: &str) -> Vec<String> {
         }
         parts.retain(|p| !p.is_empty());
         parts
-    } else if label.chars().count() <= 4 {
-        label.chars().map(String::from).collect()
     } else {
-        vec![label.to_string()]
+        let key = label.trim_start_matches(['⌃', '⌥', '⇧', '⌘']);
+        let mut out: Vec<String> = label[..label.len() - key.len()]
+            .chars()
+            .map(String::from)
+            .collect();
+        if !key.is_empty() {
+            out.push(key.to_string());
+        }
+        out
     }
 }
 
@@ -50,7 +72,6 @@ enum PillState {
 /// the accessible name.
 fn pill(ui: &mut egui::Ui, chords: &[String], state: PillState, label: &str) -> egui::Response {
     let p = theme::palette(ui.ctx());
-    let font = egui::FontId::proportional(12.0);
     let unset = chords.is_empty() && state != PillState::Recording;
     let groups: Vec<Vec<String>> = match state {
         PillState::Recording => vec![vec!["Press a shortcut…".to_string()]],
@@ -63,7 +84,53 @@ fn pill(ui: &mut egui::Ui, chords: &[String], state: PillState, label: &str) -> 
         PillState::Normal if unset => (p.text_disabled, p.border, Color32::TRANSPARENT),
         PillState::Normal => (p.text, p.border_input, p.bg_subtle),
     };
-    // Lay the caps out first to know the pill's width.
+    let hover_border = (state == PillState::Normal).then_some(p.accent);
+    let response = paint_caps(
+        ui,
+        &groups,
+        Sense::click(),
+        (text_color, border, fill),
+        hover_border,
+    );
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, label));
+    response.on_hover_text("Click to record a new shortcut")
+}
+
+/// Read-only key caps for the chords of one action (`⇧⌘Z`, `⌘Y`); a dim "—" when there are
+/// none. The accessible name is the chords joined by " or ", or "Not set".
+pub fn keycaps(ui: &mut egui::Ui, chords: &[String]) -> egui::Response {
+    let p = theme::palette(ui.ctx());
+    if chords.is_empty() {
+        let response =
+            ui.add(egui::Label::new(RichText::new("—").color(p.text_disabled)).selectable(false));
+        response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, "Not set"));
+        return response;
+    }
+    // One cap per chord, as macOS menus write them: lighter than a cap per key.
+    let groups: Vec<Vec<String>> = chords.iter().map(|c| vec![c.clone()]).collect();
+    let response = paint_caps(
+        ui,
+        &groups,
+        Sense::hover(),
+        (p.text, p.border_input, p.bg_subtle),
+        None,
+    );
+    let name = chords.join(" or ");
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, &name));
+    response
+}
+
+/// Lays out and paints groups of caps (one group per chord) in `colors` (text, border,
+/// fill); the border turns `hover_border` while hovered.
+fn paint_caps(
+    ui: &mut egui::Ui,
+    groups: &[Vec<String>],
+    sense: Sense,
+    (text_color, border, fill): (Color32, Color32, Color32),
+    hover_border: Option<Color32>,
+) -> egui::Response {
+    let font = egui::FontId::proportional(12.0);
+    // Lay the caps out first to know the width.
     let galleys: Vec<Vec<_>> = groups
         .iter()
         .map(|g| {
@@ -85,12 +152,10 @@ fn pill(ui: &mut egui::Ui, chords: &[String], state: PillState, label: &str) -> 
         width += g.iter().map(|k| cap_width(k.size().x)).sum::<f32>()
             + gap * g.len().saturating_sub(1) as f32;
     }
-    let (rect, response) = ui.allocate_exact_size(vec2(width, CAP_HEIGHT), Sense::click());
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, label));
-    let border = if response.hovered() && state == PillState::Normal {
-        p.accent
-    } else {
-        border
+    let (rect, response) = ui.allocate_exact_size(vec2(width, CAP_HEIGHT), sense);
+    let border = match hover_border {
+        Some(color) if response.hovered() => color,
+        _ => border,
     };
     let mut x = rect.left();
     for (n, g) in galleys.into_iter().enumerate() {
@@ -109,7 +174,7 @@ fn pill(ui: &mut egui::Ui, chords: &[String], state: PillState, label: &str) -> 
             x += w + gap;
         }
     }
-    response.on_hover_text("Click to record a new shortcut")
+    response
 }
 
 impl KeymapEditor {
@@ -122,7 +187,12 @@ impl KeymapEditor {
             ui.spacing_mut().item_spacing.x = Spacing::M;
             ui.label(RichText::new("Preset").color(p.text_muted));
             egui::ComboBox::from_id_salt("keymap_preset")
-                .selected_text(preset.as_str())
+                .selected_text(
+                    PRESETS
+                        .iter()
+                        .find(|(id, _)| id == preset)
+                        .map_or(preset.as_str(), |(_, label)| *label),
+                )
                 .show_ui(ui, |ui| {
                     for (id, label) in PRESETS {
                         if ui.selectable_label(preset == id, *label).clicked() {
@@ -144,6 +214,14 @@ impl KeymapEditor {
                 );
             });
         });
+        if preset.as_str() != VSCODE {
+            ui.add_space(Spacing::S);
+            if vscode_hint(ui, "Switch to the VS Code preset") {
+                *preset = VSCODE.to_string();
+                *map = Keymap::preset(VSCODE).unwrap_or_default();
+                self.recording = None;
+            }
+        }
         ui.add_space(Spacing::M);
 
         if let Some(action) = self.recording {
@@ -281,5 +359,21 @@ impl KeymapEditor {
                 }
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::caps;
+
+    #[test]
+    fn caps_split_modifiers_from_the_key() {
+        assert_eq!(caps("⇧⌘↵"), ["⇧", "⌘", "↵"]);
+        assert_eq!(caps("Esc"), ["Esc"]);
+        assert_eq!(caps("⌘Esc"), ["⌘", "Esc"]);
+        assert_eq!(caps("⌃Space"), ["⌃", "Space"]);
+        assert_eq!(caps("F2"), ["F2"]);
+        assert_eq!(caps("Ctrl+Shift+Enter"), ["Ctrl", "Shift", "Enter"]);
+        assert_eq!(caps("Ctrl++"), ["Ctrl", "+"]);
     }
 }

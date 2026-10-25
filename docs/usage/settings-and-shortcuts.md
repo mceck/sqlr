@@ -56,9 +56,9 @@ opening the terminal starts the shell lazily and hiding it keeps it running. See
 
 ## Keyboard shortcuts
 
-Shortcuts below use the default keymap, with macOS keys. On Windows and Linux use Ctrl where you see ⌘.
+Shortcuts below use the default keymap, with macOS keys. On Windows and Linux the app writes them out (`Ctrl+Shift+Enter`): use Ctrl where you see ⌘ and Alt where you see ⌥. Menus, tooltips, the command palette and Help → Keyboard Shortcuts always show your own keys.
 
-### Running
+### Query
 
 | Action | Shortcut |
 |---|---|
@@ -66,23 +66,25 @@ Shortcuts below use the default keymap, with macOS keys. On Windows and Linux us
 | Run script | ⇧⌘↵ |
 | Stop the running query | Esc |
 | Explain | ⌥⌘E |
-| Explain Analyze | ⌥⇧⌘E |
+| Explain analyze (runs the statement) | ⌥⇧⌘E |
+| Commit the transaction | ⌥⌘↵ |
+| Roll back the transaction | ⌥⌘Z |
 
 ### Tabs and navigation
 
 | Action | Shortcut |
 |---|---|
-| New query tab | ⌘T |
+| New query tab (no connection) | ⌘T |
 | New query tab on the current connection | ⌘N |
 | Close tab | ⌘W |
 | Next tab, previous tab | Ctrl+Tab, Ctrl+⇧Tab |
-| Open an object | ⌘P |
+| Go to a table or view | ⌘P |
 | Command palette | ⇧⌘P |
 | Apply the object editor's changes | ⌘S |
 | Rename the selected item in the explorer | F2 |
 | Show operations | ⇧⌘O |
 | Settings | ⌘, |
-| Terminal | Ctrl+Backtick (every platform) |
+| Terminal | ⌃` (Ctrl+` on every platform) |
 
 ### Editing
 
@@ -99,7 +101,7 @@ Shortcuts below use the default keymap, with macOS keys. On Windows and Linux us
 | Indent, outdent | Tab, ⇧Tab |
 | Delete the selected rows in a result | ⌘⌫ |
 
-The full list of commands and their current keys is in **Help, Keyboard Shortcuts**. It always reflects your own changes.
+The full list of commands and their current keys is in **Help, Keyboard Shortcuts**, grouped and searchable. It always reflects your own changes, shows unbound commands as "—", and links to the Keymap settings.
 
 ### Changing shortcuts
 

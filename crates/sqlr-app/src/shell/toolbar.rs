@@ -3,17 +3,14 @@
 //! one button and the transaction controls into an overflow button, so nothing overlaps or
 //! leaves the window.
 
-use egui::{Align, FontId, Id, KeyboardShortcut, Layout, PopupCloseBehavior, Stroke, TextStyle};
-use sqlr_core::ConnectionConfig;
+use egui::{Align, FontId, Id, Layout, PopupCloseBehavior, Stroke, TextStyle};
+use sqlr_core::{ActionId, ConnectionConfig};
 use sqlr_engine::SessionStatus;
 use sqlr_ui::theme::{self, Spacing, icons, menu};
 use sqlr_ui::{ChipAction, ChipItem, ChipState, PaletteMode, connection_chip};
 
 use crate::agents::McpStatus;
-use crate::app::{
-    CLOSE_TAB, COPY, CUT, NEW_TAB, PASTE, REDO, RUN, RUN_SCRIPT, SELECT_ALL, SETTINGS, SqlrApp,
-    UNDO, tab_mut,
-};
+use crate::app::{SqlrApp, tab_mut};
 use crate::palette::AppCommand;
 
 /// Widths the toolbar budgets before it has measured its groups, in points.
@@ -23,26 +20,38 @@ const TX_ESTIMATE: f32 = 300.0;
 const CHIP_MIN: f32 = 96.0;
 const CHIP_MAX: f32 = 220.0;
 
-/// One row of the in-window menus: a label, an optional shortcut hint and the command it
-/// runs. The same [`AppCommand`] dispatcher serves the native menu, so the two menus cannot
-/// drift apart.
-fn command_item(
-    ui: &mut egui::Ui,
-    app: &mut SqlrApp,
-    label: &str,
-    _shortcut: Option<KeyboardShortcut>,
-    command: AppCommand,
-) {
+/// One row of the in-window menus: a label, the shortcut hint of its action from the keymap
+/// and the command it runs. The same [`AppCommand`] dispatcher serves the native menu, so the
+/// two menus cannot drift apart.
+fn command_item(ui: &mut egui::Ui, app: &mut SqlrApp, label: &str, command: AppCommand) {
     let shortcut = command
         .action_id()
-        .and_then(|a| app.keymap.keymap.chord_for(a))
-        .map(|c| c.label(cfg!(target_os = "macos")));
+        .and_then(|a| sqlr_ui::keymap::shortcut(ui.ctx(), a));
+    // A keyboard-only action is reached through its shortcut: none, nothing to press.
+    let enabled = !matches!(command, AppCommand::Key(_)) || shortcut.is_some();
     // The shortcut is decoration: the menu entry keeps its plain label for accessibility
     // and for tests.
-    let response = menu::MenuItem::new(label).shortcut(shortcut).ui(ui);
+    let response = menu::MenuItem::new(label)
+        .shortcut(shortcut)
+        .enabled(enabled)
+        .ui(ui);
+    let response = if enabled {
+        response
+    } else {
+        response.on_disabled_hover_text("Give it a shortcut in Preferences → Keymap")
+    };
     if response.clicked() {
         app.run_command(command, ui.ctx());
     }
+}
+
+/// A View menu choice with its toggle's shortcut; true when clicked.
+fn check_item(ui: &mut egui::Ui, checked: bool, label: &str, action: ActionId) -> bool {
+    menu::MenuItem::new(label)
+        .checked(checked)
+        .shortcut(sqlr_ui::keymap::shortcut(ui.ctx(), action))
+        .ui(ui)
+        .clicked()
 }
 
 /// The width a toolbar group took last frame, or `estimate` before it was drawn.
@@ -73,92 +82,116 @@ fn chip_state(status: Option<&SessionStatus>) -> ChipState {
 
 impl SqlrApp {
     fn menu(&mut self, ui: &mut egui::Ui) {
+        use AppCommand as C;
         menu::bar_menu(ui, "File", |ui| {
-            command_item(ui, self, "New query tab", Some(NEW_TAB), AppCommand::NewTab);
-            command_item(ui, self, "Close tab", Some(CLOSE_TAB), AppCommand::CloseTab);
-            ui.separator();
-            command_item(ui, self, "New connection", None, AppCommand::NewConnection);
-            command_item(ui, self, "Connection profiles…", None, AppCommand::Profiles);
-            ui.separator();
-            command_item(ui, self, "Import…", None, AppCommand::ImportConnections);
-            command_item(ui, self, "Export…", None, AppCommand::ExportConnections);
-            ui.separator();
-            command_item(ui, self, "Settings…", Some(SETTINGS), AppCommand::Settings);
-            ui.separator();
-            command_item(ui, self, "Operations", None, AppCommand::ShowOperations);
-            command_item(ui, self, "Quit", None, AppCommand::Quit);
-        });
-        menu::bar_menu(ui, "Edit", |ui| {
-            command_item(ui, self, "Undo", Some(UNDO), AppCommand::Undo);
-            command_item(ui, self, "Redo", Some(REDO), AppCommand::Redo);
-            ui.separator();
-            command_item(ui, self, "Cut", Some(CUT), AppCommand::Cut);
-            command_item(ui, self, "Copy", Some(COPY), AppCommand::Copy);
-            command_item(ui, self, "Paste", Some(PASTE), AppCommand::Paste);
-            command_item(ui, self, "Delete", None, AppCommand::Delete);
-            ui.separator();
+            command_item(ui, self, "New query tab", C::NewTab);
             command_item(
                 ui,
                 self,
-                "Select All",
-                Some(SELECT_ALL),
-                AppCommand::SelectAll,
+                "New query tab on the current connection",
+                C::NewTabOnConnection,
+            );
+            command_item(ui, self, "Close tab", C::CloseTab);
+            ui.separator();
+            command_item(ui, self, "New connection", C::NewConnection);
+            command_item(ui, self, "Connection profiles…", C::Profiles);
+            ui.separator();
+            command_item(ui, self, "Import…", C::ImportConnections);
+            command_item(ui, self, "Export…", C::ExportConnections);
+            ui.separator();
+            command_item(ui, self, "Settings…", C::Settings);
+            ui.separator();
+            command_item(ui, self, "Operations", C::ShowOperations);
+            command_item(ui, self, "Quit", C::Quit);
+        });
+        menu::bar_menu(ui, "Edit", |ui| {
+            command_item(ui, self, "Undo", C::Undo);
+            command_item(ui, self, "Redo", C::Redo);
+            ui.separator();
+            command_item(ui, self, "Cut", C::Cut);
+            command_item(ui, self, "Copy", C::Copy);
+            command_item(ui, self, "Paste", C::Paste);
+            command_item(ui, self, "Delete", C::Delete);
+            ui.separator();
+            command_item(ui, self, "Select All", C::SelectAll);
+            ui.separator();
+            command_item(ui, self, "Find…", C::Key(ActionId::Find));
+            command_item(ui, self, "Find and replace…", C::Key(ActionId::Replace));
+            command_item(
+                ui,
+                self,
+                "Toggle line comment",
+                C::Key(ActionId::ToggleComment),
+            );
+            command_item(
+                ui,
+                self,
+                "Duplicate line or selection",
+                C::Key(ActionId::DuplicateLine),
+            );
+            ui.separator();
+            command_item(ui, self, "Rename…", C::Key(ActionId::RenameSelection));
+            command_item(
+                ui,
+                self,
+                "Delete selected rows",
+                C::Key(ActionId::DeleteRows),
             );
         });
         menu::bar_menu(ui, "View", |ui| {
-            if menu::check_item(ui, self.show_value_panel, "Value panel").clicked() {
+            command_item(ui, self, "Command palette…", C::Commands);
+            command_item(ui, self, "Go to a table or view…", C::OpenObject);
+            ui.separator();
+            if check_item(
+                ui,
+                self.show_value_panel,
+                "Value panel",
+                ActionId::ToggleValuePanel,
+            ) {
                 self.show_value_panel = !self.show_value_panel;
             }
-            if menu::check_item(ui, self.show_history, "History").clicked() {
+            if check_item(ui, self.show_history, "History", ActionId::ToggleHistory) {
                 self.show_history = !self.show_history;
             }
-            if menu::check_item(ui, self.terminal.is_open(), "Terminal").clicked() {
+            if check_item(
+                ui,
+                self.terminal.is_open(),
+                "Terminal",
+                ActionId::ToggleTerminal,
+            ) {
                 self.terminal.toggle();
             }
-            if menu::check_item(ui, self.settings.soft_wrap, "Soft wrap").clicked() {
+            if check_item(
+                ui,
+                self.settings.soft_wrap,
+                "Soft wrap",
+                ActionId::ToggleSoftWrap,
+            ) {
                 self.toggle_soft_wrap(ui.ctx());
             }
+            ui.separator();
+            command_item(ui, self, "Tasks", C::ShowTasks);
         });
         menu::bar_menu(ui, "Query", |ui| {
-            command_item(ui, self, "Run statement", Some(RUN), AppCommand::Run);
-            command_item(
-                ui,
-                self,
-                "Run script",
-                Some(RUN_SCRIPT),
-                AppCommand::RunScript,
-            );
-            command_item(ui, self, "Stop", None, AppCommand::Stop);
+            command_item(ui, self, "Run statement", C::Run);
+            command_item(ui, self, "Run script", C::RunScript);
+            command_item(ui, self, "Stop", C::Stop);
             ui.separator();
-            command_item(ui, self, "Explain", None, AppCommand::Explain);
-            command_item(
-                ui,
-                self,
-                "Explain Analyze",
-                None,
-                AppCommand::ExplainAnalyze,
-            );
+            command_item(ui, self, "Explain", C::Explain);
+            command_item(ui, self, "Explain analyze", C::ExplainAnalyze);
             ui.separator();
-            command_item(ui, self, "Save as snippet…", None, AppCommand::SaveSnippet);
+            command_item(ui, self, "Commit", C::Commit);
+            command_item(ui, self, "Rollback", C::Rollback);
+            ui.separator();
+            command_item(ui, self, "Format SQL", C::Key(ActionId::FormatSql));
+            command_item(ui, self, "Save as snippet…", C::SaveSnippet);
         });
         menu::bar_menu(ui, "Help", |ui| {
-            command_item(ui, self, "Keyboard Shortcuts", None, AppCommand::Shortcuts);
+            command_item(ui, self, "Keyboard Shortcuts", C::Shortcuts);
             ui.separator();
-            command_item(
-                ui,
-                self,
-                "Check for Updates…",
-                None,
-                AppCommand::CheckUpdates,
-            );
-            command_item(ui, self, "Diagnostics…", None, AppCommand::Diagnostics);
-            command_item(
-                ui,
-                self,
-                "Report a Problem…",
-                None,
-                AppCommand::ReportProblem,
-            );
+            command_item(ui, self, "Check for Updates…", C::CheckUpdates);
+            command_item(ui, self, "Diagnostics…", C::Diagnostics);
+            command_item(ui, self, "Report a Problem…", C::ReportProblem);
         });
     }
 
@@ -286,8 +319,9 @@ impl SqlrApp {
                     group(ui, menus_id, |ui| self.menu(ui));
                 });
             } else if !native {
-                let menu = icons::toolbar_button(ui, true, icons::MENU, None, false, "Menu")
-                    .on_hover_text("Menu");
+                let menu = icons::toolbar_button(ui, true, icons::MENU, None, false, "Menu");
+                let menu =
+                    theme::tooltip(menu, "Menu", None, Some("File, Edit, View, Query, Help"));
                 egui::Popup::menu(&menu)
                     .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
                     .style(theme::menu_style(ui.ctx()))
@@ -332,30 +366,30 @@ impl SqlrApp {
             // Execution.
             let can_run = active.is_some();
             let run =
-                icons::toolbar_button(ui, can_run, icons::RUN, Some(palette.success), false, "Run")
-                    .on_hover_text(format!(
-                        "Run ({})",
-                        sqlr_ui::keymap::ui_keymap(ui.ctx())
-                            .label(sqlr_core::ActionId::RunStatement)
-                            .unwrap_or_default()
-                    ));
+                icons::toolbar_button(ui, can_run, icons::RUN, Some(palette.success), false, "Run");
+            let run = theme::tooltip_for(
+                run,
+                "Run statement",
+                ActionId::RunStatement,
+                Some("The statement at the caret, or the selection"),
+            );
             if run.clicked() {
                 self.run_active();
             }
             let script =
-                icons::toolbar_button(ui, can_run, icons::RUN_SCRIPT, None, false, "Run script")
-                    .on_hover_text(format!(
-                        "Run script ({})",
-                        sqlr_ui::keymap::ui_keymap(ui.ctx())
-                            .label(sqlr_core::ActionId::RunScript)
-                            .unwrap_or_default()
-                    ));
+                icons::toolbar_button(ui, can_run, icons::RUN_SCRIPT, None, false, "Run script");
+            let script = theme::tooltip_for(
+                script,
+                "Run script",
+                ActionId::RunScript,
+                Some("Every statement in the editor, one after another"),
+            );
             if script.clicked() {
                 self.run_script_active();
             }
             let stop =
-                icons::toolbar_button(ui, running, icons::STOP, Some(palette.error), false, "Stop")
-                    .on_hover_text("Stop the running query (Esc)");
+                icons::toolbar_button(ui, running, icons::STOP, Some(palette.error), false, "Stop");
+            let stop = theme::tooltip_for(stop, "Stop the running query", ActionId::Stop, None);
             if stop.clicked() {
                 self.stop_active();
             }
@@ -364,8 +398,8 @@ impl SqlrApp {
             if tx_inline {
                 group(ui, tx_id, |ui| self.transaction_controls(ui, false));
             } else {
-                let more = icons::toolbar_button(ui, true, icons::MORE, None, false, "More tools")
-                    .on_hover_text("Transaction controls");
+                let more = icons::toolbar_button(ui, true, icons::MORE, None, false, "More tools");
+                let more = theme::tooltip(more, "Transaction controls", None, None);
                 egui::Popup::menu(&more)
                     .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
                     .show(|ui| {
@@ -385,8 +419,13 @@ impl SqlrApp {
                 None,
                 false,
                 "Refresh",
-            )
-            .on_hover_text("Reload the selected explorer node or connection");
+            );
+            let refresh = theme::tooltip(
+                refresh,
+                "Refresh",
+                None,
+                Some("Reload the object or connection selected in the explorer"),
+            );
             if refresh.clicked()
                 && let Some((conn, path)) = selection
             {
@@ -406,10 +445,9 @@ impl SqlrApp {
                     ui.spinner();
                 }
 
-                if icons::toolbar_button(ui, true, icons::SETTINGS, None, false, "Settings")
-                    .on_hover_text("Settings")
-                    .clicked()
-                {
+                let settings =
+                    icons::toolbar_button(ui, true, icons::SETTINGS, None, false, "Settings");
+                if theme::tooltip_for(settings, "Settings", ActionId::Settings, None).clicked() {
                     self.open_preferences(sqlr_core::Level::Global);
                 }
                 // The quick toggle for the loopback MCP server, next to the workspace toggles.
@@ -422,71 +460,98 @@ impl SqlrApp {
                     }
                     McpStatus::Stopped => None,
                 };
-                let mcp_tip = if mcp_on {
-                    format!(
-                        "Agent access (MCP): {} · click to disable",
-                        self.mcp.status.label()
-                    )
+                let mcp_title = if mcp_on {
+                    format!("Agent access (MCP): {}", self.mcp.status.label())
                 } else {
-                    "Agent access (MCP): off · click to enable".to_string()
+                    "Agent access (MCP): off".to_string()
                 };
-                if icons::toolbar_button(
+                let mcp_detail = if mcp_on {
+                    "AI assistants on this computer can query the connections you chose. \
+                     Click to turn it off."
+                } else {
+                    "Let AI assistants on this computer query the connections you choose. \
+                     Click to turn it on."
+                };
+                let mcp = icons::toolbar_button(
                     ui,
                     true,
                     icons::MCP,
                     mcp_color,
                     mcp_on,
                     "Toggle agent access (MCP)",
-                )
-                .on_hover_text(mcp_tip)
-                .clicked()
-                {
+                );
+                if theme::tooltip(mcp, &mcp_title, None, Some(mcp_detail)).clicked() {
                     self.set_agents_enabled(!mcp_on, ui.ctx());
                 }
-                if icons::toolbar_button(
+                let value = icons::toolbar_button(
                     ui,
                     true,
                     icons::PANEL,
                     None,
                     self.show_value_panel,
                     "Toggle value panel",
+                );
+                if theme::tooltip_for(
+                    value,
+                    "Value panel",
+                    ActionId::ToggleValuePanel,
+                    Some("The full value of the selected cell, for long text and JSON"),
                 )
-                .on_hover_text("Show or hide the value panel")
                 .clicked()
                 {
                     self.show_value_panel = !self.show_value_panel;
                 }
-                if icons::toolbar_button(
+                let history = icons::toolbar_button(
                     ui,
                     true,
                     icons::HISTORY,
                     None,
                     self.show_history,
                     "Toggle history panel",
+                );
+                if theme::tooltip_for(
+                    history,
+                    "Query history",
+                    ActionId::ToggleHistory,
+                    Some("Every query you ran, searchable"),
                 )
-                .on_hover_text("Show or hide the query history")
                 .clicked()
                 {
                     self.show_history = !self.show_history;
                 }
                 let terminal_open = self.terminal.is_open();
-                if ui.available_width() > 210.0
-                    && icons::toolbar_button(
+                if ui.available_width() > 210.0 {
+                    let terminal = icons::toolbar_button(
                         ui,
                         true,
-                        icons::QUERY,
+                        icons::TERMINAL,
                         None,
                         terminal_open,
                         "Toggle terminal",
+                    );
+                    if theme::tooltip_for(
+                        terminal,
+                        "Terminal",
+                        ActionId::ToggleTerminal,
+                        Some("A shell in the bottom panel"),
                     )
-                    .on_hover_text("Terminal (Ctrl+Backtick)")
                     .clicked()
-                {
-                    self.terminal.toggle();
+                    {
+                        self.terminal.toggle();
+                    }
                 }
                 icons::toolbar_divider(ui);
-                if icons::toolbar_button(ui, true, icons::SEARCH, None, false, "Command palette")
-                    .on_hover_text("Commands, history and snippets (⌘⇧P)")
+                let search =
+                    icons::toolbar_button(ui, true, icons::SEARCH, None, false, "Command palette");
+                let go_to = match sqlr_ui::keymap::shortcut(ui.ctx(), ActionId::OpenObject) {
+                    Some(keys) => {
+                        format!(
+                            "Commands, snippets and history. Go to a table or view with {keys}."
+                        )
+                    }
+                    None => "Commands, snippets and history.".to_string(),
+                };
+                if theme::tooltip_for(search, "Command palette", ActionId::Commands, Some(&go_to))
                     .clicked()
                 {
                     self.open_palette(PaletteMode::Commands);
@@ -501,5 +566,71 @@ impl SqlrApp {
             rect.bottom() - 0.5,
             Stroke::new(1.0, palette.border),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+    use sqlr_core::{ActionId, Chord};
+
+    use crate::SqlrApp;
+    use crate::palette::tests::bare_app;
+
+    fn harness(app: SqlrApp) -> Harness<'static, SqlrApp> {
+        let mut h = Harness::builder()
+            .with_size((1400.0, 600.0))
+            .with_os(egui::os::OperatingSystem::Mac)
+            .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+        sqlr_ui::theme::install_fonts(&h.ctx, &[]);
+        h.run_steps(3);
+        h
+    }
+
+    fn hover(h: &mut Harness<'static, SqlrApp>, label: &str) {
+        h.get_by_label(label).hover();
+        // Past egui's tooltip delay.
+        for _ in 0..60 {
+            h.step();
+        }
+    }
+
+    #[test]
+    fn toolbar_tooltips_name_the_command_and_its_shortcut() {
+        let (mut app, _dir) = bare_app();
+        app.keymap
+            .keymap
+            .set_chords(ActionId::RunScript, vec![Chord::parse("F6").unwrap()]);
+        let mut h = harness(app);
+        // The palettes' keys are on screen: the status bar and the welcome page.
+        h.get_by_label("⇧⌘P  Commands");
+        h.get_by_label("Go to a table");
+        h.get_by_label("⌘P");
+        hover(&mut h, "Settings");
+        h.get_by_label("⌘,");
+        hover(&mut h, "Toggle terminal");
+        h.get_by_label("⌃`");
+        h.get_by_label("A shell in the bottom panel");
+        hover(&mut h, "Toggle agent access (MCP)");
+        h.get_by_label_contains("Let AI assistants on this computer query");
+        // Disabled buttons still explain themselves, with the user's own keys.
+        hover(&mut h, "Run script");
+        h.get_by_label("F6");
+    }
+
+    #[test]
+    fn menus_offer_keyboard_only_actions_with_their_shortcuts() {
+        let (app, _dir) = bare_app();
+        let mut h = harness(app);
+        h.get_by_label("Query").click();
+        h.run_steps(3);
+        for label in ["Explain analyze", "Format SQL"] {
+            h.get_by_label(label);
+        }
+        // The toolbar has a Commit and a Rollback button of its own.
+        for label in ["Commit", "Rollback"] {
+            assert_eq!(h.get_all_by_label(label).count(), 2, "{label}");
+        }
     }
 }

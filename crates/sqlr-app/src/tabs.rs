@@ -956,7 +956,12 @@ fn explain_controls(ui: &mut egui::Ui, tab: &mut QueryTab, cx: &mut ViewCx<'_>) 
         "Open a connection to explain this statement".to_string()
     } else if let Some(target) = &target {
         format!(
-            "Explain the statement at the caret (⌥⌘E)\n{}",
+            "{}\n{}",
+            sqlr_ui::keymap::tooltip(
+                ui.ctx(),
+                "Explain the statement at the caret",
+                sqlr_core::ActionId::Explain
+            ),
             target.sql.lines().next().unwrap_or_default()
         )
     } else {
@@ -1067,10 +1072,10 @@ fn single_view(ui: &mut egui::Ui, tab: &mut QueryTab, cx: &mut ViewCx<'_>, q: Op
     match tab.pane {
         SinglePane::Plan => plan_pane(ui, tab, cx),
         _ => match q {
-            None => hint(
-                ui,
-                "Run the statement at the caret with ⌘↵, or the script with ⇧⌘↵",
-            ),
+            None => {
+                let text = crate::tabs::run_hint(ui.ctx());
+                hint(ui, &text)
+            }
             Some(q) if tab.pane == SinglePane::Messages => {
                 let messages = cx
                     .engine
@@ -1412,6 +1417,22 @@ fn result_view(
                 }
             }
         }
+    }
+}
+
+/// "Run the statement at the caret with ⌘↵, or the script with ⇧⌘↵", from the keymap.
+pub(crate) fn run_hint(ctx: &egui::Context) -> String {
+    use sqlr_core::ActionId;
+    let keys = sqlr_ui::keymap::ui_keymap(ctx);
+    match (
+        keys.label(ActionId::RunStatement),
+        keys.label(ActionId::RunScript),
+    ) {
+        (Some(run), Some(script)) => {
+            format!("Run the statement at the caret with {run}, or the script with {script}")
+        }
+        (Some(run), None) => format!("Run the statement at the caret with {run}"),
+        _ => "Run the statement at the caret with the Run button".to_string(),
     }
 }
 

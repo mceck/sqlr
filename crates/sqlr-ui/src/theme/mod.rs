@@ -8,12 +8,14 @@ pub mod icons;
 pub mod menu;
 mod row;
 mod tokens;
+mod tooltip;
 
 pub use apply::{apply, dock_style, monospace, palette};
 pub use fonts::{install_fonts, semibold};
 pub use row::list_row;
 pub use sqlr_core::ThemePref;
 pub use tokens::{EditorColors, Palette, Spacing, contrast_ratio};
+pub use tooltip::{tooltip, tooltip_for};
 
 use egui::{
     Align2, CornerRadius, FontId, Layout, Margin, Response, RichText, Sense, Stroke, TextStyle,

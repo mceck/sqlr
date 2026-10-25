@@ -11,6 +11,8 @@ fn item(label: &str, group: PaletteGroup, fuzzy: bool) -> PaletteItem {
         detail: "conn · table".into(),
         group,
         fuzzy,
+        icon: None,
+        shortcut: None,
     }
 }
 
@@ -161,4 +163,23 @@ fn rows_follow_the_query_in_the_same_frame() {
         "the frame that typed the query still listed the old rows"
     );
     h.get_by_label("sales.customers");
+}
+
+#[test]
+fn shortcuts_sit_in_a_right_aligned_column() {
+    let mut items: Vec<PaletteItem> = ["Run statement", "New connection with a long label"]
+        .iter()
+        .map(|l| item(l, PaletteGroup::Command, true))
+        .collect();
+    items[0].shortcut = Some("⌘↵".into());
+    items[1].shortcut = Some("⇧⌘N".into());
+    let mut h = harness(items);
+    open(&mut h, PaletteMode::Commands);
+    let run = h.get_by_label("⌘↵").rect();
+    let other = h.get_by_label("⇧⌘N").rect();
+    assert!(
+        (run.right() - other.right()).abs() < 1.0,
+        "{run:?} vs {other:?}"
+    );
+    assert!(run.left() > h.get_by_label("Run statement").rect().right() + 100.0);
 }

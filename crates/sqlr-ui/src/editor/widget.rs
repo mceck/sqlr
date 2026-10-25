@@ -1283,6 +1283,19 @@ pub fn query_editor(
                 return;
             }
             ui.separator();
+            use crate::theme::icons as i;
+            use sqlr_core::ActionId as A;
+            let item = crate::text_menu::shortcut_item;
+            item(ui, &response, i::SEARCH, "Find…", A::Find);
+            item(ui, &response, i::FORMAT, "Format SQL", A::FormatSql);
+            item(
+                ui,
+                &response,
+                i::QUERY,
+                "Toggle line comment",
+                A::ToggleComment,
+            );
+            ui.separator();
             let shortcut =
                 crate::keymap::ui_keymap(ui.ctx()).label(sqlr_core::ActionId::SaveSnippet);
             if crate::theme::icons::menu_item_shortcut(

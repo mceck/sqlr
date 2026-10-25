@@ -5,7 +5,9 @@
 use std::sync::Arc;
 
 use egui::{Context, Event, Id, Key, Modifiers, Response, TextEdit, Ui};
+use sqlr_core::ActionId;
 
+use crate::theme::menu::MenuItem;
 use crate::theme::{self, icons};
 
 const PENDING: &str = "sqlr-text-menu-events";
@@ -57,24 +59,31 @@ pub fn text_edit_menu_with(response: &Response, mode: TextMenuMode, extra: impl 
     let copy = enabled && mode != TextMenuMode::Secret;
     let cut = writable && mode != TextMenuMode::Secret;
     theme::context_menu(response, |ui| {
-        if icons::menu_item_enabled(ui, writable, icons::UNDO, "Undo").clicked() {
+        let item = |ui: &mut Ui, enabled: bool, icon: &str, label: &str, action: ActionId| {
+            MenuItem::new(label)
+                .icon(icon)
+                .enabled(enabled)
+                .shortcut(crate::keymap::shortcut(ui.ctx(), action))
+                .ui(ui)
+        };
+        if item(ui, writable, icons::UNDO, "Undo", ActionId::Undo).clicked() {
             command(response, Key::Z, Modifiers::COMMAND);
             ui.close();
         }
-        if icons::menu_item_enabled(ui, writable, icons::REDO, "Redo").clicked() {
+        if item(ui, writable, icons::REDO, "Redo", ActionId::Redo).clicked() {
             command(response, Key::Z, Modifiers::COMMAND | Modifiers::SHIFT);
             ui.close();
         }
         ui.separator();
-        if icons::menu_item_enabled(ui, cut, icons::CUT, "Cut").clicked() {
+        if item(ui, cut, icons::CUT, "Cut", ActionId::Cut).clicked() {
             event(response, Event::Cut);
             ui.close();
         }
-        if icons::menu_item_enabled(ui, copy, icons::COPY, "Copy").clicked() {
+        if item(ui, copy, icons::COPY, "Copy", ActionId::Copy).clicked() {
             event(response, Event::Copy);
             ui.close();
         }
-        if icons::menu_item_enabled(ui, writable, icons::PASTE, "Paste").clicked() {
+        if item(ui, writable, icons::PASTE, "Paste", ActionId::Paste).clicked() {
             if let Some(text) = clipboard_text()
                 && !text.is_empty()
             {
@@ -83,12 +92,47 @@ pub fn text_edit_menu_with(response: &Response, mode: TextMenuMode, extra: impl 
             ui.close();
         }
         ui.separator();
-        if icons::menu_item_enabled(ui, enabled, icons::SELECT_ALL, "Select all").clicked() {
+        if item(
+            ui,
+            enabled,
+            icons::SELECT_ALL,
+            "Select all",
+            ActionId::SelectAll,
+        )
+        .clicked()
+        {
             command(response, Key::A, Modifiers::COMMAND);
             ui.close();
         }
         extra(ui);
     });
+}
+
+/// A menu entry that presses `action`'s current shortcut in the widget of `response`, for
+/// keyboard actions without a command of their own (Format SQL, Find…). Disabled while the
+/// action is unbound. Closes the menu when clicked.
+pub(crate) fn shortcut_item(
+    ui: &mut Ui,
+    response: &Response,
+    icon: &str,
+    label: &str,
+    action: ActionId,
+) {
+    let keys = crate::keymap::ui_keymap(ui.ctx());
+    let shortcut = keys
+        .keymap()
+        .chord_for(action)
+        .and_then(|c| crate::keymap::chord_shortcut(&c, keys.mac()));
+    let clicked = MenuItem::new(label)
+        .icon(icon)
+        .enabled(shortcut.is_some())
+        .shortcut(keys.label(action))
+        .ui(ui)
+        .clicked();
+    if clicked && let Some(shortcut) = shortcut {
+        command(response, shortcut.logical_key, shortcut.modifiers);
+        ui.close();
+    }
 }
 
 fn command(response: &Response, key: Key, modifiers: Modifiers) {

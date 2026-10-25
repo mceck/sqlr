@@ -49,32 +49,17 @@ macro_rules! actions {
     };
 }
 
+// Listed group by group, in the order of [`GROUPS`]: the Shortcuts dialog and the keymap
+// editor show them in this order under one heading per group.
 actions! {
-    RunStatement => ("run_statement", "Run statement or selection", "Running", Global),
-    RunScript => ("run_script", "Run script", "Running", Global),
-    Stop => ("stop", "Stop the running query", "Running", Global),
-    Commit => ("commit", "Commit", "Running", Global),
-    Rollback => ("rollback", "Rollback", "Running", Global),
-    Explain => ("explain", "Explain", "Running", Global),
-    ExplainAnalyze => ("explain_analyze", "Explain analyze", "Running", Global),
-    NewTab => ("new_tab", "New query tab", "Tabs", Global),
-    NewTabOnConnection => ("new_tab_on_connection", "New query tab on the current connection", "Tabs", Global),
-    CloseTab => ("close_tab", "Close tab", "Tabs", Global),
-    NextTab => ("next_tab", "Next tab", "Tabs", Global),
-    PreviousTab => ("previous_tab", "Previous tab", "Tabs", Global),
-    ApplyObject => ("apply_object", "Apply the object editor's changes", "Tabs", Global),
-    OpenObject => ("open_object", "Open an object", "Navigation", Global),
-    Commands => ("commands", "Command palette", "Navigation", Global),
-    Settings => ("settings", "Preferences", "Navigation", Global),
-    ShowOperations => ("show_operations", "Show operations", "Navigation", Global),
-    ToggleHistory => ("toggle_history", "Show or hide history", "Navigation", Global),
-    ToggleValuePanel => ("toggle_value_panel", "Show or hide the value panel", "Navigation", Global),
-    ToggleTerminal => ("toggle_terminal", "Show or hide the terminal", "Navigation", Global),
-    NewConnection => ("new_connection", "New connection", "Navigation", Global),
-    TransferData => ("transfer_data", "Import or export data", "Navigation", Global),
-    CompareSchemas => ("compare_schemas", "Compare schemas", "Navigation", Global),
-    ExportResult => ("export_result", "Export the result", "Navigation", Global),
-    SaveSnippet => ("save_snippet", "Save as snippet", "Navigation", Global),
+    RunStatement => ("run_statement", "Run statement or selection", "Query", Global),
+    RunScript => ("run_script", "Run script", "Query", Global),
+    Stop => ("stop", "Stop the running query", "Query", Global),
+    Explain => ("explain", "Explain", "Query", Global),
+    ExplainAnalyze => ("explain_analyze", "Explain analyze (runs the statement)", "Query", Global),
+    Commit => ("commit", "Commit the transaction", "Query", Global),
+    Rollback => ("rollback", "Roll back the transaction", "Query", Global),
+    SaveSnippet => ("save_snippet", "Save as snippet", "Query", Global),
     FormatSql => ("format_sql", "Format SQL", "Editor", Editor),
     ToggleComment => ("toggle_comment", "Toggle line comment", "Editor", Editor),
     DuplicateLine => ("duplicate_line", "Duplicate line or selection", "Editor", Editor),
@@ -85,23 +70,51 @@ actions! {
     Complete => ("complete", "Complete", "Editor", Editor),
     Undo => ("undo", "Undo", "Editor", Editor),
     Redo => ("redo", "Redo", "Editor", Editor),
-    RenameSelection => ("rename_selection", "Rename selected explorer item", "Navigation", Explorer),
-    Newline => ("newline", "Insert newline", "Editor", Editor),
-    Indent => ("indent", "Indent", "Editor", Editor),
-    Outdent => ("outdent", "Outdent", "Editor", Editor),
     Copy => ("copy", "Copy", "Editor", Global),
     Cut => ("cut", "Cut", "Editor", Global),
     Paste => ("paste", "Paste", "Editor", Global),
-    DriverManager => ("driver_manager", "Driver Manager", "Navigation", Global),
-    Quit => ("quit", "Quit", "Navigation", Global),
-    About => ("about", "About", "Navigation", Global),
-    ToggleSoftWrap => ("toggle_soft_wrap", "Toggle soft wrap", "Editor", Global),
-    Profiles => ("profiles", "Connection profiles", "Navigation", Global),
-    ShowTasks => ("show_tasks", "Show tasks", "Navigation", Global),
-    Shortcuts => ("shortcuts", "Keyboard shortcuts", "Navigation", Global),
     SelectAll => ("select_all", "Select all", "Editor", Editor),
-    DeleteRows => ("delete_rows", "Delete selected rows", "Result grid", Editor),
+    Newline => ("newline", "Insert newline", "Editor", Editor),
+    Indent => ("indent", "Indent", "Editor", Editor),
+    Outdent => ("outdent", "Outdent", "Editor", Editor),
+    ToggleSoftWrap => ("toggle_soft_wrap", "Toggle soft wrap", "Editor", Global),
+    Commands => ("commands", "Command palette", "Navigation", Global),
+    OpenObject => ("open_object", "Go to a table or view", "Navigation", Global),
+    NewTab => ("new_tab", "New query tab (no connection)", "Navigation", Global),
+    NewTabOnConnection => ("new_tab_on_connection", "New query tab on the current connection", "Navigation", Global),
+    CloseTab => ("close_tab", "Close tab", "Navigation", Global),
+    NextTab => ("next_tab", "Next tab", "Navigation", Global),
+    PreviousTab => ("previous_tab", "Previous tab", "Navigation", Global),
+    ToggleHistory => ("toggle_history", "Show or hide query history", "View", Global),
+    ToggleValuePanel => ("toggle_value_panel", "Show or hide the value panel", "View", Global),
+    ToggleTerminal => ("toggle_terminal", "Show or hide the terminal", "View", Global),
+    ShowOperations => ("show_operations", "Show operations", "View", Global),
+    ShowTasks => ("show_tasks", "Show tasks", "View", Global),
+    ExportResult => ("export_result", "Export the result", "Results", Global),
+    DeleteRows => ("delete_rows", "Delete selected rows", "Results", Editor),
+    RenameSelection => ("rename_selection", "Rename the selected explorer item", "Objects", Explorer),
+    ApplyObject => ("apply_object", "Apply the object editor's changes", "Objects", Global),
+    NewConnection => ("new_connection", "New connection", "General", Global),
+    Settings => ("settings", "Preferences", "General", Global),
+    Shortcuts => ("shortcuts", "Keyboard shortcuts", "General", Global),
+    Profiles => ("profiles", "Connection profiles", "General", Global),
+    DriverManager => ("driver_manager", "Driver Manager", "General", Global),
+    TransferData => ("transfer_data", "Import or export data", "General", Global),
+    CompareSchemas => ("compare_schemas", "Compare schemas", "General", Global),
+    About => ("about", "About", "General", Global),
+    Quit => ("quit", "Quit", "General", Global),
 }
+
+/// The action groups, in the order they are listed.
+pub const GROUPS: &[&str] = &[
+    "Query",
+    "Editor",
+    "Navigation",
+    "View",
+    "Results",
+    "Objects",
+    "General",
+];
 
 /// The modifier keys of a chord. `cmd` is ⌘ on macOS and Ctrl elsewhere (egui's `command`);
 /// `ctrl` is the Control key itself, which on other platforms is the same key as `cmd`.
@@ -201,7 +214,9 @@ impl Chord {
         c
     }
 
-    /// How the chord reads on this platform: `⇧⌘↵` on macOS, `Ctrl+Shift+Enter` elsewhere.
+    /// How the chord reads on this platform, the one notation every shortcut hint uses.
+    /// macOS: modifier glyphs in Apple's order (⌃⌥⇧⌘) then the key, `⇧⌘↵`. Elsewhere: names
+    /// joined by `+`, `Ctrl+Shift+Enter`. The platform is a parameter so tests can check both.
     pub fn label(&self, mac: bool) -> String {
         let c = self.normalized(mac);
         if mac {
@@ -216,7 +231,7 @@ impl Chord {
                     out.push_str(glyph);
                 }
             }
-            out.push_str(&key_glyph(&c.key));
+            out.push_str(key_label(&c.key, true));
             return out;
         }
         let mut parts = Vec::new();
@@ -226,22 +241,23 @@ impl Chord {
             (c.mods.shift, "Shift"),
         ] {
             if on {
-                parts.push(name.to_string());
+                parts.push(name);
             }
         }
-        parts.push(c.key);
+        parts.push(key_label(&c.key, false));
         parts.join("+")
     }
 }
 
-fn key_glyph(key: &str) -> String {
-    match key {
-        "Enter" => "↵",
+/// How a key reads in a shortcut hint. Glyphs are kept to the ones the UI font draws (Esc
+/// stays a word: ⎋ is unfamiliar and missing from the font).
+pub fn key_label(key: &str, mac: bool) -> &str {
+    let symbol = match key {
         "Comma" => ",",
         "Period" => ".",
         "Slash" => "/",
         "Backslash" => "\\",
-        "Minus" => "−",
+        "Minus" => "-",
         "Equals" => "=",
         "Semicolon" => ";",
         "Colon" => ":",
@@ -250,17 +266,38 @@ fn key_glyph(key: &str) -> String {
         "Backtick" => "`",
         "Quote" => "'",
         "Space" => "Space",
-        "Tab" => "⇥",
-        "Escape" => "⎋",
-        "Backspace" => "⌫",
-        "Delete" => "⌦",
-        "ArrowUp" => "↑",
-        "ArrowDown" => "↓",
-        "ArrowLeft" => "←",
-        "ArrowRight" => "→",
-        other => return other.to_string(),
+        "Escape" => "Esc",
+        _ => "",
+    };
+    if !symbol.is_empty() {
+        return symbol;
     }
-    .to_string()
+    if mac {
+        match key {
+            "Enter" => "↵",
+            "Tab" => "⇥",
+            "Backspace" => "⌫",
+            "Delete" => "⌦",
+            "ArrowUp" => "↑",
+            "ArrowDown" => "↓",
+            "ArrowLeft" => "←",
+            "ArrowRight" => "→",
+            "PageUp" => "PgUp",
+            "PageDown" => "PgDn",
+            other => other,
+        }
+    } else {
+        match key {
+            "ArrowUp" => "Up",
+            "ArrowDown" => "Down",
+            "ArrowLeft" => "Left",
+            "ArrowRight" => "Right",
+            "Delete" => "Del",
+            "PageUp" => "PgUp",
+            "PageDown" => "PgDn",
+            other => other,
+        }
+    }
 }
 
 /// The preset names the keymap editor offers, with their labels.
@@ -298,6 +335,14 @@ const SQLR: Table = &[
     (A::Outdent, &["Shift+Tab"]),
     (A::RunStatement, &["Cmd+Enter"]),
     (A::RunScript, &["Cmd+Shift+Enter"]),
+    // Explain on ⌥⌘E (E for explain, ⌥ keeps ⌘E free); Analyze adds ⇧ because it runs the
+    // statement. Commit and rollback sit on ⌥⌘ next to Run: ⌥⌘↵ "submits" the transaction,
+    // ⌥⌘Z undoes it. Ctrl+Alt+Backspace is avoided for rollback: X11 can reserve it to
+    // end the session.
+    (A::Explain, &["Cmd+Alt+E"]),
+    (A::ExplainAnalyze, &["Cmd+Alt+Shift+E"]),
+    (A::Commit, &["Cmd+Alt+Enter"]),
+    (A::Rollback, &["Cmd+Alt+Z"]),
     (A::NewTab, &["Cmd+T"]),
     (A::NewTabOnConnection, &["Cmd+N"]),
     (A::CloseTab, &["Cmd+W"]),
@@ -386,6 +431,20 @@ impl Keymap {
     /// The first chord bound to `action`.
     pub fn chord_for(&self, action: ActionId) -> Option<Chord> {
         self.chords_for(action).first().map(|c| (*c).clone())
+    }
+
+    /// The hint for `action`: its first chord in platform notation ([`Chord::label`]), `None`
+    /// while it is unbound.
+    pub fn label(&self, action: ActionId, mac: bool) -> Option<String> {
+        self.chords_for(action).first().map(|c| c.label(mac))
+    }
+
+    /// Every chord of `action` in platform notation, in binding order.
+    pub fn labels(&self, action: ActionId, mac: bool) -> Vec<String> {
+        self.chords_for(action)
+            .iter()
+            .map(|c| c.label(mac))
+            .collect()
     }
 
     /// Replaces every chord of `action` with `chords`.
@@ -588,7 +647,95 @@ mod tests {
         for action in ActionId::ALL {
             assert!(ids.insert(action.id()), "{}", action.id());
             assert_eq!(ActionId::from_id(action.id()), Some(*action));
-            assert!(!action.label().is_empty() && !action.group().is_empty());
+            assert!(!action.label().is_empty() && GROUPS.contains(&action.group()));
+        }
+        // Groups are contiguous and listed in GROUPS order, so a list shows one heading each.
+        let mut seen: Vec<&str> = Vec::new();
+        for action in ActionId::ALL {
+            if seen.last() != Some(&action.group()) {
+                assert!(!seen.contains(&action.group()), "{} split", action.group());
+                seen.push(action.group());
+            }
+        }
+        assert_eq!(seen, GROUPS);
+    }
+
+    fn label(chord: &str, mac: bool) -> String {
+        Chord::parse(chord).unwrap().label(mac)
+    }
+
+    #[test]
+    fn hints_use_glyphs_on_macos_and_names_elsewhere() {
+        // Each modifier, alone and in Apple's order ⌃⌥⇧⌘.
+        assert_eq!(label("Cmd+K", true), "⌘K");
+        assert_eq!(label("Shift+K", true), "⇧K");
+        assert_eq!(label("Alt+K", true), "⌥K");
+        assert_eq!(label("Ctrl+K", true), "⌃K");
+        assert_eq!(label("Cmd+Ctrl+Alt+Shift+K", true), "⌃⌥⇧⌘K");
+        assert_eq!(label("Cmd+K", false), "Ctrl+K");
+        assert_eq!(label("Shift+K", false), "Shift+K");
+        assert_eq!(label("Alt+K", false), "Alt+K");
+        assert_eq!(label("Cmd+Alt+Shift+K", false), "Ctrl+Alt+Shift+K");
+        // Off macOS Control is ⌘'s key: one "Ctrl", never two.
+        assert_eq!(label("Ctrl+Backtick", false), "Ctrl+`");
+        assert_eq!(label("Cmd+Ctrl+K", false), "Ctrl+K");
+        // Special keys.
+        for (key, mac, other) in [
+            ("Enter", "↵", "Enter"),
+            ("Backspace", "⌫", "Backspace"),
+            ("Delete", "⌦", "Del"),
+            ("Tab", "⇥", "Tab"),
+            ("Escape", "Esc", "Esc"),
+            ("Space", "Space", "Space"),
+            ("Backtick", "`", "`"),
+            ("Comma", ",", ","),
+            ("Slash", "/", "/"),
+            ("Minus", "-", "-"),
+            ("ArrowDown", "↓", "Down"),
+            ("F2", "F2", "F2"),
+        ] {
+            assert_eq!(label(key, true), mac, "{key} on macOS");
+            assert_eq!(label(key, false), other, "{key} elsewhere");
+        }
+        assert_eq!(label("Cmd+Alt+Enter", true), "⌥⌘↵");
+        assert_eq!(label("Cmd+Alt+Enter", false), "Ctrl+Alt+Enter");
+        // Shifted symbols read as their base key with ⇧.
+        assert_eq!(label("Cmd+Questionmark", true), "⇧⌘/");
+    }
+
+    #[test]
+    fn hints_follow_the_keymap() {
+        let mut keymap = Keymap::preset("sqlr").unwrap();
+        assert_eq!(
+            keymap.label(ActionId::Explain, true).as_deref(),
+            Some("⌥⌘E")
+        );
+        assert_eq!(keymap.labels(ActionId::Redo, true), ["⇧⌘Z", "⌘Y"]);
+        keymap.set_chords(ActionId::Explain, vec![Chord::parse("F7").unwrap()]);
+        assert_eq!(
+            keymap.label(ActionId::Explain, false).as_deref(),
+            Some("F7")
+        );
+        keymap.unbind(ActionId::Explain);
+        assert_eq!(keymap.label(ActionId::Explain, true), None);
+        // The VS Code preset's own chords show through.
+        let vscode = Keymap::preset("vscode").unwrap();
+        assert_eq!(
+            vscode.label(ActionId::FormatSql, true).as_deref(),
+            Some("⌥⇧F")
+        );
+    }
+
+    #[test]
+    fn core_actions_are_bound_by_default() {
+        let keymap = Keymap::preset("sqlr").unwrap();
+        for action in [
+            ActionId::Commit,
+            ActionId::Rollback,
+            ActionId::Explain,
+            ActionId::ExplainAnalyze,
+        ] {
+            assert!(keymap.chord_for(action).is_some(), "{action:?}");
         }
     }
 }
