@@ -478,7 +478,14 @@ fn visual_audit_states() {
     }
 
     // Main screens on a small display (dark only, as agreed).
-    for case in ["welcome", "query", "connection", "preferences", "objects", "history"] {
+    for case in [
+        "welcome",
+        "query",
+        "connection",
+        "preferences",
+        "objects",
+        "history",
+    ] {
         let dir = tempfile::tempdir().unwrap();
         let mut app = fixture(dir.path(), ThemePref::Dark);
         match case {

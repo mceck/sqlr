@@ -191,22 +191,39 @@ pub fn palette(
                             for (row, &index) in listed.iter().enumerate() {
                                 let item = &items[index];
                                 let selected = row == state.selected;
-                                ui.horizontal(|ui| {
-                                    let (icon, color) = group_icon(item.group);
-                                    icons::paint(ui, icon, color(&colors));
-                                    let response = ui.selectable_label(selected, &item.label);
-                                    ui.label(
-                                        RichText::new(&item.detail)
-                                            .small()
-                                            .color(colors.text_muted),
-                                    );
-                                    if selected && (up || down) {
-                                        response.scroll_to_me(None);
-                                    }
-                                    if response.clicked() {
-                                        output = PaletteOutput::Chosen(index);
-                                    }
-                                });
+                                let response = theme::list_row(
+                                    ui,
+                                    Id::new(("sqlr_palette_row", index)),
+                                    selected,
+                                    Spacing::ROW_TREE,
+                                    egui::Sense::click(),
+                                    |ui| {
+                                        ui.add_space(Spacing::XS);
+                                        let (icon, color) = group_icon(item.group);
+                                        icons::paint(ui, icon, color(&colors));
+                                        ui.add(
+                                            egui::Label::new(&item.label)
+                                                .selectable(false)
+                                                .truncate(),
+                                        );
+                                        ui.add(
+                                            egui::Label::new(
+                                                RichText::new(&item.detail)
+                                                    .small()
+                                                    .color(colors.text_muted),
+                                            )
+                                            .selectable(false)
+                                            .truncate(),
+                                        );
+                                    },
+                                )
+                                .response;
+                                if selected && (up || down) {
+                                    response.scroll_to_me(None);
+                                }
+                                if response.clicked() {
+                                    output = PaletteOutput::Chosen(index);
+                                }
                             }
                         });
                 });

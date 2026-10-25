@@ -5,10 +5,13 @@
 mod apply;
 pub mod fonts;
 pub mod icons;
+pub mod menu;
+mod row;
 mod tokens;
 
 pub use apply::{apply, dock_style, monospace, palette};
 pub use fonts::{install_fonts, semibold};
+pub use row::list_row;
 pub use sqlr_core::ThemePref;
 pub use tokens::{EditorColors, Palette, Spacing, contrast_ratio};
 
@@ -17,26 +20,24 @@ use egui::{
     WidgetInfo, WidgetType, vec2,
 };
 
-/// A context menu styled like the rest of the app: roomier than egui's compact default and a
-/// touch smaller than body text. Submenus inherit the same `MenuConfig`.
-pub fn context_menu<R>(
-    response: &Response,
-    add_contents: impl FnOnce(&mut egui::Ui) -> R,
-) -> Option<egui::InnerResponse<R>> {
-    let p = palette(&response.ctx);
-    let style = egui::style::StyleModifier::new(move |style| {
+/// The style of every menu (context menus, the menu bar's menus and their submenus): roomier
+/// than egui's compact default, body-sized text, entries softer at rest that brighten on a
+/// subtle hover fill.
+pub fn menu_style(ctx: &egui::Context) -> egui::style::StyleModifier {
+    let p = palette(ctx);
+    egui::style::StyleModifier::new(move |style| {
         egui::containers::menu::menu_style(style);
         let s = &mut style.spacing;
-        s.button_padding = vec2(5.0, 4.0);
+        s.button_padding = vec2(6.0, 4.0);
         s.item_spacing = vec2(14.0, 2.0);
         s.menu_margin = Margin::same(4);
+        s.interact_size.y = 26.0;
         style
             .text_styles
-            .insert(TextStyle::Button, FontId::proportional(12.0));
+            .insert(TextStyle::Button, FontId::proportional(13.0));
         style
             .text_styles
-            .insert(TextStyle::Body, FontId::proportional(12.0));
-        // Menu entries read softer at rest and brighten under the pointer.
+            .insert(TextStyle::Body, FontId::proportional(13.0));
         let v = &mut style.visuals;
         v.widgets.inactive.fg_stroke = Stroke::new(1.0, p.text_muted);
         v.widgets.hovered.fg_stroke = Stroke::new(1.0, p.text);
@@ -44,15 +45,66 @@ pub fn context_menu<R>(
         v.widgets.open.fg_stroke = Stroke::new(1.0, p.text);
         v.widgets.hovered.weak_bg_fill = p.hover;
         v.widgets.active.weak_bg_fill = p.hover;
-    });
+        v.widgets.open.weak_bg_fill = p.hover;
+    })
+}
+
+/// The `MenuConfig` carrying [`menu_style`], for menus opened from a menu bar or a button.
+pub fn menu_config(ctx: &egui::Context) -> egui::containers::menu::MenuConfig {
+    egui::containers::menu::MenuConfig::new().style(menu_style(ctx))
+}
+
+/// A context menu in the app's [`menu_style`], opened at the pointer. Submenus inherit the
+/// same `MenuConfig`. Build its entries with [`menu`].
+pub fn context_menu<R>(
+    response: &Response,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> Option<egui::InnerResponse<R>> {
+    show_menu(egui::Popup::context_menu(response), response, add_contents)
+}
+
+/// [`context_menu`] for a list or tree row: it opens at the pointer's x just below the row,
+/// so the row it acts on (name, state, actions) stays visible. Rows drawn with [`list_row`]
+/// stay highlighted while it is open.
+pub fn row_context_menu<R>(
+    response: &Response,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> Option<egui::InnerResponse<R>> {
+    let anchor = egui::Popup::default_response_id(response).with("sqlr_row_anchor");
+    if response.secondary_clicked() {
+        let x = response
+            .interact_pointer_pos()
+            .map_or(response.rect.left(), |p| p.x);
+        let pos = egui::pos2(x, response.rect.bottom());
+        response.ctx.data_mut(|d| d.insert_temp(anchor, pos));
+    }
+    let pos = response
+        .ctx
+        .data(|d| d.get_temp::<egui::Pos2>(anchor))
+        .unwrap_or(response.rect.left_bottom());
+    let popup = egui::Popup::context_menu(response)
+        .anchor(egui::PopupAnchor::Position(pos))
+        .align(egui::RectAlign::BOTTOM_START);
+    show_menu(popup, response, add_contents)
+}
+
+fn show_menu<R>(
+    popup: egui::Popup<'_>,
+    response: &Response,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> Option<egui::InnerResponse<R>> {
+    let style = menu_style(&response.ctx);
     let config = egui::containers::menu::MenuConfig::new().style(style.clone());
-    egui::Popup::context_menu(response)
+    popup
         .style(style)
         .info(
             egui::UiStackInfo::new(egui::UiKind::Menu)
                 .with_tag_value(egui::containers::menu::MenuConfig::MENU_CONFIG_TAG, config),
         )
-        .show(add_contents)
+        .show(|ui| {
+            ui.set_min_width(menu::MIN_WIDTH);
+            add_contents(ui)
+        })
 }
 
 /// A much smaller monospace font (grid column types, compact details).

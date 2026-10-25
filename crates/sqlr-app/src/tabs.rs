@@ -993,16 +993,18 @@ fn explain_controls(ui: &mut egui::Ui, tab: &mut QueryTab, cx: &mut ViewCx<'_>) 
             egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, "Explain options")
         });
         if enabled {
-            egui::Popup::menu(&chevron).show(|ui| {
-                if icons::menu_item(ui, icons::PLAN, "Explain").clicked() {
-                    requested = Some(false);
-                    ui.close();
-                }
-                if icons::menu_item(ui, icons::PLAN, "Explain Analyze").clicked() {
-                    requested = Some(true);
-                    ui.close();
-                }
-            });
+            egui::Popup::menu(&chevron)
+                .style(theme::menu_style(ui.ctx()))
+                .show(|ui| {
+                    if icons::menu_item(ui, icons::PLAN, "Explain").clicked() {
+                        requested = Some(false);
+                        ui.close();
+                    }
+                    if icons::menu_item(ui, icons::PLAN, "Explain Analyze").clicked() {
+                        requested = Some(true);
+                        ui.close();
+                    }
+                });
         }
         let glyph = icons::text(ui, icons::PLAN, icons::SIZE).color(if enabled {
             p.text_muted

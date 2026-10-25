@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 
 use egui::{
-    Align2, Button, Color32, DragAndDrop, Id, Key, Margin, Rect, RichText, Sense, Stroke, TextEdit,
+    Align2, Color32, DragAndDrop, Id, Key, Margin, Rect, RichText, Sense, Stroke, TextEdit,
     WidgetInfo, WidgetType, vec2,
 };
 use sqlr_core::{
@@ -15,7 +15,7 @@ use sqlr_core::{
 };
 
 use crate::admin::AdminPanel;
-use crate::theme::{self, Palette, Spacing, icons};
+use crate::theme::{self, Palette, Spacing, icons, menu};
 
 const INDENT: f32 = Spacing::XL;
 const ARROW_WIDTH: f32 = 16.0;
@@ -1075,60 +1075,69 @@ fn folder_row(
         .renaming_folder
         .as_ref()
         .is_some_and(|(folder, _)| folder == path);
+    let selected = state.selected_folder.as_deref() == Some(path);
     let mut toggle = false;
-    let mut icon_clicked = false;
-    let mut icon_double_clicked = false;
-    let hit = row_ui_hit(ui, Id::new(("tree_folder", path)), |ui| {
-        ui.add_space(depth as f32 * INDENT);
-        toggle |= arrow(ui, name, true, open, palette.text_muted);
-        if renaming {
+    let row = theme::list_row(
+        ui,
+        Id::new(("tree_folder", path)),
+        selected && !renaming,
+        Spacing::ROW_TREE,
+        Sense::click_and_drag(),
+        |ui| {
+            ui.add_space(depth as f32 * INDENT);
+            toggle |= arrow(ui, name, true, open, palette.text_muted);
             icons::paint(ui, icons::FOLDER, palette.icon_schema);
-            rename_folder_field(ui, path, state, actions);
-            return;
-        }
-        let icon = icons::paint_clickable(ui, icons::FOLDER, palette.icon_schema);
-        icon_clicked = icon.clicked();
-        icon_double_clicked = icon.double_clicked();
-        ui.spacing_mut().item_spacing.x = Spacing::XS;
-        ui.spacing_mut().button_padding.x = Spacing::XS;
-        let selected = state.selected_folder.as_deref() == Some(path);
-        let response = ui.add(Button::selectable(selected, name).sense(Sense::click_and_drag()));
-        let response = if path != name {
-            response.on_hover_text(path)
-        } else {
-            response
-        };
+            if renaming {
+                rename_folder_field(ui, path, state, actions);
+                return;
+            }
+            ui.spacing_mut().item_spacing.x = Spacing::XS;
+            let label = ui.add(egui::Label::new(name).selectable(false).truncate());
+            if path != name {
+                label.on_hover_text(path);
+            }
+        },
+    );
+    let response = row.response;
+    if !renaming {
         response.dnd_set_drag_payload(TreeDrag::Folder(path.to_string()));
-        if response.clicked() || icon_clicked {
+        if response.clicked() {
             state.selected_folder = Some(path.to_string());
             state.selected = None;
         }
-        toggle |= response.double_clicked() || icon_double_clicked;
-        theme::context_menu(&response, |ui| {
-            if icons::menu_item(ui, icons::CONNECTION, "New connection").clicked() {
+        toggle |= response.double_clicked();
+        theme::row_context_menu(&response, |ui| {
+            if menu::item(ui, icons::CONNECTION, "New connection", None).clicked() {
                 actions.push(TreeAction::NewConnectionIn(path.to_string()));
                 ui.close();
             }
-            if icons::menu_item(ui, icons::FOLDER_PLUS, "New folder").clicked() {
+            if menu::item(ui, icons::FOLDER_PLUS, "New folder", None).clicked() {
                 state.start_new_folder_in(Some(path));
                 ui.close();
             }
-            if icons::menu_item(ui, icons::EDIT, "Rename").clicked() {
+            let rename = rename_shortcut(ui);
+            if menu::item(ui, icons::EDIT, "Rename", rename.as_deref()).clicked() {
                 state.selected_folder = Some(path.to_string());
                 state.selected = None;
                 state.renaming_folder = Some((path.to_string(), name.to_string()));
                 ui.close();
             }
-            if icons::menu_item(ui, icons::DELETE, "Delete folder").clicked() {
+            menu::separator(ui);
+            if menu::danger_item(ui, icons::DELETE, "Delete folder").clicked() {
                 actions.push(TreeAction::DeleteFolder(path.to_string()));
                 ui.close();
             }
         });
-    });
+    }
     if toggle {
         state.set_folder_expanded(path, !open);
     }
-    drop_on_folder(ui, &hit, path, state, palette, actions);
+    drop_on_folder(ui, &response, path, state, palette, actions);
+}
+
+/// The F2 hint of a Rename entry, from the active keymap.
+fn rename_shortcut(ui: &egui::Ui) -> Option<String> {
+    crate::keymap::ui_keymap(ui.ctx()).label(sqlr_core::ActionId::RenameSelection)
 }
 
 /// The inline rename field for a folder, showing its leaf name; true when it was drawn.
@@ -1370,263 +1379,110 @@ fn conn_row(
 ) {
     let root = NodePath::root();
     let mut toggle = false;
-    let mut icon_clicked = false;
-    let mut icon_double_clicked = false;
-    let hit = row_ui_hit(ui, Id::new(("tree_conn", conn.id)), |ui| {
-        ui.add_space(depth as f32 * INDENT);
-        if let Some([r, g, b]) = conn.color.or(conn.tint) {
-            let rect = ui.max_rect();
-            let fill = Color32::from_rgba_unmultiplied(r, g, b, 40);
-            ui.painter().rect_filled(rect, 4.0, fill);
-        }
-        toggle |= arrow(ui, conn.name, true, open, palette.text_muted);
-        let selected = state.is_selected(conn.id, &root);
-        // The name gives way to the state mark, the detail and the row buttons: a long one
-        // is cut with an ellipsis and shown whole on hover.
-        let live = matches!(conn.badge, ConnBadge::Connected | ConnBadge::Connecting);
-        // The state is an icon alone: its color names it at a glance, its accessible label
-        // and tooltip spell it out.
-        let (mark, color, label) = match &conn.badge {
-            ConnBadge::Disconnected => (icons::DISCONNECTED, palette.text_muted, "disconnected"),
-            ConnBadge::Connecting => (icons::CONNECTING, palette.warning, "connecting…"),
-            ConnBadge::Connected => (icons::CONNECTED, palette.success, "connected"),
-            ConnBadge::Failed(_) => (icons::FAILED, palette.error, "failed"),
-            ConnBadge::MissingDriver => (icons::WARNING, palette.warning, "driver missing"),
-        };
-        let badge_text = icons::text(ui, mark, 12.0).color(color);
-        let badge_width = egui::WidgetText::from(badge_text.clone())
-            .into_galley(
-                ui,
-                Some(egui::TextWrapMode::Extend),
-                f32::INFINITY,
-                egui::TextStyle::Body,
-            )
-            .size()
-            .x;
-        let trailing = badge_width
-            + ui.spacing().item_spacing.x
-            + if live { ROW_BUTTONS_WIDTH } else { 0.0 }
-            + if conn.open_transaction { 16.0 } else { 0.0 };
-        let budget = (ui.available_width() - trailing).max(60.0);
-        let name = ui.horizontal(|ui| {
-            ui.set_max_width(budget);
-            // Keep the database mark close to the name; the row's other gaps stay wider.
-            ui.spacing_mut().item_spacing.x = Spacing::XS;
-            ui.spacing_mut().button_padding.x = Spacing::XS;
-            let icon = icons::paint_database(ui, conn.driver);
-            icon_clicked = icon.clicked();
-            icon_double_clicked = icon.double_clicked();
-            ui.add(
-                Button::selectable(selected, conn.name)
-                    .truncate()
-                    .sense(Sense::click_and_drag()),
-            )
-        });
-        let response = if name.response.rect.width() >= budget - 1.0 {
-            name.inner.on_hover_text(conn.name)
-        } else {
-            name.inner
-        };
-        // The detail takes what is left, if that is enough to read.
-        let room = (ui.available_width() - trailing).min(DETAIL_MAX);
-        if let Some(detail) = conn.detail.filter(|_| room >= 28.0) {
-            ui.scope(|ui| {
-                ui.set_max_width(room);
+    let selected = state.is_selected(conn.id, &root);
+    let row = theme::list_row(
+        ui,
+        Id::new(("tree_conn", conn.id)),
+        selected,
+        Spacing::ROW_TREE,
+        Sense::click_and_drag(),
+        |ui| {
+            ui.add_space(depth as f32 * INDENT);
+            if let Some([r, g, b]) = conn.color.or(conn.tint) {
+                let rect = ui.max_rect();
+                let fill = Color32::from_rgba_unmultiplied(r, g, b, 40);
+                ui.painter().rect_filled(rect, 4.0, fill);
+            }
+            toggle |= arrow(ui, conn.name, true, open, palette.text_muted);
+            // The name gives way to the state mark, the detail and the row buttons: a long one
+            // is cut with an ellipsis and shown whole on hover.
+            let live = matches!(conn.badge, ConnBadge::Connected | ConnBadge::Connecting);
+            // The state is an icon alone: its color names it at a glance, its accessible label
+            // and tooltip spell it out.
+            let (mark, color, label) = match &conn.badge {
+                ConnBadge::Disconnected => {
+                    (icons::DISCONNECTED, palette.text_muted, "disconnected")
+                }
+                ConnBadge::Connecting => (icons::CONNECTING, palette.warning, "connecting…"),
+                ConnBadge::Connected => (icons::CONNECTED, palette.success, "connected"),
+                ConnBadge::Failed(_) => (icons::FAILED, palette.error, "failed"),
+                ConnBadge::MissingDriver => (icons::WARNING, palette.warning, "driver missing"),
+            };
+            let badge_text = icons::text(ui, mark, 12.0).color(color);
+            let badge_width = egui::WidgetText::from(badge_text.clone())
+                .into_galley(
+                    ui,
+                    Some(egui::TextWrapMode::Extend),
+                    f32::INFINITY,
+                    egui::TextStyle::Body,
+                )
+                .size()
+                .x;
+            let trailing = badge_width
+                + ui.spacing().item_spacing.x
+                + if live { ROW_BUTTONS_WIDTH } else { 0.0 }
+                + if conn.open_transaction { 16.0 } else { 0.0 };
+            let budget = (ui.available_width() - trailing).max(60.0);
+            let name = ui.horizontal(|ui| {
+                ui.set_max_width(budget);
+                // Keep the database mark close to the name; the row's other gaps stay wider.
+                ui.spacing_mut().item_spacing.x = Spacing::XS;
+                icons::paint_database(ui, conn.driver);
+                ui.add_space(Spacing::XS);
+                ui.add(egui::Label::new(conn.name).selectable(false).truncate())
+            });
+            if name.response.rect.width() >= budget - 1.0 {
+                name.inner.on_hover_text(conn.name);
+            }
+            // The detail takes what is left, if that is enough to read.
+            let room = (ui.available_width() - trailing).min(DETAIL_MAX);
+            if let Some(detail) = conn.detail.filter(|_| room >= 28.0) {
+                ui.scope(|ui| {
+                    ui.set_max_width(room);
+                    ui.add(
+                        egui::Label::new(RichText::new(detail).small().color(palette.text_muted))
+                            .selectable(false)
+                            .truncate(),
+                    );
+                });
+            }
+            let badge = ui.add(egui::Label::new(badge_text).selectable(false));
+            badge.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, label));
+            let tip = match &conn.badge {
+                ConnBadge::Failed(message) => message.as_str(),
+                _ => label,
+            };
+            badge.on_hover_text(tip);
+            if conn.open_transaction {
                 ui.add(
-                    egui::Label::new(RichText::new(detail).small().color(palette.text_muted))
-                        .truncate(),
-                );
-            });
-        }
-        response.dnd_set_drag_payload(TreeDrag::Connection(conn.id.to_string()));
-        if response.clicked() || icon_clicked {
-            state.selected = Some((conn.id.to_string(), root.clone()));
-            state.selected_folder = None;
-        }
-        toggle |= response.double_clicked() || icon_double_clicked;
-        let badge = ui.label(badge_text);
-        badge.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, label));
-        let tip = match &conn.badge {
-            ConnBadge::Failed(message) => message.as_str(),
-            _ => label,
-        };
-        badge.on_hover_text(tip);
-        if conn.open_transaction {
-            ui.label(RichText::new("●").color(palette.warning))
+                    egui::Label::new(RichText::new("●").color(palette.warning)).selectable(false),
+                )
                 .on_hover_text("Open transaction");
-        }
-        // The row's actions stay anchored to the right edge, away from the name.
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if matches!(conn.badge, ConnBadge::Connected | ConnBadge::Connecting) {
-                if icons::row_button(ui, icons::STOP, "Disconnect connection").clicked() {
-                    actions.push(TreeAction::Disconnect(conn.id.to_string()));
-                }
-                if icons::row_button(ui, icons::REFRESH, "Reconnect").clicked() {
-                    actions.push(TreeAction::Reconnect(conn.id.to_string()));
-                }
             }
-        });
-        theme::context_menu(&response, |ui| {
-            let connected = matches!(conn.badge, ConnBadge::Connected | ConnBadge::Connecting);
-            if icons::menu_item(ui, icons::QUERY, "New editor tab").clicked() {
-                actions.push(TreeAction::NewEditorTab(conn.id.to_string()));
-                ui.close();
-            }
-            if connected {
-                if icons::menu_item(ui, icons::STOP, "Disconnect").clicked() {
-                    actions.push(TreeAction::Disconnect(conn.id.to_string()));
-                    ui.close();
-                }
-            } else if icons::menu_item(ui, icons::CONNECTION, "Connect").clicked() {
-                actions.push(TreeAction::Connect(conn.id.to_string()));
-                ui.close();
-            }
-            if connected && icons::menu_item(ui, icons::REFRESH, "Refresh").clicked() {
-                actions.push(TreeAction::Refresh {
-                    conn: conn.id.to_string(),
-                    path: NodePath::root(),
-                });
-                ui.close();
-            }
-            let kinds = if connected {
-                source.conn_new(conn.id)
-            } else {
-                Vec::new()
-            };
-            if !kinds.is_empty() {
-                icons::menu_button(ui, icons::ADD, "New", |ui| {
-                    for kind in kinds {
-                        if icons::menu_item(ui, icons::for_object(kind), kind_label(kind)).clicked()
-                        {
-                            actions.push(TreeAction::NewObject {
-                                conn: conn.id.to_string(),
-                                node: None,
-                                kind,
-                            });
-                            ui.close();
-                        }
+            // The row's actions stay anchored to the right edge, away from the name.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if matches!(conn.badge, ConnBadge::Connected | ConnBadge::Connecting) {
+                    if icons::row_button(ui, icons::STOP, "Disconnect connection").clicked() {
+                        actions.push(TreeAction::Disconnect(conn.id.to_string()));
                     }
-                });
-            }
-            let tools = if connected {
-                source.database_tools(conn.id)
-            } else {
-                DatabaseTools::default()
-            };
-            let database = connected
-                .then(|| source.connection_database(conn.id))
-                .flatten();
-            if tools.dump
-                && let Some(database) = &database
-            {
-                if icons::menu_item(ui, icons::EXPORT, "Dump database…").clicked() {
-                    actions.push(TreeAction::DumpDatabase {
-                        conn: conn.id.to_string(),
-                        database: database.clone(),
-                    });
-                    ui.close();
-                }
-                if tools.restore
-                    && icons::menu_item(ui, icons::IMPORT, "Restore database…").clicked()
-                {
-                    actions.push(TreeAction::RestoreDatabase {
-                        conn: conn.id.to_string(),
-                        database: database.clone(),
-                    });
-                    ui.close();
-                }
-            }
-            let panels = if connected {
-                source.conn_admin(conn.id)
-            } else {
-                Vec::new()
-            };
-            if !panels.is_empty() {
-                ui.separator();
-                for panel in panels {
-                    let icon = match panel {
-                        AdminPanel::Users => icons::KEY,
-                        AdminPanel::Sessions => icons::CONNECTION,
-                        AdminPanel::Server => icons::SETTINGS,
-                    };
-                    if icons::menu_item(ui, icon, panel.label()).clicked() {
-                        actions.push(TreeAction::OpenAdmin {
-                            conn: conn.id.to_string(),
-                            panel,
-                        });
-                        ui.close();
-                    }
-                }
-                ui.separator();
-            }
-            let folders = source.folders();
-            if !folders.is_empty() {
-                icons::menu_button(ui, icons::FOLDER, "Move to folder", |ui| {
-                    if conn.group.is_some()
-                        && icons::menu_item(ui, icons::FOLDER, "Top level").clicked()
-                    {
-                        actions.push(TreeAction::MoveConnection {
-                            conn: conn.id.to_string(),
-                            folder: None,
-                            target: TreeDrop::End,
-                        });
-                        ui.close();
-                    }
-                    for folder in folders {
-                        if conn.group == Some(folder) {
-                            continue;
-                        }
-                        if icons::menu_item(ui, icons::FOLDER, folder).clicked() {
-                            actions.push(TreeAction::MoveConnection {
-                                conn: conn.id.to_string(),
-                                folder: Some(folder.to_string()),
-                                target: TreeDrop::End,
-                            });
-                            ui.close();
-                        }
-                    }
-                });
-            }
-            ui.menu_button("Agent access", |ui| {
-                for (access, label) in [
-                    (sqlr_core::AgentAccess::None, "None"),
-                    (sqlr_core::AgentAccess::Read, "Read"),
-                    (sqlr_core::AgentAccess::Write, "Write"),
-                ] {
-                    if ui
-                        .selectable_label(conn.agent_access == access, label)
-                        .clicked()
-                    {
-                        actions.push(TreeAction::SetAgentAccess {
-                            conn: conn.id.to_string(),
-                            access,
-                        });
-                        ui.close();
+                    if icons::row_button(ui, icons::REFRESH, "Reconnect").clicked() {
+                        actions.push(TreeAction::Reconnect(conn.id.to_string()));
                     }
                 }
             });
-            if icons::menu_item(ui, icons::EDIT, "Edit").clicked() {
-                actions.push(TreeAction::Edit(conn.id.to_string()));
-                ui.close();
-            }
-            if icons::menu_item(ui, icons::DUPLICATE, "Duplicate").clicked() {
-                actions.push(TreeAction::Duplicate(conn.id.to_string()));
-                ui.close();
-            }
-            if icons::menu_item(ui, icons::COPY, "Copy connection URL")
-                .on_hover_text("Without its password")
-                .clicked()
-            {
-                actions.push(TreeAction::CopyUrl(conn.id.to_string()));
-                ui.close();
-            }
-            if icons::menu_item(ui, icons::DELETE, "Delete").clicked() {
-                actions.push(TreeAction::Delete(conn.id.to_string()));
-                ui.close();
-            }
-        });
+        },
+    );
+    let response = row.response;
+    response.dnd_set_drag_payload(TreeDrag::Connection(conn.id.to_string()));
+    if response.clicked() {
+        state.selected = Some((conn.id.to_string(), root.clone()));
+        state.selected_folder = None;
+    }
+    toggle |= response.double_clicked();
+    theme::row_context_menu(&response, |ui| {
+        connection_menu(ui, conn, source, actions);
     });
-    drop_on_connection(ui, &hit, conn, state, palette, actions);
+    drop_on_connection(ui, &response, conn, state, palette, actions);
     if !toggle {
         return;
     }
@@ -1652,6 +1508,180 @@ fn conn_row(
     }
 }
 
+/// A connection's context menu, in groups: open (tab, connect, refresh, new objects) · edit,
+/// duplicate, copy, move · database tools and server panels · agent access · delete.
+fn connection_menu(
+    ui: &mut egui::Ui,
+    conn: &TreeConn<'_>,
+    source: &dyn SchemaSource,
+    actions: &mut Vec<TreeAction>,
+) {
+    let id = || conn.id.to_string();
+    let mut act = |ui: &mut egui::Ui, action: TreeAction| {
+        actions.push(action);
+        ui.close();
+    };
+    let connected = matches!(conn.badge, ConnBadge::Connected | ConnBadge::Connecting);
+    let keymap = crate::keymap::ui_keymap(ui.ctx());
+
+    // Open.
+    let new_tab = keymap.label(sqlr_core::ActionId::NewTabOnConnection);
+    if menu::item(ui, icons::QUERY, "New editor tab", new_tab.as_deref()).clicked() {
+        act(ui, TreeAction::NewEditorTab(id()));
+    }
+    if connected {
+        if menu::item(ui, icons::DISCONNECT, "Disconnect", None).clicked() {
+            act(ui, TreeAction::Disconnect(id()));
+        }
+    } else if menu::item(ui, icons::CONNECTION, "Connect", None).clicked() {
+        act(ui, TreeAction::Connect(id()));
+    }
+    if connected && menu::item(ui, icons::REFRESH, "Refresh", None).clicked() {
+        act(
+            ui,
+            TreeAction::Refresh {
+                conn: id(),
+                path: NodePath::root(),
+            },
+        );
+    }
+    let kinds = if connected {
+        source.conn_new(conn.id)
+    } else {
+        Vec::new()
+    };
+    if !kinds.is_empty() {
+        menu::submenu(ui, Some(icons::ADD), "New", |ui| {
+            for kind in kinds {
+                if menu::item(ui, icons::for_object(kind), kind_label(kind), None).clicked() {
+                    act(
+                        ui,
+                        TreeAction::NewObject {
+                            conn: id(),
+                            node: None,
+                            kind,
+                        },
+                    );
+                }
+            }
+        });
+    }
+
+    // Edit, duplicate, copy, move.
+    menu::separator(ui);
+    if menu::item(ui, icons::EDIT, "Edit", None).clicked() {
+        act(ui, TreeAction::Edit(id()));
+    }
+    if menu::item(ui, icons::DUPLICATE, "Duplicate", None).clicked() {
+        act(ui, TreeAction::Duplicate(id()));
+    }
+    if menu::item(ui, icons::LINK, "Copy connection URL", None)
+        .on_hover_text("Without its password")
+        .clicked()
+    {
+        act(ui, TreeAction::CopyUrl(id()));
+    }
+    let folders = source.folders();
+    if !folders.is_empty() {
+        menu::submenu(ui, Some(icons::FOLDER), "Move to folder", |ui| {
+            if conn.group.is_some() && menu::item(ui, icons::FOLDER, "Top level", None).clicked() {
+                act(
+                    ui,
+                    TreeAction::MoveConnection {
+                        conn: id(),
+                        folder: None,
+                        target: TreeDrop::End,
+                    },
+                );
+            }
+            for folder in folders {
+                if conn.group == Some(folder) {
+                    continue;
+                }
+                if menu::item(ui, icons::FOLDER, folder, None).clicked() {
+                    act(
+                        ui,
+                        TreeAction::MoveConnection {
+                            conn: id(),
+                            folder: Some(folder.to_string()),
+                            target: TreeDrop::End,
+                        },
+                    );
+                }
+            }
+        });
+    }
+
+    // Database tools and server panels.
+    let tools = if connected {
+        source.database_tools(conn.id)
+    } else {
+        DatabaseTools::default()
+    };
+    let database = connected
+        .then(|| source.connection_database(conn.id))
+        .flatten();
+    let panels = if connected {
+        source.conn_admin(conn.id)
+    } else {
+        Vec::new()
+    };
+    let dump = tools.dump && database.is_some();
+    if dump || !panels.is_empty() {
+        menu::separator(ui);
+    }
+    if let Some(database) = database.filter(|_| tools.dump) {
+        if menu::item(ui, icons::EXPORT, "Dump database…", None).clicked() {
+            act(
+                ui,
+                TreeAction::DumpDatabase {
+                    conn: id(),
+                    database: database.clone(),
+                },
+            );
+        }
+        if tools.restore && menu::item(ui, icons::IMPORT, "Restore database…", None).clicked() {
+            act(
+                ui,
+                TreeAction::RestoreDatabase {
+                    conn: id(),
+                    database,
+                },
+            );
+        }
+    }
+    for panel in panels {
+        let icon = match panel {
+            AdminPanel::Users => icons::ROLE,
+            AdminPanel::Sessions => icons::SESSIONS,
+            AdminPanel::Server => icons::SETTINGS,
+        };
+        if menu::item(ui, icon, panel.label(), None).clicked() {
+            act(ui, TreeAction::OpenAdmin { conn: id(), panel });
+        }
+    }
+
+    // Agent access.
+    menu::separator(ui);
+    menu::submenu(ui, Some(icons::MCP), "Agent access", |ui| {
+        for (access, label) in [
+            (sqlr_core::AgentAccess::None, "None"),
+            (sqlr_core::AgentAccess::Read, "Read"),
+            (sqlr_core::AgentAccess::Write, "Write"),
+        ] {
+            if menu::check_item(ui, conn.agent_access == access, label).clicked() {
+                act(ui, TreeAction::SetAgentAccess { conn: id(), access });
+            }
+        }
+    });
+
+    // Delete.
+    menu::separator(ui);
+    if menu::danger_item(ui, icons::DELETE, "Delete").clicked() {
+        act(ui, TreeAction::Delete(id()));
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn node_row(
     ui: &mut egui::Ui,
@@ -1666,54 +1696,64 @@ fn node_row(
     actions: &mut Vec<TreeAction>,
 ) {
     let mut toggle = false;
-    let mut icon_clicked = false;
-    let mut icon_double_clicked = false;
-    row_ui(ui, |ui| {
-        ui.add_space(depth as f32 * INDENT);
-        toggle |= arrow(ui, &node.name, node.has_children, open, palette.text_muted);
-        let (icon, color) = icons::for_node(node.kind);
-        let renaming = state
-            .renaming
-            .as_ref()
-            .is_some_and(|(c, p, _)| c == conn && *p == node.path);
-        if renaming {
-            icons::paint(ui, icon, color(palette));
-            rename_field(ui, conn, node, state, actions);
-            return;
-        }
-        let selected = state.is_selected(conn, &node.path);
-        let response = ui
-            .horizontal(|ui| {
+    let renaming = state
+        .renaming
+        .as_ref()
+        .is_some_and(|(c, p, _)| c == conn && *p == node.path);
+    let selected = state.is_selected(conn, &node.path) && !renaming;
+    let row = theme::list_row(
+        ui,
+        Id::new(("tree_node", conn, &node.path)),
+        selected,
+        Spacing::ROW_TREE,
+        Sense::click(),
+        |ui| {
+            ui.add_space(depth as f32 * INDENT);
+            toggle |= arrow(ui, &node.name, node.has_children, open, palette.text_muted);
+            let (icon, color) = icons::for_node(node.kind);
+            if renaming {
+                icons::paint(ui, icon, color(palette));
+                rename_field(ui, conn, node, state, actions);
+                return;
+            }
+            ui.horizontal(|ui| {
                 // Match the connection rows: the icon sits right next to its name.
                 ui.spacing_mut().item_spacing.x = Spacing::XS;
-                ui.spacing_mut().button_padding.x = Spacing::XS;
-                let icon = icons::paint_clickable(ui, icon, color(palette));
-                icon_clicked = icon.clicked();
-                icon_double_clicked = icon.double_clicked();
-                ui.selectable_label(selected, &node.name)
-            })
-            .inner;
-        if let Some(detail) = &node.detail {
-            ui.label(RichText::new(detail).small().color(palette.text_muted));
-        }
-        // A folder shows how many children it holds once they are loaded.
-        if node.kind == NodeKind::Folder
-            && let Some(count) = source.child_count(conn, &node.path)
-        {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add_space(Spacing::S);
-                ui.label(
-                    RichText::new(count.to_string())
-                        .small()
-                        .color(palette.text_muted),
-                );
+                icons::paint(ui, icon, color(palette));
+                ui.add_space(Spacing::XS);
+                ui.add(egui::Label::new(&node.name).selectable(false));
             });
-        }
-        if response.clicked() || icon_clicked {
+            if let Some(detail) = &node.detail {
+                ui.add(
+                    egui::Label::new(RichText::new(detail).small().color(palette.text_muted))
+                        .selectable(false),
+                );
+            }
+            // A folder shows how many children it holds once they are loaded.
+            if node.kind == NodeKind::Folder
+                && let Some(count) = source.child_count(conn, &node.path)
+            {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add_space(Spacing::S);
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(count.to_string())
+                                .small()
+                                .color(palette.text_muted),
+                        )
+                        .selectable(false),
+                    );
+                });
+            }
+        },
+    );
+    let response = row.response;
+    if !renaming {
+        if response.clicked() {
             state.selected = Some((conn.to_string(), node.path.clone()));
             state.selected_folder = None;
         }
-        if response.double_clicked() || icon_double_clicked {
+        if response.double_clicked() {
             if node.kind.opens_data() {
                 actions.push(TreeAction::OpenData {
                     conn: conn.to_string(),
@@ -1723,7 +1763,7 @@ fn node_row(
                 toggle |= node.has_children;
             }
         }
-        theme::context_menu(&response, |ui| {
+        theme::row_context_menu(&response, |ui| {
             // "Open editor" leads the object entries, before the data actions.
             let menu = source.node_menu(conn, node);
             if menu.open && icons::menu_item(ui, icons::EDIT, "Open editor").clicked() {
@@ -1847,15 +1887,15 @@ fn node_row(
                 });
                 ui.close();
             }
-            object_menu(ui, conn, node, state, &menu, actions);
-            if icons::menu_item(ui, icons::REFRESH, "Refresh").clicked() {
+            menu::separator(ui);
+            if menu::item(ui, icons::REFRESH, "Refresh", None).clicked() {
                 actions.push(TreeAction::Refresh {
                     conn: conn.to_string(),
                     path: node.path.clone(),
                 });
                 ui.close();
             }
-            if icons::menu_item(ui, icons::COPY, "Copy name").clicked() {
+            if menu::item(ui, icons::COPY, "Copy name", None).clicked() {
                 actions.push(TreeAction::CopyName {
                     conn: conn.to_string(),
                     node: node.clone(),
@@ -1863,8 +1903,9 @@ fn node_row(
                 });
                 ui.close();
             }
+            object_menu(ui, conn, node, state, &menu, actions);
         });
-    });
+    }
     if !toggle {
         return;
     }
@@ -1991,17 +2032,17 @@ fn object_menu(
             );
         }
     }
-    if menu.rename
-        && icons::menu_item(ui, icons::EDIT, "Rename")
-            .on_hover_text("F2")
-            .clicked()
-    {
+    let rename = rename_shortcut(ui);
+    if menu.rename && menu::item(ui, icons::EDIT, "Rename", rename.as_deref()).clicked() {
         state.selected = Some((c.clone(), n.path.clone()));
         state.selected_folder = None;
         state.renaming = Some((c.clone(), n.path.clone(), n.name.clone()));
         ui.close();
     }
-    if menu.truncate && icons::menu_item(ui, icons::TRUNCATE, "Truncate…").clicked() {
+    if menu.truncate || menu.drop {
+        menu::separator(ui);
+    }
+    if menu.truncate && menu::danger_item(ui, icons::TRUNCATE, "Truncate…").clicked() {
         action(
             TreeAction::Truncate {
                 conn: c.clone(),
@@ -2011,7 +2052,7 @@ fn object_menu(
             ui,
         );
     }
-    if menu.drop && icons::menu_item(ui, icons::DELETE, "Drop…").clicked() {
+    if menu.drop && menu::danger_item(ui, icons::DELETE, "Drop…").clicked() {
         action(TreeAction::DropObject { conn: c, node: n }, actions, ui);
     }
 }
