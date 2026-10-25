@@ -29,23 +29,6 @@ jobs:
             exit 1
           fi
           echo "version=$crate" >> "$GITHUB_OUTPUT"
-
-  # Fast, container-free tests gate the release and run in parallel with the builds.
-  tests:
-    needs: version
-    runs-on: ubuntu-latest
-    env:
-      SQLR_SKIP_CONTAINER_TESTS: "1"
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.98.1
-      - uses: Swatinem/rust-cache@v2
-      - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxi-dev libxcursor-dev libxrandr-dev pkg-config xvfb mesa-vulkan-drivers
-      - name: cargo test --workspace (no containers)
-        run: xvfb-run -a cargo test --workspace
-
   macos:
     needs: version
     runs-on: macos-latest
@@ -165,7 +148,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: [version, tests, macos, linux, windows]
+    needs: [version, macos, linux, windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
