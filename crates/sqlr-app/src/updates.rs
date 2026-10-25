@@ -117,7 +117,7 @@ impl Platform {
             Platform::Macos => "macos-x86_64.dmg",
             Platform::Linux => "linux-x86_64.tar.gz",
             Platform::LinuxAppImage => "linux-x86_64.AppImage",
-            Platform::Windows => "windows-x86_64.exe",
+            Platform::Windows => "windows-x86_64.zip",
         }
     }
 }
@@ -1403,7 +1403,7 @@ mod tests {
             "sqlr_0.2.0_macos-x86_64.dmg",
             "sqlr_0.2.0_linux-x86_64.tar.gz",
             "sqlr_0.2.0_linux-x86_64.AppImage",
-            "sqlr_0.2.0_windows-x86_64.exe",
+            "sqlr_0.2.0_windows-x86_64.zip",
             "SHA256SUMS.txt",
         ]);
         let mac = if cfg!(target_arch = "aarch64") {
@@ -1425,7 +1425,7 @@ mod tests {
         );
         assert_eq!(
             pick_asset(&latest, Platform::Windows).map(|a| a.name.as_str()),
-            Some("sqlr_0.2.0_windows-x86_64.exe")
+            Some("sqlr_0.2.0_windows-x86_64.zip")
         );
         assert!(pick_asset(&release(&["SHA256SUMS.txt"]), Platform::Linux).is_none());
     }

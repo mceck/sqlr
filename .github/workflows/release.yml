@@ -162,11 +162,11 @@ jobs:
       - name: Smoke test
         run: ./target/release/sqlr.exe --version
       - name: Stage the distribution
-        run: Copy-Item ./target/release/sqlr.exe "sqlr_${env:VERSION}_windows-x86_64.exe"
+        run: Compress-Archive -Path ./target/release/sqlr.exe -DestinationPath "sqlr_${env:VERSION}_windows-x86_64.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: sqlr_${{ env.VERSION }}_windows-x86_64.exe
+          path: sqlr_${{ env.VERSION }}_windows-x86_64.zip
           if-no-files-found: error
 
   release:
