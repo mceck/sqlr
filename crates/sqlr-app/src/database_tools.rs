@@ -413,35 +413,38 @@ impl DumpDialog {
         ui.add_space(Spacing::M);
 
         let mut format = self.options.format;
-        ComboBox::from_label("Format")
-            .selected_text(self.state.kind.format_label(format))
-            .show_ui(ui, |ui| {
-                for candidate in self.state.kind.formats() {
-                    ui.selectable_value(
-                        &mut format,
-                        *candidate,
-                        self.state.kind.format_label(*candidate),
-                    );
-                }
-            });
+        let kind = self.state.kind;
+        option_group(ui, "Format", |ui| {
+            ComboBox::from_id_salt("dump_format")
+                .selected_text(kind.format_label(format))
+                .width(200.0)
+                .show_ui(ui, |ui| {
+                    for candidate in kind.formats() {
+                        ui.selectable_value(&mut format, *candidate, kind.format_label(*candidate));
+                    }
+                });
+        });
         self.options.format = format;
 
-        ui.horizontal(|ui| {
-            ui.label("File");
-            ui.add_enabled(
-                !self.state.running(),
-                TextEdit::singleline(&mut self.state.path)
-                    .desired_width((ui.available_width() - 130.0).max(80.0))
-                    .hint_text("Choose a backup file…"),
-            );
-            if ui
-                .add_enabled(!self.state.running(), egui::Button::new("Browse…"))
-                .clicked()
-            {
-                let name = suggested_name(&self.state.database, self.options.format.extension());
-                self.state.ask = Some(FileAsk::save(answer, "Dump to", &name));
-            }
+        let running = self.state.running();
+        let mut browse = false;
+        option_group(ui, "Save to", |ui| {
+            ui.horizontal(|ui| {
+                ui.add_enabled(
+                    !running,
+                    TextEdit::singleline(&mut self.state.path)
+                        .desired_width((ui.available_width() - 90.0).max(80.0))
+                        .hint_text("Choose where to save the backup…"),
+                );
+                browse = ui
+                    .add_enabled(!running, egui::Button::new("Browse…"))
+                    .clicked();
+            });
         });
+        if browse {
+            let name = suggested_name(&self.state.database, self.options.format.extension());
+            self.state.ask = Some(FileAsk::save(answer, "Dump to", &name));
+        }
         if self.options.format == DumpFormat::Directory {
             ui.label(
                 RichText::new(

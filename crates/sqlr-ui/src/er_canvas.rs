@@ -353,12 +353,27 @@ fn paint_edge(
     for w in pts.windows(2) {
         painter.line_segment([w[0], w[1]], stroke);
     }
-    // The crow's foot at the referencing side unless the key is unique.
-    if !e.unique {
-        let dir = if x2 > x1 { 1.0 } else { -1.0 };
-        let tip = pts[0];
-        let foot = vec2(dir * 10.0 * zoom, 6.0 * zoom);
-        painter.line_segment([tip, tip + foot], stroke);
-        painter.line_segment([tip, tip + vec2(foot.x, -foot.y)], stroke);
+    let dir = if x2 > x1 { 1.0 } else { -1.0 };
+    // The referencing side: a crow's foot (many) whose prongs open onto the table, or a
+    // single bar when the key is unique (one).
+    let edge = pts[0];
+    let joint = edge + vec2(dir * 12.0 * zoom, 0.0);
+    if e.unique {
+        let bar = edge + vec2(dir * 6.0 * zoom, 0.0);
+        painter.line_segment(
+            [bar + vec2(0.0, -6.0 * zoom), bar + vec2(0.0, 6.0 * zoom)],
+            stroke,
+        );
+    } else {
+        for spread in [-6.0, 0.0, 6.0] {
+            painter.line_segment([joint, edge + vec2(0.0, spread * zoom)], stroke);
+        }
     }
+    // The referenced side: one row, a bar across the line.
+    let end = pts[3];
+    let bar = end - vec2(dir * 6.0 * zoom, 0.0);
+    painter.line_segment(
+        [bar + vec2(0.0, -6.0 * zoom), bar + vec2(0.0, 6.0 * zoom)],
+        stroke,
+    );
 }
