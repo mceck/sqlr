@@ -973,6 +973,8 @@ impl SqlrApp {
         }
         self.profiles_ui(ctx);
         self.secret_prompt_ui(ctx);
+        let agent_rows = self.agent_access_rows();
+        let mut access_changes = Vec::new();
         if let Some(window) = &mut self.prefs {
             let scopes = Scopes::new(&self.profiles, &self.connections);
             window.mcp = crate::agents::McpPrefs {
@@ -986,9 +988,11 @@ impl SqlrApp {
                 ctx,
                 &mut self.layered,
                 &scopes,
+                &agent_rows,
                 &self.config_dir,
                 &mut self.keymap,
             );
+            access_changes = std::mem::take(&mut window.access_changes);
             let open_drivers = std::mem::take(&mut window.open_drivers);
             let open_databases = std::mem::take(&mut window.open_databases);
             let open_folder = std::mem::take(&mut window.open_settings_folder);
@@ -1027,6 +1031,9 @@ impl SqlrApp {
             if !keep {
                 self.prefs = None;
             }
+        }
+        for (id, access) in access_changes {
+            self.set_agent_access(&id, access);
         }
         if let Some(target) = self.clear_history_pending.clone() {
             let (prompt, detail) = match &target {

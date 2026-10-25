@@ -4,14 +4,37 @@
 
 use std::path::Path;
 
-use egui::{Align, ComboBox, Frame, Id, Layout, Margin, Stroke, vec2};
-use sqlr_core::{Level, SECTIONS, SettingDef, search_settings, setting_defs};
+use egui::{
+    Align, Color32, ComboBox, CornerRadius, Frame, Id, Layout, Margin, Stroke, WidgetInfo,
+    WidgetType, vec2,
+};
+use sqlr_core::{AgentAccess, Level, SECTIONS, SettingDef, search_settings, setting_defs};
 use sqlr_store::LayeredSettings;
 use sqlr_ui::theme::{self, Spacing, icons};
 
 use super::resolve::Scopes;
 use super::sections::Editing;
+use crate::agents::AgentAccessRow;
 use crate::dialogs::nav_item;
+
+/// Which connections Settings → Agents lists.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum AccessFilter {
+    #[default]
+    All,
+    Exposed,
+    Hidden,
+}
+
+impl AccessFilter {
+    fn matches(self, access: AgentAccess) -> bool {
+        match self {
+            Self::All => true,
+            Self::Exposed => access.is_exposed(),
+            Self::Hidden => !access.is_exposed(),
+        }
+    }
+}
 
 /// Edits the app's live settings; the app derives everything else from them each frame.
 struct PendingSave {
@@ -32,6 +55,11 @@ pub struct PrefsWindow {
     section: &'static str,
     scope: Level,
     error: Option<String>,
+    /// The Settings → Agents search field and access filter.
+    agent_query: String,
+    agent_filter: AccessFilter,
+    /// Exposure changes picked in Settings → Agents, applied by the app after the frame.
+    pub access_changes: Vec<(String, AgentAccess)>,
     /// The search field takes the keyboard when the window opens.
     focus_search: bool,
     /// "Drivers…" was clicked; the app opens the driver manager.
@@ -85,6 +113,9 @@ impl PrefsWindow {
             },
             scope,
             error: None,
+            agent_query: String::new(),
+            agent_filter: AccessFilter::All,
+            access_changes: Vec::new(),
             focus_search: true,
             open_drivers: false,
             open_databases: false,
@@ -104,6 +135,7 @@ impl PrefsWindow {
         ctx: &egui::Context,
         live: &mut LayeredSettings,
         scopes: &Scopes,
+        agent_rows: &[AgentAccessRow],
         config_dir: &Path,
         keymap: &mut sqlr_store::StoredKeymap,
     ) -> bool {
@@ -252,7 +284,7 @@ impl PrefsWindow {
                                             &mut keymap.preset,
                                         );
                                     } else {
-                                        self.page(ui, live, scopes);
+                                        self.page(ui, live, scopes, agent_rows);
                                     }
                                 });
                         });
@@ -268,18 +300,24 @@ impl PrefsWindow {
         true
     }
 
-    fn page(&mut self, ui: &mut egui::Ui, live: &mut LayeredSettings, scopes: &Scopes) {
+    fn page(
+        &mut self,
+        ui: &mut egui::Ui,
+        live: &mut LayeredSettings,
+        scopes: &Scopes,
+        agent_rows: &[AgentAccessRow],
+    ) {
         self.scope_picker(ui, scopes);
         ui.add_space(Spacing::L);
         let searching = !self.query.trim().is_empty();
-        let mut editing = Editing {
-            live,
-            scope: &self.scope,
-            scopes,
-            error: &mut self.error,
-        };
         if searching {
             let found = search_settings(&self.query);
+            let mut editing = Editing {
+                live,
+                scope: &self.scope,
+                scopes,
+                error: &mut self.error,
+            };
             let mut any = false;
             for section in SECTIONS {
                 let defs: Vec<&'static SettingDef> = found
@@ -306,6 +344,32 @@ impl PrefsWindow {
             .iter()
             .filter(|d| d.section == self.section)
             .collect();
+        // The server's configuration comes first; both blocks are on the same page.
+        if self.section == "Agents" {
+            if self.scope == Level::Global {
+                theme::section_title(ui, "MCP server");
+                ui.add_space(Spacing::M);
+                let mut editing = Editing {
+                    live,
+                    scope: &self.scope,
+                    scopes,
+                    error: &mut self.error,
+                };
+                editing.rows(ui, &defs);
+                self.agents_actions(ui);
+                ui.add_space(Spacing::XL);
+                theme::hairline(ui);
+                ui.add_space(Spacing::L);
+            }
+            self.agents_access(ui, agent_rows);
+            return;
+        }
+        let mut editing = Editing {
+            live,
+            scope: &self.scope,
+            scopes,
+            error: &mut self.error,
+        };
         editing.rows(ui, &defs);
         if self.scope == Level::Global {
             self.section_actions(ui);
@@ -420,6 +484,153 @@ impl PrefsWindow {
         }
     }
 
+    /// Settings → Agents' connection list: every saved connection, grouped by folder, with
+    /// the exposure level one click away.
+    fn agents_access(&mut self, ui: &mut egui::Ui, rows: &[AgentAccessRow]) {
+        let p = theme::palette(ui.ctx());
+        // Keep a margin at the right: the header, the filters and the cards all share one
+        // edge, clear of the scrollbar.
+        let width = (ui.available_width() - Spacing::XL).max(240.0);
+        ui.vertical(|ui| {
+            ui.set_width(width);
+            let exposed = rows.iter().filter(|row| row.access.is_exposed()).count();
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Connection access").strong().size(14.0));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let (fill, text) = if exposed > 0 {
+                        (p.accent_soft, p.accent)
+                    } else {
+                        (p.bg_subtle, p.text_muted)
+                    };
+                    Frame::new()
+                        .fill(fill)
+                        .corner_radius(CornerRadius::same(10))
+                        .inner_margin(Margin::symmetric(8, 3))
+                        .show(ui, |ui| {
+                            ui.label(
+                                egui::RichText::new(format!("{exposed} of {} exposed", rows.len()))
+                                    .size(11.0)
+                                    .color(text),
+                            );
+                        });
+                });
+            });
+            ui.add_space(Spacing::XS);
+            theme::hint(
+                ui,
+                "Agents see only the connections exposed here. Changes apply immediately; the connection profile and its confirmations still apply.",
+            );
+            if !self.mcp.status.is_running() && self.mcp.status != crate::agents::McpStatus::Starting
+            {
+                ui.add_space(Spacing::XS);
+                theme::hint(
+                    ui,
+                    "The MCP server is off. Exposure is saved and takes effect when you enable the server below.",
+                );
+            }
+
+            if rows.is_empty() {
+                ui.add_space(Spacing::M);
+                theme::hint(
+                    ui,
+                    "No saved connections yet. Add one from Data Sources to expose it to agents.",
+                );
+                return;
+            }
+
+            ui.add_space(Spacing::M);
+            let mut query = std::mem::take(&mut self.agent_query);
+            let mut filter = self.agent_filter;
+            ui.horizontal(|ui| {
+                // The filters are anchored to the right edge so the search field and the
+                // connection cards below share one right margin.
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    for (mode, label) in [
+                        (AccessFilter::Hidden, "Hidden"),
+                        (AccessFilter::Exposed, "Exposed"),
+                        (AccessFilter::All, "All"),
+                    ] {
+                        if theme::segment(ui, filter == mode, label).clicked() {
+                            filter = mode;
+                        }
+                    }
+                    ui.add_space(Spacing::S);
+                    let width = ui.available_width();
+                    ui.allocate_ui_with_layout(
+                        vec2(width, ui.spacing().interact_size.y),
+                        Layout::left_to_right(Align::Center),
+                        |ui| {
+                            ui.set_width(width);
+                            let search = egui::TextEdit::singleline(&mut query)
+                                .hint_text("Search connections")
+                                .desired_width(width);
+                            let response = sqlr_ui::text_edit(ui, search);
+                            if response.has_focus() || !query.is_empty() {
+                                response
+                                    .clone()
+                                    .on_hover_text("Filters by name, driver and folder");
+                            }
+                        },
+                    );
+                });
+            });
+            self.agent_query = query;
+            self.agent_filter = filter;
+
+            let needle = self.agent_query.trim().to_lowercase();
+            let mut visible: Vec<&AgentAccessRow> = rows
+                .iter()
+                .filter(|row| filter.matches(row.access))
+                .filter(|row| {
+                    needle.is_empty()
+                        || row.name.to_lowercase().contains(&needle)
+                        || row.driver_name.to_lowercase().contains(&needle)
+                        || row
+                            .folder
+                            .as_deref()
+                            .is_some_and(|folder| folder.to_lowercase().contains(&needle))
+                })
+                .collect();
+            visible.sort_by(|a, b| {
+                (a.folder.as_deref().unwrap_or(""), &a.name)
+                    .cmp(&(b.folder.as_deref().unwrap_or(""), &b.name))
+            });
+
+            if visible.is_empty() {
+                ui.add_space(Spacing::M);
+                theme::hint(ui, "No connection matches the filter.");
+                return;
+            }
+
+            let mut groups: Vec<(Option<&str>, Vec<&AgentAccessRow>)> = Vec::new();
+            for row in visible {
+                match groups.last_mut() {
+                    Some((folder, grouped)) if *folder == row.folder.as_deref() => {
+                        grouped.push(row)
+                    }
+                    _ => groups.push((row.folder.as_deref(), vec![row])),
+                }
+            }
+            // A lone top-level group needs no heading; a list with folders does.
+            let show_ungrouped = groups.len() > 1 || groups.iter().any(|(folder, _)| folder.is_some());
+            for (folder, grouped) in groups {
+                if folder.is_some() || show_ungrouped {
+                    agents_folder_header(ui, folder, grouped.len());
+                }
+                for row in grouped {
+                    ui.add_space(Spacing::XS);
+                    let change = ui
+                        .push_id(("agent-row", &row.id), |ui| agents_access_row(ui, row))
+                        .inner;
+                    if let Some(access) = change {
+                        self.access_changes.push((row.id.clone(), access));
+                    }
+                }
+                ui.add_space(Spacing::XS);
+            }
+        });
+    }
+
     /// Buttons that open something else, at the end of the section they belong to.
     fn section_actions(&mut self, ui: &mut egui::Ui) {
         match self.section {
@@ -511,4 +722,164 @@ impl PrefsWindow {
             repaint.request_repaint();
         });
     }
+}
+
+/// The color that tells a connection's exposure apart at a glance.
+fn agent_access_color(p: &theme::Palette, access: AgentAccess) -> Color32 {
+    match access {
+        AgentAccess::None => p.text_disabled,
+        AgentAccess::Read => p.accent,
+        AgentAccess::Write => p.warning,
+    }
+}
+
+/// A folder heading in Settings → Agents' connection list.
+fn agents_folder_header(ui: &mut egui::Ui, folder: Option<&str>, connections: usize) {
+    let p = theme::palette(ui.ctx());
+    ui.add_space(Spacing::M);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = Spacing::S;
+        ui.label(icons::text(ui, icons::FOLDER, 12.0).color(p.text_muted));
+        ui.label(
+            egui::RichText::new(folder.unwrap_or("Ungrouped"))
+                .size(11.0)
+                .strong()
+                .color(p.text_muted),
+        );
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.label(
+                egui::RichText::new(connections.to_string())
+                    .size(11.0)
+                    .color(p.text_muted),
+            );
+        });
+    });
+    ui.add_space(Spacing::XS);
+}
+
+/// One connection with its exposure control at the right.
+fn agents_access_row(ui: &mut egui::Ui, row: &AgentAccessRow) -> Option<AgentAccess> {
+    /// Three 46 px buttons, their 2 px gaps, and the slack of the widest label.
+    const PICKER_WIDTH: f32 = 3.0 * 48.0 + 2.0 * 2.0;
+    let p = theme::palette(ui.ctx());
+    let mut change = None;
+    Frame::new()
+        .fill(p.bg_subtle)
+        .stroke(Stroke::new(1.0, p.border))
+        .corner_radius(CornerRadius::same(Spacing::RADIUS_S))
+        .inner_margin(Margin::symmetric(10, 6))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                icons::paint_database(ui, &row.driver);
+                ui.add_space(Spacing::M);
+                let text_width = (ui.available_width() - PICKER_WIDTH - Spacing::M).max(80.0);
+                ui.allocate_ui_with_layout(
+                    vec2(text_width, 34.0),
+                    Layout::top_down(Align::LEFT),
+                    |ui| {
+                        // Reserve the whole column: the picker is then flush with the
+                        // card's right edge, not right after the name.
+                        ui.set_width(text_width);
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = Spacing::S;
+                            ui.label(
+                                egui::RichText::new(icons::DOT)
+                                    .size(8.0)
+                                    .color(agent_access_color(&p, row.access)),
+                            );
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(&row.name).size(12.5).color(p.text),
+                                )
+                                .truncate(),
+                            )
+                            .on_hover_text(&row.name);
+                        });
+                        let meta = match &row.profile {
+                            Some(profile) => format!("{} · {profile}", row.driver_name),
+                            None => row.driver_name.clone(),
+                        };
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(meta).size(10.5).color(p.text_muted),
+                            )
+                            .truncate(),
+                        );
+                    },
+                );
+                ui.allocate_ui_with_layout(
+                    vec2(ui.available_width(), 24.0),
+                    Layout::right_to_left(Align::Center),
+                    |ui| {
+                        ui.set_width(ui.available_width());
+                        change = agents_access_picker(ui, &row.name, row.access);
+                    },
+                );
+            });
+        });
+    change
+}
+
+/// The three-level exposure control. Its buttons are named after the connection so screen
+/// readers and UI tests can tell rows apart.
+fn agents_access_picker(
+    ui: &mut egui::Ui,
+    connection_name: &str,
+    current: AgentAccess,
+) -> Option<AgentAccess> {
+    let p = theme::palette(ui.ctx());
+    let mut picked = None;
+    ui.spacing_mut().item_spacing.x = 2.0;
+    // Added right to left so they read None · Read · Write, flush with the card's
+    // right edge.
+    for (value, label, tip) in [
+        (
+            AgentAccess::Write,
+            "Write",
+            "Agents may write; the profile's confirmations still apply",
+        ),
+        (
+            AgentAccess::Read,
+            "Read",
+            "Agents may browse and run reads only",
+        ),
+        (
+            AgentAccess::None,
+            "None",
+            "Agents cannot see this connection",
+        ),
+    ] {
+        let active = current == value;
+        let (fill, text) = if active {
+            let tint = agent_access_color(&p, value);
+            (p.bg_panel.lerp_to_gamma(tint, 0.22), p.text)
+        } else {
+            (Color32::TRANSPARENT, p.text_muted)
+        };
+        let font = if active {
+            theme::semibold(ui.ctx(), 11.5)
+        } else {
+            egui::FontId::proportional(11.5)
+        };
+        let button = egui::Button::new(egui::RichText::new(label).font(font).color(text))
+            .fill(fill)
+            .stroke(Stroke::NONE)
+            .corner_radius(CornerRadius::same(Spacing::RADIUS_S))
+            .min_size(vec2(46.0, 24.0));
+        let response = ui.add(button);
+        response.widget_info(|| {
+            WidgetInfo::selected(
+                WidgetType::Button,
+                true,
+                active,
+                format!("{connection_name}: {label}"),
+            )
+        });
+        if response.clicked() {
+            picked = Some(value);
+        }
+        response.on_hover_text(tip);
+    }
+    picked
 }

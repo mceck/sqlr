@@ -355,6 +355,18 @@ pub struct McpPrefs {
     pub token_present: bool,
 }
 
+/// One connection in Settings → Agents' access list.
+#[derive(Clone, Debug)]
+pub struct AgentAccessRow {
+    pub id: String,
+    pub name: String,
+    pub driver: String,
+    pub driver_name: String,
+    pub folder: Option<String>,
+    pub profile: Option<String>,
+    pub access: sqlr_core::AgentAccess,
+}
+
 type StartResult = Result<RunningMcp, (McpStatus, String)>;
 
 pub struct AgentsUi {
@@ -582,6 +594,31 @@ impl SqlrApp {
 
     fn agent_connections(&self) -> Vec<sqlr_core::ConnectionConfig> {
         self.connections.clone()
+    }
+
+    /// Every saved connection as Settings → Agents lists it, with the names a person
+    /// recognizes rather than driver and profile ids.
+    pub(crate) fn agent_access_rows(&self) -> Vec<AgentAccessRow> {
+        self.connections
+            .iter()
+            .map(|cfg| AgentAccessRow {
+                id: cfg.id.clone(),
+                name: cfg.name.clone(),
+                driver: cfg.driver.clone(),
+                driver_name: self
+                    .engine
+                    .manifest(&cfg.driver)
+                    .map_or_else(|| cfg.driver.clone(), |manifest| manifest.name),
+                folder: cfg.group.clone(),
+                profile: cfg.profile.as_deref().and_then(|id| {
+                    self.profiles
+                        .iter()
+                        .find(|profile| profile.id == id)
+                        .map(|profile| profile.name.clone())
+                }),
+                access: cfg.agent_access,
+            })
+            .collect()
     }
 
     fn agent_settings(&self) -> Vec<SettingEntry> {
@@ -882,6 +919,12 @@ impl SqlrApp {
     #[doc(hidden)]
     pub fn agents_enabled_for_tests(&self) -> bool {
         self.settings.agents_enabled
+    }
+
+    #[doc(hidden)]
+    pub fn agent_access_for_tests(&self, id: &str) -> sqlr_core::AgentAccess {
+        self.connection(id)
+            .map_or(sqlr_core::AgentAccess::None, |config| config.agent_access)
     }
 
     /// Turns the MCP server on or off from the toolbar toggle and saves the setting in the

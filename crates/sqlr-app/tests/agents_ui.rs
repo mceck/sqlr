@@ -3,7 +3,7 @@ use std::sync::Arc;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use sqlr_app::{AppDeps, SqlrApp};
-use sqlr_core::{ConnectionConfig, Secrets};
+use sqlr_core::{AgentAccess, ConnectionConfig, Secrets};
 use sqlr_engine::{DriverRegistry, Engine};
 use sqlr_store::{ConnectionRepo, MemorySecretStore, Settings};
 use sqlr_testkit::FakeDriver;
@@ -20,6 +20,18 @@ fn app(dir: &std::path::Path) -> SqlrApp {
         name: "fake".into(),
         driver: "fake".into(),
         group: None,
+        color: None,
+        values: Default::default(),
+        profile: None,
+        save_secrets: true,
+        agent_access: Default::default(),
+    };
+    repo.save(&cfg, &Secrets::default()).unwrap();
+    let cfg = ConnectionConfig {
+        id: "c2".into(),
+        name: "work-db".into(),
+        driver: "fake".into(),
+        group: Some("Work".into()),
         color: None,
         values: Default::default(),
         profile: None,
@@ -62,6 +74,73 @@ fn mcp_is_off_by_default_and_settings_explain_it() {
     assert!(harness.get_all_by_label("Agents").next().is_some());
     harness.get_by_label("Enable agent access (MCP)");
     harness.get_by_label("Stopped");
+}
+
+#[test]
+fn settings_lists_connections_grouped_by_folder_and_changes_their_access() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = app(dir.path());
+    let mut harness = Harness::builder()
+        .with_size((1200.0, 820.0))
+        .with_step_dt(0.01)
+        .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    harness.run_steps(3);
+    harness.state_mut().open_agents_settings_for_tests();
+    harness.run_steps(3);
+
+    harness.get_by_label("Connection access");
+    harness.get_by_label("0 of 2 exposed");
+    assert!(
+        harness.get_all_by_label("Ungrouped").count() >= 1,
+        "top-level connections get a heading when folders exist"
+    );
+    assert!(
+        harness.get_all_by_label("Work").count() >= 2,
+        "the folder is named by its header and the explorer"
+    );
+    harness.get_by_label("fake: None");
+    harness.get_by_label("work-db: None");
+
+    // The server settings come first, so the list is below the fold: scroll the page.
+    harness.hover_at(egui::pos2(700.0, 500.0));
+    for _ in 0..4 {
+        harness.event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, -400.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        });
+        harness.run_steps(2);
+    }
+    harness.get_by_label("work-db: Write").click();
+    harness.run_steps(3);
+    assert_eq!(
+        harness.state().agent_access_for_tests("c2"),
+        AgentAccess::Write
+    );
+    assert_eq!(
+        harness.state().agent_access_for_tests("c1"),
+        AgentAccess::None
+    );
+    harness.get_by_label("1 of 2 exposed");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        let text = std::fs::read_to_string(dir.path().join("connections.toml")).unwrap_or_default();
+        if text.contains("agent_access = \"write\"") {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "access was not saved");
+        harness.run_steps(1);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    harness.get_by_label("work-db: None").click();
+    harness.run_steps(3);
+    assert_eq!(
+        harness.state().agent_access_for_tests("c2"),
+        AgentAccess::None
+    );
 }
 
 #[test]

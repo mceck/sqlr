@@ -22,8 +22,10 @@ terminal first.
 | See the current state of long operations and cancel them | Read or drive the integrated terminal |
 
 Every connection starts at **None**: an agent cannot see it. You set **Read** or **Write**
-in the connection dialog (Main tab, below the profile and colour), or in the explorer's
-**Agent access** menu. The explorer shows a small eye next to exposed connections.
+in the connection dialog (Main tab, below the profile and colour), in the explorer's
+**Agent access** menu, or in **Settings → Agents**, which lists every connection by folder
+with its current level and one click to change it. The explorer shows a small eye next to
+exposed connections.
 
 - **Read** forces the agent's database session read-only. Browsing and reads work;
   writes are rejected before they run.

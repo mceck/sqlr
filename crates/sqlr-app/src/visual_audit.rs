@@ -284,6 +284,7 @@ fn visual_audit() {
                     "Data formats",
                     "Keymap",
                     "Connections",
+                    "Agents",
                     "Drivers",
                 ] {
                     h.get_all_by_label(section)

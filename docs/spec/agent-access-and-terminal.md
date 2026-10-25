@@ -708,6 +708,11 @@ The UI is intentionally small and integrated rather than a new workspace.
 
 **Settings → Agents**
 
+- The connection access list follows the server settings: every saved connection grouped
+  by folder, with a search field, All / Exposed / Hidden filters, an “N of M exposed”
+  count and a None / Read / Write segmented control on each row. Changes apply
+  immediately, without Save, and never wait for the server to be enabled. A hint says so
+  when MCP is off.
 - A clear enable switch with a short explanation of what enabling means: a local endpoint
   for agents, no connection exposed yet, token required.
 - Port field with validation and a note that changing it restarts the server.

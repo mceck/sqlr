@@ -527,9 +527,10 @@ and `Origin`, publishes a token-free `mcp.json`, and exposes MCP tools only. The
 stops and removes its discovery file when disabled or when sqlr quits.
 
 Each connection has an **agent access** level, `None` (the default), `Read` or `Write`,
-chosen only by the person in the connection dialog or the explorer. `Read` forces the
-agent's engine session read-only; `Write` still follows the connection profile's commit
-mode, read-only flag and confirmations. Exposed connections are marked in the explorer.
+chosen only by the person in the connection dialog, the explorer, or the connection list
+in **Settings → Agents**. `Read` forces the agent's engine session read-only; `Write` still
+follows the connection profile's commit mode, read-only flag and confirmations. Exposed
+connections are marked in the explorer.
 Connections open lazily and visibly; the agent has its own engine session per connection
 and MCP session, isolated from editor transactions, and its open transactions are rolled
 back when the MCP session ends. There is no connect or disconnect tool.
