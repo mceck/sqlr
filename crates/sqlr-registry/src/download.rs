@@ -39,20 +39,16 @@ impl Fetcher {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let refused = Arc::new(std::sync::Mutex::new(None));
         let seen = refused.clone();
-        // A download may follow redirects inside its own host only: a registry that
-        // bounces to another host is refused rather than trusted.
+        // A download may follow redirects inside its own host only (and from GitHub to its
+        // release file storage): a registry that bounces elsewhere is refused, not trusted.
         let policy = reqwest::redirect::Policy::custom(move |attempt| {
-            let from = attempt
-                .previous()
-                .first()
-                .and_then(|u| u.host_str().map(str::to_string));
-            let to = attempt.url().host_str().map(str::to_string);
+            let from = attempt.previous().first().cloned();
             if attempt.previous().len() > 5 {
                 attempt.error("too many redirects")
-            } else if from == to {
+            } else if from.is_some_and(|from| redirect_allowed(&from, attempt.url())) {
                 attempt.follow()
             } else {
-                *seen.lock().expect("lock") = to;
+                *seen.lock().expect("lock") = attempt.url().host_str().map(str::to_string);
                 attempt.error("redirect to another host")
             }
         });
@@ -220,6 +216,51 @@ impl Default for Fetcher {
     }
 }
 
+/// Whether a download that started at `from` may continue at `to`: the same host, or a
+/// GitHub release file (github.com) served by GitHub's file storage over https.
+fn redirect_allowed(from: &reqwest::Url, to: &reqwest::Url) -> bool {
+    if from.host_str() == to.host_str() {
+        return true;
+    }
+    from.scheme() == "https"
+        && from.host_str() == Some("github.com")
+        && to.scheme() == "https"
+        && to
+            .host_str()
+            .is_some_and(|host| host.ends_with(".githubusercontent.com"))
+}
+
 fn file_path(url: &str) -> Option<std::path::PathBuf> {
     url.strip_prefix("file://").map(std::path::PathBuf::from)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn allowed(from: &str, to: &str) -> bool {
+        redirect_allowed(&from.parse().unwrap(), &to.parse().unwrap())
+    }
+
+    #[test]
+    fn redirects_stay_on_their_host_or_github_release_storage() {
+        assert!(allowed("http://127.0.0.1:1/a", "http://127.0.0.1:1/b"));
+        assert!(!allowed("http://127.0.0.1:1/a", "http://localhost:1/b"));
+        let release = "https://github.com/mceck/sqlr/releases/download/v1.0.0/x.tar.gz";
+        assert!(allowed(
+            release,
+            "https://release-assets.githubusercontent.com/github-production-release-asset/1"
+        ));
+        assert!(allowed(release, "https://objects.githubusercontent.com/x"));
+        assert!(!allowed(release, "http://objects.githubusercontent.com/x"));
+        assert!(!allowed(
+            release,
+            "https://githubusercontent.com.evil.example/x"
+        ));
+        assert!(!allowed(release, "https://example.com/x"));
+        assert!(!allowed(
+            "https://example.com/x",
+            "https://objects.githubusercontent.com/x"
+        ));
+    }
 }

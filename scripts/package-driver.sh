@@ -1,6 +1,6 @@
 #!/bin/sh
 # Packs a sidecar driver into the archive the Driver Manager installs (Install from file…, or
-# a registry download once it is signed with tools/sign-index):
+# a download from the release, packed by scripts/package-release-drivers.sh):
 #
 #   scripts/package-driver.sh hana            out.tar.gz [--bin PATH]
 #   scripts/package-driver.sh duckdb          out.tar.gz [--bin PATH]
@@ -29,9 +29,13 @@ while [ $# -gt 0 ]; do
 done
 
 case "$id" in
-    hana|duckdb) package=sqlr-driver-$id; exe=$package; dir=drivers/$package; args='[]' ;;
-    jdbc|jdbc-*) package=sqlr-driver-jdbc; exe=$package; dir=crates/$package; args="[\"--preset\", \"$id\"]" ;;
+    hana|duckdb) package=sqlr-driver-$id; dir=drivers/$package; args='[]' ;;
+    jdbc|jdbc-*) package=sqlr-driver-jdbc; dir=crates/$package; args="[\"--preset\", \"$id\"]" ;;
     *) echo "unknown driver $id" >&2; exit 2 ;;
+esac
+case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*) exe=$package.exe ;;
+    *) exe=$package ;;
 esac
 version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' "$root/$dir/Cargo.toml" | head -1)
 
@@ -59,5 +63,6 @@ if [ -n "$jars" ]; then
     for jar in $jars; do cp "$jar" "$work/jars/"; done
 fi
 mkdir -p "$(dirname "$out")"
-(cd "$work" && tar -czf - .) > "$out"
+# No AppleDouble (._*) entries for extended attributes on macOS.
+(cd "$work" && COPYFILE_DISABLE=1 tar -czf - .) > "$out"
 echo "$out"

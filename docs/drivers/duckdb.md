@@ -1,8 +1,9 @@
 # DuckDB
 
 A sidecar driver (`drivers/sqlr-driver-duckdb`) that embeds the bundled DuckDB engine through
-the official `duckdb` Rust crate. It is installed from a local driver file through the Driver
-Manager (Settings → Drivers…), like SAP HANA:
+the official `duckdb` Rust crate. Every sqlr release publishes it for each platform: choose
+**Download and install** in the Driver Manager (Settings → Drivers…), like SAP HANA. To install a
+build of your own instead:
 
 ```sh
 scripts/package-driver.sh duckdb duckdb.tar.gz    # builds it in release mode and packs it

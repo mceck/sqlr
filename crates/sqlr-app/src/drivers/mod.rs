@@ -1,6 +1,6 @@
-//! The Driver Manager and the install prompts: the window that lists and removes drivers
-//! installed from local files, the review step of a file install, and the "Install from
-//! file…" a missing driver offers wherever it is needed.
+//! The Driver Manager and the install prompts: the window that downloads, lists and removes
+//! drivers, the review step of an install from a local file, and the install a missing
+//! driver offers wherever it is needed.
 
 mod install_prompt;
 mod manager;
@@ -10,6 +10,14 @@ use std::pin::Pin;
 use std::task::{Context, Poll, Waker};
 
 use sqlr_ui::DriverManagerState;
+
+/// Whether the sqlr release publishes driver `id`: the drivers of the known databases that
+/// do not ship with the app (the release workflow packages exactly these).
+pub(crate) fn downloadable(id: &str) -> bool {
+    sqlr_core::known_databases().iter().any(
+        |db| matches!(db.status, sqlr_core::KnownStatus::Installable { driver } if driver == id),
+    )
+}
 
 /// An open file dialog for "Install from file…", or the answer a test gave in advance.
 pub(crate) struct ManualPick {
@@ -69,6 +77,29 @@ pub(crate) struct DriversUi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_release_packages_every_downloadable_driver() {
+        let script = include_str!("../../../../scripts/package-release-drivers.sh");
+        let line = script
+            .lines()
+            .find_map(|l| l.strip_prefix("DRIVERS=\""))
+            .expect("the script lists its drivers");
+        let mut packed: Vec<&str> = line.trim_end_matches('"').split_whitespace().collect();
+        let mut offered: Vec<&str> = sqlr_core::known_databases()
+            .iter()
+            .filter_map(|db| match db.status {
+                sqlr_core::KnownStatus::Installable { driver } => Some(driver),
+                _ => None,
+            })
+            .collect();
+        packed.sort_unstable();
+        offered.sort_unstable();
+        offered.dedup();
+        assert_eq!(packed, offered);
+        assert!(packed.iter().all(|id| downloadable(id)));
+        assert!(!downloadable("postgres"));
+    }
 
     #[test]
     fn a_dismissed_file_pick_is_reported_once() {

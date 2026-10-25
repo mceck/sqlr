@@ -1,11 +1,12 @@
-//! Signed index, verified downloads, install layout, versions and manual installs.
+//! Signed index, verified downloads, release downloads, install layout, versions and manual
+//! installs.
 
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use sqlr_registry::{Registry, RegistryError, platform_key};
+use sqlr_registry::{Registry, RegistryError, ReleaseSource, platform_key};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
@@ -741,4 +742,155 @@ fn the_documented_example_index_is_valid() {
     assert!(drivers.iter().any(|d| d["id"] == "hana"));
     let h2 = drivers.iter().find(|d| d["id"] == "jdbc-h2").unwrap();
     assert_eq!(h2["jdbc"]["maven"][0]["sha256"].as_str().unwrap().len(), 64);
+}
+
+// ----- driver files published with a sqlr release -----
+
+/// Publishes `echo` at `version` as a release asset of this platform, listed in the
+/// release's `SHA256SUMS.txt` with `sha256` (the archive's own checksum by default).
+fn publish_release(world: &World, version: &str, sha256: Option<&str>) -> ReleaseSource {
+    let release = ReleaseSource {
+        base_url: world.server.url(&format!("/v{version}")),
+        version: version.into(),
+    };
+    let bytes = archive("echo", version);
+    let name = release.asset_name("echo", &platform_key());
+    let sums = format!(
+        "{}  sqlr_{version}_linux-x86_64.tar.gz\n{}  {name}\n",
+        sha(b"the app"),
+        sha256.map_or_else(|| sha(&bytes), str::to_string)
+    );
+    world.server.set(
+        &format!("/v{version}/SHA256SUMS.txt"),
+        Route::Ok(sums.into_bytes()),
+    );
+    world
+        .server
+        .set(&format!("/v{version}/{name}"), Route::Ok(bytes));
+    release
+}
+
+#[test]
+fn release_assets_follow_the_published_names() {
+    let release = ReleaseSource::github("0.3.1");
+    assert_eq!(
+        release.base_url,
+        "https://github.com/mceck/sqlr/releases/download/v0.3.1"
+    );
+    assert_eq!(
+        release.asset_name("jdbc-h2", "macos-aarch64"),
+        "sqlr-driver-jdbc-h2_0.3.1_macos-aarch64.tar.gz"
+    );
+}
+
+#[tokio::test]
+async fn a_release_driver_downloads_checks_and_installs() {
+    let world = World::new().await;
+    let release = publish_release(&world, "1.2.0", None);
+    let registry = world.registry();
+    let seen = Mutex::new(Vec::new());
+    let installed = registry
+        .install_release(&release, "echo", |done, total| {
+            seen.lock().unwrap().push((done, total))
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        (installed.id.as_str(), installed.active.as_str()),
+        ("echo", "1.2.0")
+    );
+    assert!(!installed.manual, "a release download is not a manual file");
+    assert!(!seen.lock().unwrap().is_empty(), "progress was reported");
+    assert!(world.staging_is_empty());
+    let again = registry
+        .install_release(&release, "echo", no_progress)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(again, RegistryError::AlreadyInstalled { .. }),
+        "{again}"
+    );
+}
+
+#[tokio::test]
+async fn a_release_driver_with_another_checksum_is_refused() {
+    let world = World::new().await;
+    let release = publish_release(&world, "1.2.0", Some(&sha(b"something else")));
+    let registry = world.registry();
+    let error = registry
+        .install_release(&release, "echo", no_progress)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, RegistryError::Sha256Mismatch { .. }),
+        "{error}"
+    );
+    assert!(registry.installed().unwrap().is_empty());
+    assert!(world.staging_is_empty());
+}
+
+#[tokio::test]
+async fn a_release_without_the_driver_or_without_checksums_installs_nothing() {
+    let world = World::new().await;
+    let release = publish_release(&world, "1.2.0", None);
+    let registry = world.registry();
+    // Not built for this release (or this platform): not listed in SHA256SUMS.txt.
+    let error = registry
+        .install_release(&release, "hana", no_progress)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, RegistryError::NoBuildForPlatform { .. }),
+        "{error}"
+    );
+    // No release for this version at all (a development build).
+    let missing = ReleaseSource {
+        base_url: world.server.url("/v9.9.9"),
+        version: "9.9.9".into(),
+    };
+    let error = registry
+        .install_release(&missing, "echo", no_progress)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, RegistryError::ReleaseUnavailable { .. }),
+        "{error}"
+    );
+    assert!(error.to_string().contains("9.9.9"), "{error}");
+    assert!(registry.installed().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_release_asset_must_hold_the_promised_driver() {
+    let world = World::new().await;
+    let release = publish_release(&world, "1.2.0", None);
+    // The asset named for 1.2.0 holds 1.1.0: the release would install another version.
+    let bytes = archive("echo", "1.1.0");
+    let name = release.asset_name("echo", &platform_key());
+    world.server.set(
+        "/v1.2.0/SHA256SUMS.txt",
+        Route::Ok(format!("{}  {name}\n", sha(&bytes)).into_bytes()),
+    );
+    world
+        .server
+        .set(&format!("/v1.2.0/{name}"), Route::Ok(bytes));
+    let registry = world.registry();
+    let error = registry
+        .install_release(&release, "echo", no_progress)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, RegistryError::UnsafeArchive(_)), "{error}");
+    assert!(registry.installed().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_release_driver_id_cannot_escape_the_install() {
+    let world = World::new().await;
+    let release = publish_release(&world, "1.2.0", None);
+    let error = world
+        .registry()
+        .install_release(&release, "../echo", no_progress)
+        .await
+        .unwrap_err();
+    assert!(matches!(error, RegistryError::UnsafeArchive(_)), "{error}");
 }

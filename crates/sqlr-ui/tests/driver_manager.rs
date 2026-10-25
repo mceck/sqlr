@@ -23,6 +23,7 @@ fn row(id: &str, name: &str) -> DriverRow {
         description: format!("{name} driver"),
         homepage: String::new(),
         license: "MIT".into(),
+        download: None,
         job: None,
     }
 }
@@ -86,8 +87,8 @@ fn driver_manager_lists_bundled_and_installed_drivers() {
     for name in ["SQLite", "SAP HANA"] {
         h.get_all_by_label(name).next().expect(name);
     }
-    // There is no online catalog: the only install action is a local file.
-    assert!(h.query_by_label("Install").is_none());
+    // Nothing offers a download unless the release has the driver.
+    assert!(h.query_by_label("Download and install").is_none());
     assert!(h.query_by_label("Update to 1.1.0").is_none());
 }
 
@@ -144,14 +145,49 @@ fn search_filters_the_list() {
 }
 
 #[test]
-fn toolbar_offers_only_a_file_install() {
+fn toolbar_offers_a_file_install_as_the_alternative() {
     let mut h = harness(rows());
     assert_eq!(
         click(&mut h, "Install from file…"),
         DriverManagerAction::InstallFromFile
     );
-    h.get_by_label("Bundled drivers ship with sqlr. Other drivers install only from a local file.");
+    h.get_by_label(
+        "Bundled drivers ship with sqlr. Other drivers download from the sqlr release on \
+         GitHub, or install from a local driver file.",
+    );
     assert!(h.query_by_label("Refresh").is_none());
+}
+
+#[test]
+fn an_available_driver_downloads_from_the_release() {
+    let mut available = rows();
+    available.push(DriverRow {
+        download: Some("0.4.0".into()),
+        ..row("duckdb", "DuckDB")
+    });
+    let mut h = harness(available);
+    select(&mut h, "DuckDB");
+    h.get_by_label("AVAILABLE");
+    h.get_by_label(
+        "Downloads version 0.4.0 for this computer from the sqlr release on GitHub and \
+         checks its SHA-256.",
+    );
+    assert_eq!(
+        click(&mut h, "Download and install"),
+        DriverManagerAction::Download("duckdb".into())
+    );
+}
+
+#[test]
+fn an_installed_driver_updates_to_the_release_version() {
+    let mut newer = rows();
+    newer[1].download = Some("1.2.0".into());
+    let mut h = harness(newer);
+    select(&mut h, "SAP HANA");
+    assert_eq!(
+        click(&mut h, "Update to 1.2.0"),
+        DriverManagerAction::Download("hana".into())
+    );
 }
 
 #[test]

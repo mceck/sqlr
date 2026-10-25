@@ -10,7 +10,7 @@ sqlr is an open-source, universal database client for relational and NoSQL datab
 
 - One native app for relational, document and key-value databases.
 - Measurable lightness (see §1.3). These are hard requirements, not aspirations.
-- A modular driver system. Adding a database means writing a driver without changing the app. Drivers that do not ship with the app install from a local driver file.
+- A modular driver system. Adding a database means writing a driver without changing the app. Drivers that do not ship with the app download from the sqlr release on GitHub, or install from a local driver file.
 - Open source and community-extensible.
 
 ### 1.2 Non-goals
@@ -83,10 +83,10 @@ These targets rule out Electron, any webview, and the JVM. They are why the UI i
 | Redis | Key-value | Bundled |
 | SQL Server | Relational | Bundled (`tiberius`) |
 | Oracle | Relational | Bundled (`oracle-rs`, no OCI) |
-| SAP HANA | Relational | Install from a file (sidecar) |
-| DuckDB | Relational | Install from a file (sidecar embedding the DuckDB engine, files and memory) |
+| SAP HANA | Relational | Download from the release (sidecar) |
+| DuckDB | Relational | Download from the release (sidecar embedding the DuckDB engine, files and memory) |
 | Snowflake | Relational | Bundled (HTTPS SQL API, token authentication; independent auto-commit requests) |
-| Any database with a JDBC driver (Db2, ClickHouse, H2, …) | Relational | Install from a file (JDBC bridge sidecar, needs Java 17+) |
+| Any database with a JDBC driver (Db2, ClickHouse, H2, …) | Relational | Download from the release (JDBC bridge sidecar, needs Java 17+) |
 
 ## 3. Technology choices
 
@@ -212,7 +212,7 @@ The manifest declares its fields: type, label, default, required, secret flag, a
 
   `SAP/go-hdb` in a Go sidecar remains the fallback if `hdbconnect` maintenance stalls.
 
-## 6. Modular drivers: sidecars, SDK, local driver files
+## 6. Modular drivers: sidecars, SDK, release downloads, local driver files
 
 ### 6.1 Why sidecars
 
@@ -243,21 +243,32 @@ IPC cost is negligible: binary columnar chunks over pipes run at hundreds of MB/
 - `cargo generate` template: `sqlr-driver-template`.
 - **Conformance suite (`sqlr-driver-tests`):** a reusable test harness that runs against a real database in Docker. It checks connect, ping, browse, execute and streaming, `fetch_more`, cancellation, the type round-trip matrix and editing. Any driver that passes it can be packaged as a local driver file.
 
-### 6.4 Driver Manager and local driver files
+### 6.4 Driver Manager, release downloads and local driver files
 
-- **Install source:** only a local driver archive the user picks. sqlr does not browse or fetch
-  a remote index, so there is no background update check and no remote code install.
-- **Driver Manager UI:** search, install from a file, roll back between installed versions,
-  remove versions or a driver, and restart a sidecar. When a user creates a connection for a
-  database whose driver is not installed, the app opens the manager and points at
-  **Install from file…**.
+- **Install sources:** the primary source is the sqlr GitHub release of the running app's
+  version (tag `v<version>`): the release workflow packs every installable driver of the known
+  databases (`scripts/package-release-drivers.sh`) for every platform as
+  `sqlr-driver-<id>_<version>_<os>-<arch>.tar.gz`, listed in the release's `SHA256SUMS.txt`.
+  The secondary source is a local driver archive the user picks (**Install from file…**). sqlr
+  reads no remote index and runs no background update check: nothing is fetched until the user
+  clicks **Download and install** or **Update to <version>**.
+- **Download checks:** the archive comes over https from `github.com` (redirects only to
+  GitHub's `*.githubusercontent.com` release storage), must match its `SHA256SUMS.txt` line, and
+  must hold the driver id and version it is named after. Nothing is unpacked before the checksum
+  matches, and nothing is kept unless the driver answers its handshake.
+- **Driver Manager UI:** search, download and install, update to the release's version, install
+  from a file, roll back between installed versions, remove versions or a driver, and restart a
+  sidecar. When a user creates a connection for a database whose driver is not installed, the
+  app opens the manager on that driver's **Download and install**; a driver the release does not
+  publish (a connection from another machine) opens the file picker instead.
 - **Install location:** `<user data dir>/drivers/<id>/<version>/`, with a `driver.toml`
   manifest and the executable. Several versions can coexist, so rolling back is instant.
-- **Review:** an archive is inspected first; the user sees its id, version, size and SHA-256,
-  and is told that the driver runs with their rights and receives connection passwords.
-  Nothing is installed or started before an explicit confirmation.
-- **Trust:** a file is never signed or verified by sqlr on the user's behalf. The review step
-  is the trust boundary; install only archives from a source you trust.
+- **Review of a local file:** an archive is inspected first; the user sees its id, version, size
+  and SHA-256, and is told that the driver runs with their rights and receives connection
+  passwords. Nothing is installed or started before an explicit confirmation.
+- **Trust:** a release download is trusted as far as the project's GitHub release is (https and
+  the release's checksums; there is no separate signature). A local file is never signed or
+  verified by sqlr on the user's behalf: the review step is the trust boundary.
 
 ## 7. Data flow
 

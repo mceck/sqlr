@@ -231,7 +231,7 @@
 
 <section id="databases">
   <h2><span class="num">02</span>Supported databases</h2>
-  <p class="sub">Bundled drivers ship in the app; every other driver installs from a local driver file.</p>
+  <p class="sub">Bundled drivers ship in the app; every other driver downloads from the sqlr release in the Driver Manager, or installs from a local driver file.</p>
   <table>
     <tr><th>Database</th><th>Type</th><th>How it ships</th><th>Notes</th></tr>
     <tr><td>PostgreSQL</td><td>Relational</td><td><span class="mono">bundled</span></td><td>Full driver: catalog, queries, grid editing, object editors.</td></tr>
@@ -239,13 +239,13 @@
     <tr><td>SQL Server</td><td>Relational</td><td><span class="mono">bundled</span></td><td>Native TDS driver over rustls; SQL authentication and SSH tunnels.</td></tr>
     <tr><td>Oracle</td><td>Relational</td><td><span class="mono">bundled</span></td><td>Pure-Rust <span class="mono">oracle-rs</span>; no OCI or Instant Client.</td></tr>
     <tr><td>SQLite</td><td>Relational</td><td><span class="mono">bundled</span></td><td>File-per-database, no server required; backups and traces.</td></tr>
-    <tr><td>DuckDB</td><td>Relational</td><td><span class="mono">driver file</span></td><td>Sidecar embedding the DuckDB engine; local files and in-memory databases, no Java.</td></tr>
+    <tr><td>DuckDB</td><td>Relational</td><td><span class="mono">download</span></td><td>Sidecar embedding the DuckDB engine; local files and in-memory databases, no Java.</td></tr>
     <tr><td>Snowflake</td><td>Relational</td><td><span class="mono">bundled</span></td><td>HTTPS SQL API with OAuth, PAT or JWT tokens; independent auto-commit requests.</td></tr>
     <tr><td>MongoDB</td><td>Document</td><td><span class="mono">bundled</span></td><td>Collections, document viewer, shell-subset commands.</td></tr>
     <tr><td>Elasticsearch</td><td>Search / document</td><td><span class="mono">bundled</span></td><td>Indices, documents, query DSL.</td></tr>
     <tr><td>Redis</td><td>Key-value</td><td><span class="mono">bundled</span></td><td>KV browser with type-aware values.</td></tr>
-    <tr><td>SAP HANA</td><td>Relational</td><td><span class="mono">from file</span></td><td>Sidecar built on <span class="mono">hdbconnect_async</span>, installed from a driver file.</td></tr>
-    <tr><td>Any JDBC database</td><td>Relational</td><td><span class="mono">from file</span></td><td>Java 17+ bridge, installed from a driver file with its JDBC jar.</td></tr>
+    <tr><td>SAP HANA</td><td>Relational</td><td><span class="mono">download</span></td><td>Sidecar built on <span class="mono">hdbconnect_async</span>, downloaded in the Driver Manager.</td></tr>
+    <tr><td>Any JDBC database</td><td>Relational</td><td><span class="mono">download</span></td><td>Java 17+ bridge, downloaded in the Driver Manager; pick your database's JDBC jar.</td></tr>
   </table>
 </section>
 

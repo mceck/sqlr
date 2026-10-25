@@ -5,8 +5,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use sqlr_core::{ConnectionConfig, ConnectionProfile, Secrets};
-use sqlr_engine::{DriverJobState, DriverRegistry, Engine, QueryStatus, SessionStatus};
-use sqlr_registry::Registry;
+use sqlr_engine::{
+    DriverJobState, DriverRegistry, Engine, QueryStatus, ReleaseSource, SessionStatus,
+};
+use sqlr_registry::{Registry, platform_key};
 
 use crate::support;
 use support::{TIMEOUT, no_repaint, wait_until};
@@ -174,4 +176,63 @@ fn a_job_while_another_driver_stays_installed_does_not_deadlock() {
         }
     });
     assert_eq!(jobs, "1.0.0");
+}
+
+/// A local mirror of a release that publishes `echo` at `version` for this platform, listed in
+/// its `SHA256SUMS.txt` with `sha256` (the archive's own checksum by default).
+fn release_mirror(dir: &std::path::Path, version: &str, sha256: Option<&str>) -> ReleaseSource {
+    let release = ReleaseSource {
+        base_url: format!("file://{}", dir.display()),
+        version: version.into(),
+    };
+    let bytes = archive(version);
+    let name = release.asset_name("echo", &platform_key());
+    let sha = sha256.map_or_else(|| sqlr_registry::sha256_hex(&bytes), str::to_string);
+    std::fs::write(dir.join("SHA256SUMS.txt"), format!("{sha}  {name}\n")).unwrap();
+    std::fs::write(dir.join(name), bytes).unwrap();
+    release
+}
+
+#[test]
+fn a_driver_downloads_from_the_release_and_registers() {
+    let data = tempfile::tempdir().unwrap();
+    let mirror = tempfile::tempdir().unwrap();
+    let engine = engine();
+    engine.configure_drivers(data.path(), 5);
+    // By default, drivers come from this version's GitHub release.
+    assert_eq!(
+        engine.driver_release(),
+        ReleaseSource::github(env!("CARGO_PKG_VERSION"))
+    );
+    engine.set_driver_release(release_mirror(mirror.path(), "1.3.0", None));
+    engine.download_driver("echo");
+    assert!(wait_until(Duration::from_secs(20), || engine
+        .drivers()
+        .get("echo")
+        .is_some()));
+    let installed = engine.installed_drivers();
+    assert_eq!(installed[0].active, "1.3.0");
+    assert!(!installed[0].manual);
+    assert!(wait_until(TIMEOUT, || engine
+        .driver_jobs()
+        .contains(&("echo".to_string(), DriverJobState::Done))));
+    connect_echo(&engine);
+}
+
+#[test]
+fn a_tampered_release_download_fails_and_installs_nothing() {
+    let data = tempfile::tempdir().unwrap();
+    let mirror = tempfile::tempdir().unwrap();
+    let engine = engine();
+    engine.configure_drivers(data.path(), 5);
+    let other = sqlr_registry::sha256_hex(b"another file");
+    engine.set_driver_release(release_mirror(mirror.path(), "1.3.0", Some(&other)));
+    engine.download_driver("echo");
+    assert!(wait_until(TIMEOUT, || {
+        engine.driver_jobs().iter().any(|(id, state)| {
+            id == "echo" && matches!(state, DriverJobState::Failed(m) if m.contains("sha256"))
+        })
+    }));
+    assert!(engine.drivers().get("echo").is_none());
+    assert!(engine.installed_drivers().is_empty());
 }

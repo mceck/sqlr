@@ -10,7 +10,7 @@ use sqlr_core::{
     CatalogColumn, CatalogRelation, ConnectionConfig, ConnectionProfile, DriverError, ErrorKind,
     HistoryEntry, HistoryOutcome, Node, NodeKind, NodePath, RelationKind, SchemaCatalog, Secrets,
 };
-use sqlr_engine::{DriverRegistry, Engine};
+use sqlr_engine::{DriverRegistry, Engine, ReleaseSource};
 use sqlr_store::{ConnectionRepo, Db, MemorySecretStore, Settings};
 use sqlr_testkit::{FakeDriver, FakeScript};
 use sqlr_ui::theme::ThemePref;
@@ -2487,6 +2487,35 @@ fn harness_missing_driver(dir: &tempfile::TempDir) -> Harness<'static, SqlrApp> 
     h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
     h.run_steps(2);
     h
+}
+
+#[test]
+fn an_available_driver_downloads_only_when_asked() {
+    let dir = tempfile::tempdir().unwrap();
+    // A release that has no driver files at all.
+    let mirror = tempfile::tempdir().unwrap();
+    std::fs::write(mirror.path().join("SHA256SUMS.txt"), "").unwrap();
+    let (deps, _driver) = deps_with(dir.path(), FakeScript::default());
+    deps.engine.configure_drivers(&dir.path().join("data"), 5);
+    deps.engine.set_driver_release(ReleaseSource {
+        base_url: format!("file://{}", mirror.path().display()),
+        version: "9.9.9".into(),
+    });
+    let app = SqlrApp::new(deps, &egui::Context::default());
+    let mut h = Harness::builder()
+        .with_size((1400.0, 900.0))
+        .with_step_dt(0.01)
+        .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    h.run_steps(2);
+    h.get_by_label("ClickHouse").click();
+    wait_for_label(&mut h, "Download and install");
+    h.get_by_label("Download and install").click_accesskit();
+    // The download ran and its failure reached the user.
+    step_until(&mut h, "the download to fail", |h| {
+        h.state().toast_texts().iter().any(|t| {
+            t.contains("Could not install the jdbc-clickhouse driver") && t.contains("no build")
+        })
+    });
 }
 
 #[test]

@@ -25,12 +25,16 @@ when you connect).
 | `jdbc-duckdb` | DuckDB | file |
 | `jdbc-h2` | H2 | file or `mem:` URL part, user, password |
 
-Each preset names the JDBC class and URL shape. The JDBC jar is not downloaded: package it
-with the driver (see below) or pick a jar in the connection form. Generic JDBC takes any jar
+Each preset names the JDBC class and URL shape. The JDBC jar is not downloaded: pick a jar in
+the connection form, or package it with the driver (see below). Generic JDBC takes any jar
 you have (or list more, separated by `;`). SQL Server and Oracle are now native drivers and no
 longer need the bridge.
 
-## Install from a file
+## Install
+
+Every sqlr release publishes `jdbc`, `jdbc-db2`, `jdbc-clickhouse` and `jdbc-h2` (the launcher and
+the bridge jar, without database jars) for each platform: choose **Download and install** in the
+Driver Manager. To bundle a JDBC jar, or for another preset, pack the driver yourself:
 
 ```sh
 scripts/package-driver.sh jdbc-h2 jdbc-h2.tar.gz --jar ~/Downloads/h2-2.3.232.jar

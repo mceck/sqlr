@@ -1,5 +1,6 @@
-//! The Driver Manager: the bundled drivers and the ones installed from a local file,
-//! in a searchable list with the selected driver's versions and actions on the right.
+//! The Driver Manager: the bundled drivers, the ones downloaded from the sqlr release or
+//! installed from a local file, and the ones available to download, in a searchable list
+//! with the selected driver's versions and actions on the right.
 //! Pure view: the app builds the rows from the engine and applies the returned action.
 
 use egui::{RichText, vec2};
@@ -30,6 +31,8 @@ pub struct DriverRow {
     pub description: String,
     pub homepage: String,
     pub license: String,
+    /// The version the sqlr release offers to download, when it is not installed yet.
+    pub download: Option<String>,
     pub job: Option<DriverJobView>,
 }
 
@@ -49,6 +52,8 @@ pub enum DriverManagerAction {
         id: String,
         version: Option<String>,
     },
+    /// Downloads the driver from the sqlr release and installs it.
+    Download(String),
     InstallFromFile,
     ClearJob(String),
     /// Stops the driver's process (a hung or confused one); its connections fail and the
@@ -70,7 +75,7 @@ fn group(row: &DriverRow) -> &'static str {
     } else if row.active.is_some() {
         "Installed"
     } else {
-        "Available from file"
+        "Available"
     }
 }
 
@@ -103,7 +108,8 @@ pub fn driver_manager(
     ui.add_space(Spacing::XS);
     ui.label(
         RichText::new(
-            "Bundled drivers ship with sqlr. Other drivers install only from a local file.",
+            "Bundled drivers ship with sqlr. Other drivers download from the sqlr release on \
+             GitHub, or install from a local driver file.",
         )
         .small()
         .color(palette.text_muted),
@@ -137,7 +143,7 @@ pub fn driver_manager(
                 .max_height(height)
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    for heading in ["Installed", "Built in", "Available from file"] {
+                    for heading in ["Installed", "Built in", "Available"] {
                         let group_rows: Vec<_> =
                             filtered.iter().filter(|r| group(r) == heading).collect();
                         if group_rows.is_empty() {
@@ -256,13 +262,34 @@ fn details(ui: &mut egui::Ui, row: &DriverRow) -> Option<DriverManagerAction> {
             ui.label(
                 RichText::new(format!("Active version {active}{source}")).color(palette.success),
             );
+            if let Some(version) = &row.download
+                && ui.button(format!("Update to {version}")).clicked()
+            {
+                action = Some(DriverManagerAction::Download(row.id.clone()));
+            }
         }
-        None => {
-            theme::hint(
+        None => match &row.download {
+            Some(version) => {
+                if ui
+                    .add(theme::primary_button(ui.ctx(), "Download and install"))
+                    .clicked()
+                {
+                    action = Some(DriverManagerAction::Download(row.id.clone()));
+                }
+                ui.add_space(Spacing::XS);
+                theme::hint(
+                    ui,
+                    &format!(
+                        "Downloads version {version} for this computer from the sqlr release \
+                         on GitHub and checks its SHA-256."
+                    ),
+                );
+            }
+            None => theme::hint(
                 ui,
                 "Not installed. Use “Install from file…” to add this driver.",
-            );
-        }
+            ),
+        },
     }
 
     if !row.installed.is_empty() {

@@ -26,7 +26,7 @@ pub(crate) struct DriverToml {
     /// Arguments the executable is started with (the JDBC launcher takes its preset here).
     #[serde(default)]
     pub args: Vec<String>,
-    /// `"registry"` or `"manual"`.
+    /// `"registry"`, `"release"` or `"manual"`.
     #[serde(default)]
     pub source: String,
 }
@@ -40,7 +40,7 @@ pub struct InstalledDriver {
     /// The active version's directory.
     pub path: PathBuf,
     pub manifest: DriverManifest,
-    /// The active version was installed from a file, not from the registry.
+    /// The active version was installed from a local file, not downloaded.
     pub manual: bool,
 }
 
@@ -242,7 +242,7 @@ impl Registry {
     }
 
     /// Validates the unpacked driver, starts it once to read its manifest and moves it into
-    /// place. `expect` pins the id and version the index promised.
+    /// place. `expect` pins the id and version the index or release promised.
     pub(crate) async fn finish(
         &self,
         staging: Staging,
@@ -263,7 +263,7 @@ impl Registry {
             && (meta.id != id || meta.version != version)
         {
             return Err(RegistryError::UnsafeArchive(format!(
-                "the archive holds {} {}, the index promised {id} {version}",
+                "the archive holds {} {}, expected {id} {version}",
                 meta.id, meta.version
             )));
         }

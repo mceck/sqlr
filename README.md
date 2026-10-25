@@ -44,12 +44,12 @@ Link to [documentation](https://mceck.github.io/sqlr/usage/README.html).
 | SQL Server 2016+ | `tiberius` (rustls) | native TDS, SQL and Windows-less authentication, SSH tunnel |
 | Oracle 12c+ | `oracle-rs` (pure Rust) | no Oracle Instant Client or OCI, TLS, SSH tunnel |
 | SQLite 3 | `rusqlite` (bundled) | files, read-only open |
-| DuckDB | sidecar with the bundled `duckdb` engine (install from a file) | files and in-memory databases, read-only open, no Java or system library, [docs/drivers/duckdb.md](docs/drivers/duckdb.md) |
+| DuckDB | sidecar with the bundled `duckdb` engine (downloaded in the Driver Manager) | files and in-memory databases, read-only open, no Java or system library, [docs/drivers/duckdb.md](docs/drivers/duckdb.md) |
 | Snowflake | SQL API via `reqwest` (rustls) | HTTPS, OAuth/PAT/JWT tokens, [connection notes](docs/drivers/snowflake.md) |
 | MongoDB | `mongodb` (rustls) | [Mongo shell subset](docs/tech/mongo-shell-subset.md), TLS, SSH tunnel |
 | Elasticsearch 7.17 / 8.x | `reqwest` (rustls) | Kibana-console requests, ES\|QL and SQL, SSH tunnel |
 | Redis (standalone) | `redis` (rustls) | key browser, console, TLS, SSH tunnel |
-| Db2, ClickHouse, H2, any JDBC | JDBC bridge sidecar (install from a file, Java 17+) | [docs/drivers/jdbc.md](docs/drivers/jdbc.md) |
+| Db2, ClickHouse, H2, any JDBC | JDBC bridge sidecar (downloaded in the Driver Manager, Java 17+) | [docs/drivers/jdbc.md](docs/drivers/jdbc.md) |
 
 A connection can be pasted as a URL (`postgresql://user@host:5432/db`, `sqlite:/path`, …); a password inside a URL is refused.
 
@@ -60,7 +60,7 @@ Drivers run as separate processes against a fixed protocol a crash takes down on
 1. Generate a skeleton from `templates/sqlr-driver-template`.
 2. Implement the driver with [`sqlr-driver-sdk`](crates/sqlr-driver-sdk) and launch it with `run(MyDriver)`.
 3. Check it with the conformance suite in `crates/sqlr-driver-tests`.
-4. Package it with `scripts/package-driver.sh` and install it through **Settings → Drivers… → Install from file…**. The Driver Manager keeps every version, so rollback and removal need no restart; a file is the only install source.
+4. Package it with `scripts/package-driver.sh` and install it through **Settings → Drivers… → Install from file…**. The Driver Manager keeps every version, so rollback and removal need no restart. Drivers published with a sqlr release (HANA, DuckDB, the JDBC bridge) download from the release instead.
 
 Start with [docs/tech/writing-a-driver.md](docs/tech/writing-a-driver.md) and [docs/tech/driver-protocol.md](docs/tech/driver-protocol.md).
 

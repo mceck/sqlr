@@ -45,7 +45,7 @@ pub use registry::DriverRegistry;
 pub use result::{QueryId, QueryResult, QueryStatus};
 pub use script::{OutputLine, ScriptId, ScriptOnError, ScriptState};
 pub use session::{LoadState, SessionKey, SessionStatus, Slot};
-pub use sqlr_registry::{InstalledDriver, ManualInspection};
+pub use sqlr_registry::{InstalledDriver, ManualInspection, ReleaseSource};
 pub use ssh::{ConnectReport, HostKeyInfo};
 pub use transfer::{ExportSource, ImportOptions, PREVIEW_ROWS};
 pub use tx::{MessageLevel, RunMessage, TxPhase, TxState};

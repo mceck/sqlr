@@ -1,6 +1,6 @@
-//! Drivers that do not ship with the app: installs, version rollbacks and manual installs
-//! from a local driver file, and the sidecars registered from the install directory at
-//! startup and after every change, with no restart.
+//! Drivers that do not ship with the app: downloads from the sqlr release on GitHub,
+//! manual installs from a local driver file, version rollbacks, and the sidecars registered
+//! from the install directory at startup and after every change, with no restart.
 //!
 //! Every method returns immediately; a job runs on the engine runtime and the UI reads the
 //! state each frame. Nothing is fetched until a caller asks (spec §1.2: no background
@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use parking_lot::Mutex;
-use sqlr_registry::{InstalledDriver, ManualInspection, Registry};
+use sqlr_registry::{InstalledDriver, ManualInspection, Registry, ReleaseSource};
 use sqlr_sidecar::{SidecarDriver, SidecarSpec};
 
 use crate::engine::{Command, Engine, Shared};
@@ -48,6 +48,8 @@ pub enum ManualState {
 
 struct Hub {
     registry: Option<Arc<Registry>>,
+    /// Where "Download" fetches driver files from.
+    release: ReleaseSource,
     idle: Duration,
     installed: Vec<InstalledDriver>,
     jobs: BTreeMap<String, DriverJobState>,
@@ -68,6 +70,7 @@ impl DriverHub {
         Self {
             inner: Mutex::new(Hub {
                 registry: None,
+                release: ReleaseSource::github(env!("CARGO_PKG_VERSION")),
                 idle: Duration::from_secs(300),
                 installed: Vec::new(),
                 jobs: BTreeMap::new(),
@@ -138,8 +141,8 @@ impl DriverHub {
 impl Engine {
     /// Points the engine at the install directory and registers the drivers installed
     /// there (on the runtime: the UI thread never reads the disk). `idle_minutes` is how
-    /// long a sidecar outlives its last connection. Non-bundled drivers install only from
-    /// a local file, so there is no index to fetch.
+    /// long a sidecar outlives its last connection. Nothing is fetched here: a download
+    /// starts only with [`Engine::download_driver`].
     pub fn configure_drivers(&self, data_dir: &Path, idle_minutes: u32) {
         let registry = Arc::new(Registry::new(data_dir.to_path_buf(), String::new(), ""));
         {
@@ -249,6 +252,64 @@ impl Engine {
                 Ok(Ok(())) => DriverJobState::Done,
                 Ok(Err(e)) => DriverJobState::Failed(e.to_string()),
                 Err(e) => DriverJobState::Failed(e.to_string()),
+            };
+            finish_job(&shared, &registry, &id, state).await;
+        })));
+    }
+
+    /// The release driver downloads come from: this version's GitHub release by default.
+    pub fn driver_release(&self) -> ReleaseSource {
+        self.shared.drivers_hub.inner.lock().release.clone()
+    }
+
+    /// Downloads come from `release` from now on (a local mirror, tests).
+    pub fn set_driver_release(&self, release: ReleaseSource) {
+        self.shared.drivers_hub.inner.lock().release = release;
+    }
+
+    /// Downloads driver `id` from the release, checks it against the release's checksums,
+    /// installs it and makes it active. A download already running for `id` is left alone.
+    pub fn download_driver(&self, id: &str) {
+        let hub = &self.shared.drivers_hub;
+        let (registry, release) = {
+            let mut inner = hub.inner.lock();
+            let Some(registry) = inner.registry.clone() else {
+                return;
+            };
+            if matches!(inner.jobs.get(id), Some(DriverJobState::Running { .. })) {
+                return;
+            }
+            inner.jobs.insert(
+                id.to_string(),
+                DriverJobState::Running {
+                    done: 0,
+                    total: None,
+                },
+            );
+            (registry, inner.release.clone())
+        };
+        hub.bump(&self.shared);
+        let (shared, id) = (self.shared.clone(), id.to_string());
+        self.shared.send(Command::Spawn(Box::pin(async move {
+            let progress = {
+                let (shared, id) = (shared.clone(), id.clone());
+                move |done: u64, total: Option<u64>| {
+                    // Only the job moves: the installed drivers did not change yet.
+                    shared
+                        .drivers_hub
+                        .inner
+                        .lock()
+                        .jobs
+                        .insert(id.clone(), DriverJobState::Running { done, total });
+                    shared.repaint();
+                }
+            };
+            let state = match registry.install_release(&release, &id, progress).await {
+                Ok(_) => DriverJobState::Done,
+                Err(e) => {
+                    tracing::warn!(driver = %id, version = %release.version, error = %e, "driver download failed");
+                    DriverJobState::Failed(e.to_string())
+                }
             };
             finish_job(&shared, &registry, &id, state).await;
         })));

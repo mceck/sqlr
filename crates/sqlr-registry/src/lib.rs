@@ -1,6 +1,6 @@
-//! Driver files: the install layout on disk, versions, rollback and manual installs from
-//! a local file. The signed-index and download code remains for tests and local mirrors;
-//! the app never contacts a registry and offers no online install.
+//! Driver files: the install layout on disk, versions, rollback, downloads of the driver
+//! files published with a sqlr release on GitHub, and manual installs from a local file.
+//! The signed-index code remains for tests and local mirrors; the app reads no index.
 //!
 //! Layout: `<data dir>/drivers/<id>/<version>/{driver.toml, manifest.json, <executable>, …}`
 //! and `<data dir>/drivers/<id>/active`, which names the version in use. Nothing is fetched
@@ -10,12 +10,14 @@ mod download;
 mod index;
 mod install;
 mod manual;
+mod release;
 mod verify;
 
 pub use download::Fetcher;
 pub use index::{Artifact, MavenArtifact, RegistryEntry, is_newer, platform_key};
 pub use install::{InstalledDriver, MAVEN_CENTRAL, Registry};
 pub use manual::ManualInspection;
+pub use release::{GITHUB_RELEASES, ReleaseSource};
 pub use verify::{sha256_hex, verify_signature};
 
 use sqlr_core::DriverError;
@@ -36,6 +38,8 @@ pub enum RegistryError {
     },
     #[error("{url} redirects to another host ({to}); refused")]
     RedirectToOtherHost { url: String, to: String },
+    #[error("the sqlr {version} release has no driver files: {reason}")]
+    ReleaseUnavailable { version: String, reason: String },
     #[error("{id} has no build for {platform}")]
     NoBuildForPlatform { id: String, platform: String },
     #[error("unsafe driver archive: {0}")]

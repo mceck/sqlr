@@ -2,6 +2,8 @@ name: release
 
 # Push a tag like `v0.1.0` to build every platform and publish a GitHub release.
 # The tag must match the version in crates/sqlr-app/Cargo.toml.
+# Each platform also publishes the sidecar drivers the Driver Manager downloads:
+# sqlr-driver-<id>_<version>_<os>-<arch>.tar.gz, listed in SHA256SUMS.txt.
 on:
   push:
     tags: ["v*"]
@@ -41,6 +43,10 @@ jobs:
           toolchain: 1.98.1
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
       - name: Build, package and wrap each architecture in a dmg
         run: |
           for pair in aarch64-apple-darwin:arm64 x86_64-apple-darwin:x86_64; do
@@ -67,10 +73,17 @@ jobs:
             hdiutil create -volname "sqlr" -srcfolder "$stage" -ov -format UDZO \
               "sqlr_${VERSION}_macos-${arch}.dmg"
           done
+      - name: Build and pack the sidecar drivers
+        run: |
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            scripts/package-release-drivers.sh . --target "$target"
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: macos
-          path: sqlr_${{ env.VERSION }}_macos-*.dmg
+          path: |
+            sqlr_${{ env.VERSION }}_macos-*.dmg
+            sqlr-driver-*_${{ env.VERSION }}_macos-*.tar.gz
           if-no-files-found: error
 
   linux:
@@ -93,6 +106,10 @@ jobs:
         with:
           toolchain: 1.98.1
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
       - run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libxi-dev libxcursor-dev libxrandr-dev pkg-config
       - name: Build
         run: cargo build --release -p sqlr-app --bin sqlr
@@ -147,12 +164,15 @@ jobs:
           curl -fsSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-${ARCH}.AppImage
           chmod +x appimagetool
           APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool "$appdir" "sqlr_${VERSION}_linux-${ARCH}.AppImage"
+      - name: Build and pack the sidecar drivers
+        run: scripts/package-release-drivers.sh . --platform "linux-${ARCH}"
       - uses: actions/upload-artifact@v4
         with:
           name: linux-${{ matrix.arch }}
           path: |
             sqlr_${{ env.VERSION }}_linux-${{ matrix.arch }}.tar.gz
             sqlr_${{ env.VERSION }}_linux-${{ matrix.arch }}.AppImage
+            sqlr-driver-*_${{ env.VERSION }}_linux-${{ matrix.arch }}.tar.gz
           if-no-files-found: error
 
   windows:
@@ -166,16 +186,25 @@ jobs:
         with:
           toolchain: 1.98.1
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
       - name: Build
         run: cargo build --release -p sqlr-app --bin sqlr
       - name: Smoke test
         run: ./target/release/sqlr.exe --version
       - name: Stage the distribution
         run: Compress-Archive -Path ./target/release/sqlr.exe -DestinationPath "sqlr_${env:VERSION}_windows-x86_64.zip"
+      - name: Build and pack the sidecar drivers
+        shell: bash
+        run: sh scripts/package-release-drivers.sh . --platform windows-x86_64
       - uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: sqlr_${{ env.VERSION }}_windows-x86_64.zip
+          path: |
+            sqlr_${{ env.VERSION }}_windows-x86_64.zip
+            sqlr-driver-*_${{ env.VERSION }}_windows-x86_64.tar.gz
           if-no-files-found: error
 
   release:

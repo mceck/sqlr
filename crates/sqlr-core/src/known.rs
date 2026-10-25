@@ -15,8 +15,9 @@ pub enum KnownStatus {
         driver: &'static str,
         preset: &'static [(&'static str, &'static str)],
     },
-    /// A driver that does not ship with sqlr and installs only from a local driver file
-    /// (`driver` is the driver id; the Driver Manager offers "Install from file…").
+    /// A driver that does not ship with sqlr: the Driver Manager downloads it from the sqlr
+    /// release (the release workflow packs every one of these), or installs it from a local
+    /// driver file (`driver` is the driver id).
     Installable { driver: &'static str },
     /// Not reachable yet; `note` describes its support status.
     Planned { note: &'static str },
@@ -52,7 +53,7 @@ impl KnownDatabase {
     }
 }
 
-const JDBC: &str = "JDBC bridge; install the driver from a local file";
+const JDBC: &str = "JDBC bridge, downloaded from the sqlr release; needs Java 17+";
 
 const fn bundled(
     id: &'static str,
@@ -293,14 +294,14 @@ static KNOWN: &[KnownDatabase] = &[
         "SAP HANA",
         "hana",
         Some(30015),
-        "install from a file (hdbconnect sidecar)",
+        "hdbconnect sidecar, downloaded from the sqlr release",
     ),
     installable(
         "duckdb",
         "DuckDB",
         "duckdb",
         None,
-        "install from a file (embedded DuckDB sidecar)",
+        "embedded DuckDB sidecar, downloaded from the sqlr release",
     ),
     installable("jdbc", "Generic JDBC", "jdbc", None, JDBC),
     installable("db2", "Db2", "jdbc-db2", Some(50000), JDBC),

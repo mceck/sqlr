@@ -1,5 +1,5 @@
-//! "Install from file…" wherever a driver is missing: the new-connection catalog, a saved
-//! connection from another machine, the tree's inline row.
+//! The install wherever a driver is missing: the new-connection catalog, a saved connection
+//! from another machine, the tree's inline row.
 
 use sqlr_engine::{DriverJobState, ManualState};
 use sqlr_ui::ToastKind;
@@ -8,10 +8,11 @@ use super::PendingInstall;
 use crate::app::SqlrApp;
 
 impl SqlrApp {
-    /// Asks for the local driver file: opens the Drivers window on `driver` and its file
-    /// picker. With `known` set, the new-connection form for that database opens once the
-    /// driver is installed. A request left behind (its picker dismissed, its window closed)
-    /// never blocks a new one; only an install that is really under way does.
+    /// Opens the Drivers window on `driver`: on its download when the sqlr release has it,
+    /// otherwise on the file picker for a local driver file. With `known` set, the
+    /// new-connection form for that database opens once the driver is installed. A request
+    /// left behind (its picker dismissed, its window closed) never blocks a new one; only an
+    /// install that is really under way does.
     pub(crate) fn request_driver_install(&mut self, driver: &str, known: Option<&'static str>) {
         if self.driver_install_busy() {
             self.open_driver_manager();
@@ -21,6 +22,8 @@ impl SqlrApp {
             );
             return;
         }
+        // A failure left from an earlier attempt must not end this request at once.
+        self.engine.clear_driver_job(driver);
         self.drivers_ui.pending = Some(PendingInstall {
             driver: driver.to_string(),
             known,
@@ -29,7 +32,7 @@ impl SqlrApp {
         if let Some(manager) = &mut self.drivers_ui.manager {
             manager.selected = Some(driver.to_string());
         }
-        if self.drivers_ui.pick.is_none() {
+        if !super::downloadable(driver) && self.drivers_ui.pick.is_none() {
             self.drivers_ui.pick =
                 Some(super::ManualPick::open(self.drivers_ui.file_answer.clone()));
         }

@@ -11,13 +11,13 @@ A connection tells sqlr how to reach a database: where it is, who you are, and h
 | SQL Server | SQL authentication, TLS, SSH tunnel |
 | Oracle | Works directly; the Oracle Instant Client is not needed |
 | SQLite | A file on disk, optionally opened read-only |
-| DuckDB | Installed from a driver file; a file on disk or `:memory:`, optionally opened read-only. No Java needed |
+| DuckDB | Downloaded in the Driver Manager; a file on disk or `:memory:`, optionally opened read-only. No Java needed |
 | Snowflake | Built in; HTTPS SQL API with OAuth, PAT or JWT token authentication |
 | MongoDB | TLS, SSH tunnel |
 | Elasticsearch | Versions 7.17 and 8.x |
 | Redis | A standalone server, with TLS and ACL users |
-| SAP HANA | Installed from a driver file, see [Drivers](drivers.md) |
-| Db2, ClickHouse, H2 and any other JDBC database | Through the JDBC bridge, installed from a driver file. Needs Java 17 or newer |
+| SAP HANA | Downloaded in the Driver Manager, see [Drivers](drivers.md) |
+| Db2, ClickHouse, H2 and any other JDBC database | Through the JDBC bridge, downloaded in the Driver Manager. Needs Java 17 or newer |
 
 Several databases that speak the PostgreSQL or MySQL protocol are listed in the new-connection dialog with their usual port and defaults already filled in: CockroachDB, YugabyteDB, Amazon Redshift, Greenplum, TimescaleDB, Neon, Supabase, Amazon Aurora (both flavors), TiDB and SingleStore.
 
@@ -35,7 +35,7 @@ Some things worth knowing:
 
 ## DuckDB and Snowflake
 
-DuckDB comes from a driver file (see [Drivers](drivers.md)) that embeds the whole engine, so nothing else is needed. Pick a database file, or use `:memory:` for a temporary database. Snowflake uses its public SQL API. Enter the account hostname, optional database, schema, warehouse and role, then choose the token type and paste the token in its secret field. Tokens use the same encrypted vault as passwords.
+DuckDB comes from a driver file the Driver Manager downloads (see [Drivers](drivers.md)) that embeds the whole engine, so nothing else is needed. Pick a database file, or use `:memory:` for a temporary database. Snowflake uses its public SQL API. Enter the account hostname, optional database, schema, warehouse and role, then choose the token type and paste the token in its secret field. Tokens use the same encrypted vault as passwords.
 
 Snowflake requests run independently in auto-commit mode. Persistent transactions, temporary tables, session variables and `USE` changes across requests are unavailable; select the context in the connection form. Editing result cells is unavailable. Existing JDBC connections still work with their installed driver. More in [the Snowflake notes](https://github.com/mceck/sqlr/blob/main/docs/drivers/snowflake.md).
 

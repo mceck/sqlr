@@ -1,7 +1,8 @@
 # SAP HANA
 
-A bundled sidecar crate built on `hdbconnect_async` (spec §5.6), installed from a local
-driver file through the Driver Manager (Settings → Drivers…):
+A sidecar crate built on `hdbconnect_async` (spec §5.6). Every sqlr release publishes it for
+each platform: choose **Download and install** in the Driver Manager (Settings → Drivers…). To
+install a build of your own instead:
 
 ```sh
 scripts/package-driver.sh hana hana.tar.gz      # builds it in release mode and packs it

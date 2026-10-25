@@ -12,18 +12,27 @@ use sqlr_ui::{
 use super::ManualPick;
 use crate::app::SqlrApp;
 use crate::dialogs::{Confirm, DeleteAsk, confirm_delete};
+use crate::updates::is_newer;
 
 impl SqlrApp {
-    /// Opens the Driver Manager. Non-bundled drivers install only from a local file.
+    /// Opens the Driver Manager. Non-bundled drivers download from the sqlr release or
+    /// install from a local file.
     pub(crate) fn open_driver_manager(&mut self) {
         self.drivers_ui
             .manager
             .get_or_insert_with(DriverManagerState::default);
     }
 
-    /// The list: the drivers installed from files and the ones that ship with sqlr.
+    /// The list: the installed drivers, the ones that ship with sqlr and the ones the sqlr
+    /// release offers to download.
     fn driver_rows(&self) -> Vec<DriverRow> {
         let installed = self.engine.installed_drivers();
+        let release = self.engine.driver_release().version;
+        // Offered only when it is newer than every installed version: never a downgrade.
+        let download = |id: &str, installed: &[String]| {
+            (super::downloadable(id) && installed.iter().all(|v| is_newer(&release, v)))
+                .then(|| release.clone())
+        };
         let jobs = self.engine.driver_jobs();
         let job_of = |id: &str| {
             jobs.iter()
@@ -52,6 +61,7 @@ impl SqlrApp {
                 description: String::new(),
                 homepage: String::new(),
                 license: String::new(),
+                download: download(&driver.id, &driver.versions),
                 job: job_of(&driver.id),
             });
         }
@@ -74,6 +84,7 @@ impl SqlrApp {
                 ),
                 homepage: "https://mceck.github.io/sqlr/usage/README.html".into(),
                 license: String::new(),
+                download: None,
                 job: None,
             });
         }
@@ -92,6 +103,7 @@ impl SqlrApp {
                     description: db.notes.into(),
                     homepage: "https://github.com/mceck/sqlr/tree/main/docs/drivers".into(),
                     license: String::new(),
+                    download: download(driver, &[]),
                     job: job_of(driver),
                 });
             }
@@ -158,6 +170,7 @@ impl SqlrApp {
             Some(DriverManagerAction::Remove { id, version: None }) => {
                 self.drivers_ui.confirm_remove = Some(id);
             }
+            Some(DriverManagerAction::Download(id)) => self.engine.download_driver(&id),
             Some(DriverManagerAction::InstallFromFile) => {
                 if self.drivers_ui.pick.is_none() {
                     self.drivers_ui.pick =
