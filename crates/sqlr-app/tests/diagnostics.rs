@@ -86,11 +86,14 @@ fn wait_for_label(h: &mut Harness<'static, SqlrApp>, label: &str) {
 
 /// Writes the marker and (with `panic`) a panic incident a previous session would have left.
 fn previous_session(dir: &std::path::Path, panic: bool) -> String {
+    let version = env!("CARGO_PKG_VERSION");
     let diagnostics = dir.join("diagnostics");
     std::fs::create_dir_all(&diagnostics).unwrap();
     std::fs::write(
         diagnostics.join("session.json"),
-        r#"{"session_id":"previous-session","pid":999,"started_ms":1,"version":"0.1.1"}"#,
+        format!(
+            r#"{{"session_id":"previous-session","pid":999,"started_ms":1,"version":"{version}"}}"#
+        ),
     )
     .unwrap();
     let at = now_ms();
@@ -106,7 +109,7 @@ fn previous_session(dir: &std::path::Path, panic: bool) -> String {
             "thread": "main",
             "file": "src/app.rs",
             "line": 42,
-            "environment": {"version": "0.1.1", "os": "macos", "arch": "aarch64"},
+            "environment": {"version": version, "os": "macos", "arch": "aarch64"},
             "logs": ["the line before the crash"]
         });
         std::fs::write(

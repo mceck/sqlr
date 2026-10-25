@@ -291,3 +291,30 @@ fn grid_json_keeps_numbers_as_written() {
     h.run_steps(2);
     h.get_by_label("{\"n\":123456789012345678901234,\"d\":1.10}");
 }
+
+#[test]
+fn read_only_context_menu_offers_copy_without_disabled_edit_actions() {
+    let mut h = harness(2, false);
+    h.get_by_label("0").click_secondary();
+    h.run_steps(2);
+    h.get_by_label("Copy");
+    assert!(h.query_by_label("Edit cell").is_none());
+    assert!(h.query_by_label("Paste").is_none());
+    assert!(h.query_by_label("Delete row").is_none());
+}
+
+#[test]
+fn selection_summary_uses_view_order_and_sums_numeric_cells() {
+    let mut h = harness(3, false);
+    let pos = first_cell_pos(&h);
+    click(&mut h, pos);
+    h.key_press_modifiers(Modifiers::SHIFT, Key::ArrowDown);
+    h.run_steps(2);
+    assert_eq!(
+        h.state()
+            .state
+            .selection_summary(&h.state().rows)
+            .as_deref(),
+        Some("2 cells · Sum 1")
+    );
+}

@@ -196,7 +196,6 @@ targets list. Supported payloads:
 | `profile` | Create: `name`. Update: existing `id` plus fields. Optional `color`, `commit_mode` (`auto`/`manual`/`smart`), `confirm_writes`, `confirm_destructive`, `read_only`, `idle_tx_timeout_min`; safety can only tighten. |
 | `setting` | `id`, `level:{name:"global"}` or `level:{name:"profile"/"connection",id:"..."}`, and `value` or `reset:true`. Use the listed setting kind, allowed levels and `agent_writable`. |
 | `keymap` | `action` from `config_list(target:"keymap")`, plus `chords:["Cmd+Shift+P"]` or `reset:true`. |
-| `task` | Create: `name`, `spec`. Update: existing `id` and fields to patch. `spec` is a complete TaskSpec, not SQL text; inspect existing tasks for its structure. |
 
 For connections, driver field keys and string values come from
 `config_list({"target":"drivers","driver_id":"<driver>"})`. Put non-secret fields in

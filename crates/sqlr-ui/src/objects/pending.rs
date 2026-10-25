@@ -49,15 +49,27 @@ pub fn sql_view(ui: &mut egui::Ui, id: &str, text: &str, syntax: &SqlSyntax, max
                 .max_height(max_height)
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
-                    let mut text = text;
-                    crate::text_menu::text_edit(
-                        ui,
-                        TextEdit::multiline(&mut text)
-                            .code_editor()
-                            .desired_width(f32::INFINITY)
-                            .frame(egui::Frame::NONE)
-                            .layouter(&mut layouter),
-                    );
+                    ui.horizontal_top(|ui| {
+                        let numbers = (1..=text.lines().count().max(1))
+                            .map(|n| n.to_string())
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        ui.label(
+                            egui::RichText::new(numbers)
+                                .font(theme::monospace(ui.ctx()))
+                                .color(theme::palette(ui.ctx()).text_muted),
+                        );
+                        ui.add_space(Spacing::S);
+                        let mut text = text;
+                        crate::text_menu::text_edit(
+                            ui,
+                            TextEdit::multiline(&mut text)
+                                .code_editor()
+                                .desired_width(f32::INFINITY)
+                                .frame(egui::Frame::NONE)
+                                .layouter(&mut layouter),
+                        );
+                    });
                 });
         });
 }

@@ -431,6 +431,9 @@ impl SqlrApp {
             }
             tab.close_run(&self.engine);
             tab.close_plan(&self.engine);
+            if let Some(er) = &mut tab.er {
+                er.close(&self.engine);
+            }
             if let Some(doc) = &mut tab.doc {
                 doc.close(&self.engine);
             }

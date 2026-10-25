@@ -55,6 +55,7 @@ impl PlanViewState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlanAction {
     CopyRaw,
+    Analyze,
     /// The editor text changed: explain the current statement again.
     Recompute,
 }
@@ -142,13 +143,8 @@ fn header(
             ui.label(RichText::new("execution").small().color(p.text_muted));
         } else if let Some(time) = plan.root.time_ms {
             metric(ui, p, "root total", fmt_ms(time));
-        } else {
-            ui.label(
-                RichText::new("Execution not measured")
-                    .small()
-                    .color(p.text_muted),
-            );
         }
+
         if let Some(planning) = plan.planning_ms {
             metric(ui, p, "planning", fmt_ms(planning));
         }
@@ -157,9 +153,6 @@ fn header(
         }
         if let Some(rows) = output_rows(plan) {
             metric(ui, p, "rows", fmt_num(rows));
-        }
-        if insights.depth > 1 {
-            metric(ui, p, "depth", insights.depth.to_string());
         }
         let warnings = insights
             .issues
@@ -210,7 +203,15 @@ fn header(
     });
 
     if !insights.timed {
-        theme::hint(ui, "Run Explain Analyze to measure execution time in ms.");
+        ui.horizontal(|ui| {
+            theme::hint(ui, "Run Explain Analyze for real timings.");
+            if ui
+                .add_enabled(!chrome.running, egui::Button::new("Explain Analyze"))
+                .clicked()
+            {
+                action = Some(PlanAction::Analyze);
+            }
+        });
     }
 
     ui.add_space(Spacing::S);
@@ -450,7 +451,12 @@ fn nodes(
             Layout::top_down(Align::Min),
             |ui| {
                 ui.set_min_height(height);
-                inspector(ui, p, plan, insights, state);
+                Frame::new()
+                    .fill(p.bg_raised)
+                    .stroke(Stroke::new(1.0, p.border))
+                    .corner_radius(Spacing::RADIUS_M)
+                    .inner_margin(Spacing::M)
+                    .show(ui, |ui| inspector(ui, p, plan, insights, state));
             },
         );
     });

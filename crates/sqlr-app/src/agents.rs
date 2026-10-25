@@ -200,14 +200,6 @@ impl AgentHost for AppHostClient {
             .await
     }
 
-    async fn save_task(&self, task: SavedTask) -> ToolResult<()> {
-        self.request(move |app| {
-            app.engine.save_task(task);
-            Ok(())
-        })
-        .await
-    }
-
     async fn write_connection(&self, write: ConnectionWrite) -> ToolResult<()> {
         let (tx, rx) = oneshot::channel();
         if self

@@ -65,7 +65,13 @@ fn matches(row: &DriverRow, search: &str) -> bool {
 }
 
 fn group(row: &DriverRow) -> &'static str {
-    if row.builtin { "Built in" } else { "Installed" }
+    if row.builtin {
+        "Built in"
+    } else if row.active.is_some() {
+        "Installed"
+    } else {
+        "Available from file"
+    }
 }
 
 /// Draws the manager; returns what the user asked for this frame.
@@ -77,15 +83,17 @@ pub fn driver_manager(
     let palette = theme::palette(ui.ctx());
     let mut action = None;
     ui.horizontal(|ui| {
-        crate::text_edit(
-            ui,
-            egui::TextEdit::singleline(&mut state.search)
-                .hint_text("Search drivers")
-                .desired_width(260.0),
-        )
-        .widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Search drivers")
-        });
+        if rows.len() > 5 {
+            crate::text_edit(
+                ui,
+                egui::TextEdit::singleline(&mut state.search)
+                    .hint_text("Search drivers")
+                    .desired_width(260.0),
+            )
+            .widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Search drivers")
+            });
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui.button("Install from file…").clicked() {
                 action = Some(DriverManagerAction::InstallFromFile);
@@ -99,6 +107,10 @@ pub fn driver_manager(
         )
         .small()
         .color(palette.text_muted),
+    );
+    ui.hyperlink_to(
+        "Driver files and installation guide",
+        "https://github.com/mceck/sqlr/tree/main/docs/drivers",
     );
     ui.add_space(Spacing::S);
     ui.separator();
@@ -125,7 +137,7 @@ pub fn driver_manager(
                 .max_height(height)
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    for heading in ["Installed", "Built in"] {
+                    for heading in ["Installed", "Built in", "Available from file"] {
                         let group_rows: Vec<_> =
                             filtered.iter().filter(|r| group(r) == heading).collect();
                         if group_rows.is_empty() {

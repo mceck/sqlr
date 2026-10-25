@@ -139,6 +139,36 @@ impl PendingCopy {
 }
 
 impl SqlrApp {
+    pub(crate) fn open_result_table(&mut self, tab: u64, q: QueryId) {
+        let target = tab_mut(&mut self.dock, tab)
+            .and_then(|t| Some((t.conn.clone()?, t.edits.get(&q)?.table.clone()?)));
+        let Some((conn, table)) = target else {
+            self.reveal_tab_connection(tab);
+            self.notify_as(
+                ToastKind::Info,
+                "Open a table from the explorer to edit its rows",
+            );
+            return;
+        };
+        let Some(dialect) = self.dialects.get(&conn) else {
+            return;
+        };
+        let qualified = table
+            .schema
+            .iter()
+            .chain(std::iter::once(&table.name))
+            .map(|part| dialect.quote_ident(part))
+            .collect::<Vec<_>>()
+            .join(".");
+        let sql = format!("SELECT * FROM {qualified}");
+        self.open_and_run(
+            format!("Data · {}", table.name),
+            &conn,
+            table.database,
+            &sql,
+        );
+    }
+
     /// The statements of the open Preview dialog.
     #[doc(hidden)]
     pub fn changes_preview(&self) -> Option<String> {

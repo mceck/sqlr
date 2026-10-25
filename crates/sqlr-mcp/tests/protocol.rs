@@ -139,9 +139,6 @@ impl AgentHost for TestHost {
     async fn tasks(&self) -> sqlr_mcp::error::ToolResult<Vec<SavedTask>> {
         Ok(Vec::new())
     }
-    async fn save_task(&self, _task: SavedTask) -> sqlr_mcp::error::ToolResult<()> {
-        Ok(())
-    }
     async fn write_connection(&self, write: ConnectionWrite) -> sqlr_mcp::error::ToolResult<()> {
         let mut state = self.state.lock().unwrap();
         if write.config.agent_access != AgentAccess::None

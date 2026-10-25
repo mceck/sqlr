@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 
 use egui::{ComboBox, DragValue, RichText, TextEdit};
 use sqlr_core::{
-    ColumnMapping, CsvOptions, Endpoint, Node, ObjectDef, SavedTask, TableColumn, TableRef,
-    TaskSpec, TextFormat, TransferOptions, TransferSpec, new_table_def,
+    ColumnMapping, CsvOptions, Endpoint, Node, ObjectDef, TableColumn, TableRef, TextFormat,
+    TransferOptions, TransferSpec, new_table_def,
 };
 use sqlr_engine::{Engine, JobId, JobOutcome, JobProgress, SessionKey, SessionStatus, SourceProbe};
 use sqlr_ui::theme::{self, Spacing};
@@ -142,8 +142,6 @@ enum AskFor {
 pub(crate) enum WizardEvent {
     None,
     Close,
-    /// "Save as task" on the last step; the task being edited, when there is one.
-    SaveAsTask(Box<TransferSpec>, Option<(String, String)>),
 }
 
 pub(crate) struct TransferWizard {
@@ -166,8 +164,14 @@ pub(crate) struct TransferWizard {
     t_file: FileKind,
     ask: Option<(AskFor, FileAsk)>,
     probe_job: Option<JobId>,
+    probe_for: String,
+    observed_source: (String, f64),
+    confirm_run: bool,
     /// What the source holds, for the inputs it was read with.
     probe: Option<(String, SourceProbe)>,
+    preview_rows: Option<sqlr_core::RowBuffer>,
+    preview_grid: sqlr_ui::GridState,
+    preview_for: String,
     probe_error: Option<String>,
     mapping: Vec<ColumnMapping>,
     /// The existing target's columns were asked for.
@@ -185,8 +189,6 @@ pub(crate) struct TransferWizard {
     progress: JobProgress,
     log: Vec<String>,
     outcome: Option<Result<String, String>>,
-    /// The saved task being edited: its id and name.
-    editing: Option<(String, String)>,
     /// Look into the source as soon as its connections are up (an edited task).
     autoprobe: bool,
     /// The mapping and the edited DDL come from a task: the first look keeps them.
@@ -218,7 +220,13 @@ impl TransferWizard {
             t_file: FileKind::Csv,
             ask: None,
             probe_job: None,
+            probe_for: String::new(),
+            observed_source: (String::new(), 0.0),
+            confirm_run: false,
             probe: None,
+            preview_rows: None,
+            preview_grid: sqlr_ui::GridState::default(),
+            preview_for: String::new(),
             probe_error: None,
             mapping: Vec::new(),
             described: None,
@@ -234,126 +242,9 @@ impl TransferWizard {
             progress: JobProgress::default(),
             log: Vec::new(),
             outcome: None,
-            editing: None,
             autoprobe: false,
             keep_mapping: false,
         }
-    }
-
-    /// A wizard that edits a saved transfer task; `None` for another kind of task.
-    pub fn from_task(conns: &[ConnChoice], task: &SavedTask) -> Option<Self> {
-        let TaskSpec::Transfer(spec) = &task.spec else {
-            return None;
-        };
-        let mut wizard = Self::new(conns);
-        wizard.editing = Some((task.id.clone(), task.name.clone()));
-        wizard.apply(spec);
-        wizard.autoprobe = true;
-        wizard.keep_mapping = true;
-        Some(wizard)
-    }
-
-    /// Fills the choices from `spec`.
-    fn apply(&mut self, spec: &TransferSpec) {
-        match &spec.source {
-            Endpoint::Table { conn, table } => {
-                self.source_kind = SourceKind::Table;
-                self.s_conn = conn.clone();
-                self.s_schema = table.schema.clone().unwrap_or_default();
-                self.s_table = table.name.clone();
-            }
-            Endpoint::Query { conn, sql, .. } => {
-                self.source_kind = SourceKind::Query;
-                self.s_conn = conn.clone();
-                self.s_sql = sql.clone();
-            }
-            Endpoint::File { path, format } => {
-                self.source_kind = SourceKind::File;
-                self.s_path = path.display().to_string();
-                match format {
-                    TextFormat::Csv(csv) => {
-                        self.s_file = FileKind::Csv;
-                        self.s_header = csv.header;
-                    }
-                    TextFormat::Tsv => self.s_file = FileKind::Tsv,
-                    TextFormat::Json => self.s_file = FileKind::Json,
-                    _ => self.s_file = FileKind::JsonLines,
-                }
-            }
-            Endpoint::Workbook {
-                path,
-                sheet,
-                header,
-            } => {
-                self.source_kind = SourceKind::File;
-                self.s_file = FileKind::Xlsx;
-                self.s_path = path.display().to_string();
-                self.s_sheet = sheet.clone();
-                self.s_header = *header;
-            }
-            Endpoint::Parquet { path } => {
-                self.source_kind = SourceKind::File;
-                self.s_file = FileKind::Parquet;
-                self.s_path = path.display().to_string();
-            }
-            _ => {}
-        }
-        match &spec.target {
-            Endpoint::Table { conn, table } => {
-                self.target_kind = TargetKind::Existing;
-                self.t_conn = conn.clone();
-                self.t_schema = table.schema.clone().unwrap_or_default();
-                self.t_table = table.name.clone();
-            }
-            Endpoint::NewTable { conn, table, ddl } => {
-                self.target_kind = TargetKind::New;
-                self.t_conn = conn.clone();
-                self.t_schema = table.schema.clone().unwrap_or_default();
-                self.t_table = table.name.clone();
-                if let Some(ddl) = ddl {
-                    self.ddl = ddl.clone();
-                    self.ddl_edited = true;
-                }
-            }
-            Endpoint::File { path, format } => {
-                self.target_kind = TargetKind::File;
-                self.t_path = path.display().to_string();
-                self.t_file = match format {
-                    TextFormat::Tsv => FileKind::Tsv,
-                    TextFormat::Json => FileKind::Json,
-                    TextFormat::JsonLines => FileKind::JsonLines,
-                    TextFormat::SqlInsert { .. } => FileKind::SqlInsert,
-                    _ => FileKind::Csv,
-                };
-            }
-            Endpoint::Workbook { path, .. } => {
-                self.target_kind = TargetKind::File;
-                self.t_file = FileKind::Xlsx;
-                self.t_path = path.display().to_string();
-            }
-            Endpoint::Parquet { path } => {
-                self.target_kind = TargetKind::File;
-                self.t_file = FileKind::Parquet;
-                self.t_path = path.display().to_string();
-            }
-            _ => {}
-        }
-        self.mapping = spec.mapping.clone();
-        self.options = spec.options.clone();
-        self.upsert = spec.options.upsert_key.is_some();
-        self.upsert_text = spec
-            .options
-            .upsert_key
-            .as_ref()
-            .map(|k| k.join(", "))
-            .unwrap_or_default();
-        self.rejected_path = spec
-            .options
-            .rejected_file
-            .as_ref()
-            .map(|p| p.display().to_string())
-            .unwrap_or_default();
-        self.s_encoding = spec.options.encoding.clone().unwrap_or_default();
     }
 
     /// A wizard whose source is `table` of `conn` (the explorer's "Transfer data…").
@@ -560,6 +451,7 @@ impl TransferWizard {
             ..TransferOptions::default()
         };
         self.probe_error = None;
+        self.probe_for = self.source_key();
         self.probe_job = Some(engine.probe_source(source, options));
     }
 
@@ -589,7 +481,7 @@ impl TransferWizard {
                         self.probe_job = None;
                         match outcome {
                             JobOutcome::Probed(probe) => {
-                                self.probe = Some((self.source_key(), probe));
+                                self.probe = Some((self.probe_for.clone(), probe));
                                 if !std::mem::take(&mut self.keep_mapping) {
                                     self.mapping.clear();
                                     self.ddl_edited = false;
@@ -624,7 +516,22 @@ impl TransferWizard {
     fn steps(&self, engine: &Engine) -> Vec<WizardStep> {
         let mut steps = vec![
             WizardStep::new("Source", self.source_missing()),
-            WizardStep::new("Target", self.target_missing()),
+            WizardStep::new(
+                "Target",
+                self.target_missing().or_else(|| {
+                    if self.target_kind != TargetKind::Existing {
+                        return None;
+                    }
+                    match engine.table_info(&self.t_conn, &table_ref(&self.t_schema, &self.t_table))
+                    {
+                        Some(sqlr_engine::LoadState::Ready(_)) => None,
+                        Some(sqlr_engine::LoadState::Failed(e)) => {
+                            Some(format!("Target table is unavailable: {}", e.message))
+                        }
+                        _ => Some("Checking the target table…".into()),
+                    }
+                }),
+            ),
         ];
         if self.table_target() {
             let missing = if self.target_columns(engine).is_none() {
@@ -640,16 +547,14 @@ impl TransferWizard {
             "Options",
             (self.options.batch == 0).then(|| "Rows per batch must be at least 1".to_string()),
         ));
-        steps.push(WizardStep::new("Review", self.spec().err()));
-        let run_missing = if self.run.is_some() {
-            // Running: Finish waits without a reason; the progress says enough.
-            Some(String::new())
+        let blocked = if self.run.is_some() {
+            Some("Transfer is running…".into())
         } else if self.outcome.is_some() {
-            Some("The transfer has run".to_string())
+            Some("The transfer has run".into())
         } else {
             self.spec().err()
         };
-        steps.push(WizardStep::new("Run", run_missing));
+        steps.push(WizardStep::new("Review", blocked));
         steps
     }
 
@@ -694,8 +599,17 @@ impl TransferWizard {
     ) -> WizardEvent {
         self.poll(engine);
         self.poll_ask(ctx);
-        if self.autoprobe
+        let key = self.source_key();
+        let now = ctx.input(|i| i.time);
+        if self.observed_source.0 != key {
+            self.observed_source = (key.clone(), now);
+            self.probe_error = None;
+        }
+        if self.source_endpoint().is_some()
+            && !self.probe_is_current()
             && self.probe_job.is_none()
+            && self.probe_for != key
+            && (self.autoprobe || now - self.observed_source.1 >= 0.35)
             && self
                 .needed_connections()
                 .iter()
@@ -704,9 +618,12 @@ impl TransferWizard {
             self.autoprobe = false;
             self.start_probe(engine);
         }
+        if self.source_endpoint().is_some() && !self.probe_is_current() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
         let steps = self.steps(engine);
         self.step = self.step.min(steps.len() - 1);
-        let mut event = WizardEvent::None;
+        let event = WizardEvent::None;
         let mut open = true;
         let response = theme::Dialog::new("transfer_wizard", theme::icons::ROWS, "Transfer data")
             .subtitle(
@@ -722,10 +639,45 @@ impl TransferWizard {
                     "Target" => self.target_ui(ui, engine, conns, answer),
                     "Mapping" => self.mapping_ui(ui, engine),
                     "Options" => self.options_ui(ui, answer),
-                    "Review" => self.review_ui(ui, engine, conns),
+                    "Review" => {
+                        self.review_ui(ui, engine, conns);
+                        self.run_ui(ui);
+                    }
                     _ => self.run_ui(ui),
                 });
-                d.footer(|f| wizard_footer(f, &steps, self.step))
+                d.footer(|f| {
+                    if self.step + 1 < steps.len() {
+                        return wizard_footer(f, &steps, self.step);
+                    }
+                    let mut action = None;
+                    if let Some(job) = self.run {
+                        if f.button("Stop transfer", true) {
+                            engine.cancel_job(job);
+                        }
+                    } else if self.outcome.is_none() {
+                        let blocked = steps[self.step].reason.as_deref();
+                        let clicked =
+                            if self.options.truncate_first || self.options.disable_constraints {
+                                f.danger("Run transfer", blocked)
+                            } else {
+                                f.primary("Run transfer", blocked)
+                            };
+                        if clicked {
+                            action = Some(WizardAction::Finish);
+                        }
+                        if f.button("Back", true) {
+                            action = Some(WizardAction::Back);
+                        }
+                    }
+                    if f.cancel_as(if self.outcome.is_some() {
+                        "Close"
+                    } else {
+                        "Cancel"
+                    }) {
+                        action = Some(WizardAction::Cancel);
+                    }
+                    action
+                })
             });
         let action = response.inner;
         if response.closed {
@@ -735,13 +687,51 @@ impl TransferWizard {
             Some(WizardAction::Back) => self.step = self.step.saturating_sub(1),
             Some(WizardAction::Next) => self.step += 1,
             Some(WizardAction::Cancel) => open = false,
-            Some(WizardAction::Finish) => self.start(engine),
-            Some(WizardAction::SaveAsTask) => {
-                if let Ok(spec) = self.spec() {
-                    event = WizardEvent::SaveAsTask(Box::new(spec), self.editing.clone());
+            Some(WizardAction::Finish) => {
+                if self.options.truncate_first || self.options.disable_constraints {
+                    self.confirm_run = true;
+                } else {
+                    self.start(engine);
                 }
             }
             None => {}
+        }
+        if self.confirm_run {
+            let spec = crate::confirm::ConfirmSpec::new(
+                egui::Id::new("confirm_transfer"),
+                theme::icons::WARNING,
+                "Run transfer with risky options",
+                "Run transfer",
+            );
+            let answer = crate::confirm::confirm_modal(
+                ctx,
+                spec,
+                |ui| {
+                    ui.label(format!(
+                        "Target: {}",
+                        describe(self.target_endpoint().as_ref(), conns)
+                    ));
+                    if self.options.truncate_first {
+                        ui.colored_label(
+                            theme::palette(ui.ctx()).error,
+                            "All existing target rows will be deleted.",
+                        );
+                    }
+                    if self.options.disable_constraints {
+                        ui.colored_label(
+                            theme::palette(ui.ctx()).error,
+                            "Foreign key checks will be disabled during the transfer.",
+                        );
+                    }
+                },
+                |_| {},
+            );
+            if let Some(confirmed) = answer {
+                self.confirm_run = false;
+                if confirmed {
+                    self.start(engine);
+                }
+            }
         }
         if !open {
             if let Some(id) = self.run.take() {
@@ -872,9 +862,30 @@ impl TransferWizard {
                 if self.source_kind == SourceKind::Table {
                     ui.horizontal(|ui| {
                         ui.label("Schema");
-                        ui.add(TextEdit::singleline(&mut self.s_schema).desired_width(120.0));
+                        let schemas =
+                            crate::catalog_picker::schema_names(engine, &self.s_conn, None);
+                        crate::catalog_picker::name(
+                            ui,
+                            "source_schema",
+                            &mut self.s_schema,
+                            &schemas,
+                            "Schema",
+                            160.0,
+                        );
                         ui.label("Table");
-                        ui.add(TextEdit::singleline(&mut self.s_table).desired_width(200.0));
+                        let tables = crate::catalog_picker::table_names(
+                            engine,
+                            &self.s_conn,
+                            &self.s_schema,
+                        );
+                        crate::catalog_picker::name(
+                            ui,
+                            "source_table",
+                            &mut self.s_table,
+                            &tables,
+                            "Table",
+                            220.0,
+                        );
                     });
                 } else {
                     ui.label("Statement (it must only read)");
@@ -966,6 +977,7 @@ impl TransferWizard {
             }
             if busy {
                 ui.spinner();
+                ui.label("Reading source preview…");
             }
         });
         if let Some(e) = &self.probe_error {
@@ -981,21 +993,27 @@ impl TransferWizard {
                 ))
                 .color(theme::palette(ui.ctx()).text_muted),
             );
-            egui::ScrollArea::both().max_height(220.0).show(ui, |ui| {
-                egui::Grid::new("tw-preview").striped(true).show(ui, |ui| {
-                    for c in &probe.columns {
-                        ui.label(RichText::new(&c.name).strong());
-                    }
-                    ui.end_row();
-                    for row in probe.rows.iter().take(20) {
-                        for v in row {
-                            let text: String = v.display().chars().take(40).collect();
-                            ui.label(text);
-                        }
-                        ui.end_row();
-                    }
+            if self.preview_rows.is_none() || self.preview_for != self.source_key() {
+                let columns: std::sync::Arc<[sqlr_core::ColumnMeta]> = probe.columns.clone().into();
+                let mut rows = sqlr_core::RowBuffer::new(columns.clone());
+                let mut chunk = sqlr_core::ChunkBuilder::new(columns);
+                for row in probe.rows.iter().take(20) {
+                    let _ = chunk.push_row(
+                        &row.iter()
+                            .map(sqlr_core::Value::as_cell)
+                            .collect::<Vec<_>>(),
+                    );
+                }
+                rows.push_chunk(chunk.finish());
+                self.preview_rows = Some(rows);
+                self.preview_for = self.source_key();
+            }
+            if let Some(rows) = &self.preview_rows {
+                let height = (52.0 + rows.row_count().min(6) as f32 * 26.0).min(220.0);
+                ui.allocate_ui(egui::vec2(ui.available_width(), height), |ui| {
+                    sqlr_ui::result_grid(ui, &mut self.preview_grid, rows, false);
                 });
-            });
+            }
         }
     }
 
@@ -1035,16 +1053,58 @@ impl TransferWizard {
                 });
                 ui.horizontal(|ui| {
                     ui.label("Schema");
-                    ui.add(TextEdit::singleline(&mut self.t_schema).desired_width(120.0));
+                    let schemas = crate::catalog_picker::schema_names(engine, &self.t_conn, None);
+                    crate::catalog_picker::name(
+                        ui,
+                        "target_schema",
+                        &mut self.t_schema,
+                        &schemas,
+                        "Schema",
+                        160.0,
+                    );
                     ui.label("Table");
-                    if ui
-                        .add(TextEdit::singleline(&mut self.t_table).desired_width(200.0))
-                        .changed()
-                    {
+                    let tables =
+                        crate::catalog_picker::table_names(engine, &self.t_conn, &self.t_schema);
+                    if crate::catalog_picker::name(
+                        ui,
+                        "target_table",
+                        &mut self.t_table,
+                        &tables,
+                        "Table",
+                        220.0,
+                    ) {
                         self.mapping.clear();
                         self.described = None;
                     }
                 });
+                if self.target_kind == TargetKind::Existing && !self.t_table.trim().is_empty() {
+                    let table = table_ref(&self.t_schema, &self.t_table);
+                    let key = (self.t_conn.clone(), table.clone());
+                    if self.described.as_ref() != Some(&key) {
+                        engine.describe(&SessionKey::meta(&self.t_conn), table.clone());
+                        self.described = Some(key);
+                    }
+                    match engine.table_info(&self.t_conn, &table) {
+                        Some(sqlr_engine::LoadState::Ready(info)) => {
+                            ui.colored_label(
+                                theme::palette(ui.ctx()).success,
+                                format!("Table exists · {} columns", info.columns.len()),
+                            );
+                        }
+                        Some(sqlr_engine::LoadState::Failed(e)) => {
+                            ui.colored_label(
+                                theme::palette(ui.ctx()).error,
+                                format!("Target table not found or unavailable: {}", e.message),
+                            );
+                        }
+                        _ => {
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.label("Checking target table…");
+                            });
+                        }
+                    }
+                }
                 if self.target_kind == TargetKind::New {
                     ui.label(
                         RichText::new(
@@ -1125,20 +1185,50 @@ impl TransferWizard {
             );
             ui.checkbox(
                 &mut self.options.truncate_first,
-                "Delete the target's rows first",
+                RichText::new("Delete the target's rows first")
+                    .color(theme::palette(ui.ctx()).error),
             );
+            if self.options.truncate_first {
+                theme::hint(
+                    ui,
+                    "Removes every existing row before loading. You will confirm on Review.",
+                );
+            }
             ui.horizontal(|ui| {
                 ui.checkbox(&mut self.upsert, "Update rows that exist, by key");
-                ui.add_enabled(
-                    self.upsert,
-                    TextEdit::singleline(&mut self.upsert_text)
-                        .hint_text("key columns, comma separated")
-                        .desired_width(240.0),
-                );
+                ui.add_enabled_ui(self.upsert, |ui| {
+                    ComboBox::from_id_salt("upsert_keys")
+                        .selected_text(if self.upsert_text.is_empty() {
+                            "Choose key columns"
+                        } else {
+                            &self.upsert_text
+                        })
+                        .show_ui(ui, |ui| {
+                            let mut keys: Vec<String> = self
+                                .upsert_text
+                                .split(',')
+                                .map(str::trim)
+                                .filter(|s| !s.is_empty())
+                                .map(str::to_owned)
+                                .collect();
+                            for name in self.mapping.iter().filter_map(|m| m.target.as_ref()) {
+                                let mut included = keys.contains(name);
+                                if ui.checkbox(&mut included, name).changed() {
+                                    if included {
+                                        keys.push(name.clone());
+                                    } else {
+                                        keys.retain(|k| k != name);
+                                    }
+                                }
+                            }
+                            self.upsert_text = keys.join(", ");
+                        });
+                });
             });
             ui.checkbox(
                 &mut self.options.disable_constraints,
-                "Switch foreign keys off during the load",
+                RichText::new("Switch foreign keys off during the load")
+                    .color(theme::palette(ui.ctx()).error),
             );
             ui.checkbox(
                 &mut self.options.skip_bad_rows,
@@ -1210,8 +1300,9 @@ impl TransferWizard {
         }
         if let Some((_, probe)) = &self.probe {
             ui.label(format!(
-                "Preview: {} rows shown of the source",
-                probe.rows.len()
+                "Sample: {} rows · {} columns. The transfer reads all source rows.",
+                probe.rows.len(),
+                probe.columns.len()
             ));
         }
         if self.target_kind == TargetKind::New {
@@ -1238,11 +1329,44 @@ impl TransferWizard {
                 self.ddl_edited = true;
             }
         }
+        ui.add_space(Spacing::M);
+        theme::section_title(ui, "Transfer options");
+        ui.label(format!("Rows per batch: {}", self.options.batch));
+        ui.label(if self.options.commit_per_batch {
+            "Commit after each batch — completed batches remain if stopped"
+        } else {
+            "Commit once at the end"
+        });
         if self.options.truncate_first {
             ui.colored_label(
-                theme::palette(ui.ctx()).warning,
-                "The target's existing rows are deleted first.",
+                theme::palette(ui.ctx()).error,
+                "Delete all existing target rows before loading",
             );
+        }
+        if self.options.disable_constraints {
+            ui.colored_label(
+                theme::palette(ui.ctx()).error,
+                "Disable foreign key checks during loading",
+            );
+        }
+        if self.upsert {
+            ui.label(format!("Update existing rows by key: {}", self.upsert_text));
+        }
+        if self.options.skip_bad_rows {
+            ui.label("Skip and report rows that fail");
+        }
+        if !self.rejected_path.is_empty() {
+            ui.label(format!("Rejected rows: {}", self.rejected_path));
+        }
+        if self.source_kind == SourceKind::File {
+            ui.label(format!(
+                "Encoding: {}",
+                if self.s_encoding.is_empty() {
+                    "Auto-detect (UTF-8 default)"
+                } else {
+                    &self.s_encoding
+                }
+            ));
         }
     }
 
@@ -1261,8 +1385,6 @@ impl TransferWizard {
                     }
                 ));
             });
-        } else if self.outcome.is_none() {
-            ui.label("Press Finish to run the transfer.");
         }
         match &self.outcome {
             Some(Ok(message)) => {
@@ -1340,9 +1462,6 @@ impl SqlrApp {
         match wizard.show(ctx, &self.engine, &conns, self.file_answer.as_ref()) {
             WizardEvent::None => {}
             WizardEvent::Close => self.transfer_wizard = None,
-            WizardEvent::SaveAsTask(spec, editing) => {
-                self.save_task_dialog(TaskSpec::Transfer(*spec), editing);
-            }
         }
     }
 }
@@ -1367,7 +1486,7 @@ fn summarize(outcome: JobOutcome) -> Result<String, String> {
 }
 
 /// A one-line description of an endpoint.
-fn describe(endpoint: Option<&Endpoint>, conns: &[ConnChoice]) -> String {
+pub(crate) fn describe(endpoint: Option<&Endpoint>, conns: &[ConnChoice]) -> String {
     let name = |id: &str| {
         conns
             .iter()
@@ -1397,9 +1516,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    use sqlr_core::{
-        ColumnKind, ColumnMeta, DisplayHint, DriverError, ErrorKind, SavedTask, TaskSpec, Value,
-    };
+    use sqlr_core::{ColumnKind, ColumnMeta, DisplayHint, DriverError, ErrorKind, Value};
     use sqlr_engine::DriverRegistry;
 
     fn conns() -> Vec<ConnChoice> {
@@ -1446,23 +1563,36 @@ mod tests {
         out.textures_delta.clear();
     }
 
-    fn task(spec: TransferSpec) -> SavedTask {
-        SavedTask {
-            id: "t1".into(),
-            name: "saved".into(),
-            spec: TaskSpec::Transfer(spec),
-            created_ms: 0,
-            updated_ms: 0,
+    #[test]
+    fn a_file_source_loads_its_preview_without_an_extra_click() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("source.csv");
+        std::fs::write(&path, "id,name\n1,Ada\n").unwrap();
+        let engine = Engine::new(
+            sqlr_engine::DriverRegistry::default(),
+            std::sync::Arc::new(|| {}),
+        );
+        let mut wizard = TransferWizard::new(&[]);
+        wizard.source_kind = SourceKind::File;
+        wizard.s_path = path.display().to_string();
+        let mut h = egui_kittest::Harness::builder()
+            .with_size((1100.0, 850.0))
+            .with_step_dt(0.05)
+            .build_ui_state(
+                |ui, wizard: &mut TransferWizard| {
+                    wizard.show(ui.ctx(), &engine, &[], None);
+                },
+                wizard,
+            );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !h.state().probe_is_current() && std::time::Instant::now() < deadline {
+            h.run_steps(5);
+            std::thread::yield_now();
         }
-    }
-
-    fn spec(source: Endpoint, target: Endpoint) -> TransferSpec {
-        TransferSpec {
-            source,
-            target,
-            mapping: vec![ColumnMapping::new(0, Some("id".into()))],
-            options: TransferOptions::default(),
-        }
+        assert!(
+            h.state().probe_is_current(),
+            "the file preview should load automatically"
+        );
     }
 
     #[test]
@@ -1641,97 +1771,6 @@ mod tests {
         }
         wizard.t_path.clear();
         assert!(wizard.target_endpoint().is_none());
-    }
-
-    #[test]
-    fn a_saved_task_reopens_with_its_choices() {
-        let sources = [
-            Endpoint::Table {
-                conn: "a".into(),
-                table: table_ref("main", "src"),
-            },
-            Endpoint::Query {
-                conn: "a".into(),
-                database: Some("db".into()),
-                sql: "SELECT 1".into(),
-            },
-            Endpoint::File {
-                path: "/tmp/in.json".into(),
-                format: TextFormat::Json,
-            },
-            Endpoint::Workbook {
-                path: "/tmp/in.xlsx".into(),
-                sheet: Some("Sheet1".into()),
-                header: false,
-            },
-            Endpoint::Parquet {
-                path: "/tmp/in.parquet".into(),
-            },
-            Endpoint::RedisKeys {
-                conn: "a".into(),
-                db: 1,
-                pattern: b"*".to_vec(),
-            },
-        ];
-        let targets = [
-            Endpoint::Table {
-                conn: "b".into(),
-                table: table_ref("public", "dst"),
-            },
-            Endpoint::NewTable {
-                conn: "b".into(),
-                table: table_ref("public", "new"),
-                ddl: Some("CREATE TABLE new (id integer)".into()),
-            },
-            Endpoint::File {
-                path: "/tmp/out.csv".into(),
-                format: TextFormat::Csv(CsvOptions::default()),
-            },
-            Endpoint::Workbook {
-                path: "/tmp/out.xlsx".into(),
-                sheet: None,
-                header: true,
-            },
-            Endpoint::Parquet {
-                path: "/tmp/out.parquet".into(),
-            },
-        ];
-        for source in sources {
-            for target in &targets {
-                let saved = task(spec(source.clone(), target.clone()));
-                let wizard = TransferWizard::from_task(&conns(), &saved).unwrap();
-                assert_eq!(wizard.editing, Some(("t1".into(), "saved".into())));
-                assert!(wizard.autoprobe && wizard.keep_mapping);
-                if matches!(source, Endpoint::RedisKeys { .. }) {
-                    // The transfer wizard does not reopen key-value sources.
-                    assert!(wizard.spec().is_err());
-                } else if matches!(
-                    target,
-                    Endpoint::File { .. } | Endpoint::Workbook { .. } | Endpoint::Parquet { .. }
-                ) {
-                    assert!(wizard.spec().unwrap().mapping.is_empty());
-                } else {
-                    assert_eq!(wizard.spec().unwrap().mapping.len(), 1);
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn another_task_kind_does_not_open_the_wizard() {
-        let saved = SavedTask {
-            id: "t2".into(),
-            name: "dump".into(),
-            spec: TaskSpec::Dump {
-                conn: "a".into(),
-                database: "main".into(),
-                options: sqlr_core::DumpOptions::default(),
-                out: "/tmp/x".into(),
-            },
-            created_ms: 0,
-            updated_ms: 0,
-        };
-        assert!(TransferWizard::from_task(&conns(), &saved).is_none());
     }
 
     #[test]

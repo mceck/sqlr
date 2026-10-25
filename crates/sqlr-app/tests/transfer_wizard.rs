@@ -151,7 +151,8 @@ fn transfer_wizard_end_to_end_sqlite() {
     h.get_by_label("Next").click();
     h.run_steps(3);
 
-    // Target: an existing table, by default on the other connection and with the same name.
+    // Target: validate the table on the other connection before continuing.
+    wait_for_label_containing(&mut h, "Table exists");
     h.get_by_label("Next").click();
     // Mapping: columns map by name; the table's columns load first.
     wait_for_label(&mut h, "score");
@@ -162,9 +163,7 @@ fn transfer_wizard_end_to_end_sqlite() {
     h.get_by_label("Next").click();
     h.run_steps(3);
     wait_for_label_containing(&mut h, "3 of 3 columns mapped");
-    h.get_by_label("Next").click();
-    h.run_steps(3);
-    h.get_by_label("Finish").click();
+    h.get_by_label("Run transfer").click();
     wait_for_label(&mut h, "Read 3 rows, wrote 3, rejected 0");
 
     let copy = rusqlite::Connection::open(dir.path().join("b.db")).unwrap();
@@ -182,7 +181,7 @@ fn transfer_wizard_end_to_end_sqlite() {
 }
 
 #[test]
-fn save_transfer_as_task_and_rerun() {
+fn transfer_runs_without_task_persistence() {
     let dir = tempfile::tempdir().unwrap();
     let mut h = harness(dir.path());
     open_wizard(&mut h);
@@ -190,83 +189,21 @@ fn save_transfer_as_task_and_rerun() {
     wait_for_label(&mut h, "3 columns, first 3 rows");
     h.get_by_label("Next").click();
     h.run_steps(3);
+    wait_for_label_containing(&mut h, "Table exists");
     h.get_by_label("Next").click();
     wait_for_label(&mut h, "score");
     h.run_steps(3);
-    for _ in 0..3 {
+    for _ in 0..2 {
         h.get_by_label("Next").click();
         h.run_steps(3);
     }
-    h.get_by_label("Finish").click();
+    h.get_by_label("Run transfer").click();
     wait_for_label(&mut h, "Read 3 rows, wrote 3, rejected 0");
 
-    // Save it: the prompt is prefilled with a name.
-    h.get_by_label("Save as task").click();
-    wait_for_label(&mut h, "Save task");
-    h.get_by_label("Save task").click();
-    h.run_steps(5);
-    h.get_by_label("Cancel").click();
+    assert!(h.query_by_label("Save as task").is_none());
+    h.get_by_label("Close").click();
     h.run_steps(3);
-
-    // The Tasks pane lists it; running it again appends the rows once more.
-    h.get_by_label("Tasks").click();
-    wait_for_label(&mut h, "Transfer data");
-    h.get_by_label("Transfer data").click();
-    h.run_steps(3);
-    h.get_by_label("Run task").click();
-    let deadline = Instant::now() + TIMEOUT;
-    loop {
-        h.step();
-        let count: i64 = rusqlite::Connection::open(dir.path().join("b.db"))
-            .unwrap()
-            .query_row("SELECT count(*) FROM src", [], |r| r.get(0))
-            .unwrap();
-        if count == 6 {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "the task never ran again: {count} rows"
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    // The run is on record.
-    wait_for_label_containing(&mut h, "wrote 3");
-
-    // The run's summary opens its log.
-    h.get_by_label_contains("Read 3 rows, wrote 3, rejected 0")
-        .click();
-    h.run_steps(5);
-    h.get_by_label("Copy").click();
-    h.run_steps(2);
-    // The log is a modal dialog: Escape closes it.
-    h.key_press(egui::Key::Escape);
-    h.run_steps(2);
-
-    // Duplicate the task, edit the copy, then delete it.
-    h.get_by_label("Transfer data").click();
-    h.run_steps(2);
-    h.get_by_label("Duplicate").click();
-    wait_for_label(&mut h, "Transfer data (copy)");
-    h.get_all_by_label("Edit")
-        .find(|node| node.rect().top() > 60.0)
-        .expect("the tasks pane's Edit")
-        .click();
-    wait_for_label(&mut h, "Load preview");
-    h.get_by_label("Cancel").click_accesskit();
-    h.run_steps(3);
-    h.get_by_label("Transfer data (copy)").click();
-    h.run_steps(2);
-    h.get_all_by_label("Delete")
-        .find(|node| node.rect().top() > 60.0)
-        .expect("the tasks pane's Delete")
-        .click();
-    let deadline = Instant::now() + TIMEOUT;
-    while h.query_by_label("Transfer data (copy)").is_some() {
-        assert!(Instant::now() < deadline, "the copied task was not deleted");
-        h.step();
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    assert!(h.query_by_label("Tasks").is_none());
 }
 
 #[test]
@@ -302,7 +239,7 @@ fn er_diagram_from_schema() {
     h.get_by_label("Expand db-a").click();
     wait_for_label(&mut h, "Expand main");
     context_menu(&mut h, "main", "ER diagram");
-    wait_for_label(&mut h, "ER diagram of main");
+    assert!(h.state().tab_titles().contains(&"ER · main".to_string()));
     wait_for_label(&mut h, "Export SVG");
 }
 
@@ -321,7 +258,9 @@ fn generate_data_preview_then_run() {
     wait_for_label(&mut h, "Preview");
     h.get_by_label("Preview").click();
     h.run_steps(3);
-    h.get_by_label("Generate").click();
+    h.get_by_label("Insert 100 rows").click();
+    h.run_steps(3);
+    h.get_by_label("Insert rows").click();
     let deadline = Instant::now() + TIMEOUT;
     loop {
         h.step();

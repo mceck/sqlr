@@ -164,14 +164,14 @@ impl CsvFields {
                 ui.label("Delimiter");
                 text_edit(
                     ui,
-                    TextEdit::singleline(&mut self.delimiter).desired_width(40.0),
+                    TextEdit::singleline(&mut self.delimiter).desired_width(80.0),
                 )
                 .on_hover_text("One character; \\t for a tab");
                 ui.end_row();
                 ui.label("Quote");
                 text_edit(
                     ui,
-                    TextEdit::singleline(&mut self.quote).desired_width(40.0),
+                    TextEdit::singleline(&mut self.quote).desired_width(80.0),
                 );
                 ui.end_row();
                 ui.label("NULL as");
@@ -235,6 +235,7 @@ pub(crate) struct ExportDialog {
     csv: CsvFields,
     table: String,
     ask: Option<FileAsk>,
+    sample: Option<(Vec<ColumnMeta>, Vec<Vec<Value>>)>,
 }
 
 /// What the export dialog asks for this frame.
@@ -273,6 +274,7 @@ impl ExportDialog {
             csv: CsvFields::default(),
             table: name.to_string(),
             ask: None,
+            sample: None,
         }
     }
 
@@ -309,6 +311,65 @@ impl ExportDialog {
         }
     }
 
+    fn load_sample(&mut self, engine: &sqlr_engine::Engine) {
+        if self.sample.is_some() {
+            return;
+        }
+        let Some((q, _)) = self.loaded else {
+            return;
+        };
+        let Some(result) = engine.result(q) else {
+            return;
+        };
+        let result = result.read();
+        let columns = result
+            .rows
+            .columns()
+            .iter()
+            .take(20)
+            .cloned()
+            .collect::<Vec<_>>();
+        let rows = (0..result.rows.row_count().min(3))
+            .map(|r| {
+                (0..columns.len())
+                    .map(|c| match result.rows.cell(r, c) {
+                        Some(sqlr_core::Cell::Text(text)) => {
+                            Value::Text(text.chars().take(120).collect())
+                        }
+                        Some(sqlr_core::Cell::Bytes(bytes)) => {
+                            Value::Bytes(bytes.iter().take(32).copied().collect())
+                        }
+                        Some(cell) => Value::from_cell(cell),
+                        None => Value::Null,
+                    })
+                    .collect()
+            })
+            .collect();
+        self.sample = Some((columns, rows));
+    }
+
+    fn sample_text(&self) -> String {
+        let fallback = (
+            vec![
+                ColumnMeta::new("id", "integer", ColumnKind::Int, DisplayHint::Number),
+                ColumnMeta::new("name", "text", ColumnKind::Text, DisplayHint::Plain),
+            ],
+            vec![vec![Value::Int(1), Value::Text("Example".into())]],
+        );
+        let (columns, rows) = self.sample.as_ref().unwrap_or(&fallback);
+        let mut encoder = sqlr_core::Encoder::new(self.text_format(), columns, None);
+        let mut text = String::new();
+        encoder.header(&mut text);
+        for row in rows {
+            encoder.row(
+                &row.iter().map(Value::as_cell).collect::<Vec<_>>(),
+                &mut text,
+            );
+        }
+        encoder.footer(&mut text);
+        text
+    }
+
     pub fn show(&mut self, ctx: &egui::Context, answer: Option<&PathBuf>) -> ExportEvent {
         if let Some(ask) = &mut self.ask {
             match ask.poll(ctx) {
@@ -336,8 +397,9 @@ impl ExportDialog {
         let mut event = ExportEvent::None;
         let title = format!("Export {}", self.name);
         let response = theme::Dialog::new("export_dialog", theme::icons::EXPORT, &title)
-            .subtitle("Choose which rows to export and how to format them")
-            .width(520.0)
+            .subtitle("Choose the rows and format; a save dialog follows Export")
+            .width(560.0)
+            .body_height(480.0)
             .show(ctx, |d| {
                 d.body(|ui| {
                     if let Some((_, rows)) = self.loaded {
@@ -373,13 +435,15 @@ impl ExportDialog {
                     ui.add_space(Spacing::L);
                     theme::section_title(ui, "File format");
                     ui.add_space(Spacing::M);
-                    ComboBox::from_label("Format")
+                    ui.label("Format");
+                    ComboBox::from_id_salt("export_format")
                         .selected_text(self.format.label())
                         .show_ui(ui, |ui| {
                             for f in ExportFormat::ALL {
                                 ui.selectable_value(&mut self.format, f, f.label());
                             }
                         });
+                    ui.label("Encoding: UTF-8");
                     match self.format {
                         ExportFormat::Csv => self.csv.ui(ui, true),
                         ExportFormat::SqlInsert => {
@@ -390,6 +454,14 @@ impl ExportDialog {
                         }
                         _ => {}
                     }
+                    ui.add_space(Spacing::M);
+                    ui.label(if self.sample.is_some() {
+                        "Output sample (first rows, long values shortened)"
+                    } else {
+                        "Format example"
+                    });
+                    let sample = self.sample_text();
+                    ui.add(egui::Label::new(RichText::new(sample).monospace()).wrap());
                 });
                 d.footer(|f| {
                     let waiting = self.ask.is_some();
@@ -577,18 +649,22 @@ impl ImportDialog {
     /// row first under `confirm_destructive`, writing (into a table or a collection) under
     /// `confirm_writes`. The row count is not known before the file is read.
     fn run_prompt(&self) -> Option<String> {
-        if self.options.truncate_first && self.confirm_destructive {
+        if self.options.truncate_first {
             return Some(format!(
                 "Delete every row of {} before importing?",
                 self.target.name
             ));
         }
-        self.confirm_writes.then(|| {
-            format!(
-                "Insert the file's rows into {}? The profile confirms writes.",
-                self.target.name
-            )
-        })
+        (self.confirm_writes
+            || self.confirm_destructive
+                && self.collection.is_none()
+                && self.options.disable_constraints)
+            .then(|| {
+                format!(
+                    "Insert the file's rows into {}? The profile confirms writes.",
+                    self.target.name
+                )
+            })
     }
 
     fn text_format(&self) -> TextFormat {
@@ -638,11 +714,19 @@ impl ImportDialog {
                 d.body(|ui| {
                     {
                         ui.horizontal(|ui| {
+                            ui.label("File");
                             let shown = self
                                 .path
                                 .as_ref()
-                                .map_or("No file chosen".to_string(), |p| p.display().to_string());
-                            ui.label(shown);
+                                .and_then(|p| p.file_name())
+                                .map_or("No file chosen".to_string(), |n| {
+                                    n.to_string_lossy().into_owned()
+                                });
+                            ui.add(egui::Label::new(shown).truncate()).on_hover_text(
+                                self.path
+                                    .as_ref()
+                                    .map_or(String::new(), |p| p.display().to_string()),
+                            );
                             if ui
                                 .add_enabled(self.run.is_none(), egui::Button::new("Choose file…"))
                                 .clicked()
@@ -655,7 +739,8 @@ impl ImportDialog {
                             }
                         });
                         let before = (self.format, self.csv.options());
-                        ComboBox::from_label("Format")
+                        ui.label("Format");
+                        ComboBox::from_id_salt("import_format")
                             .selected_text(self.format.label())
                             .show_ui(ui, |ui| {
                                 for f in ImportFormat::ALL {
@@ -674,12 +759,18 @@ impl ImportDialog {
                             ui.colored_label(theme::palette(ui.ctx()).error, e);
                         }
                         if self.preview_job.is_some() {
-                            ui.spinner();
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.label("Reading columns and sample rows…");
+                            });
                         }
                         if let Some(preview) = &mut self.preview {
                             ui.separator();
                             ui.label(format!("First {} rows", preview.rows.row_count()));
-                            ui.allocate_ui(egui::vec2(ui.available_width(), 180.0), |ui| {
+                            let height =
+                                (40.0 + preview.rows.row_count().min(6) as f32 * 26.0 + 12.0)
+                                    .min(220.0);
+                            ui.allocate_ui(egui::vec2(ui.available_width(), height), |ui| {
                                 result_grid(ui, &mut preview.grid, &preview.rows, false);
                             });
                             ui.separator();
@@ -963,7 +1054,7 @@ fn mapping_ui(
 /// `table`: the target is a table (a collection has no transaction and is not emptied).
 fn options_ui(ui: &mut egui::Ui, options: &mut ImportOptions, table: bool) {
     ui.horizontal(|ui| {
-        ui.label("Batch size");
+        ui.label("Rows per batch");
         ui.add(DragValue::new(&mut options.batch).range(1..=100_000));
     });
     if table {
@@ -1111,6 +1202,7 @@ impl SqlrApp {
     /// The export and import dialogs, and the jobs they started.
     pub(crate) fn transfer_ui(&mut self, ctx: &egui::Context) {
         if let Some(dialog) = &mut self.export_dialog {
+            dialog.load_sample(&self.engine);
             match dialog.show(ctx, self.file_answer.as_ref()) {
                 ExportEvent::None => {}
                 ExportEvent::Close => self.export_dialog = None,

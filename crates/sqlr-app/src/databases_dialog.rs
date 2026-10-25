@@ -30,15 +30,6 @@ enum Event {
     Closed,
 }
 
-fn group_of(db: &KnownDatabase) -> &'static str {
-    match db.status {
-        KnownStatus::Bundled { .. } => "Bundled",
-        KnownStatus::Compatible { .. } => "Compatible",
-        KnownStatus::Installable { .. } => "From file",
-        KnownStatus::Planned { .. } => "Planned",
-    }
-}
-
 fn family_label(family: Family) -> &'static str {
     match family {
         Family::Relational => "Relational",
@@ -111,7 +102,11 @@ impl DatabasesDialog {
                                     event = Some(Event::Picked(id));
                                 }
                             }
-                            Mode::Matrix => matrix(ui, &self.filter, drivers),
+                            Mode::Matrix => {
+                                if let Some(id) = matrix(ui, &self.filter, drivers) {
+                                    event = Some(Event::Picked(id));
+                                }
+                            }
                         }
                     });
                 });
@@ -132,10 +127,19 @@ fn catalog_list(
 ) -> Option<&'static str> {
     let palette = theme::palette(ui.ctx());
     let mut picked = None;
-    for group in ["Bundled", "Compatible", "From file", "Planned"] {
+    for group in ["Available", "Needs a driver", "Planned"] {
         let entries: Vec<&KnownDatabase> = known_databases()
             .iter()
-            .filter(|db| group_of(db) == group && matches(db, filter))
+            .filter(|db| {
+                let availability = if db.driver().is_some_and(|d| drivers.contains(d)) {
+                    "Available"
+                } else if db.driver().is_some() {
+                    "Needs a driver"
+                } else {
+                    "Planned"
+                };
+                availability == group && matches(db, filter)
+            })
             .collect();
         if entries.is_empty() {
             continue;
@@ -185,11 +189,7 @@ fn catalog_row(ui: &mut egui::Ui, db: &KnownDatabase, usable: bool, installable:
         vec2(16.0, 16.0),
     );
     icons::paint_database_at(ui, icon, db.driver().unwrap_or("database"));
-    let text = if clickable {
-        palette.text
-    } else {
-        palette.text_disabled
-    };
+    let text = palette.text;
     let name_pos = egui::pos2(icon.right() + Spacing::M, rect.center().y);
     let galley =
         ui.painter()
@@ -203,9 +203,9 @@ fn catalog_row(ui: &mut egui::Ui, db: &KnownDatabase, usable: bool, installable:
     let note = if usable || db.driver().is_none() {
         db.notes
     } else if installable {
-        "Click to choose its driver file"
+        "Driver required · choose a file"
     } else {
-        "Its driver is not part of this build"
+        "Not included · get the full sqlr build"
     };
     ui.painter().text(
         egui::pos2(name_pos.x + name_width + Spacing::M, name_pos.y),
@@ -218,7 +218,8 @@ fn catalog_row(ui: &mut egui::Ui, db: &KnownDatabase, usable: bool, installable:
 }
 
 /// The read-only matrix: database, family, how sqlr reaches it, driver, port, notes.
-fn matrix(ui: &mut egui::Ui, filter: &str, drivers: &HashSet<String>) {
+fn matrix(ui: &mut egui::Ui, filter: &str, drivers: &HashSet<String>) -> Option<&'static str> {
+    let mut picked = None;
     let palette = theme::palette(ui.ctx());
     // The header cells share the full width, so the table and its stripes span the dialog.
     let shares = [0.27, 0.15, 0.28, 0.17, 0.13];
@@ -266,10 +267,24 @@ fn matrix(ui: &mut egui::Ui, filter: &str, drivers: &HashSet<String>) {
                 ui.label(RichText::new(support).color(color))
                     .on_hover_text(db.notes);
                 ui.label(db.driver().unwrap_or("—"));
-                ui.label(db.default_port.map_or("—".to_string(), |p| p.to_string()));
+                ui.horizontal(|ui| {
+                    ui.label(db.default_port.map_or("—".to_string(), |p| p.to_string()));
+                    if let KnownStatus::Installable { driver } = db.status
+                        && !drivers.contains(driver)
+                        && ui.small_button("Install…").clicked()
+                    {
+                        picked = Some(db.id);
+                    }
+                    if db.driver().is_some_and(|d| !drivers.contains(d))
+                        && !matches!(db.status, KnownStatus::Installable { .. })
+                    {
+                        ui.hyperlink_to("Get sqlr", "https://github.com/mceck/sqlr/releases");
+                    }
+                });
                 ui.end_row();
             }
         });
+    picked
 }
 
 impl SqlrApp {

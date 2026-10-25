@@ -1,5 +1,5 @@
 //! The parts of a multi-step wizard shown in a [`theme::Dialog`] (the data transfer wizard,
-//! saved-task editing): the step strip ([`wizard_steps`], in the dialog's top band) and the
+//! data operations): the step strip ([`wizard_steps`], in the dialog's top band) and the
 //! Cancel / Back / Next actions ([`wizard_footer`], in its footer). The caller owns the
 //! steps and the current index and acts on the returned [`WizardAction`].
 
@@ -33,7 +33,6 @@ pub enum WizardAction {
     Next,
     Finish,
     Cancel,
-    SaveAsTask,
 }
 
 /// The step strip: "1. Source › 2. Target › …", the current step highlighted.
@@ -56,7 +55,12 @@ pub fn wizard_steps(ui: &mut egui::Ui, steps: &[WizardStep], current: usize) {
                 .corner_radius(Spacing::RADIUS_S)
                 .inner_margin(egui::Margin::symmetric(8, 6))
                 .show(ui, |ui| {
-                    ui.label(text);
+                    ui.horizontal(|ui| {
+                        if i < current {
+                            theme::icons::paint(ui, theme::icons::SUCCESS, p.success);
+                        }
+                        ui.label(text);
+                    });
                 });
             if i + 1 < steps.len() {
                 ui.label(RichText::new("›").color(p.text_muted));
@@ -65,8 +69,8 @@ pub fn wizard_steps(ui: &mut egui::Ui, steps: &[WizardStep], current: usize) {
     });
 }
 
-/// The wizard's actions in a dialog footer: "Save as task" on the left of the last step,
-/// then Cancel, Back and Next on the right. Next is disabled, with the step's reason,
+/// The wizard's actions in a dialog footer: Cancel, Back and Next.
+/// Next is disabled, with the step's reason,
 /// until the current step is valid; on the last step it becomes Finish.
 pub fn wizard_footer(
     f: &mut theme::DialogFooter,
@@ -81,9 +85,6 @@ pub fn wizard_footer(
         None => Some(""),
     };
     let mut action = None;
-    if last && f.secondary("Save as task", true) {
-        action = Some(WizardAction::SaveAsTask);
-    }
     let (label, forward) = if last {
         ("Finish", WizardAction::Finish)
     } else {

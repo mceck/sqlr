@@ -1084,3 +1084,26 @@ fn a_large_new_row_paste_is_prepared_in_background_and_undoes_once() {
     press(&mut h, Modifiers::COMMAND, Key::Z);
     assert_eq!(h.state().state.edits.as_ref().unwrap().inserted_rows(), 0);
 }
+
+#[test]
+fn read_only_result_can_open_its_table() {
+    let mut h = Harness::builder().with_size((900.0, 100.0)).build_ui_state(
+        |ui, action: &mut Option<ResultBarAction>| {
+            *action = result_bar(
+                ui,
+                &ResultBarView {
+                    pending: 0,
+                    applying: false,
+                    editable: false,
+                    exportable: true,
+                    read_only: Some("columns from several tables"),
+                },
+            );
+        },
+        None,
+    );
+    h.run_steps(2);
+    h.get_by_label("Open table to edit").click();
+    h.run_steps(1);
+    assert_eq!(format!("{:?}", h.state()), "Some(OpenTable)");
+}

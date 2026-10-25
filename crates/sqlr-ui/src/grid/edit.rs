@@ -5,7 +5,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use sqlr_core::{Change, Changeset, ColumnKind, ColumnMeta, RowBuffer, TableInfo, TableRef, Value};
+use sqlr_core::{
+    Cell, Change, Changeset, ColumnKind, ColumnMeta, RowBuffer, TableInfo, TableRef, Value,
+};
 
 /// The row number of the first inserted row; inserted rows count up from it, far above any
 /// loaded row.
@@ -275,6 +277,27 @@ impl EditBuffer {
             return Some(v.clone());
         }
         rows.cell(row, col).map(Value::from_cell)
+    }
+
+    /// The displayed value without cloning potentially large text or binary cells.
+    pub(super) fn cell<'a>(
+        &'a self,
+        rows: &'a RowBuffer,
+        row: usize,
+        col: usize,
+    ) -> Option<Cell<'a>> {
+        if is_inserted_row(row) {
+            return self
+                .inserted_cells(row)?
+                .get(col)?
+                .as_ref()
+                .map(Value::as_cell);
+        }
+        self.updates
+            .get(&row)
+            .and_then(|r| r.get(&col))
+            .map(Value::as_cell)
+            .or_else(|| rows.cell(row, col))
     }
 
     /// Sets a cell; refused on a column that cannot be written, NULL on a `NOT NULL` column

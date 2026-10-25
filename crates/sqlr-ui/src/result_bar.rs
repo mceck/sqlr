@@ -20,6 +20,7 @@ pub enum ResultBarAction {
     /// Append a row of defaults to the pending changes.
     AddRow,
     Export,
+    OpenTable,
 }
 
 /// What the result bar shows this frame.
@@ -60,8 +61,18 @@ pub fn result_bar(ui: &mut egui::Ui, view: &ResultBarView<'_>) -> Option<ResultB
         ui.spacing_mut().item_spacing.x = Spacing::S;
         if let Some(reason) = view.read_only {
             icons::paint(ui, icons::READ_ONLY, palette.text_muted);
-            ui.label(RichText::new(format!("Read-only: {reason}")).color(palette.text_muted));
+            ui.add(
+                egui::Label::new(
+                    RichText::new(format!("Read-only: {reason}")).color(palette.text_muted),
+                )
+                .truncate(),
+            )
+            .on_hover_text(reason);
+            if ui.link("Open table to edit").clicked() {
+                action = Some(ResultBarAction::OpenTable);
+            }
         } else {
+            ui.label(RichText::new("Table data").color(palette.text_muted));
             let text = match view.pending {
                 0 => "No pending changes".to_string(),
                 1 => "1 pending change".to_string(),
@@ -84,34 +95,36 @@ pub fn result_bar(ui: &mut egui::Ui, view: &ResultBarView<'_>) -> Option<ResultB
                 ui.label(RichText::new("Applying…").color(palette.text_muted));
             }
             let enabled = view.pending > 0 && !view.applying && view.editable;
-            for (icon, color, label, changes, tooltip) in [
-                (
-                    icons::PREVIEW,
-                    None,
-                    "SQL",
-                    ChangesAction::Preview,
-                    "Show the SQL of the pending changes",
-                ),
-                (
-                    icons::COMMIT,
-                    Some(palette.success),
-                    "Apply",
-                    ChangesAction::Apply,
-                    "Run the pending changes in a transaction",
-                ),
-                (
-                    icons::ROLLBACK,
-                    None,
-                    "Discard",
-                    ChangesAction::Discard,
-                    "Drop the pending changes",
-                ),
-            ] {
-                if icons::button(ui, enabled, icon, color, label)
-                    .on_hover_text(tooltip)
-                    .clicked()
-                {
-                    action = Some(ResultBarAction::Changes(changes));
+            if view.pending > 0 {
+                for (icon, color, label, changes, tooltip) in [
+                    (
+                        icons::PREVIEW,
+                        None,
+                        "Preview SQL",
+                        ChangesAction::Preview,
+                        "Show the SQL of the pending changes",
+                    ),
+                    (
+                        icons::COMMIT,
+                        Some(palette.success),
+                        "Apply",
+                        ChangesAction::Apply,
+                        "Run the pending changes in a transaction",
+                    ),
+                    (
+                        icons::ROLLBACK,
+                        None,
+                        "Discard",
+                        ChangesAction::Discard,
+                        "Drop the pending changes",
+                    ),
+                ] {
+                    if icons::button(ui, enabled, icon, color, label)
+                        .on_hover_text(tooltip)
+                        .clicked()
+                    {
+                        action = Some(ResultBarAction::Changes(changes));
+                    }
                 }
             }
             if view.editable {

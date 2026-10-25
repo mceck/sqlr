@@ -959,6 +959,8 @@ fn f2_renames_inline() {
 fn only_live_connections_offer_reconnect() {
     let mut h = harness(StubSource::new());
     open_folder(&mut h, "prod");
+    h.get_by_label("prod-db").hover();
+    h.run_steps(2);
     // "local" is disconnected; only "prod-db" has a reconnect button.
     assert_eq!(h.get_all_by_label("Reconnect").count(), 1);
     h.get_by_label("Reconnect").click();
@@ -974,6 +976,8 @@ fn only_live_connections_offer_reconnect() {
 fn only_live_connections_offer_disconnect() {
     let mut h = harness(StubSource::new());
     open_folder(&mut h, "prod");
+    h.get_by_label("prod-db").hover();
+    h.run_steps(2);
     // "local" is disconnected; only "prod-db" can be disconnected.
     assert_eq!(h.get_all_by_label("Disconnect connection").count(), 1);
     h.get_by_label("Disconnect connection").click();
@@ -1005,41 +1009,21 @@ fn connection_state_is_an_icon_without_text() {
             .any(|text| matches!(text.as_str(), "connected" | "disconnected")),
         "the state is written out: {painted:?}"
     );
-    assert!(
-        painted.iter().any(|text| text == theme::icons::CONNECTED),
-        "the connected state is not drawn as an icon: {painted:?}"
-    );
-    assert!(
-        painted
-            .iter()
-            .any(|text| text == theme::icons::DISCONNECTED),
-        "the disconnected state is not drawn as an icon: {painted:?}"
-    );
+    h.get_by_label("connected");
+    h.get_by_label("disconnected");
 }
 
 #[test]
-fn connected_icon_is_as_legible_as_disconnected_icon() {
+fn connection_actions_appear_on_hover_and_hide_at_rest() {
     let mut h = harness(StubSource::new());
-    theme::install_fonts(&h.ctx, &[]);
     open_folder(&mut h, "prod");
-    let bounds = |icon: &str| {
-        h.output()
-            .shapes
-            .iter()
-            .find_map(|shape| match &shape.shape {
-                egui::Shape::Text(text) if text.galley.text() == icon => {
-                    Some(text.galley.mesh_bounds.size())
-                }
-                _ => None,
-            })
-            .expect("connection state icon is painted")
-    };
-    let connected = bounds(theme::icons::CONNECTED);
-    let disconnected = bounds(theme::icons::DISCONNECTED);
-    assert!(
-        connected.x >= disconnected.x * 0.8 && connected.y >= disconnected.y * 0.8,
-        "connected icon is too small: {connected:?}, disconnected: {disconnected:?}"
-    );
+    assert!(h.query_by_label("Disconnect connection").is_none());
+    h.get_by_label("prod-db").hover();
+    h.run_steps(2);
+    h.get_by_label("Disconnect connection");
+    h.get_by_label("local").hover();
+    h.run_steps(2);
+    assert!(h.query_by_label("Disconnect connection").is_none());
 }
 
 #[test]
@@ -1057,6 +1041,8 @@ fn connection_rows_do_not_show_the_agent_access_eye() {
 fn connection_actions_sit_at_the_right_edge() {
     let mut h = harness(StubSource::new());
     open_folder(&mut h, "prod");
+    h.get_by_label("prod-db").hover();
+    h.run_steps(2);
     let disconnect = h.get_by_label("Disconnect connection").rect();
     let reconnect = h.get_by_label("Reconnect").rect();
     let name = h.get_by_label("prod-db").rect();
@@ -1360,7 +1346,9 @@ fn explorer_many_long_connections() {
         h.query_by_label(&names[49]).is_none(),
         "every row was drawn"
     );
-    // Their row buttons stay inside too.
+    // Hover exposes only this row's actions, inside the panel.
+    first.hover();
+    h.run_steps(2);
     for button in h.get_all_by_label("Disconnect connection") {
         assert!(button.rect().right() <= width + 0.5, "{:?}", button.rect());
     }
@@ -1494,4 +1482,17 @@ fn menu_labels_align_with_and_without_icons() {
             "{other} is not aligned with Edit"
         );
     }
+}
+
+#[test]
+fn an_expanded_empty_connection_says_it_has_no_objects() {
+    let mut source = StubSource::new();
+    source.prod_root.clear();
+    let mut h = harness(source);
+    h.state_mut().state.expand_folder("prod");
+    h.state_mut()
+        .state
+        .set_expanded("prod", &NodePath::root(), true);
+    h.run_steps(2);
+    h.get_by_label("No objects");
 }

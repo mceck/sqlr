@@ -503,7 +503,9 @@ pub fn connection_identity(ui: &mut egui::Ui, state: &mut FormState) {
         labeled(ui, "Name", |ui| {
             crate::text_menu::text_edit(
                 ui,
-                TextEdit::singleline(&mut state.name).desired_width(field_width(ui)),
+                TextEdit::singleline(&mut state.name)
+                    .hint_text("e.g. Development database")
+                    .desired_width(field_width(ui)),
             );
         });
         labeled(ui, "Folder", |ui| {

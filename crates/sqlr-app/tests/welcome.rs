@@ -129,7 +129,7 @@ fn welcome_shown_without_tabs() {
     );
     h.get_by_label("Open demo database");
     h.get_by_label("A fast, native database client");
-    h.get_by_label("No recent connections yet");
+    assert!(h.query_by_label("Recent connections").is_none());
     // A new tab hides it again.
     h.get_by_label("New connection…");
     h.key_press_modifiers(Modifiers::COMMAND, Key::T);
@@ -405,11 +405,11 @@ fn welcome_shows_native_and_installable_databases_in_two_rows() {
         "ClickHouse",
     ];
     let first_row = h.get_by_label(labels[0]).rect();
-    let second_row = h.get_by_label(labels[4]).rect();
+    let second_row = h.get_by_label(labels[5]).rect();
     assert!(second_row.top() > first_row.top());
     for (index, label) in labels.iter().enumerate() {
         let rect = h.get_by_label(label).rect();
-        let expected = if index < 4 {
+        let expected = if index < 5 {
             first_row.top()
         } else {
             second_row.top()

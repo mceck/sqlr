@@ -28,7 +28,6 @@ mod prefs_widgets;
 mod result_bar;
 pub mod shortcuts;
 mod snippets;
-mod tasks_panel;
 mod text;
 mod text_menu;
 pub mod theme;
@@ -99,7 +98,6 @@ pub use snippets::{
     DraftResult, SnippetAction, SnippetDraft, SnippetsState, snippet_dialog, snippets_panel,
     suggest_snippet_name,
 };
-pub use tasks_panel::{RunningTask, TasksAction, tasks_panel};
 pub use text::first_line;
 pub use text_menu::{
     TextMenuMode, text_edit, text_edit_menu, text_edit_read_only, text_edit_secret,

@@ -82,6 +82,8 @@ pub enum PaletteOutput {
     QueryChanged,
     /// The index into `items` of the chosen item. The palette has closed.
     Chosen(usize),
+    /// Open the chosen object in its structure editor.
+    EditChosen(usize),
     Closed,
 }
 
@@ -124,11 +126,12 @@ pub fn palette(
         return PaletteOutput::None;
     }
     // Consumed before the query field sees them: a single-line field would act on them too.
-    let (up, down, enter, escape) = ctx.input_mut(|i| {
+    let (up, down, enter, edit, escape) = ctx.input_mut(|i| {
         (
             i.consume_key(Modifiers::NONE, Key::ArrowUp),
             i.consume_key(Modifiers::NONE, Key::ArrowDown),
             i.consume_key(Modifiers::NONE, Key::Enter),
+            i.consume_key(Modifiers::COMMAND, Key::Enter),
             i.consume_key(Modifiers::NONE, Key::Escape),
         )
     });
@@ -145,9 +148,16 @@ pub fn palette(
         state.selected = state.selected.saturating_sub(1);
     }
     state.selected = state.selected.min(listed.len().saturating_sub(1));
-    if enter && let Some(&chosen) = listed.get(state.selected) {
+    if (enter || edit)
+        && let Some(&chosen) = listed.get(state.selected)
+    {
+        let structure = edit && state.mode == Some(PaletteMode::Objects);
         state.close();
-        return PaletteOutput::Chosen(chosen);
+        return if structure {
+            PaletteOutput::EditChosen(chosen)
+        } else {
+            PaletteOutput::Chosen(chosen)
+        };
     }
 
     let mut output = PaletteOutput::None;
@@ -195,13 +205,42 @@ pub fn palette(
                         ui.label(RichText::new("No matches").color(colors.text_muted));
                         return;
                     }
+                    ui.label(
+                        RichText::new(format!("{} matches", listed.len()))
+                            .small()
+                            .color(colors.text_muted),
+                    );
+                    if state.mode == Some(PaletteMode::Objects) {
+                        ui.label(
+                            RichText::new(if ctx.os() == egui::os::OperatingSystem::Mac {
+                                "↵ Open data · ⌘↵ Edit structure"
+                            } else {
+                                "Enter Open data · Ctrl+Enter Edit structure"
+                            })
+                            .small()
+                            .color(colors.text_muted),
+                        );
+                    }
                     egui::ScrollArea::vertical()
                         .id_salt("sqlr_palette_rows")
                         .max_height(MAX_LIST_HEIGHT)
                         .auto_shrink([false, true])
                         .show(ui, |ui| {
+                            let mut last_group = None;
                             for (row, &index) in listed.iter().enumerate() {
                                 let item = &items[index];
+                                if state.mode == Some(PaletteMode::Commands)
+                                    && last_group != Some(item.group)
+                                {
+                                    let title = match item.group {
+                                        PaletteGroup::Command => "Commands",
+                                        PaletteGroup::Snippet => "Snippets",
+                                        PaletteGroup::History => "History",
+                                        PaletteGroup::Object => "Objects",
+                                    };
+                                    ui.label(RichText::new(title).small().color(colors.text_muted));
+                                    last_group = Some(item.group);
+                                }
                                 let selected = row == state.selected;
                                 let response = theme::list_row(
                                     ui,
@@ -223,7 +262,7 @@ pub fn palette(
                 });
         });
     match output {
-        PaletteOutput::Chosen(_) => state.close(),
+        PaletteOutput::Chosen(_) | PaletteOutput::EditChosen(_) => state.close(),
         _ if !just_opened && area.response.clicked_elsewhere() => {
             state.close();
             output = PaletteOutput::Closed;

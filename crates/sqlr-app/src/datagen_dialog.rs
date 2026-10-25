@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use egui::{DragValue, RichText};
 use sqlr_core::{
     ColumnGen, ConstraintDef, DataGenSpec, Endpoint, Generator, ObjectDef, ObjectKind, ObjectRef,
-    RowGenerator, TableColumn, TableDef, TableRef, TaskSpec, TransferOptions, TransferSpec, Value,
+    RowGenerator, TableColumn, TableDef, TableRef, TransferOptions, TransferSpec, Value,
     default_generator,
 };
 use sqlr_engine::{Engine, JobId, JobOutcome, JobProgress};
@@ -19,7 +19,6 @@ use crate::app::SqlrApp;
 pub(crate) enum DatagenEvent {
     None,
     Close,
-    SaveAsTask(Box<TaskSpec>),
 }
 
 pub(crate) struct DatagenDialog {
@@ -35,6 +34,7 @@ pub(crate) struct DatagenDialog {
     progress: JobProgress,
     outcome: Option<Result<String, String>>,
     error: Option<String>,
+    confirm_insert: bool,
 }
 
 /// The generators a table's columns start with.
@@ -91,6 +91,7 @@ impl DatagenDialog {
             progress: JobProgress::default(),
             outcome: None,
             error: None,
+            confirm_insert: false,
         }
     }
 
@@ -176,7 +177,7 @@ impl DatagenDialog {
                 });
             }
         }
-        let mut event = DatagenEvent::None;
+        let event = DatagenEvent::None;
         let title = format!("Generate data for {}", self.table.name);
         let response = theme::Dialog::new("datagen_dialog", theme::icons::CREATE, &title)
             .subtitle("Configure generators, preview sample rows, then write to the table")
@@ -264,9 +265,6 @@ impl DatagenDialog {
                 if f.secondary("Preview", true) {
                     self.make_preview();
                 }
-                if f.secondary("Save as task", true) {
-                    event = DatagenEvent::SaveAsTask(Box::new(TaskSpec::Transfer(self.transfer())));
-                }
                 if let Some(id) = self.run {
                     f.left().spinner();
                     f.left().label(format!("{} rows", self.progress.rows));
@@ -275,10 +273,7 @@ impl DatagenDialog {
                     }
                     return;
                 }
-                if f.primary("Generate", None) {
-                    self.outcome = None;
-                    self.run = Some(engine.transfer(self.transfer()));
-                }
+                if f.primary(&format!("Insert {} rows", self.rows), None) { self.confirm_insert = true; }
                 f.cancel_as(if self.outcome.is_some() {
                     "Close"
                 } else {
@@ -286,6 +281,31 @@ impl DatagenDialog {
                 });
             });
             });
+        if self.confirm_insert {
+            let spec = crate::confirm::ConfirmSpec::new(
+                egui::Id::new("confirm_generated_data"),
+                theme::icons::ROWS,
+                "Insert generated rows",
+                "Insert rows",
+            );
+            if let Some(yes) = crate::confirm::confirm_modal(
+                ctx,
+                spec,
+                |ui| {
+                    ui.label(format!(
+                        "Insert {} generated rows into {}?",
+                        self.rows, self.table.name
+                    ));
+                },
+                |_| {},
+            ) {
+                self.confirm_insert = false;
+                if yes {
+                    self.outcome = None;
+                    self.run = Some(engine.transfer(self.transfer()));
+                }
+            }
+        }
         if response.closed {
             if let Some(id) = self.run.take() {
                 engine.cancel_job(id);
@@ -317,7 +337,6 @@ impl SqlrApp {
         match dialog.show(ctx, &self.engine) {
             DatagenEvent::None => {}
             DatagenEvent::Close => self.datagen_dialog = None,
-            DatagenEvent::SaveAsTask(spec) => self.save_task_dialog(*spec, None),
         }
     }
 }

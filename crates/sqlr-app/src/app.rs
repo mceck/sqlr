@@ -161,7 +161,6 @@ pub fn production_deps_with(
 pub(crate) enum LeftPane {
     Connections,
     Snippets,
-    Tasks,
 }
 
 pub struct SqlrApp {
@@ -263,12 +262,9 @@ pub struct SqlrApp {
     pub(crate) import_dialog: Option<crate::transfer_dialogs::ImportDialog>,
     /// The data transfer wizard (spec §8.5), when open.
     pub(crate) transfer_wizard: Option<crate::transfer_wizard::TransferWizard>,
-    /// Saved tasks: the pane's state, the runs and the prompts.
-    pub(crate) tasks_ui: crate::tasks_ui::TasksUi,
     /// The schema compare dialog, when open.
     pub(crate) compare_dialog: Option<crate::compare_dialog::CompareDialog>,
     /// The ER diagram window, when open.
-    pub(crate) er_dialog: Option<crate::schema_tools::ErDialog>,
     /// The test-data generator dialog, when open.
     pub(crate) datagen_dialog: Option<crate::datagen_dialog::DatagenDialog>,
     /// Native dump and restore dialogs (spec §8.5).
@@ -420,9 +416,7 @@ impl SqlrApp {
             export_dialog: None,
             import_dialog: None,
             transfer_wizard: None,
-            tasks_ui: Default::default(),
             compare_dialog: None,
-            er_dialog: None,
             datagen_dialog: None,
             dump_dialog: None,
             restore_dialog: None,
@@ -508,6 +502,7 @@ impl SqlrApp {
         let terminal_focused = self.terminal.focused();
         for action in crate::actions::dispatch_actions(ui.ctx(), &self.keymap.keymap, |action| {
             self.prefs.is_none()
+                && self.palette.state.mode.is_none()
                 && action != sqlr_core::ActionId::Stop
                 && (!terminal_focused
                     || matches!(
@@ -608,11 +603,8 @@ impl SqlrApp {
         self.transfer_ui(ui.ctx());
         self.client_migration_ui(ui.ctx());
         self.transfer_wizard_ui(ui.ctx());
-        self.poll_tasks();
         self.compare_ui(ui.ctx());
-        self.er_ui(ui.ctx());
         self.datagen_ui(ui.ctx());
-        self.tasks_windows(ui.ctx());
         self.database_tools_ui(ui.ctx());
         self.index_admin_ui(ui.ctx());
         if let Some(sqlr_ui::shortcuts::ShortcutsAction::OpenKeymap) =
@@ -904,11 +896,26 @@ impl SqlrApp {
                     status,
                 })
             });
-        let transaction = self.tx_line();
+        let result_controls = self.active_tab().is_some_and(|t| {
+            t.ddl.is_none() && t.er.is_none() && t.pane != crate::tabs::SinglePane::Plan
+        });
+        let transaction = result_controls.then(|| self.tx_line()).flatten();
+        let selection = result.and_then(|q| {
+            let key = self.active_key()?;
+            let engine = &self.engine;
+            let grid = tab_mut(&mut self.dock, key)?.grids.get(&q)?;
+            let result = engine.result(q)?;
+            let rows = result.read();
+            grid.selection_summary(&rows.rows)
+        });
         let caret = self
             .active_tab()
             .filter(|t| {
-                t.redis.is_none() && t.object.is_none() && t.admin.is_none() && t.ddl.is_none()
+                t.redis.is_none()
+                    && t.object.is_none()
+                    && t.admin.is_none()
+                    && t.ddl.is_none()
+                    && t.er.is_none()
             })
             .map(|t| {
                 let head = t.editor.model().primary().head;
@@ -919,8 +926,9 @@ impl SqlrApp {
             conn,
             transaction,
             caret,
-            page_size,
-            info: info.as_ref(),
+            page_size: page_size.filter(|_| result_controls),
+            info: info.as_ref().filter(|_| result_controls),
+            selection: selection.as_deref().filter(|_| result_controls),
             storage_warning: self.storage_warning.as_deref(),
             job: job.as_ref().map(|(text, _)| text.as_str()),
             terminal_open: self.terminal.is_open(),
@@ -977,7 +985,6 @@ impl SqlrApp {
             for (pane, label) in [
                 (LeftPane::Connections, "Connections"),
                 (LeftPane::Snippets, "Snippets"),
-                (LeftPane::Tasks, "Tasks"),
             ] {
                 if theme::dialog_tab(ui, self.left == pane, label).clicked() {
                     self.left = pane;
@@ -1004,7 +1011,6 @@ impl SqlrApp {
                 }
             }
             LeftPane::Snippets => self.snippets_ui(ui),
-            LeftPane::Tasks => self.tasks_pane(ui),
         }
     }
 
@@ -1073,6 +1079,7 @@ impl SqlrApp {
         for command in std::mem::take(&mut viewer.commands) {
             match command {
                 TabCommand::FetchMore(q) => self.engine.fetch_more(q),
+                TabCommand::OpenResultTable { tab, q } => self.open_result_table(tab, q),
                 TabCommand::SaveSnippet(key) => self.save_as_snippet_for(key),
                 TabCommand::RequestClose(key) => self.request_close_tab(key),
                 TabCommand::RevealConnection(key) => self.reveal_tab_connection(key),
@@ -1114,6 +1121,8 @@ impl SqlrApp {
                 qualified,
             } => self.copy_node_name(ctx, &conn, &node, qualified),
             TreeAction::NewConnection => self.open_new_connection(),
+            TreeAction::OpenDemo => self.open_demo(),
+            TreeAction::ImportConnections => self.open_client_import(),
             TreeAction::NewConnectionIn(folder) => self.open_new_connection_in(Some(&folder)),
             TreeAction::CreateFolder(name) => self.create_folder(&name),
             TreeAction::RenameFolder { from, to } => self.rename_folder(&from, &to),

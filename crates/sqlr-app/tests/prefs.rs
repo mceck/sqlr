@@ -75,8 +75,8 @@ fn prefs_search_filters_sections() {
     let dir = tempfile::tempdir().unwrap();
     let mut h = app(dir.path());
     open_preferences(&mut h);
-    h.get_by_label("Theme");
-    assert!(h.query_by_label(STOP_ON_ERROR).is_none(), "another section");
+    h.get_by_label(STOP_ON_ERROR);
+    assert!(h.query_by_label("Theme").is_none(), "another section");
 
     // The search field has the keyboard: a keyword finds a setting in another section.
     h.event(egui::Event::Text("zoom".into()));
@@ -154,6 +154,8 @@ fn prefs_cancel_reverts_live_preview() {
         "System falls back to dark"
     );
     open_preferences(&mut h);
+    h.get_by_label("Appearance").click();
+    h.run_steps(2);
     h.get_by_label("Light").click();
     h.run_steps(3);
     assert!(
@@ -219,6 +221,8 @@ fn saving_preferences_waits_for_background_persistence() {
     let dir = tempfile::tempdir().unwrap();
     let mut h = app(dir.path());
     open_preferences(&mut h);
+    h.get_by_label(STOP_ON_ERROR).click();
+    h.run_steps(2);
     h.get_by_label("Save").click();
     h.run_steps(1);
     h.get_by_label("Saving preferences…");
@@ -230,4 +234,14 @@ fn saving_preferences_waits_for_background_persistence() {
     }
     assert!(dir.path().join("settings.toml").exists());
     assert!(dir.path().join("keymap.toml").exists());
+}
+
+#[test]
+fn preferences_start_on_general_and_keep_save_disabled_until_a_change() {
+    use egui_kittest::kittest::NodeT;
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = app(dir.path());
+    open_preferences(&mut h);
+    assert!(h.query_by_label("Theme").is_none());
+    assert!(h.get_by_label("Apply").accesskit_node().is_disabled());
 }

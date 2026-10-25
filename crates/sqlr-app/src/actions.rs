@@ -41,7 +41,6 @@ impl SqlrApp {
             A::About => AppCommand::About,
             A::ToggleSoftWrap => AppCommand::ToggleSoftWrap,
             A::Profiles => AppCommand::Profiles,
-            A::ShowTasks => AppCommand::ShowTasks,
             A::Shortcuts => AppCommand::Shortcuts,
             A::NextTab | A::PreviousTab => {
                 let keys: Vec<_> = self.dock.iter_all_tabs().map(|(_, t)| t.key).collect();
@@ -107,7 +106,6 @@ impl AppCommand {
             Self::About => A::About,
             Self::ToggleSoftWrap => A::ToggleSoftWrap,
             Self::Profiles => A::Profiles,
-            Self::ShowTasks => A::ShowTasks,
             Self::Shortcuts => A::Shortcuts,
             Self::Copy => A::Copy,
             Self::Cut => A::Cut,
@@ -173,7 +171,6 @@ impl AppCommand {
             Self::EditSelected(..) => i::EDIT,
             Self::OpenAdmin(..) => i::SESSIONS,
             Self::TransferData => i::TRANSFER,
-            Self::ShowTasks => i::TASKS,
             Self::ShowOperations => i::TIMER,
             Self::CompareSchemas => i::COMPARE,
             Self::Explain => i::PLAN,

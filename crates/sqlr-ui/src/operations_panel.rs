@@ -1,5 +1,5 @@
 //! Reusable view of client-side operations; the app owns cancellation and retention.
-use egui::{Align, Frame, Layout, Margin, RichText, Stroke};
+use egui::{Align, Layout, RichText};
 
 use crate::theme::{self, Spacing, icons};
 
@@ -41,6 +41,15 @@ pub fn operations_panel(ui: &mut egui::Ui, rows: &[OperationRow]) -> Vec<Operati
             {
                 out.push(OperationsAction::Close);
             }
+            let completed: Vec<_> = rows
+                .iter()
+                .filter(|r| {
+                    r.state == "Done" || r.state == "Cancelled" || r.state.starts_with("Failed")
+                })
+                .collect();
+            if !completed.is_empty() && ui.button("Clear completed").clicked() {
+                out.extend(completed.iter().map(|r| OperationsAction::Forget(r.id)));
+            }
             if running > 0 && ui.button("Cancel all…").clicked() {
                 out.push(OperationsAction::CancelAll);
             }
@@ -60,67 +69,72 @@ pub fn operations_panel(ui: &mut egui::Ui, rows: &[OperationRow]) -> Vec<Operati
         .id_salt("operation_rows")
         .show(ui, |ui| {
             for row in rows {
-                ui.push_id(row.id, |ui| {
-                    Frame::new()
-                        .fill(p.bg_editor)
-                        .stroke(Stroke::new(1.0, p.border))
-                        .corner_radius(Spacing::RADIUS_M)
-                        .inner_margin(Margin::same(10))
-                        .show(ui, |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal_top(|ui| {
-                                // Reserve the action before laying out a potentially very long label.
-                                let details_width = (ui.available_width() - 78.0).max(20.0);
-                                ui.allocate_ui_with_layout(
-                                    egui::vec2(details_width, 0.0),
-                                    Layout::top_down(Align::Min),
-                                    |ui| {
-                                        ui.label(RichText::new(&row.label).strong());
-                                        ui.horizontal_wrapped(|ui| {
-                                            if row.cancelable {
-                                                ui.spinner();
-                                            }
-                                            let color = if row.state == "Done" {
-                                                p.success
-                                            } else if row.state.starts_with("Failed") {
-                                                p.error
-                                            } else {
-                                                p.text_muted
-                                            };
-                                            ui.label(RichText::new(&row.state).color(color));
-                                            ui.label(
-                                                RichText::new(&row.kind)
-                                                    .small()
-                                                    .color(p.text_muted),
-                                            );
-                                        });
-                                        ui.label(
-                                            RichText::new(format!(
-                                                "{:.1} s · {} rows · {}",
-                                                row.elapsed_ms as f64 / 1000.0,
-                                                row.rows,
-                                                crate::human_bytes(
-                                                    row.bytes.min(i64::MAX as u64) as i64
-                                                )
-                                            ))
-                                            .small()
-                                            .color(p.text_muted),
-                                        );
-                                    },
+                theme::list_row(
+                    ui,
+                    ui.id().with(row.id),
+                    false,
+                    32.0,
+                    egui::Sense::hover(),
+                    |ui| {
+                        let color = if row.state == "Done" {
+                            p.success
+                        } else if row.state.starts_with("Failed") {
+                            p.error
+                        } else {
+                            p.text_muted
+                        };
+                        if row.cancelable {
+                            ui.spinner();
+                        } else {
+                            icons::paint(
+                                ui,
+                                if row.state == "Done" {
+                                    icons::SUCCESS
+                                } else {
+                                    icons::HISTORY
+                                },
+                                color,
+                            );
+                        }
+                        let action_width = 82.0;
+                        let width = (ui.available_width() - action_width).max(20.0);
+                        ui.allocate_ui_with_layout(
+                            egui::vec2(width, 24.0),
+                            Layout::left_to_right(Align::Center),
+                            |ui| {
+                                ui.add(egui::Label::new(&row.label).truncate())
+                                    .on_hover_text(&row.label);
+                                ui.label(RichText::new(&row.state).small().color(color))
+                                    .on_hover_text(&row.state);
+                                let mut metrics = crate::history::format_duration(row.elapsed_ms);
+                                if row.rows > 0 {
+                                    metrics.push_str(&format!(" · {} rows", row.rows));
+                                }
+                                if row.bytes > 0 {
+                                    metrics.push_str(&format!(
+                                        " · {}",
+                                        crate::human_bytes(row.bytes.min(i64::MAX as u64) as i64)
+                                    ));
+                                }
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(metrics).small().color(p.text_muted),
+                                    )
+                                    .truncate(),
                                 );
-                                ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
-                                    if row.cancelable {
-                                        if ui.button("Cancel").clicked() {
-                                            out.push(OperationsAction::Cancel(row.id));
-                                        }
-                                    } else if ui.button("Dismiss").clicked() {
-                                        out.push(OperationsAction::Forget(row.id));
-                                    }
-                                });
-                            });
+                            },
+                        );
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if row.cancelable {
+                                if ui.button("Cancel").clicked() {
+                                    out.push(OperationsAction::Cancel(row.id));
+                                }
+                            } else if ui.button("Dismiss").clicked() {
+                                out.push(OperationsAction::Forget(row.id));
+                            }
                         });
-                    ui.add_space(Spacing::S);
-                });
+                    },
+                );
             }
         });
     out

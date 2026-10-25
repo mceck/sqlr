@@ -373,3 +373,21 @@ fn snippet_dialog_selects_a_suggested_name() {
     h.run_steps(2);
     assert_eq!(h.state().draft.name, "mine");
 }
+
+#[test]
+fn empty_snippets_can_be_created_from_the_empty_state() {
+    let mut h = snippets_harness(Vec::new());
+    h.get_by_label("New snippet").click();
+    h.run_steps(2);
+    assert!(
+        h.state()
+            .actions
+            .contains(&SnippetAction::Edit(SnippetDraft::default()))
+    );
+}
+
+#[test]
+fn empty_history_does_not_offer_a_destructive_action() {
+    let h = history_harness(Some(Vec::new()));
+    assert!(h.query_by_label("Clear history").is_none());
+}

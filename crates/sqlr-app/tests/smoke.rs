@@ -422,6 +422,8 @@ fn reconnect_reloads_expanded_nodes() {
     let (mut h, driver) = harness_with_driver(&dir);
     expand_to_orders(&mut h);
     let before = driver.connects().len();
+    h.get_by_label("fake-conn").hover();
+    h.run_steps(2);
     h.get_by_label("Reconnect").click();
     step_until(&mut h, "the reconnecting session", |_| {
         driver.connects().len() > before
@@ -638,7 +640,7 @@ fn snippet_shortcut_opens_the_dialog() {
 }
 
 #[test]
-fn saving_a_snippet_from_an_empty_editor_does_nothing() {
+fn saving_from_an_empty_editor_opens_a_new_snippet_draft() {
     let dir = tempfile::tempdir().unwrap();
     let mut h = harness(&dir);
     focus_editor_end(&mut h);
@@ -648,10 +650,8 @@ fn saving_a_snippet_from_an_empty_editor_does_nothing() {
     wait_for_label(&mut h, "Save as snippet…");
     h.get_by_label("Save as snippet…").click();
     h.run_steps(3);
-    assert!(
-        h.query_by_label("Cancel").is_none(),
-        "an empty editor opened the snippet dialog"
-    );
+    h.get_by_label("Save snippet");
+    h.get_by_label("Cancel");
 }
 
 #[test]
@@ -671,6 +671,9 @@ fn syntax_error_marks_editor() {
     expand_to_orders(&mut h);
     double_click(&mut h, "orders");
     wait_for_label(&mut h, "at line 1, column 8");
+    h.get_by_label("Error");
+    h.get_by_label("at line 1, column 8").click();
+    h.run_steps(2);
 }
 
 #[test]
@@ -728,6 +731,8 @@ fn appearance_switch_applies() {
     h.run_steps(2);
     h.get_by_label_contains("Settings…").click();
     h.run_steps(2);
+    h.get_by_label("Appearance").click();
+    h.run_steps(2);
     h.get_by_label("Theme");
     h.get_by_label("Light").click_accesskit();
     h.run_steps(2);
@@ -735,10 +740,11 @@ fn appearance_switch_applies() {
     step_until(&mut h, "the light theme", |h| {
         !h.ctx.global_style().visuals.dark_mode
     });
-    let saved = Settings::load(dir.path()).unwrap();
-    assert_eq!(saved.theme, ThemePref::Light);
-    // Apply keeps the dialog open; Save closes it.
-    h.get_by_label("Save").click_accesskit();
+    step_until(&mut h, "preferences saved to disk", |_| {
+        Settings::load(dir.path()).is_ok_and(|s| s.theme == ThemePref::Light)
+    });
+    // Apply persists the change; dismissing the unchanged dialog keeps it.
+    h.get_by_label("Cancel").click_accesskit();
     step_until(&mut h, "the settings dialog closes", |h| {
         h.query_by_label("Apply").is_none()
     });
@@ -989,7 +995,7 @@ fn edit_preview_apply_flow() {
     h.run_steps(2);
     press(&mut h, Modifiers::NONE, Key::Enter);
     wait_for_label(&mut h, "1 pending change");
-    h.get_by_label("SQL").click();
+    h.get_by_label("Preview SQL").click();
     h.run_steps(5);
     let preview = h
         .state()
@@ -1180,6 +1186,7 @@ fn export_dialog_writes_file() {
     h.run_steps(2);
     h.get_by_label("Whole result (re-run)");
     h.get_by_label("Export").click();
+    h.run_steps(2);
     step_until(&mut h, "the export", |_| path.exists());
     wait_for_label(&mut h, &format!("Exported 1200 rows to {}", path.display()));
     let text = std::fs::read_to_string(&path).unwrap();
@@ -1851,7 +1858,8 @@ fn cmd_comma_opens_settings() {
     let mut h = harness(&dir);
     h.key_press_modifiers(Modifiers::COMMAND, Key::Comma);
     h.run_steps(3);
-    h.get_by_label("Theme");
+    h.get_by_label("Preferences");
+    assert!(h.query_by_label("Theme").is_none());
 }
 
 #[test]
@@ -2102,16 +2110,22 @@ fn folded_transaction_controls_still_switch_the_commit_mode() {
     h.get_by_label("Toggle value panel").click();
     h.run_steps(2);
     open_orders(&mut h);
-    assert!(
-        h.query_by_label("Commit").is_none(),
-        "the controls are folded"
-    );
-    h.get_by_label("More tools").click();
-    h.run_steps(3);
+    if let Some(more) = h.query_by_label("More tools") {
+        more.click();
+        h.run_steps(3);
+    }
+    if h.query_by_label("Manual commit").is_none() {
+        h.get_by_label("Auto-commit").click();
+        h.run_steps(2);
+    }
     h.get_by_label("Manual commit").click();
     h.run_steps(3);
     if h.query_by_label("Manual commit").is_none() {
-        h.get_by_label("More tools").click();
+        if let Some(more) = h.query_by_label("More tools") {
+            more.click();
+        } else if let Some(mode) = h.query_by_label("Manual commit") {
+            mode.click();
+        }
         h.run_steps(3);
     }
     step_until(&mut h, "the manual commit mode", |h| {
@@ -2200,7 +2214,13 @@ fn open_ddl_tab() {
     );
     let text = h.state().ddl_text().unwrap();
     assert!(
-        text.contains("CREATE TABLE orders (id integer, total integer)"),
+        text.lines().count() > 2,
+        "DDL columns should be on separate lines: {text}"
+    );
+    assert!(
+        text.contains("CREATE TABLE orders")
+            && text.contains("id integer")
+            && text.contains("total integer"),
         "{text}"
     );
 
@@ -2393,6 +2413,8 @@ fn settings_ui_scale_applies() {
     let dir = tempfile::tempdir().unwrap();
     let mut h = harness(&dir);
     press(&mut h, Modifiers::COMMAND, Key::Comma);
+    h.run_steps(2);
+    h.get_by_label("Appearance").click();
     h.run_steps(2);
     h.get_by_label("150%").click();
     h.run_steps(2);

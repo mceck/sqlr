@@ -338,6 +338,10 @@ enum TreeDrag {
 #[derive(Clone, Debug, PartialEq)]
 pub enum TreeAction {
     NewConnection,
+    /// From the empty state: open the bundled demo database.
+    OpenDemo,
+    /// From the empty state: bring connections over from another client.
+    ImportConnections,
     /// Open the new-connection dialog with this folder prefilled.
     NewConnectionIn(String),
     /// The user typed the name of a new folder.
@@ -509,16 +513,20 @@ enum Row<'a> {
         depth: usize,
         open: bool,
     },
-    /// Under a connection whose connect failed: the error's first line, Retry and Edit.
+    /// Under a connection whose connect failed: the error's first line, then (`actions`) a
+    /// second row with Retry, Edit and Details.
     ConnFailed {
         conn: &'a TreeConn<'a>,
         message: &'a str,
         depth: usize,
+        actions: bool,
     },
-    /// Under a connection whose driver is not installed: the message and Install.
+    /// Under a connection whose driver is not installed: the message, then (`actions`) a
+    /// second row with Install and Edit.
     ConnMissingDriver {
         conn: &'a TreeConn<'a>,
         depth: usize,
+        actions: bool,
     },
     Node {
         conn: &'a str,
@@ -527,6 +535,9 @@ enum Row<'a> {
         node: &'a Node,
         depth: usize,
         open: bool,
+    },
+    Empty {
+        depth: usize,
     },
     Loading {
         depth: usize,
@@ -577,6 +588,9 @@ impl<'a> Flattener<'a, '_> {
     ) {
         match self.source.children(conn, path) {
             Children::Ready(nodes) => {
+                if nodes.is_empty() {
+                    rows.push(Row::Empty { depth });
+                }
                 for node in nodes {
                     let below = !self.filter.is_empty() && self.descendant_matches(conn, node);
                     if !(self.filter.is_empty() || below || self.name_matches(&node.name)) {
@@ -715,18 +729,24 @@ fn push_conn<'a>(
     rows.push(Row::Conn { conn, depth, open });
     if let ConnBadge::Failed(message) = &conn.badge {
         // In place of its tree, whose loads failed the same way.
-        rows.push(Row::ConnFailed {
-            conn,
-            message,
-            depth: depth + 1,
-        });
+        for actions in [false, true] {
+            rows.push(Row::ConnFailed {
+                conn,
+                message,
+                depth: depth + 1,
+                actions,
+            });
+        }
         return;
     }
     if conn.badge == ConnBadge::MissingDriver {
-        rows.push(Row::ConnMissingDriver {
-            conn,
-            depth: depth + 1,
-        });
+        for actions in [false, true] {
+            rows.push(Row::ConnMissingDriver {
+                conn,
+                depth: depth + 1,
+                actions,
+            });
+        }
         return;
     }
     if open {
@@ -791,6 +811,37 @@ fn push_folder<'a>(
     }
 }
 
+/// The sidebar with no saved connection: what it is for and the ways to get one.
+fn empty_state(ui: &mut egui::Ui, actions: &mut Vec<TreeAction>) {
+    let p = theme::palette(ui.ctx());
+    ui.add_space(Spacing::XL);
+    ui.vertical_centered(|ui| {
+        ui.label(icons::text(ui, icons::DATA_SOURCE, 28.0).color(p.text_muted));
+        ui.add_space(Spacing::M);
+        theme::section_title(ui, "No connections yet");
+        ui.add_space(Spacing::XS);
+        ui.label(
+            RichText::new("Connect to a database to browse its tables and run queries.")
+                .small()
+                .color(p.text_muted),
+        );
+        ui.add_space(Spacing::L);
+        if ui
+            .add(theme::primary_button(ui.ctx(), "New connection…"))
+            .clicked()
+        {
+            actions.push(TreeAction::NewConnection);
+        }
+        ui.add_space(Spacing::S);
+        if ui.link("Open the demo database").clicked() {
+            actions.push(TreeAction::OpenDemo);
+        }
+        if ui.link("Import from another client…").clicked() {
+            actions.push(TreeAction::ImportConnections);
+        }
+    });
+}
+
 /// A shared empty path, so rows can borrow the root without allocating.
 static ROOT: NodePath = NodePath(Vec::new());
 
@@ -803,22 +854,21 @@ pub fn schema_tree(
 
     let palette = theme::palette(ui.ctx());
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = Spacing::S;
-        if icons::icon_button(ui, icons::ADD, Some(palette.success), "New connection").clicked() {
+        ui.spacing_mut().item_spacing.x = Spacing::XS;
+        if icons::row_button(ui, icons::ADD, "New connection").clicked() {
             actions.push(TreeAction::NewConnection);
         }
-        if icons::icon_button(
-            ui,
-            icons::FOLDER_PLUS,
-            Some(palette.icon_schema),
-            "New folder",
-        )
-        .clicked()
-        {
+        if icons::row_button(ui, icons::FOLDER_PLUS, "New folder").clicked() {
             state.start_new_folder();
         }
         // Refreshes the selected node, or the selected connection's whole tree.
-        if icons::icon_button(ui, icons::REFRESH, None, "Refresh selected").clicked()
+        let refresh = ui
+            .add_enabled_ui(state.selected.is_some(), |ui| {
+                icons::row_button(ui, icons::REFRESH, "Refresh selected")
+            })
+            .inner
+            .on_disabled_hover_text("Select a connection or an object to refresh it");
+        if refresh.clicked()
             && let Some((conn, path)) = &state.selected
         {
             actions.push(TreeAction::Refresh {
@@ -826,6 +876,7 @@ pub fn schema_tree(
                 path: path.clone(),
             });
         }
+        ui.add_space(Spacing::S);
         icons::paint(ui, icons::SEARCH, palette.text_muted);
         let clear = !state.filter.is_empty();
         let width = if clear {
@@ -836,9 +887,10 @@ pub fn schema_tree(
         let filter = crate::text_menu::text_edit(
             ui,
             TextEdit::singleline(&mut state.filter)
-                .hint_text("Filter objects")
+                .hint_text("Filter objects…")
                 .desired_width(width),
-        );
+        )
+        .on_hover_text("Filters the loaded tables, views and other objects by name");
         if clear && icons::icon_button(ui, icons::CLOSE, None, "Clear filter").clicked() {
             state.filter.clear();
             filter.request_focus();
@@ -848,6 +900,10 @@ pub fn schema_tree(
 
     let conns = source.connections();
     let folders = source.folders();
+    if conns.is_empty() && folders.is_empty() && state.new_folder.is_none() {
+        empty_state(ui, &mut actions);
+        return actions;
+    }
     let filter = state.filter.to_lowercase();
     let dragging = DragAndDrop::has_payload_of_type::<TreeDrag>(ui.ctx());
     let rows = flatten(source, state, &conns, &folders, &filter, dragging);
@@ -909,6 +965,12 @@ fn render_row(
         } => {
             folder_row(ui, path, name, *depth, *open, state, palette, actions);
         }
+        Row::Empty { depth } => {
+            row_ui(ui, |ui| {
+                ui.add_space(*depth as f32 * INDENT + ARROW_WIDTH);
+                ui.label(RichText::new("No objects").color(palette.text_muted));
+            });
+        }
         Row::NewFolder { depth } => new_folder_row(ui, *depth, state, palette, actions),
         Row::Conn { conn, depth, open } => {
             conn_row(ui, conn, *depth, *open, state, source, palette, actions);
@@ -923,48 +985,88 @@ fn render_row(
             ui, conn, driver, node, *depth, *open, state, source, palette, actions,
         ),
         Row::ConnFailed {
-            conn,
             message,
             depth,
+            actions: false,
+            ..
         } => {
             row_ui(ui, |ui| {
                 ui.add_space(*depth as f32 * INDENT + ARROW_WIDTH);
+                icons::paint(ui, icons::WARNING, palette.error);
                 let text = format!(
                     "Could not connect: {}",
                     crate::text::first_line(message, 80)
                 );
-                // Retry and Edit stay visible: the message gives way.
-                let budget = (ui.available_width() - 110.0).max(40.0);
-                ui.scope(|ui| {
-                    ui.set_max_width(budget);
-                    ui.add(egui::Label::new(RichText::new(text).color(palette.error)).truncate())
-                        .on_hover_text(*message);
-                });
-                if ui.small_button("Retry").clicked() {
-                    actions.push(TreeAction::Retry(conn.id.to_string()));
-                }
-                if ui.small_button("Edit").clicked() {
-                    actions.push(TreeAction::Edit(conn.id.to_string()));
-                }
+                ui.add(
+                    egui::Label::new(RichText::new(text).color(palette.error))
+                        .selectable(false)
+                        .truncate(),
+                )
+                .on_hover_text(*message);
             });
         }
-        Row::ConnMissingDriver { conn, depth } => {
+        Row::ConnFailed {
+            conn,
+            message,
+            depth,
+            actions: true,
+        } => {
+            row_ui(ui, |ui| {
+                ui.add_space(*depth as f32 * INDENT + ARROW_WIDTH + icons::SIZE + 6.0);
+                ui.spacing_mut().item_spacing.x = Spacing::M;
+                if row_link(ui, "Retry").clicked() {
+                    actions.push(TreeAction::Retry(conn.id.to_string()));
+                }
+                if row_link(ui, "Edit").clicked() {
+                    actions.push(TreeAction::Edit(conn.id.to_string()));
+                }
+                let details = row_link(ui, "Details");
+                egui::Popup::from_toggle_button_response(&details)
+                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                    .show(|ui| {
+                        ui.set_max_width(360.0);
+                        theme::section_title(ui, "Could not connect");
+                        ui.add_space(Spacing::S);
+                        ui.add(egui::Label::new(*message).wrap());
+                        ui.add_space(Spacing::M);
+                        if ui.button("Copy error").clicked() {
+                            ui.ctx().copy_text(message.to_string());
+                            ui.close();
+                        }
+                    });
+            });
+        }
+        Row::ConnMissingDriver {
+            conn,
+            depth,
+            actions: false,
+        } => {
             row_ui(ui, |ui| {
                 ui.add_space(*depth as f32 * INDENT + ARROW_WIDTH);
+                icons::paint(ui, icons::WARNING, palette.warning);
                 let text = format!("Driver {} is not installed", conn.driver);
-                let budget = (ui.available_width() - 110.0).max(40.0);
-                ui.scope(|ui| {
-                    ui.set_max_width(budget);
-                    ui.add(egui::Label::new(RichText::new(text).color(palette.warning)).truncate());
-                });
-                if ui
-                    .small_button("Install…")
-                    .on_hover_text("Install the driver from a local file")
+                ui.add(
+                    egui::Label::new(RichText::new(text).color(palette.warning))
+                        .selectable(false)
+                        .truncate(),
+                );
+            });
+        }
+        Row::ConnMissingDriver {
+            conn,
+            depth,
+            actions: true,
+        } => {
+            row_ui(ui, |ui| {
+                ui.add_space(*depth as f32 * INDENT + ARROW_WIDTH + icons::SIZE + 6.0);
+                ui.spacing_mut().item_spacing.x = Spacing::M;
+                if row_link(ui, "Install…")
+                    .on_hover_text("Install the driver")
                     .clicked()
                 {
                     actions.push(TreeAction::InstallDriver(conn.driver.to_string()));
                 }
-                if ui.small_button("Edit").clicked() {
+                if row_link(ui, "Edit").clicked() {
                     actions.push(TreeAction::Edit(conn.id.to_string()));
                 }
             });
@@ -995,6 +1097,17 @@ fn render_row(
         }
         Row::DropEnd => drop_end_row(ui, palette, actions),
     }
+}
+
+/// A compact text action inside a tree row: accent text, underlined on hover.
+fn row_link(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    let accent = theme::palette(ui.ctx()).accent;
+    ui.add(
+        egui::Button::new(RichText::new(label).small().color(accent))
+            .frame(false)
+            .small(),
+    )
+    .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 /// One row: left to right, vertically centered, `ROW_TREE` high.
@@ -1375,6 +1488,47 @@ fn drop_on_folder(
     }
 }
 
+/// The connection's state as a dot on the corner of its database mark, ringed in the panel
+/// color so it reads on any icon: green connected, amber connecting, red failed, a hollow ring
+/// offline, and a warning triangle when the driver is missing. Its accessible label and
+/// tooltip spell the state out.
+fn state_badge(ui: &mut egui::Ui, mark: egui::Rect, badge: &ConnBadge, palette: &Palette) {
+    let (color, label, filled) = match badge {
+        ConnBadge::Disconnected => (palette.text_disabled, "disconnected", false),
+        ConnBadge::Connecting => (palette.warning, "connecting…", true),
+        ConnBadge::Connected => (palette.success, "connected", true),
+        ConnBadge::Failed(_) => (palette.error, "failed", true),
+        ConnBadge::MissingDriver => (palette.warning, "driver missing", true),
+    };
+    let center = mark.right_bottom() + vec2(-1.0, -2.0);
+    let rect = egui::Rect::from_center_size(center, vec2(9.0, 9.0));
+    let response = ui.interact(rect, ui.id().with(("state", label)), Sense::hover());
+    let painter = ui.painter();
+    if matches!(badge, ConnBadge::MissingDriver) {
+        painter.circle_filled(center, 5.5, palette.bg_panel);
+        painter.text(
+            center,
+            Align2::CENTER_CENTER,
+            icons::WARNING,
+            icons::font(ui, 10.0),
+            color,
+        );
+    } else {
+        painter.circle_filled(center, 4.5, palette.bg_panel);
+        if filled {
+            painter.circle_filled(center, 3.0, color);
+        } else {
+            painter.circle_stroke(center, 2.5, Stroke::new(1.0, color));
+        }
+    }
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, label));
+    let tip = match badge {
+        ConnBadge::Failed(message) => format!("Connection failed: {message}"),
+        _ => label.to_string(),
+    };
+    response.on_hover_text(tip);
+}
+
 #[allow(clippy::too_many_arguments)]
 fn conn_row(
     ui: &mut egui::Ui,
@@ -1403,40 +1557,23 @@ fn conn_row(
                 ui.painter().rect_filled(rect, 4.0, fill);
             }
             toggle |= arrow(ui, conn.name, true, open, palette.text_muted);
-            // The name gives way to the state mark, the detail and the row buttons: a long one
-            // is cut with an ellipsis and shown whole on hover.
             let live = matches!(conn.badge, ConnBadge::Connected | ConnBadge::Connecting);
-            // The state is an icon alone: its color names it at a glance, its accessible label
-            // and tooltip spell it out.
-            let (mark, color, label) = match &conn.badge {
-                ConnBadge::Disconnected => {
-                    (icons::DISCONNECTED, palette.text_muted, "disconnected")
-                }
-                ConnBadge::Connecting => (icons::CONNECTING, palette.warning, "connecting…"),
-                ConnBadge::Connected => (icons::CONNECTED, palette.success, "connected"),
-                ConnBadge::Failed(_) => (icons::FAILED, palette.error, "failed"),
-                ConnBadge::MissingDriver => (icons::WARNING, palette.warning, "driver missing"),
-            };
-            let badge_text = icons::text(ui, mark, 12.0).color(color);
-            let badge_width = egui::WidgetText::from(badge_text.clone())
-                .into_galley(
-                    ui,
-                    Some(egui::TextWrapMode::Extend),
-                    f32::INFINITY,
-                    egui::TextStyle::Body,
-                )
-                .size()
-                .x;
-            let trailing = badge_width
-                + ui.spacing().item_spacing.x
-                + if live { ROW_BUTTONS_WIDTH } else { 0.0 }
-                + if conn.open_transaction { 16.0 } else { 0.0 };
+            // The row's actions show while it is hovered or selected, so at rest the name gets
+            // the whole width.
+            let hot = selected || ui.rect_contains_pointer(ui.max_rect());
+            let actions_shown = live && hot;
+            let trailing = if actions_shown {
+                ROW_BUTTONS_WIDTH
+            } else {
+                0.0
+            } + if conn.open_transaction { 16.0 } else { 0.0 };
             let budget = (ui.available_width() - trailing).max(60.0);
             let name = ui.horizontal(|ui| {
                 ui.set_max_width(budget);
                 // Keep the database mark close to the name; the row's other gaps stay wider.
                 ui.spacing_mut().item_spacing.x = Spacing::XS;
-                icons::paint_database(ui, conn.driver);
+                let mark = icons::paint_database(ui, conn.driver);
+                state_badge(ui, mark.rect, &conn.badge, palette);
                 ui.add_space(Spacing::XS);
                 ui.add(egui::Label::new(conn.name).selectable(false).truncate())
             });
@@ -1455,28 +1592,22 @@ fn conn_row(
                     );
                 });
             }
-            let badge = ui.add(egui::Label::new(badge_text).selectable(false));
-            badge.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, label));
-            let tip = match &conn.badge {
-                ConnBadge::Failed(message) => message.as_str(),
-                _ => label,
-            };
-            badge.on_hover_text(tip);
-            if conn.open_transaction {
-                ui.add(
-                    egui::Label::new(RichText::new("●").color(palette.warning)).selectable(false),
-                )
-                .on_hover_text("Open transaction");
-            }
             // The row's actions stay anchored to the right edge, away from the name.
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if matches!(conn.badge, ConnBadge::Connected | ConnBadge::Connecting) {
-                    if icons::row_button(ui, icons::STOP, "Disconnect connection").clicked() {
+                if actions_shown {
+                    if icons::row_button(ui, icons::DISCONNECT, "Disconnect connection").clicked() {
                         actions.push(TreeAction::Disconnect(conn.id.to_string()));
                     }
                     if icons::row_button(ui, icons::REFRESH, "Reconnect").clicked() {
                         actions.push(TreeAction::Reconnect(conn.id.to_string()));
                     }
+                }
+                if conn.open_transaction {
+                    ui.add(
+                        egui::Label::new(RichText::new("●").color(palette.warning))
+                            .selectable(false),
+                    )
+                    .on_hover_text("Open transaction");
                 }
             });
         },
@@ -1735,8 +1866,10 @@ fn node_row(
             if let Some(detail) = &node.detail {
                 ui.add(
                     egui::Label::new(RichText::new(detail).small().color(palette.text_muted))
-                        .selectable(false),
-                );
+                        .selectable(false)
+                        .truncate(),
+                )
+                .on_hover_text(detail);
             }
             // A folder shows how many children it holds once they are loaded.
             if node.kind == NodeKind::Folder

@@ -23,6 +23,7 @@ pub struct DdlTab {
     pub state: DdlState,
     /// The engine job writing the statement, until it ends.
     job: Option<JobId>,
+    formatted: bool,
 }
 
 /// A DDL tab's toolbar action.
@@ -33,6 +34,58 @@ pub enum DdlAction {
     Reload,
 }
 
+/// Split a table definition at top-level column commas, preserving quoted text and nested
+/// type/default expressions through the driver's lexer.
+fn formatted_ddl(syntax: &SqlSyntax, text: &str) -> String {
+    let text = sqlr_core::format_sql(syntax, text, &sqlr_core::FormatOptions::default());
+    if !text
+        .trim_start()
+        .to_ascii_uppercase()
+        .starts_with("CREATE TABLE")
+    {
+        return text;
+    }
+    let mut tokens = Vec::new();
+    let end = syntax.lex(&text, sqlr_core::LexState::Normal, &mut tokens);
+    if end.state != sqlr_core::LexState::Normal {
+        return text;
+    }
+    let mut depth = 0;
+    let mut at = 0;
+    let mut out = String::new();
+    for token in tokens
+        .iter()
+        .filter(|t| t.kind == sqlr_core::TokenKind::Punct)
+    {
+        match &text[token.start..token.end] {
+            "(" => {
+                if depth == 0 {
+                    out.push_str(text[..token.start].trim_end());
+                    out.push_str(" (\n    ");
+                    at = token.end;
+                }
+                depth += 1;
+            }
+            "," if depth == 1 => {
+                out.push_str(text[at..token.end].trim());
+                out.push_str("\n    ");
+                at = token.end;
+            }
+            ")" if depth > 0 => {
+                depth -= 1;
+                if depth == 0 {
+                    out.push_str(text[at..token.start].trim());
+                    out.push_str("\n)");
+                    out.push_str(&text[token.end..]);
+                    return out;
+                }
+            }
+            _ => {}
+        }
+    }
+    text
+}
+
 impl DdlTab {
     pub fn open(engine: &Engine, conn: &str, node: Node) -> Self {
         let job = engine.load_ddl(&SessionKey::meta(conn), node.clone());
@@ -41,6 +94,7 @@ impl DdlTab {
             node,
             state: DdlState::Loading,
             job: Some(job),
+            formatted: false,
         }
     }
 
@@ -81,6 +135,12 @@ impl DdlTab {
         syntax: &SqlSyntax,
     ) -> Option<DdlAction> {
         self.poll(engine);
+        if !self.formatted
+            && let DdlState::Ready(text) = &mut self.state
+        {
+            *text = formatted_ddl(syntax, text);
+            self.formatted = true;
+        }
         let palette = theme::palette(ui.ctx());
         let mut action = None;
         egui::Frame::NONE
@@ -90,6 +150,7 @@ impl DdlTab {
                 ui.set_min_size(ui.available_size());
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = Spacing::S;
+                    ui.label(RichText::new("Read-only").small().color(palette.text_muted));
                     let ready = match &self.state {
                         DdlState::Ready(text) => Some(text.clone()),
                         _ => None,

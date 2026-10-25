@@ -295,7 +295,7 @@ The incident shape (schema version 1) is:
   "fields": {"op": "query", "conn": "c1", "driver": "postgres"},
   "note": null,
   "acknowledged": false,
-  "environment": {"version": "0.1.0", "os": "macos", "arch": "aarch64"},
+  "environment": {"version": "0.1.1", "os": "macos", "arch": "aarch64"},
   "logs": ["…recent lines…"]
 }
 ```

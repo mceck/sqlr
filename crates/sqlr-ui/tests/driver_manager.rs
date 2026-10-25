@@ -131,7 +131,11 @@ fn built_in_drivers_cannot_be_removed() {
 
 #[test]
 fn search_filters_the_list() {
-    let mut h = harness(rows());
+    let mut many = rows();
+    for i in 0..4 {
+        many.push(row(&format!("extra{i}"), &format!("Extra {i}")));
+    }
+    let mut h = harness(many);
     h.get_by_label("Search drivers").click();
     h.get_by_label("Search drivers").type_text("hana");
     h.run_steps(3);

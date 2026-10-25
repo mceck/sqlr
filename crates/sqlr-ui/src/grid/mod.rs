@@ -247,6 +247,73 @@ impl GridState {
         self.all_selections().map(|s| s.cell_count()).sum()
     }
 
+    /// A bounded summary of the selected cells in displayed order. Large selections show
+    /// their size without scanning the whole result on the UI thread.
+    pub fn selection_summary(&self, rows: &RowBuffer) -> Option<String> {
+        let (row, col) = self.selected?;
+        let count = self.selected_cells();
+        if count == 1 {
+            let value = self
+                .edits
+                .as_ref()
+                .map_or_else(|| rows.cell(row, col), |e| e.cell(rows, row, col))?;
+            let length = match value {
+                Cell::Text(s) => s.len(),
+                Cell::Bytes(b) => b.len(),
+                Cell::Null => 0,
+                _ => value.to_string().len(),
+            };
+            return Some(format!(
+                "Row {} · Column {} · {} bytes",
+                self.selection.cursor.0 + 1,
+                col + 1,
+                length
+            ));
+        }
+        let mut text = format!("{count} cells");
+        if count > 10_000 {
+            return Some(text);
+        }
+        let mut integer_sum = 0_i128;
+        let mut float_sum = 0.0_f64;
+        let mut numeric = false;
+        let mut floating = false;
+        for selection in self.all_selections() {
+            for vr in selection.rows() {
+                let Some(src) = self.view.as_ref().and_then(|(_, view)| view.get(vr)) else {
+                    continue;
+                };
+                for col in selection.cols() {
+                    match self
+                        .edits
+                        .as_ref()
+                        .map_or_else(|| rows.cell(src, col), |e| e.cell(rows, src, col))
+                    {
+                        Some(Cell::Int(n)) => {
+                            integer_sum += i128::from(n);
+                            numeric = true;
+                        }
+                        Some(Cell::Float(n)) if n.is_finite() => {
+                            float_sum += n;
+                            numeric = true;
+                            floating = true;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        if numeric {
+            let sum = if floating {
+                (integer_sum as f64 + float_sum).to_string()
+            } else {
+                integer_sum.to_string()
+            };
+            text.push_str(&format!(" · Sum {sum}"));
+        }
+        Some(text)
+    }
+
     /// Whether a view cell is part of any selected rectangle.
     pub fn is_selected(&self, row: usize, col: usize) -> bool {
         self.selected.is_some()
@@ -811,6 +878,7 @@ pub fn data_grid(ui: &mut egui::Ui, state: &mut GridState, input: &GridInput<'_>
             columns,
             first_col..last_col,
             &state.sort,
+            &state.selected_cols(),
             &palette,
             (&name_font, &type_font),
         );
@@ -842,7 +910,7 @@ fn filter_bar(ui: &mut egui::Ui, state: &mut GridState) {
                 let field = crate::text_menu::text_edit(
                     ui,
                     TextEdit::singleline(&mut state.where_filter)
-                        .hint_text("condition, ↵ to re-run")
+                        .hint_text("Filter rows (SQL WHERE), e.g. status = 'paid' ↵")
                         .desired_width(f32::INFINITY),
                 );
                 if field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
@@ -1348,6 +1416,12 @@ fn paint_rows(
             let rect = geo.cell_rect(vr, col);
             if state.is_selected(vr, col) {
                 painter.rect_filled(rect, 0.0, palette.selection);
+                painter.rect_stroke(
+                    rect.shrink(0.5),
+                    0.0,
+                    Stroke::new(1.5, palette.accent),
+                    egui::StrokeKind::Inside,
+                );
             }
             let edited = state.edits.as_ref().is_some_and(|e| e.is_edited(src, col));
             if edited {
@@ -1408,7 +1482,17 @@ fn paint_rows(
         }
         // Row numbers, pinned to the left edge.
         let number = geo.gutter_rect(vr);
-        painter.rect_filled(number, 0.0, palette.bg_panel);
+        let row_selected =
+            state.selected.is_some() && state.all_selections().any(|s| s.rows().contains(&vr));
+        painter.rect_filled(
+            number,
+            0.0,
+            if row_selected {
+                palette.accent_soft
+            } else {
+                palette.bg_panel
+            },
+        );
         painter.vline(
             number.right(),
             number.y_range(),
@@ -1485,82 +1569,86 @@ fn context_menu(ui: &mut egui::Ui, state: &GridState, allow_copy_all: bool) -> O
         choice = Some(MenuChoice::CopyAll);
     }
     let editable = state.edits.is_some();
-    if menu_entry(ui, editable, icons::PASTE, "Paste", Some(ActionId::Paste)) {
-        choice = Some(MenuChoice::Paste);
-    }
-    if menu_item(ui, editable, icons::PASTE_ROWS, "Paste as new rows…") {
-        choice = Some(MenuChoice::PasteRows);
-    }
-    ui.separator();
-    if menu_entry(
-        ui,
-        state.can_undo(),
-        icons::UNDO,
-        "Undo",
-        Some(ActionId::Undo),
-    ) {
-        choice = Some(MenuChoice::Undo);
-    }
-    if menu_entry(
-        ui,
-        state.can_redo(),
-        icons::REDO,
-        "Redo",
-        Some(ActionId::Redo),
-    ) {
-        choice = Some(MenuChoice::Redo);
-    }
-    ui.separator();
     let rows = state.selected_rows();
-    let (_, col) = state.selection.cursor;
-    let writable = state.edits.as_ref().is_some_and(|e| e.writable(col));
-    let not_null = state.edits.as_ref().is_some_and(|e| e.not_null(col));
     let plural = if rows.len() > 1 { "s" } else { "" };
-    if menu_item(ui, writable, icons::EDIT, "Edit cell") {
-        choice = Some(MenuChoice::Edit);
-    }
-    let can_null = state.edits.as_ref().is_some_and(|e| {
-        state.selected.is_some()
-            && state
-                .selected_cols()
-                .iter()
-                .all(|&c| e.writable(c) && !e.not_null(c))
-    });
-    let set_null = icons::menu_item_enabled(ui, can_null, icons::NULL, "Set NULL")
-        .on_disabled_hover_text(if not_null {
-            "The column is NOT NULL"
-        } else {
-            "The cell cannot be edited"
+    if editable {
+        if menu_entry(ui, editable, icons::PASTE, "Paste", Some(ActionId::Paste)) {
+            choice = Some(MenuChoice::Paste);
+        }
+        if menu_item(ui, editable, icons::PASTE_ROWS, "Paste as new rows…") {
+            choice = Some(MenuChoice::PasteRows);
+        }
+        ui.separator();
+        if menu_entry(
+            ui,
+            state.can_undo(),
+            icons::UNDO,
+            "Undo",
+            Some(ActionId::Undo),
+        ) {
+            choice = Some(MenuChoice::Undo);
+        }
+        if menu_entry(
+            ui,
+            state.can_redo(),
+            icons::REDO,
+            "Redo",
+            Some(ActionId::Redo),
+        ) {
+            choice = Some(MenuChoice::Redo);
+        }
+        ui.separator();
+        let (_, col) = state.selection.cursor;
+        let writable = state.edits.as_ref().is_some_and(|e| e.writable(col));
+        let not_null = state.edits.as_ref().is_some_and(|e| e.not_null(col));
+        if menu_item(ui, writable, icons::EDIT, "Edit cell") {
+            choice = Some(MenuChoice::Edit);
+        }
+        let can_null = state.edits.as_ref().is_some_and(|e| {
+            state.selected.is_some()
+                && state
+                    .selected_cols()
+                    .iter()
+                    .all(|&c| e.writable(c) && !e.not_null(c))
         });
-    if set_null.clicked() {
-        choice = Some(MenuChoice::SetNull);
-        ui.close();
-    }
-    if menu_item(
-        ui,
-        editable && !rows.is_empty(),
-        icons::DUPLICATE,
-        &format!("Duplicate row{plural}"),
-    ) {
-        choice = Some(MenuChoice::Duplicate);
-    }
-    if menu_item(ui, editable, icons::ADD, "Add row") {
-        choice = Some(MenuChoice::AddRow);
-    }
-    if menu_item(
-        ui,
-        editable && state.selected.is_some(),
-        icons::ROLLBACK_TO,
-        "Revert selected cells",
-    ) {
-        choice = Some(MenuChoice::RevertCells);
-    }
-    let changed = state
-        .edits
-        .as_ref()
-        .is_some_and(|e| rows.iter().any(|&r| e.row_state(r) != RowState::Clean));
-    if menu_item(ui, changed, icons::ROLLBACK, &format!("Revert row{plural}")) {
-        choice = Some(MenuChoice::Revert);
+        let set_null = icons::menu_item_enabled(ui, can_null, icons::NULL, "Set NULL")
+            .on_disabled_hover_text(if not_null {
+                "The column is NOT NULL"
+            } else {
+                "The cell cannot be edited"
+            });
+        if set_null.clicked() {
+            choice = Some(MenuChoice::SetNull);
+            ui.close();
+        }
+        if menu_item(
+            ui,
+            editable && !rows.is_empty(),
+            icons::DUPLICATE,
+            &format!("Duplicate row{plural}"),
+        ) {
+            choice = Some(MenuChoice::Duplicate);
+        }
+        if menu_item(ui, editable, icons::ADD, "Add row") {
+            choice = Some(MenuChoice::AddRow);
+        }
+        if menu_item(
+            ui,
+            editable && state.selected.is_some(),
+            icons::ROLLBACK_TO,
+            "Revert selected cells",
+        ) {
+            choice = Some(MenuChoice::RevertCells);
+        }
+        let changed = state
+            .edits
+            .as_ref()
+            .is_some_and(|e| rows.iter().any(|&r| e.row_state(r) != RowState::Clean));
+        if menu_item(ui, changed, icons::ROLLBACK, &format!("Revert row{plural}")) {
+            choice = Some(MenuChoice::Revert);
+        }
+    } else {
+        theme::hint(ui, "Read-only result — open a table to edit");
     }
     ui.separator();
     if menu_item(ui, true, icons::PANEL, "Open in value panel") {
@@ -1569,16 +1657,18 @@ fn context_menu(ui: &mut egui::Ui, state: &GridState, allow_copy_all: bool) -> O
     if menu_item(ui, true, icons::FILTER, "Filter by this value") {
         choice = Some(MenuChoice::FilterByValue);
     }
-    ui.separator();
-    let delete_rows = MenuItem::new(&format!("Delete row{plural}"))
-        .icon(icons::DELETE)
-        .enabled(editable && !rows.is_empty())
-        .shortcut(crate::keymap::ui_keymap(ui.ctx()).label(ActionId::DeleteRows))
-        .danger()
-        .ui(ui);
-    if delete_rows.clicked() {
-        choice = Some(MenuChoice::Delete);
-        ui.close();
+    if editable {
+        ui.separator();
+        let delete_rows = MenuItem::new(&format!("Delete row{plural}"))
+            .icon(icons::DELETE)
+            .enabled(editable && !rows.is_empty())
+            .shortcut(crate::keymap::ui_keymap(ui.ctx()).label(ActionId::DeleteRows))
+            .danger()
+            .ui(ui);
+        if delete_rows.clicked() {
+            choice = Some(MenuChoice::Delete);
+            ui.close();
+        }
     }
     choice
 }

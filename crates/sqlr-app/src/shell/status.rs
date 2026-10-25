@@ -96,6 +96,7 @@ pub struct StatusView<'a> {
     /// The active tab's page size; `None` without a tab.
     pub page_size: Option<usize>,
     pub info: Option<&'a ResultInfo>,
+    pub selection: Option<&'a str>,
     /// Why history and snippets will not be saved, while that holds.
     pub storage_warning: Option<&'a str>,
     /// A running export or copy: its progress line.
@@ -209,6 +210,12 @@ fn left_group(
             icons::paint(ui, icons::TIMER, palette.text_muted);
             segment(ui, &time, Some(palette.text));
         }
+    }
+    if let Some(selection) = view.selection
+        && fits(ui, 120.0)
+    {
+        ui.separator();
+        segment(ui, selection, Some(palette.text));
     }
     // Paging only means something for a result that returned rows.
     let rows_result = view

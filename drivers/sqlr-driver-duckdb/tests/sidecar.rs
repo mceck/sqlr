@@ -6,7 +6,11 @@ use sqlr_driver_sdk::{
 use sqlr_sidecar::{SidecarDriver, SidecarSpec};
 
 fn spec() -> SidecarSpec {
-    SidecarSpec::new("duckdb", "0.1.0", env!("CARGO_BIN_EXE_sqlr-driver-duckdb"))
+    SidecarSpec::new(
+        "duckdb",
+        env!("CARGO_PKG_VERSION"),
+        env!("CARGO_BIN_EXE_sqlr-driver-duckdb"),
+    )
 }
 
 fn config(id: &str, path: &str) -> ConnectionConfig {

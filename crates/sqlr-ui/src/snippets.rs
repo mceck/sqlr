@@ -165,15 +165,18 @@ pub fn snippets_panel(
 ) -> Vec<SnippetAction> {
     let mut actions = Vec::new();
     ui.horizontal(|ui| {
-        if icons::icon_button(ui, icons::ADD, None, "New snippet").clicked() {
+        if !snippets.is_empty() && icons::icon_button(ui, icons::ADD, None, "New snippet").clicked()
+        {
             actions.push(SnippetAction::Edit(SnippetDraft::default()));
         }
-        crate::text_menu::text_edit(
-            ui,
-            TextEdit::singleline(&mut state.filter)
-                .hint_text("Filter")
-                .desired_width(f32::INFINITY),
-        );
+        ui.add_enabled_ui(!snippets.is_empty(), |ui| {
+            crate::text_menu::text_edit(
+                ui,
+                TextEdit::singleline(&mut state.filter)
+                    .hint_text("Filter snippets…")
+                    .desired_width(f32::INFINITY),
+            );
+        });
     });
     ui.add_space(2.0);
 
@@ -191,11 +194,25 @@ pub fn snippets_panel(
             "No matching snippets"
         };
         let description = if snippets.is_empty() {
-            "Save SQL you use often. Choose + to create a snippet, then open it or insert it into a query."
+            "Save SQL you use often, then open it or insert it into a query."
         } else {
             "Try a different filter or switch to the connection this snippet belongs to."
         };
         theme::empty_panel(ui, icons::SNIPPET, text, description);
+        if snippets.is_empty() {
+            if ui
+                .add(theme::primary_button(ui.ctx(), "New snippet"))
+                .clicked()
+            {
+                actions.push(SnippetAction::Edit(SnippetDraft::default()));
+            }
+            let hint = crate::keymap::tooltip(
+                ui.ctx(),
+                "Or save SQL from the editor",
+                sqlr_core::ActionId::SaveSnippet,
+            );
+            theme::hint(ui, &hint);
+        }
         return actions;
     }
     let mut root = Folder::default();

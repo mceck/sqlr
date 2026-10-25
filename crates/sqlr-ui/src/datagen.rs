@@ -91,7 +91,14 @@ pub fn datagen_table(
         .spacing([Spacing::L, Spacing::S])
         .striped(true)
         .show(ui, |ui| {
-            for heading in ["Write", "Type", "Generator", "Options", "NULL %", "Unique"] {
+            for heading in [
+                "Include",
+                "Type",
+                "Generator",
+                "Options",
+                "NULL %",
+                "Unique",
+            ] {
                 ui.label(RichText::new(heading).strong());
             }
             ui.end_row();
@@ -119,7 +126,11 @@ pub fn datagen_table(
                     c.generator,
                     Generator::ForeignKey { .. } | Generator::Default
                 ) {
-                    ui.label(generator_label(&c.generator));
+                    ui.add_enabled_ui(false, |ui| {
+                        ComboBox::from_id_salt(("fixed_generator", i))
+                            .selected_text(generator_label(&c.generator))
+                            .show_ui(ui, |_| {});
+                    });
                 } else {
                     ComboBox::from_id_salt(("datagen-kind", i))
                         .selected_text(generator_label(&c.generator))
@@ -134,14 +145,20 @@ pub fn datagen_table(
                         });
                 }
                 changed |= options(ui, &mut c.generator);
-                changed |= ui
+                let mut percent = c.null_ratio * 100.0;
+                if ui
                     .add(
-                        DragValue::new(&mut c.null_ratio)
-                            .range(0.0..=1.0)
-                            .speed(0.01)
-                            .fixed_decimals(2),
+                        DragValue::new(&mut percent)
+                            .range(0.0..=100.0)
+                            .speed(1.0)
+                            .suffix(" %")
+                            .fixed_decimals(0),
                     )
-                    .changed();
+                    .changed()
+                {
+                    c.null_ratio = percent / 100.0;
+                    changed = true;
+                }
                 let unique = ui.checkbox(&mut c.unique, "");
                 let label = c.column.clone();
                 let on = c.unique;

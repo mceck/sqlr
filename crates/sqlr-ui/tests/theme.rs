@@ -385,3 +385,68 @@ fn every_database_mark_paints_in_both_themes() {
         h.run_steps(2);
     }
 }
+
+#[test]
+fn format_presets_change_the_pattern_value() {
+    use egui_kittest::{Harness, kittest::Queryable};
+    let def = sqlr_core::setting_defs()
+        .iter()
+        .find(|d| d.id == "formats.date")
+        .unwrap();
+    let mut h = Harness::builder().with_size((700.0, 220.0)).build_ui_state(
+        |ui, value: &mut sqlr_core::SettingValue| {
+            sqlr_ui::setting_editor(ui, def, value);
+        },
+        sqlr_core::SettingValue::Text(String::new()),
+    );
+    h.run_steps(2);
+    h.get_by_label("Date presets").click();
+    h.run_steps(2);
+    h.get_by_label("European · 25/10/2026").click();
+    h.run_steps(2);
+    assert_eq!(h.state().as_str(), "%d/%m/%Y");
+}
+
+#[test]
+fn properties_editor_adds_a_row_without_requiring_json() {
+    use egui_kittest::{Harness, kittest::Queryable};
+    let def = sqlr_core::setting_defs()
+        .iter()
+        .find(|d| d.id == "drivers.postgres.properties")
+        .unwrap();
+    let mut h = Harness::builder().with_size((700.0, 300.0)).build_ui_state(
+        |ui, value: &mut sqlr_core::SettingValue| {
+            sqlr_ui::setting_editor(ui, def, value);
+        },
+        sqlr_core::SettingValue::Text("{}".into()),
+    );
+    h.run_steps(2);
+    h.get_by_label("Add property").click();
+    h.run_steps(2);
+    assert_eq!(
+        h.get_all_by_role(egui::accesskit::Role::TextInput).count(),
+        2
+    );
+}
+
+#[test]
+fn disabling_a_row_limit_keeps_the_previous_limit_for_reenable() {
+    use egui_kittest::{Harness, kittest::Queryable};
+    let def = sqlr_core::setting_defs()
+        .iter()
+        .find(|d| d.id == "grid.row_cap")
+        .unwrap();
+    let mut h = Harness::builder().with_size((600.0, 120.0)).build_ui_state(
+        |ui, value: &mut sqlr_core::SettingValue| {
+            sqlr_ui::setting_editor(ui, def, value);
+        },
+        sqlr_core::SettingValue::Int(500),
+    );
+    h.run_steps(2);
+    h.get_by_label("No limit").click();
+    h.run_steps(2);
+    assert_eq!(h.state().as_i64(), 0);
+    h.get_by_label("No limit").click();
+    h.run_steps(2);
+    assert_eq!(h.state().as_i64(), 500);
+}

@@ -1,6 +1,6 @@
 [package]
 name = "sign-index"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 publish = false
 description = "Signs a driver registry index and its artifacts with a minisign key."

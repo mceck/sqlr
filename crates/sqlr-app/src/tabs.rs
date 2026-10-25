@@ -216,6 +216,7 @@ pub struct QueryTab {
     pub admin: Option<Box<crate::admin::AdminTab>>,
     /// Set when the tab shows an object's DDL instead of an editor.
     pub ddl: Option<Box<crate::ddl_tab::DdlTab>>,
+    pub(crate) er: Option<Box<crate::schema_tools::ErDialog>>,
 }
 
 impl QueryTab {
@@ -251,6 +252,7 @@ impl QueryTab {
             doc: None,
             admin: None,
             ddl: None,
+            er: None,
         }
     }
 
@@ -529,6 +531,10 @@ impl QueryTab {
 /// Work the dock area asks for; applied once the dock is drawn (and no result guard is held).
 pub enum TabCommand {
     FetchMore(QueryId),
+    OpenResultTable {
+        tab: u64,
+        q: QueryId,
+    },
     /// The changes bar of a result.
     Changes {
         tab: u64,
@@ -671,6 +677,7 @@ impl egui_dock::TabViewer for Viewer<'_> {
                     };
                     (icon, icon_color, None)
                 }
+                None if tab.er.is_some() => (icons::SCHEMA, icon_color, None),
                 None if tab.ddl.is_some() => (icons::SQL, icon_color, None),
                 None => (icons::DATABASE, icon_color, None),
             },
@@ -688,23 +695,26 @@ impl egui_dock::TabViewer for Viewer<'_> {
             0.0,
             TextFormat::simple(self.icon_font.clone(), icon_color),
         );
-        let underline = if self.active.contains(&tab.key) {
-            Stroke::new(2.0, p.accent)
-        } else {
-            Stroke::NONE
-        };
         job.append(
             &tab.title,
             Spacing::S + 2.0,
-            TextFormat {
-                underline,
-                ..TextFormat::simple(font.clone(), Color32::PLACEHOLDER)
-            },
+            TextFormat::simple(font.clone(), Color32::PLACEHOLDER),
         );
         if let Some(badge) = badge {
             job.append(&badge, 0.0, TextFormat::simple(font, p.warning));
         }
         job.into()
+    }
+
+    fn on_tab_button(&mut self, tab: &mut QueryTab, response: &egui::Response) {
+        if self.active.contains(&tab.key) {
+            let rect = response.rect;
+            response.ctx.layer_painter(response.layer_id).hline(
+                rect.x_range(),
+                rect.bottom() - 1.0,
+                Stroke::new(2.0, self.palette.accent),
+            );
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut QueryTab) {
@@ -731,6 +741,10 @@ impl egui_dock::TabViewer for Viewer<'_> {
                 commands,
                 self.show_value_panel,
             );
+            return;
+        }
+        if let Some(er) = tab.er.as_deref_mut() {
+            er.show_ui(ui, self.engine, None);
             return;
         }
         if let Some(ddl) = tab.ddl.as_deref_mut() {
@@ -790,6 +804,15 @@ impl egui_dock::TabViewer for Viewer<'_> {
             .frame(egui::Frame::NONE.fill(self.palette.bg_editor))
             .show(ui, |ui| {
                 let output = query_editor(ui, &mut tab.editor, &catalog);
+                let rect = ui.max_rect();
+                let p = theme::palette(ui.ctx());
+                ui.painter()
+                    .hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, p.border));
+                ui.painter().hline(
+                    (rect.center().x - 14.0)..=(rect.center().x + 14.0),
+                    rect.bottom() - 2.0,
+                    Stroke::new(2.0, p.text_disabled),
+                );
                 tab.dirty |= output.changed;
                 if output.save_snippet {
                     self.commands.push(TabCommand::SaveSnippet(tab.key));
@@ -1035,9 +1058,12 @@ fn explain_controls(ui: &mut egui::Ui, tab: &mut QueryTab, cx: &mut ViewCx<'_>) 
 fn single_view(ui: &mut egui::Ui, tab: &mut QueryTab, cx: &mut ViewCx<'_>, q: Option<QueryId>) {
     let has_plan = tab.plan.has_content();
     let run = q.is_some();
+    let failed = q
+        .and_then(|q| cx.engine.result(q))
+        .is_some_and(|r| matches!(r.read().status, QueryStatus::Failed(_)));
     let mut labels = vec![
         (
-            "Result 1".to_string(),
+            if failed { "Error" } else { "Result 1" }.to_string(),
             tab.pane == SinglePane::Result && run,
             run,
         ),
@@ -1081,6 +1107,12 @@ fn single_view(ui: &mut egui::Ui, tab: &mut QueryTab, cx: &mut ViewCx<'_>, q: Op
 /// The Plan pane: the confirmation an Analyze of a write needs, the running job, an error,
 /// then the plan itself.
 fn plan_pane(ui: &mut egui::Ui, tab: &mut QueryTab, cx: &mut ViewCx<'_>) {
+    egui::Frame::NONE
+        .inner_margin(Spacing::L)
+        .show(ui, |ui| plan_pane_content(ui, tab, cx));
+}
+
+fn plan_pane_content(ui: &mut egui::Ui, tab: &mut QueryTab, cx: &mut ViewCx<'_>) {
     let p = theme::palette(ui.ctx());
     let engine = cx.engine;
     let conn = tab.conn.clone();
@@ -1095,6 +1127,7 @@ fn plan_pane(ui: &mut egui::Ui, tab: &mut QueryTab, cx: &mut ViewCx<'_>) {
     let mut stop = false;
     let mut retry = false;
     let mut recompute = false;
+    let mut analyze = false;
 
     if let Some(request) = &tab.plan.pending {
         egui::Frame::new()
@@ -1171,6 +1204,7 @@ fn plan_pane(ui: &mut egui::Ui, tab: &mut QueryTab, cx: &mut ViewCx<'_>) {
             match action {
                 sqlr_ui::PlanAction::CopyRaw => ui.ctx().copy_text(tree.raw.clone()),
                 sqlr_ui::PlanAction::Recompute => recompute = true,
+                sqlr_ui::PlanAction::Analyze => analyze = true,
             }
         }
     } else if tab.plan.job.is_none() && tab.plan.error.is_none() && tab.plan.pending.is_none() {
@@ -1195,8 +1229,10 @@ fn plan_pane(ui: &mut egui::Ui, tab: &mut QueryTab, cx: &mut ViewCx<'_>) {
             .is_none_or(|d| d.syntax().classify(&sql) != StatementClass::Read);
         tab.start_explain(engine, conn, sql, analyzed, writes);
     }
-    if recompute && let Some(conn) = &conn {
-        tab.recompute_plan(engine, conn, cx.dialect, analyzed);
+    if (recompute || analyze)
+        && let Some(conn) = &conn
+    {
+        tab.recompute_plan(engine, conn, cx.dialect, analyzed || analyze);
     }
 }
 
@@ -1235,7 +1271,17 @@ fn script_view(
         .iter()
         .map(|p| {
             let label = match p {
-                ScriptPane::Result(n) => format!("Result {}", n + 1),
+                ScriptPane::Result(n) => {
+                    if results
+                        .get(*n)
+                        .and_then(|(_, q)| engine.result(*q))
+                        .is_some_and(|r| matches!(r.read().status, QueryStatus::Failed(_)))
+                    {
+                        format!("Error {}", n + 1)
+                    } else {
+                        format!("Result {}", n + 1)
+                    }
+                }
                 ScriptPane::Output => "Output".to_string(),
                 ScriptPane::Messages => "Messages".to_string(),
                 ScriptPane::Plan => "Plan".to_string(),
@@ -1337,7 +1383,19 @@ fn result_view(
                 sql: cx.include_sql.then_some(r.sql.as_str()),
                 elapsed_ms: r.elapsed.as_millis() as u64,
             };
-            error_panel(ui, &details);
+            if error_panel(ui, &details)
+                && let Some((line, column)) = at
+            {
+                let text = tab.editor.text();
+                let offset = text
+                    .lines()
+                    .take(line.saturating_sub(1))
+                    .map(|l| l.chars().count() + 1)
+                    .sum::<usize>()
+                    + column.saturating_sub(1);
+                tab.editor.set_caret_char(offset);
+                tab.editor.request_focus();
+            }
         }
         status => {
             if let Some(n) = r.affected {
@@ -1380,6 +1438,9 @@ fn result_view(
                             action,
                         });
                     }
+                    Some(ResultBarAction::OpenTable) => cx
+                        .commands
+                        .push(TabCommand::OpenResultTable { tab: tab.key, q }),
                     Some(ResultBarAction::AddRow) => grid.add_row(),
                     Some(ResultBarAction::Export) => {
                         cx.commands.push(TabCommand::Export { tab: tab.key, q });
@@ -1471,18 +1532,43 @@ impl ErrorDetails<'_> {
 }
 
 /// `details.at` is the 1-based line and column of the error position, in the editor's buffer.
-fn error_panel(ui: &mut egui::Ui, details: &ErrorDetails<'_>) {
-    ui.add_space(Spacing::M);
-    ui.colored_label(theme::palette(ui.ctx()).error, &details.error.message);
-    if let Some(hint) = &details.error.hint {
-        ui.label(format!("Hint: {hint}"));
-    }
-    if let Some((line, column)) = details.at {
-        ui.label(format!("at line {line}, column {column}"));
-    }
-    if ui.button("Copy details").clicked() {
-        ui.ctx().copy_text(details.text());
-    }
+fn error_panel(ui: &mut egui::Ui, details: &ErrorDetails<'_>) -> bool {
+    let p = theme::palette(ui.ctx());
+    let mut reveal = false;
+    egui::Frame::NONE.inner_margin(Spacing::L).show(ui, |ui| {
+        egui::Frame::new()
+            .fill(p.error.gamma_multiply(0.08))
+            .stroke(egui::Stroke::new(1.0, p.error.gamma_multiply(0.35)))
+            .corner_radius(Spacing::RADIUS_M)
+            .inner_margin(Spacing::L)
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    icons::paint(ui, icons::FAILED, p.error);
+                    ui.label(RichText::new("Query failed").strong().color(p.error));
+                });
+                ui.add_space(Spacing::S);
+                ui.add(egui::Label::new(&details.error.message).wrap());
+                if let Some(hint) = &details.error.hint {
+                    ui.label(format!("Hint: {hint}"));
+                }
+                if let Some((line, column)) = details.at {
+                    reveal = ui
+                        .link(format!("at line {line}, column {column}"))
+                        .on_hover_text("Go to the error in the SQL editor")
+                        .clicked();
+                }
+                if let Some(sql) = details.sql {
+                    ui.add_space(Spacing::S);
+                    ui.add(egui::Label::new(RichText::new(sql).monospace()).wrap());
+                }
+                ui.add_space(Spacing::S);
+                if ui.button("Copy details").clicked() {
+                    ui.ctx().copy_text(details.text());
+                }
+            });
+    });
+    reveal
 }
 
 impl SqlrApp {
@@ -1513,7 +1599,7 @@ impl SqlrApp {
         };
         if self
             .tab(key)
-            .is_some_and(|t| t.redis.is_some() || t.ddl.is_some())
+            .is_some_and(|t| t.redis.is_some() || t.ddl.is_some() || t.er.is_some())
         {
             return;
         }
@@ -1595,7 +1681,7 @@ impl SqlrApp {
         // A Redis or DDL tab has no editor to run.
         if self
             .tab(key)
-            .is_some_and(|t| t.redis.is_some() || t.ddl.is_some())
+            .is_some_and(|t| t.redis.is_some() || t.ddl.is_some() || t.er.is_some())
         {
             return;
         }
@@ -2148,8 +2234,6 @@ mod tests {
         assert_eq!(app.show_value_panel, !values);
         app.dispatch_action(A::ShowOperations, &ctx);
         assert!(app.show_operations);
-        app.dispatch_action(A::ShowTasks, &ctx);
-        assert!(matches!(app.left, crate::app::LeftPane::Tasks));
         app.dispatch_action(A::Settings, &ctx);
         assert!(app.prefs.is_some());
         app.dispatch_action(A::Profiles, &ctx);

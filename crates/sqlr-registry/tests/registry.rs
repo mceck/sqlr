@@ -711,11 +711,12 @@ async fn jdbc_jar_names_cannot_escape_the_install() {
 async fn driver_toml_args_reach_the_installed_driver() {
     let world = World::new().await;
     let registry = world.registry();
+    let version = env!("CARGO_PKG_VERSION");
     let mut tar = tar::Builder::new(Vec::new());
     add(
         &mut tar,
         "driver.toml",
-        b"id = \"echo\"\nversion = \"0.1.1\"\nexecutable = \"bin/echo\"\nargs = [\"--preset\", \"h2\"]\n",
+        format!("id = \"echo\"\nversion = \"{version}\"\nexecutable = \"bin/echo\"\nargs = [\"--preset\", \"h2\"]\n").as_bytes(),
         0o644,
     );
     add(

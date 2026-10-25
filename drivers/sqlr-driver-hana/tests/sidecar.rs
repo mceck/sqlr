@@ -4,7 +4,11 @@ use sqlr_driver_sdk::{ConnectionConfig, Driver, ErrorKind, FieldType, Secrets};
 use sqlr_sidecar::{SidecarDriver, SidecarSpec};
 
 fn spec() -> SidecarSpec {
-    SidecarSpec::new("hana", "0.1.0", env!("CARGO_BIN_EXE_sqlr-driver-hana"))
+    SidecarSpec::new(
+        "hana",
+        env!("CARGO_PKG_VERSION"),
+        env!("CARGO_BIN_EXE_sqlr-driver-hana"),
+    )
 }
 
 fn config(values: &[(&str, &str)]) -> ConnectionConfig {

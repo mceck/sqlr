@@ -21,7 +21,6 @@ mod objects;
 mod operations_panel;
 mod palette;
 mod plan_view;
-mod tasks;
 mod text_menu;
 mod theme;
 mod tree;

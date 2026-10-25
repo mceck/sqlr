@@ -84,7 +84,8 @@ fn section_icon(section: &str) -> &'static str {
         "Data formats" => icons::COLUMN,
         "Connections" => icons::CONNECTION,
         "Agents" => icons::VIEW,
-        "Terminal" => icons::QUERY,
+        "Terminal" => icons::TERMINAL,
+        "Keymap" => icons::KEYBOARD,
         "Drivers" => icons::DATABASE,
         _ => icons::SETTINGS,
     }
@@ -106,11 +107,7 @@ impl PrefsWindow {
             keymap_editor: Default::default(),
             query: String::new(),
             // Overrides start where the per-connection settings are.
-            section: if scope == Level::Global {
-                "Appearance"
-            } else {
-                SECTIONS[0]
-            },
+            section: SECTIONS[0],
             scope,
             error: None,
             agent_query: String::new(),
@@ -170,6 +167,11 @@ impl PrefsWindow {
         }
         let p = theme::palette(ctx);
         let saving = self.saving.is_some();
+        let changed = *live != self.original
+            || self
+                .keymap
+                .as_ref()
+                .is_some_and(|original| original != keymap);
         let response = theme::Dialog::new("preferences", icons::SETTINGS, "Preferences")
             .subtitle("Application, editor and per-connection preferences")
             .width(880.0)
@@ -202,7 +204,25 @@ impl PrefsWindow {
                             for section in SECTIONS {
                                 let active =
                                     self.query.trim().is_empty() && self.section == *section;
-                                if nav_item(ui, section_icon(section), section, active).clicked() {
+                                let row = nav_item(ui, section_icon(section), section, active);
+                                let key = scopes.resolve_key(&self.scope);
+                                let dirty = setting_defs().iter().any(|def| {
+                                    def.section == *section
+                                        && self.original.get(def.id, key).0
+                                            != live.get(def.id, key).0
+                                }) || (*section == "Keymap"
+                                    && self
+                                        .keymap
+                                        .as_ref()
+                                        .is_some_and(|original| original != keymap));
+                                if dirty {
+                                    ui.painter().circle_filled(
+                                        egui::pos2(row.rect.right() - 8.0, row.rect.center().y),
+                                        3.0,
+                                        p.accent,
+                                    );
+                                }
+                                if row.clicked() {
                                     self.section = section;
                                     self.query.clear();
                                 }
@@ -230,13 +250,25 @@ impl PrefsWindow {
                     });
                 });
                 d.footer(|f| {
-                    let blocked = saving.then_some("");
+                    let blocked = if saving {
+                        Some("Saving preferences…")
+                    } else if !changed {
+                        Some("No unsaved changes")
+                    } else {
+                        None
+                    };
                     let save = f.primary("Save", blocked);
-                    let apply = f.button("Apply", !saving);
+                    let apply = f.button("Apply", !saving && changed);
                     if (save || apply) && self.saving.is_none() {
                         self.persist_all(live, config_dir, keymap, save, ctx);
                     }
                     f.cancel();
+                    if f.secondary("Open settings folder", true) {
+                        self.open_settings_folder = true;
+                    }
+                    if changed {
+                        f.left().label("Unsaved changes");
+                    }
                     // After the buttons, so a save started this frame says so at once.
                     if let Some(error) = &self.error {
                         f.left().colored_label(p.error, error);
@@ -262,8 +294,14 @@ impl PrefsWindow {
         scopes: &Scopes,
         agent_rows: &[AgentAccessRow],
     ) {
-        self.scope_picker(ui, scopes);
-        ui.add_space(Spacing::L);
+        if self.section == "Connections"
+            || setting_defs()
+                .iter()
+                .any(|d| d.section == self.section && d.levels == sqlr_core::Levels::All)
+        {
+            self.scope_picker(ui, scopes);
+            ui.add_space(Spacing::L);
+        }
         let searching = !self.query.trim().is_empty();
         if searching {
             let found = search_settings(&self.query);
@@ -302,7 +340,10 @@ impl PrefsWindow {
         // The server's configuration comes first; both blocks are on the same page.
         if self.section == "Agents" {
             if self.scope == Level::Global {
-                theme::section_title(ui, "MCP server");
+                theme::hint(
+                    ui,
+                    "Let AI assistants on this computer query the connections you choose.",
+                );
                 ui.add_space(Spacing::M);
                 let mut editing = Editing {
                     live,
@@ -399,6 +440,9 @@ impl PrefsWindow {
                         egui::Button::new("Copy MCP config"),
                     )
                     .on_hover_text("Contains the bearer token; paste it into the agent")
+                    .on_disabled_hover_text(
+                        "Enable the local agent server and wait until it is running",
+                    )
                     .clicked()
                 {
                     self.copy_mcp_config = true;
@@ -409,6 +453,9 @@ impl PrefsWindow {
                         egui::Button::new("Rotate token"),
                     )
                     .on_hover_text("Revokes the old token and disconnects active agents")
+                    .on_disabled_hover_text(
+                        "Enable the local agent server before rotating its token",
+                    )
                     .clicked()
                 {
                     self.rotate_token = true;
@@ -604,18 +651,6 @@ impl PrefsWindow {
                         &format!("You are running sqlr {}", env!("CARGO_PKG_VERSION")),
                     );
                 });
-            }
-            "Appearance" => {
-                ui.add_space(Spacing::M);
-                if ui
-                    .button("Open settings folder")
-                    .on_hover_text(
-                        "Shows settings.toml, overrides.toml, connections.toml and profiles.toml",
-                    )
-                    .clicked()
-                {
-                    self.open_settings_folder = true;
-                }
             }
             "Drivers" => {
                 ui.add_space(Spacing::M);

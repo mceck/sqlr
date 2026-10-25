@@ -7297,7 +7297,7 @@ checksum = "3a0219bd7d979d58245a4f41f695e1ac9f8befdffadd7f61f1bae9e39abc6620"
 
 [[package]]
 name = "sqlr-app"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "arboard",
@@ -7349,7 +7349,7 @@ dependencies = [
 
 [[package]]
 name = "sqlr-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "jiff",
@@ -7361,7 +7361,7 @@ dependencies = [
 
 [[package]]
 name = "sqlr-driver-duckdb"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "duckdb",
@@ -7375,7 +7375,7 @@ dependencies = [
 
 [[package]]
 name = "sqlr-driver-elastic"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "reqwest",
@@ -7391,7 +7391,7 @@ dependencies = [
 
 [[package]]
 name = "sqlr-driver-hana"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "bigdecimal",
@@ -7408,7 +7408,7 @@ dependencies = [
 
 [[package]]
 name = "sqlr-driver-jdbc"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "sha2 0.11.1",
  "sqlr-driver-sdk",
@@ -7421,7 +7421,7 @@ dependencies = [
 
 [[package]]
 name = "sqlr-driver-mongo"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "bson",
@@ -7435,7 +7435,7 @@ dependencies = [
 
 [[package]]
 name = "sqlr-driver-mssql"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -7452,7 +7452,7 @@ dependencies = [
 
 [[package]]
 name = "sqlr-driver-mysql"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "mysql_async",
@@ -7467,7 +7467,7 @@ dependencies = [
 
 [[package]]
 name = "sqlr-driver-oracle"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "oracle-rs",
@@ -7481,7 +7481,7 @@ dependencies = [
 
 [[package]]
 name = "sqlr-driver-postgres"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -7502,7 +7502,7 @@ dependencies = [
 
 [[package]]
 name = "sqlr-driver-redis"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "redis",
@@ -7514,7 +7514,7 @@ dependencies = [
 
 [[package]]
 name = "sqlr-driver-sdk"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "sqlr-core",
@@ -7526,7 +7526,7 @@ dependencies = [
 
 [[package]]
 name = "sqlr-driver-snowflake"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "reqwest",
@@ -7539,7 +7539,7 @@ dependencies = [
 
 [[package]]
 name = "sqlr-driver-sqlite"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "rusqlite",
@@ -7553,7 +7553,7 @@ dependencies = [
 
 [[package]]
 name = "sqlr-driver-tests"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "sqlr-core",
  "tokio",
@@ -7561,7 +7561,7 @@ dependencies = [
 
 [[package]]
 name = "sqlr-engine"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "calamine",
  "encoding_rs",
@@ -7601,7 +7601,7 @@ dependencies = [
 
 [[package]]
 name = "sqlr-mcp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "axum",
@@ -7632,7 +7632,7 @@ dependencies = [
 
 [[package]]
 name = "sqlr-registry"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "flate2",
  "minisign",
@@ -7658,7 +7658,7 @@ dependencies = [
 
 [[package]]
 name = "sqlr-sidecar"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "parking_lot",
@@ -7678,7 +7678,7 @@ dependencies = [
 
 [[package]]
 name = "sqlr-store"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "directories",
@@ -7701,7 +7701,7 @@ dependencies = [
 
 [[package]]
 name = "sqlr-terminal"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "egui",
  "libc",
@@ -7714,7 +7714,7 @@ dependencies = [
 
 [[package]]
 name = "sqlr-testkit"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "parking_lot",
@@ -7724,7 +7724,7 @@ dependencies = [
 
 [[package]]
 name = "sqlr-ui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "arboard",
  "egui",
@@ -7736,6 +7736,7 @@ dependencies = [
  "memory-stats",
  "nucleo-matcher",
  "ropey",
+ "serde_json",
  "similar",
  "sqlr-core",
  "sqlr-testkit",

@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use sqlr_core::{ErColors, ErLayout, ErModel, StatementClass, er_layout, er_to_svg};
 use sqlr_engine::{Engine, JobId, JobOutcome};
 use sqlr_ui::ToastKind;
-use sqlr_ui::theme;
+use sqlr_ui::theme::{self, Spacing};
 use sqlr_ui::{ColumnsShown, ErAction, ErView, er_canvas, er_measure};
 
 use crate::app::{SqlrApp, tab_mut};
@@ -175,13 +175,36 @@ impl ErDialog {
         }
     }
 
-    /// `false` once the window should close.
+    #[cfg(test)]
     pub fn show(
         &mut self,
         ctx: &egui::Context,
         engine: &Engine,
         answer: Option<&std::path::PathBuf>,
     ) -> bool {
+        egui::Area::new(egui::Id::new("er_test_view")).show(ctx, |ui| {
+            self.show_ui(ui, engine, answer);
+        });
+        true
+    }
+
+    pub(crate) fn close(&mut self, engine: &Engine) {
+        for job in [self.model_job.take(), self.layout_job.take()]
+            .into_iter()
+            .flatten()
+        {
+            engine.cancel_job(job);
+            engine.forget_job(job);
+        }
+    }
+
+    pub fn show_ui(
+        &mut self,
+        ui: &mut egui::Ui,
+        engine: &Engine,
+        answer: Option<&std::path::PathBuf>,
+    ) {
+        let ctx = ui.ctx().clone();
         if self.model_job.is_none() && self.model.is_none() && self.error.is_none() {
             self.model_job = Some(engine.er_model(
                 &self.conn,
@@ -222,7 +245,7 @@ impl ErDialog {
             self.saved = None;
         }
         if let Some((svg, ask)) = &mut self.ask
-            && let Some(done) = ask.poll(ctx)
+            && let Some(done) = ask.poll(&ctx)
         {
             let svg = *svg;
             self.ask = None;
@@ -231,27 +254,24 @@ impl ErDialog {
                 self.export_jobs.push(engine.save_text(path, text));
             }
         }
-        let mut action = None;
-        let title = format!("ER diagram of {}", self.schema);
-        // The canvas zooms on scroll, so the body has a fixed height and never scrolls.
-        let height = (ctx.content_rect().height() - 200.0).clamp(220.0, 640.0);
-        let response = theme::Dialog::new("er_dialog", theme::icons::SCHEMA, &title)
-            .subtitle("Explore tables and relationships · Drag to arrange, scroll to zoom")
-            .width(1000.0)
-            .body_height(height)
-            .show(ctx, |d| {
-                d.body(|ui| {
-                    if let Some(e) = &self.error {
-                        ui.colored_label(theme::palette(ui.ctx()).error, e);
-                    } else if let Some(model) = &self.model {
-                        action = er_canvas(ui, model, &mut self.layout, &mut self.view);
-                    } else {
+        let action = egui::Frame::NONE
+            .inner_margin(Spacing::M)
+            .show(ui, |ui| {
+                ui.set_min_size(ui.available_size());
+                if let Some(e) = &self.error {
+                    ui.colored_label(theme::palette(ui.ctx()).error, e);
+                    None
+                } else if let Some(model) = &self.model {
+                    er_canvas(ui, model, &mut self.layout, &mut self.view)
+                } else {
+                    ui.horizontal(|ui| {
                         ui.spinner();
-                    }
-                });
-                d.footer(|f| f.cancel_as("Close"));
-            });
-        let open = !response.closed;
+                        ui.label("Loading tables and relationships…");
+                    });
+                    None
+                }
+            })
+            .inner;
         match action {
             Some(ErAction::Moved(..)) => self.save(engine),
             Some(ErAction::Relayout) => {
@@ -276,7 +296,6 @@ impl ErDialog {
             Some(ErAction::OpenTable(_)) | None => {}
         }
         let _ = ColumnsShown::All;
-        open
     }
 }
 
@@ -292,14 +311,22 @@ impl SqlrApp {
         if self.engine.session_status(conn).is_none() {
             self.connect(conn);
         }
-        self.er_dialog = Some(ErDialog::new(conn.to_string(), database, schema, tables));
-    }
-
-    pub(crate) fn er_ui(&mut self, ctx: &egui::Context) {
-        if let Some(dialog) = &mut self.er_dialog
-            && !dialog.show(ctx, &self.engine, self.file_answer.as_ref())
-        {
-            self.er_dialog = None;
+        if let Some(path) = self.dock.find_tab_from(|t| {
+            t.er.as_ref().is_some_and(|er| {
+                er.conn == conn
+                    && er.database == database
+                    && er.schema == schema
+                    && er.tables == tables
+            })
+        }) {
+            let _ = self.dock.set_active_tab(path);
+            return;
+        }
+        let title = format!("ER · {schema}");
+        let diagram = ErDialog::new(conn.to_string(), database, schema, tables);
+        let key = self.new_tab(Some(title), Some(conn.into()), "");
+        if let Some(tab) = crate::app::tab_mut(&mut self.dock, key) {
+            tab.er = Some(Box::new(diagram));
         }
     }
 }
@@ -325,6 +352,13 @@ mod tests {
         // No renderer consumes the font atlas upload here.
         out.textures_delta.clear();
         let _ = engine;
+    }
+
+    #[test]
+    fn er_opens_as_a_document_tab() {
+        let (mut app, _dir) = crate::palette::tests::bare_app();
+        app.open_er_diagram("missing", None, "main".into(), None);
+        assert_eq!(app.tab_titles(), vec!["ER · main"]);
     }
 
     #[test]

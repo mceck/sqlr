@@ -170,7 +170,6 @@ impl SqlrApp {
                 self.toggle_soft_wrap(ui.ctx());
             }
             ui.separator();
-            command_item(ui, self, "Tasks", C::ShowTasks);
         });
         menu::bar_menu(ui, "Query", |ui| {
             command_item(ui, self, "Run statement", C::Run);

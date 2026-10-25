@@ -94,8 +94,7 @@ fn estimated_plans_explain_how_to_get_measured_times() {
         false,
         false,
     );
-    h.get_by_label("Execution not measured");
-    h.get_by_label("Run Explain Analyze to measure execution time in ms.");
+    h.get_by_label("Run Explain Analyze for real timings.");
     assert!(h.query_by_label_contains("self 0").is_none());
 }
 
@@ -199,4 +198,20 @@ fn an_estimated_plan_says_so_and_lists_the_note() {
     h.get_by_label("1 operator");
     // Without timings there is no hot path worth drawing for a single node.
     assert!(h.query_by_label("SELF COST").is_none());
+}
+
+#[test]
+fn estimated_plan_offers_a_measured_run() {
+    let mut h = harness_with(
+        parse_pg_json(ESTIMATED).unwrap(),
+        "SELECT * FROM t",
+        false,
+        false,
+    );
+    h.get_by_label("Explain Analyze").click();
+    h.run_steps(2);
+    assert_eq!(
+        format!("{:?}", h.state().actions.last().unwrap()),
+        "Analyze"
+    );
 }

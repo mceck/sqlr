@@ -75,6 +75,7 @@ impl SqlrApp {
                     id: id.to_string(),
                     name: database.name.to_string(),
                     detail: detail.to_string(),
+                    install: !installed,
                     icon: if matches!(database.status, KnownStatus::Compatible { .. }) {
                         database.id
                     } else {
@@ -112,6 +113,7 @@ impl SqlrApp {
                     id: id.clone(),
                     name: cfg.name.clone(),
                     detail,
+                    driver: cfg.driver.clone(),
                     color: self
                         .connection_tint(id)
                         .map(|[r, g, b]| Color32::from_rgb(r, g, b)),

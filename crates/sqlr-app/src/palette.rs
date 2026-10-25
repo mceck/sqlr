@@ -30,13 +30,6 @@ pub enum PaletteTarget {
         name: String,
         kind: RelationKind,
     },
-    /// Open the relation in the object editor.
-    EditObject {
-        conn: String,
-        schema: String,
-        name: String,
-        kind: RelationKind,
-    },
     /// Open a collection or index (document connections) in a document tab.
     Documents {
         conn: String,
@@ -80,7 +73,6 @@ pub enum AppCommand {
     OpenAdmin(String, sqlr_ui::AdminPanel),
     ExportResult,
     TransferData,
-    ShowTasks,
     ShowOperations,
     CompareSchemas,
     Explain,
@@ -237,13 +229,25 @@ impl SqlrApp {
                     self.engine.search_history(HistoryChannel::Palette, q);
                 }
             }
-            PaletteOutput::Chosen(i) => {
+            PaletteOutput::Chosen(i) | PaletteOutput::EditChosen(i) => {
                 // Back to the editor; a command that opens a tab focuses that one instead.
                 if let Some(tab) = self.active_tab() {
                     tab.editor.request_focus();
                 }
                 if let Some(target) = self.palette.targets.get(i).cloned() {
-                    self.palette_choose(target, ctx);
+                    if matches!(output, PaletteOutput::EditChosen(_))
+                        && let PaletteTarget::Object {
+                            conn,
+                            schema,
+                            name,
+                            kind,
+                        } = &target
+                        && self.editing_for(conn).is_some()
+                    {
+                        self.open_object(conn, &relation_node(schema.clone(), name.clone(), *kind));
+                    } else {
+                        self.palette_choose(target, ctx);
+                    }
                 }
             }
             PaletteOutput::Closed => {
@@ -315,8 +319,6 @@ impl SqlrApp {
                     let Some(cfg) = self.connection(&conn) else {
                         continue;
                     };
-                    // Drivers with object editors open relations in them too.
-                    let editable = self.editing_for(&conn).is_some();
                     for state in catalog.schema.values() {
                         let LoadState::Ready(schema) = state else {
                             continue;
@@ -335,20 +337,6 @@ impl SqlrApp {
                                     kind: r.kind,
                                 },
                             );
-                            if editable {
-                                push(
-                                    format!("Edit {}.{}", schema.schema, r.name),
-                                    format!("{} · {kind} · object editor", cfg.name),
-                                    PaletteGroup::Object,
-                                    true,
-                                    PaletteTarget::EditObject {
-                                        conn: conn.clone(),
-                                        schema: schema.schema.clone(),
-                                        name: r.name.clone(),
-                                        kind: r.kind,
-                                    },
-                                );
-                            }
                         }
                     }
                 }
@@ -403,7 +391,6 @@ impl SqlrApp {
                     command("Export result…", "", AppCommand::ExportResult),
                     command("Transfer data…", "", AppCommand::TransferData),
                     command("Operations", "", AppCommand::ShowOperations),
-                    command("Tasks", "", AppCommand::ShowTasks),
                     command("Compare schemas…", "", AppCommand::CompareSchemas),
                 ];
                 // Object editors: create on the active tab's connection, edit the selection.
@@ -473,6 +460,13 @@ impl SqlrApp {
                     });
                 }
                 for (label, detail, c) in commands {
+                    if matches!(
+                        c,
+                        AppCommand::Run | AppCommand::RunScript | AppCommand::Stop
+                    ) && !active_conn.is_some_and(|conn| self.is_live(conn))
+                    {
+                        continue;
+                    }
                     let shortcut = c.action_id().and_then(|a| self.keymap.keymap.label(a, mac));
                     command_meta.push((c.icon(), shortcut));
                     push(
@@ -519,6 +513,15 @@ impl SqlrApp {
             item.icon = Some(icon);
             item.shortcut = shortcut;
         }
+        if mode == PaletteMode::Objects {
+            let mut pairs: Vec<_> = items.into_iter().zip(targets).collect();
+            pairs.sort_by(|a, b| {
+                a.0.detail
+                    .cmp(&b.0.detail)
+                    .then_with(|| a.0.label.cmp(&b.0.label))
+            });
+            return pairs.into_iter().unzip();
+        }
         (items, targets)
     }
 
@@ -530,15 +533,6 @@ impl SqlrApp {
                 name,
                 kind,
             } => self.open_relation(&conn, schema, name, kind),
-            PaletteTarget::EditObject {
-                conn,
-                schema,
-                name,
-                kind,
-            } => {
-                let node = relation_node(schema, name, kind);
-                self.open_object(&conn, &node);
-            }
             PaletteTarget::Documents { conn, node } => self.open_doc_node(&conn, &node),
             PaletteTarget::Command(c) => self.run_command(c, ctx),
             PaletteTarget::Snippet(sql) => self.insert_into_active(&sql),
@@ -585,7 +579,6 @@ impl SqlrApp {
             AppCommand::DriverManager => self.open_driver_manager(),
             AppCommand::TransferData => self.open_transfer_wizard(None),
             AppCommand::ShowOperations => self.show_operations = true,
-            AppCommand::ShowTasks => self.show_tasks_pane(),
             AppCommand::CompareSchemas => self.open_compare(None, None, None),
             AppCommand::Explain => self.explain_active(false),
             AppCommand::ExplainAnalyze => self.explain_active(true),
@@ -746,6 +739,17 @@ pub(crate) mod tests {
         (SqlrApp::new(deps, &egui::Context::default()), dir)
     }
 
+    #[test]
+    fn connectionless_palette_does_not_offer_query_execution() {
+        let (app, _dir) = bare_app();
+        let (items, _) = app.palette_items(PaletteMode::Commands, None, true);
+        assert!(
+            items
+                .iter()
+                .all(|i| !matches!(i.label.as_str(), "Run statement" | "Run script" | "Stop"))
+        );
+    }
+
     fn hint(app: &SqlrApp, label: &str, mac: bool) -> Option<String> {
         let (items, _) = app.palette_items(PaletteMode::Commands, None, mac);
         let item = items.iter().find(|i| i.label == label).expect(label);
@@ -757,7 +761,10 @@ pub(crate) mod tests {
         let (mut app, _dir) = bare_app();
         assert_eq!(hint(&app, "Explain", true).as_deref(), Some("⌥⌘E"));
         assert_eq!(hint(&app, "Explain", false).as_deref(), Some("Ctrl+Alt+E"));
-        assert_eq!(hint(&app, "Stop", true).as_deref(), Some("Esc"));
+        assert_eq!(
+            app.keymap.keymap.label(ActionId::Stop, true).as_deref(),
+            Some("Esc")
+        );
         assert_eq!(hint(&app, "Toggle terminal", true).as_deref(), Some("⌃`"));
         assert_eq!(
             hint(&app, "Toggle terminal", false).as_deref(),
@@ -783,7 +790,7 @@ pub(crate) mod tests {
         let (app, _dir) = bare_app();
         let (items, _) = app.palette_items(PaletteMode::Commands, None, true);
         let icon = |label: &str| items.iter().find(|i| i.label == label).unwrap().icon;
-        assert_eq!(icon("Run statement"), Some(icons::RUN));
+        assert_eq!(super::AppCommand::Run.icon(), icons::RUN);
         assert_eq!(icon("Commit"), Some(icons::COMMIT));
         assert_eq!(icon("Settings…"), Some(icons::SETTINGS));
         let distinct: std::collections::HashSet<_> = items.iter().map(|i| i.icon).collect();

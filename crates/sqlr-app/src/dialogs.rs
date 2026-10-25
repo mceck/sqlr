@@ -515,6 +515,17 @@ impl ConnDialog {
                     ui.add_space(Spacing::S);
                     theme::hint(ui, "No saved data sources yet.");
                 }
+                if source_row(
+                    ui,
+                    "New connection",
+                    &self.driver,
+                    self.editing.is_none(),
+                    None,
+                )
+                .clicked()
+                {
+                    *new_clicked = true;
+                }
                 for cfg in connections {
                     let selected = self.editing.as_deref() == Some(cfg.id.as_str());
                     let tint = cfg
@@ -541,6 +552,11 @@ impl ConnDialog {
             match pick.poll() {
                 Some(chosen) => {
                     if let Some(path) = chosen {
+                        if self.form.name.trim().is_empty() && pick.key == "path" {
+                            self.form.name = Path::new(&path)
+                                .file_stem()
+                                .map_or(String::new(), |s| s.to_string_lossy().into_owned());
+                        }
                         self.form.values.insert(pick.key.clone(), path);
                     }
                     self.pick = None;
@@ -602,36 +618,31 @@ impl ConnDialog {
                                 let error_room = if self.error.is_some() { 28.0 } else { 0.0 };
                                 let height = (ui.available_height() - error_room).max(80.0);
                                 theme::scroll_body(ui, "conn_dialog_form", height, height, |ui| {
-                                    connection_identity(ui, &mut self.form);
                                     self.driver_row(ui, &manifests);
-                                    self.profile_row(ui, profiles);
-                                    Self::agent_access_row(ui, &mut self.form.agent_access);
                                     ui.add_space(Spacing::M);
-                                    ui.horizontal(|ui| {
-                                        let label_width = 96.0;
-                                        ui.allocate_ui_with_layout(
-                                            vec2(label_width, ui.spacing().interact_size.y),
-                                            Layout::left_to_right(Align::Center),
-                                            |ui| {
-                                                ui.set_min_width(label_width);
-                                                ui.label("");
-                                            },
-                                        );
-                                        ui.checkbox(
-                                            &mut self.form.save_secrets,
-                                            "Save password securely on this device",
-                                        )
-                                        .on_hover_text(
-                                            "Otherwise sqlr asks for the secrets when it connects",
-                                        );
-                                    });
-                                    ui.add_space(Spacing::M);
-                                    theme::hairline(ui);
-                                    ui.add_space(Spacing::S);
                                     let body = connection_form_body(ui, &mut self.form, manifest);
-                                    if body != FormAction::None {
-                                        action = body;
+                                    if body != FormAction::None { action = body; }
+                                    ui.add_space(Spacing::L);
+                                    theme::section_title(ui, "Connection details");
+                                    ui.add_space(Spacing::S);
+                                    connection_identity(ui, &mut self.form);
+                                    if manifest.fields.iter().any(|f| f.secret && (f.group != "SSH" || self.form.values.get("ssh_enabled").is_some_and(|v| v == "true"))) {
+                                        ui.checkbox(&mut self.form.save_secrets, "Save password securely on this device")
+                                            .on_hover_text("Otherwise sqlr asks for the password when it connects");
                                     }
+                                    let production = self.form.name.to_lowercase().contains("prod")
+                                        || self.form.values.get("host").is_some_and(|h| h.to_lowercase().contains("prod"));
+                                    if production && self.form.profile.as_deref() != Some(ConnectionProfile::PRODUCTION) {
+                                        ui.horizontal_wrapped(|ui| {
+                                            ui.label("This looks like a production connection.");
+                                            if ui.link("Mark as Production").clicked() { self.form.profile = Some(ConnectionProfile::PRODUCTION.into()); }
+                                        });
+                                        theme::hint(ui, "The Production profile asks before writes and uses a red connection color.");
+                                    }
+                                    egui::CollapsingHeader::new("Advanced").id_salt("connection_advanced").show(ui, |ui| {
+                                        self.profile_row(ui, profiles);
+                                        Self::agent_access_row(ui, &mut self.form.agent_access);
+                                    });
                                     ui.add_space(Spacing::M);
                                 });
                                 if let Some(message) = &self.error {
@@ -1292,6 +1303,35 @@ mod tests {
     use sqlr_testkit::{FakeDriver, FakeScript};
 
     use super::*;
+
+    #[test]
+    fn sqlite_setup_starts_with_the_file_and_hides_password_controls() {
+        use egui_kittest::kittest::Queryable;
+        let driver = sqlr_driver_sqlite::SqliteDriver::new();
+        let dialog = ConnDialog::create(driver.manifest());
+        let mut drivers = DriverRegistry::default();
+        drivers.register(driver);
+        let engine = Engine::new(drivers, Arc::new(|| {}));
+        let mut h = egui_kittest::Harness::builder()
+            .with_size((1200.0, 900.0))
+            .build_ui_state(
+                |ui, dialog: &mut ConnDialog| {
+                    dialog.show(ui.ctx(), &engine, &[], &[]);
+                },
+                dialog,
+            );
+        h.run_steps(3);
+        assert!(
+            h.query_by_label("Save password securely on this device")
+                .is_none()
+        );
+        let file = h
+            .get_all_by_label_contains("Database file")
+            .next()
+            .unwrap()
+            .rect();
+        assert!(file.top() < h.get_by_label("Name").rect().top());
+    }
 
     #[test]
     fn duplicate_names_are_free_and_case_insensitive() {

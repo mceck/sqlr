@@ -32,6 +32,7 @@ fn cards() -> Vec<DriverCard> {
         name: name.to_string(),
         detail: detail.to_string(),
         icon,
+        install: *id == "clickhouse",
     })
     .collect()
 }
@@ -76,6 +77,7 @@ fn welcome_actions() {
             id: "c1".into(),
             name: "Production orders".into(),
             detail: "PostgreSQL · db.example".into(),
+            driver: "postgres".into(),
             color: Some(Color32::from_rgb(200, 60, 60)),
             when: "5 min ago".into(),
         },
@@ -83,6 +85,7 @@ fn welcome_actions() {
             id: "c2".into(),
             name: "Local".into(),
             detail: "SQLite · app.db".into(),
+            driver: "sqlite".into(),
             color: None,
             when: "yesterday".into(),
         },
@@ -120,7 +123,8 @@ fn welcome_actions() {
 #[test]
 fn welcome_without_recent_and_in_a_small_window() {
     let mut h = harness(Vec::new(), vec2(520.0, 420.0));
-    h.get_by_label("No recent connections yet");
+    assert!(h.query_by_label("Recent connections").is_none());
+    h.get_by_label("Create a connection");
     // Every card stays inside the window.
     for label in ["PostgreSQL", "MySQL", "SQLite", "More databases…"] {
         let rect = h.get_by_label(label).rect();
@@ -140,10 +144,10 @@ fn database_grid_has_two_balanced_rows_on_desktop() {
         .map(|card| h.get_by_label(&card.name).rect())
         .collect();
     let top = rects[0].top();
-    let bottom = rects[4].top();
+    let bottom = rects[5].top();
     assert!(bottom > top);
     for (index, rect) in rects.iter().enumerate() {
-        let expected = if index < 4 { top } else { bottom };
+        let expected = if index < 5 { top } else { bottom };
         assert!((rect.top() - expected).abs() < 1.0, "{index}: {rect:?}");
         assert!(rect.left() >= 0.0 && rect.right() <= 1100.0);
     }
@@ -173,4 +177,27 @@ fn welcome_actions_stay_within_a_narrow_viewport() {
             "{label}: {rect:?}"
         );
     }
+}
+
+#[test]
+fn returning_users_can_reopen_recent_connections_before_database_tiles() {
+    let mut h = harness(
+        vec![RecentItem {
+            id: "recent".into(),
+            name: "My database".into(),
+            detail: "SQLite".into(),
+            driver: "sqlite".into(),
+            color: None,
+            when: "just now".into(),
+        }],
+        vec2(1000.0, 680.0),
+    );
+    assert!(h.get_by_label("My database").rect().top() < h.get_by_label("PostgreSQL").rect().top());
+    assert_eq!(
+        click(&mut h, "My database"),
+        WelcomeAction::OpenRecent("recent".into())
+    );
+    let more = h.get_by_label("More databases…").rect();
+    let last = h.get_by_label("ClickHouse").rect();
+    assert!((more.top() - last.top()).abs() < 1.0 && more.left() > last.left());
 }

@@ -195,7 +195,6 @@ pub trait AgentHost: Send + Sync {
     async fn keymap(&self) -> ToolResult<Vec<KeymapEntry>>;
     async fn set_keymap(&self, action: &str, chords: Option<Vec<String>>) -> ToolResult<()>;
     async fn tasks(&self) -> ToolResult<Vec<SavedTask>>;
-    async fn save_task(&self, task: SavedTask) -> ToolResult<()>;
     async fn write_connection(&self, write: ConnectionWrite) -> ToolResult<()>;
     async fn folder(&self, op: FolderOp) -> ToolResult<()>;
     /// Deletes a configuration target after the approval the caller obtained.

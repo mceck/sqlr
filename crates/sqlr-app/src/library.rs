@@ -77,7 +77,16 @@ fn snippet_from(draft: SnippetDraft) -> Snippet {
 
 impl SqlrApp {
     pub(crate) fn history_ui(&mut self, ui: &mut egui::Ui) {
-        theme::section_title(ui, "Query history");
+        ui.horizontal(|ui| {
+            theme::section_title(ui, "Query history");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if theme::icons::icon_button(ui, theme::icons::CLOSE, None, "Close History")
+                    .clicked()
+                {
+                    self.show_history = false;
+                }
+            });
+        });
         theme::hairline(ui);
         ui.add_space(theme::Spacing::S);
         if let Some(view) = self.engine.history(HistoryChannel::Panel) {
@@ -177,6 +186,7 @@ impl SqlrApp {
     /// Opens the snippet dialog on the active editor's selection, or its whole text.
     pub(crate) fn save_as_snippet(&mut self) {
         let Some(key) = self.active_key() else {
+            self.library.draft = Some(SnippetDraft::default());
             return;
         };
         self.save_as_snippet_for(key);
@@ -195,6 +205,7 @@ impl SqlrApp {
             selected
         };
         if sql.trim().is_empty() {
+            self.library.draft = Some(SnippetDraft::default());
             return;
         }
         self.library.draft = Some(SnippetDraft {

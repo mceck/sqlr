@@ -180,7 +180,7 @@ pub fn empty_panel(ui: &mut egui::Ui, icon: &str, title: &str, description: &str
 /// The default height of a query editor above its results: about a fifth of the tab, so the
 /// result grid gets the larger share. Bounded so both panes stay usable on any window.
 pub fn editor_split_height(available: f32) -> f32 {
-    (available * 0.2).clamp(80.0, 180.0)
+    (available * 0.27).clamp(128.0, 240.0)
 }
 
 /// A muted, smaller line: hints, descriptions, empty states.
@@ -273,7 +273,7 @@ mod tests {
         for available in [400.0, 700.0, 1000.0] {
             let editor = editor_split_height(available);
             assert!(
-                editor <= available * 0.25,
+                editor <= available * 0.35,
                 "editor {editor} of {available}: the grid must get the larger share"
             );
             assert!(

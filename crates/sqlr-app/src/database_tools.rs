@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use egui::{ComboBox, DragValue, RichText, TextEdit};
-use sqlr_core::{DumpFormat, DumpOptions, NodePath, RestoreOptions, SavedTask, TaskSpec};
+use sqlr_core::{DumpFormat, DumpOptions, NodePath, RestoreOptions};
 use sqlr_engine::{Engine, JobId, JobOutcome, JobProgress};
 use sqlr_ui::theme::{self, Spacing};
 
@@ -45,8 +45,7 @@ impl DumpKind {
 
     fn format_label(self, format: DumpFormat) -> &'static str {
         match format {
-            DumpFormat::Plain if self == DumpKind::Sqlite => "SQL script",
-            DumpFormat::Plain => "Plain SQL",
+            DumpFormat::Plain => "SQL script",
             DumpFormat::Custom => "Custom archive",
             DumpFormat::Tar => "Tar archive",
             DumpFormat::Directory => "Directory (parallel)",
@@ -148,7 +147,7 @@ impl ToolDialog {
         }
     }
 
-    /// The shared footer: "Save as task" on the left, the progress and a stop button while
+    /// The shared footer: progress and a stop button while
     /// the job runs, otherwise Cancel and the `verb` primary. `true` when it was clicked.
     fn footer(
         &mut self,
@@ -156,11 +155,8 @@ impl ToolDialog {
         engine: &Engine,
         verb: &str,
         blocked: Option<&str>,
-        save_requested: &mut bool,
+        danger: bool,
     ) -> bool {
-        if f.secondary("Save as task", blocked.is_none() && !self.running()) {
-            *save_requested = true;
-        }
         if let Some(id) = self.job {
             f.left().spinner();
             f.left().label(self.progress_text());
@@ -169,7 +165,11 @@ impl ToolDialog {
             }
             return false;
         }
-        let run = f.primary(verb, blocked);
+        let run = if danger {
+            f.danger(verb, blocked)
+        } else {
+            f.primary(verb, blocked)
+        };
         f.cancel_as(if self.outcome.is_some() {
             "Close"
         } else {
@@ -210,14 +210,71 @@ impl ToolDialog {
     }
 }
 
+fn contents(ui: &mut egui::Ui, schema: &mut bool, data: &mut bool) {
+    let mut choice = if *schema {
+        1
+    } else if *data {
+        2
+    } else {
+        0
+    };
+    ui.horizontal(|ui| {
+        ui.label("Contents");
+        for (value, label) in [(0, "Everything"), (1, "Schema only"), (2, "Data only")] {
+            if ui.radio_value(&mut choice, value, label).changed() {
+                *schema = choice == 1;
+                *data = choice == 2;
+            }
+        }
+    });
+}
+
+fn confirm_tool(ctx: &egui::Context, state: &ToolDialog, restore: bool) -> Option<bool> {
+    let title = if restore {
+        "Confirm restore"
+    } else {
+        "Confirm backup with DROP statements"
+    };
+    let primary = if restore {
+        "Restore now"
+    } else {
+        "Create backup"
+    };
+    let spec = crate::confirm::ConfirmSpec::new(
+        egui::Id::new(("confirm_database_tool", restore)),
+        theme::icons::WARNING,
+        title,
+        primary,
+    );
+    crate::confirm::confirm_modal(
+        ctx,
+        spec,
+        |ui| {
+            ui.label(format!(
+                "Database: {} on {}",
+                state.database, state.conn_name
+            ));
+            ui.label(format!("File: {}", state.path));
+            ui.colored_label(
+                theme::palette(ui.ctx()).error,
+                if restore && state.kind == DumpKind::Sqlite {
+                    "The current database file will be replaced. Existing data will be lost."
+                } else if restore {
+                    "Existing database objects will be dropped before restoring the backup."
+                } else {
+                    "This backup includes DROP statements that delete objects when restored."
+                },
+            );
+        },
+        |_| {},
+    )
+}
+
 /// The "Dump database…" dialog.
 pub(crate) struct DumpDialog {
     state: ToolDialog,
     options: DumpOptions,
-    /// "Save as task" was clicked.
-    save_requested: bool,
-    /// The saved task being edited: its id and name.
-    editing: Option<(String, String)>,
+    confirming: bool,
 }
 
 impl DumpDialog {
@@ -230,44 +287,8 @@ impl DumpDialog {
                 format,
                 ..Default::default()
             },
-            save_requested: false,
-            editing: None,
+            confirming: false,
         })
-    }
-
-    /// The dialog reopened on a saved dump task.
-    pub fn from_task(app: &SqlrApp, task: &SavedTask) -> Option<Self> {
-        let TaskSpec::Dump {
-            conn,
-            database,
-            options,
-            out,
-        } = &task.spec
-        else {
-            return None;
-        };
-        let cfg = app.connection(conn)?;
-        let mut dialog = Self::new(conn, &cfg.name, database, &cfg.driver)?;
-        dialog.options = options.clone();
-        dialog.state.path = out.display().to_string();
-        dialog.editing = Some((task.id.clone(), task.name.clone()));
-        Some(dialog)
-    }
-
-    /// The task to save, once "Save as task" was clicked.
-    pub fn take_task(&mut self) -> Option<(TaskSpec, Option<(String, String)>)> {
-        if !std::mem::take(&mut self.save_requested) {
-            return None;
-        }
-        Some((
-            TaskSpec::Dump {
-                conn: self.state.conn.clone(),
-                database: self.state.database.clone(),
-                options: self.options.clone(),
-                out: PathBuf::from(self.state.path.trim()),
-            },
-            self.editing.clone(),
-        ))
     }
 
     /// Returns `false` once the dialog should close.
@@ -300,12 +321,25 @@ impl DumpDialog {
                 d.footer(|f| {
                     if self
                         .state
-                        .footer(f, engine, "Dump", blocked, &mut self.save_requested)
+                        .footer(f, engine, "Dump", blocked, self.options.clean)
                     {
-                        self.start(engine);
+                        if self.options.clean {
+                            self.confirming = true;
+                        } else {
+                            self.start(engine);
+                        }
                     }
                 });
             });
+        if self.confirming {
+            let answer = confirm_tool(ctx, &self.state, false);
+            if let Some(confirmed) = answer {
+                self.confirming = false;
+                if confirmed {
+                    self.start(engine);
+                }
+            }
+        }
         if response.closed {
             self.state.close(engine);
         }
@@ -328,8 +362,7 @@ impl DumpDialog {
     fn body(&mut self, ui: &mut egui::Ui, answer: Option<&PathBuf>) {
         ui.label(
             RichText::new(
-                "Dumps the whole database with its native tool. The password is passed to \
-                 the tool out of the command line.",
+                if self.state.kind == DumpKind::Sqlite { "Back up the SQLite database to a SQL script or a consistent copy of its file." } else { "Back up the database with its native tool. Passwords are never included in command-line arguments." },
             )
             .small()
             .color(theme::palette(ui.ctx()).text_muted),
@@ -391,10 +424,18 @@ impl DumpDialog {
 
     fn postgres_options(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
-            ui.checkbox(&mut self.options.schema_only, "Schema only");
-            ui.checkbox(&mut self.options.data_only, "Data only");
-            ui.checkbox(&mut self.options.clean, "Add DROP statements");
-            ui.checkbox(&mut self.options.if_exists, "Use IF EXISTS");
+            contents(
+                ui,
+                &mut self.options.schema_only,
+                &mut self.options.data_only,
+            );
+            ui.checkbox(
+                &mut self.options.clean,
+                RichText::new("Add DROP statements").color(theme::palette(ui.ctx()).error),
+            );
+            ui.add_enabled_ui(self.options.clean, |ui| {
+                ui.checkbox(&mut self.options.if_exists, "Use IF EXISTS");
+            });
         });
         ui.horizontal_wrapped(|ui| {
             ui.checkbox(&mut self.options.create, "Create the database");
@@ -405,7 +446,11 @@ impl DumpDialog {
             ui.label("Encoding");
             let mut encoding = self.options.encoding.clone().unwrap_or_default();
             if ui
-                .add(TextEdit::singleline(&mut encoding).desired_width(120.0))
+                .add(
+                    TextEdit::singleline(&mut encoding)
+                        .hint_text("Server default (UTF-8)")
+                        .desired_width(200.0),
+                )
                 .changed()
             {
                 self.options.encoding = (!encoding.trim().is_empty()).then_some(encoding);
@@ -437,16 +482,26 @@ impl DumpDialog {
 
     fn mysql_options(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
-            ui.checkbox(&mut self.options.schema_only, "Schema only");
-            ui.checkbox(&mut self.options.data_only, "Data only");
-            ui.checkbox(&mut self.options.clean, "Add DROP statements");
+            contents(
+                ui,
+                &mut self.options.schema_only,
+                &mut self.options.data_only,
+            );
+            ui.checkbox(
+                &mut self.options.clean,
+                RichText::new("Add DROP statements").color(theme::palette(ui.ctx()).error),
+            );
         });
         ui.horizontal_wrapped(|ui| {
-            ui.checkbox(&mut self.options.create, "Include CREATE DATABASE");
-            ui.label("Character set");
+            ui.checkbox(&mut self.options.create, "Create the database");
+            ui.label("Encoding");
             let mut encoding = self.options.encoding.clone().unwrap_or_default();
             if ui
-                .add(TextEdit::singleline(&mut encoding).desired_width(120.0))
+                .add(
+                    TextEdit::singleline(&mut encoding)
+                        .hint_text("Server default (UTF-8)")
+                        .desired_width(200.0),
+                )
                 .changed()
             {
                 self.options.encoding = (!encoding.trim().is_empty()).then_some(encoding);
@@ -458,7 +513,7 @@ impl DumpDialog {
             ui.checkbox(&mut self.options.mysql_triggers, "Triggers");
             ui.checkbox(
                 &mut self.options.mysql_single_transaction,
-                "Single transaction (InnoDB snapshot)",
+                "Consistent snapshot (transactional tables)",
             );
         });
     }
@@ -509,10 +564,7 @@ impl DumpDialog {
 pub(crate) struct RestoreDialog {
     state: ToolDialog,
     options: RestoreOptions,
-    /// "Save as task" was clicked.
-    save_requested: bool,
-    /// The saved task being edited: its id and name.
-    editing: Option<(String, String)>,
+    confirming: bool,
 }
 
 impl RestoreDialog {
@@ -521,44 +573,8 @@ impl RestoreDialog {
         Some(Self {
             state: ToolDialog::new(conn, conn_name, database, kind),
             options: RestoreOptions::default(),
-            save_requested: false,
-            editing: None,
+            confirming: false,
         })
-    }
-
-    /// The dialog reopened on a saved restore task.
-    pub fn from_task(app: &SqlrApp, task: &SavedTask) -> Option<Self> {
-        let TaskSpec::Restore {
-            conn,
-            database,
-            options,
-            input,
-        } = &task.spec
-        else {
-            return None;
-        };
-        let cfg = app.connection(conn)?;
-        let mut dialog = Self::new(conn, &cfg.name, database, &cfg.driver)?;
-        dialog.options = options.clone();
-        dialog.state.path = input.display().to_string();
-        dialog.editing = Some((task.id.clone(), task.name.clone()));
-        Some(dialog)
-    }
-
-    /// The task to save, once "Save as task" was clicked.
-    pub fn take_task(&mut self) -> Option<(TaskSpec, Option<(String, String)>)> {
-        if !std::mem::take(&mut self.save_requested) {
-            return None;
-        }
-        Some((
-            TaskSpec::Restore {
-                conn: self.state.conn.clone(),
-                database: self.state.database.clone(),
-                options: self.options.clone(),
-                input: PathBuf::from(self.state.path.trim()),
-            },
-            self.editing.clone(),
-        ))
     }
 
     pub fn show(&mut self, ctx: &egui::Context, engine: &Engine, answer: Option<&PathBuf>) -> bool {
@@ -588,14 +604,30 @@ impl RestoreDialog {
                     self.options.schema_only && self.options.data_only,
                 );
                 d.footer(|f| {
-                    if self
-                        .state
-                        .footer(f, engine, "Restore", blocked, &mut self.save_requested)
-                    {
-                        self.start(engine);
+                    if self.state.footer(
+                        f,
+                        engine,
+                        "Restore",
+                        blocked,
+                        self.options.clean || self.state.kind == DumpKind::Sqlite,
+                    ) {
+                        if self.options.clean || self.state.kind == DumpKind::Sqlite {
+                            self.confirming = true;
+                        } else {
+                            self.start(engine);
+                        }
                     }
                 });
             });
+        if self.confirming {
+            let answer = confirm_tool(ctx, &self.state, true);
+            if let Some(confirmed) = answer {
+                self.confirming = false;
+                if confirmed {
+                    self.start(engine);
+                }
+            }
+        }
         if response.closed {
             self.state.close(engine);
         }
@@ -655,10 +687,23 @@ impl RestoreDialog {
                 .color(theme::palette(ui.ctx()).text_muted),
             );
         }
+        let formats = match self.state.kind {
+            DumpKind::Postgres => {
+                "Accepts .sql, .dump, .tar and directory archives; format is detected automatically."
+            }
+            DumpKind::Mysql => "Accepts SQL scripts (.sql).",
+            DumpKind::Sqlite => {
+                "Accepts SQL scripts (.sql) and SQLite database files (.db, .sqlite, .sqlite3)."
+            }
+        };
+        theme::hint(ui, formats);
+        if self.state.kind == DumpKind::Sqlite {
+            ui.colored_label(theme::palette(ui.ctx()).error, "Restoring a database file replaces the entire connected database. You will confirm before it runs.");
+        }
         ui.add_space(Spacing::L);
-        theme::section_title(ui, "Restore options");
-        ui.add_space(Spacing::S);
         if self.state.kind == DumpKind::Postgres {
+            theme::section_title(ui, "Restore options");
+            ui.add_space(Spacing::S);
             if self.is_plain_sql() {
                 self.psql_options(ui);
             } else {
@@ -695,13 +740,21 @@ impl RestoreDialog {
 
     fn postgres_options(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
-            ui.checkbox(&mut self.options.clean, "Clean (drop before restore)");
-            ui.checkbox(&mut self.options.if_exists, "Use IF EXISTS");
+            ui.checkbox(
+                &mut self.options.clean,
+                RichText::new("Clean (drop before restore)").color(theme::palette(ui.ctx()).error),
+            );
+            ui.add_enabled_ui(self.options.clean, |ui| {
+                ui.checkbox(&mut self.options.if_exists, "Use IF EXISTS");
+            });
             ui.checkbox(&mut self.options.create, "Create the database");
         });
         ui.horizontal_wrapped(|ui| {
-            ui.checkbox(&mut self.options.schema_only, "Schema only");
-            ui.checkbox(&mut self.options.data_only, "Data only");
+            contents(
+                ui,
+                &mut self.options.schema_only,
+                &mut self.options.data_only,
+            );
             ui.checkbox(&mut self.options.no_owner, "No owner");
             ui.checkbox(&mut self.options.no_privileges, "No privileges");
         });
@@ -808,15 +861,6 @@ impl SqlrApp {
         {
             self.restore_dialog = None;
         }
-        let tasks = [
-            self.dump_dialog.as_mut().and_then(DumpDialog::take_task),
-            self.restore_dialog
-                .as_mut()
-                .and_then(RestoreDialog::take_task),
-        ];
-        for (spec, editing) in tasks.into_iter().flatten() {
-            self.save_task_dialog(spec, editing);
-        }
     }
 }
 
@@ -844,34 +888,65 @@ mod tests {
     }
 
     #[test]
-    fn a_restore_can_be_saved_as_a_task() {
+    fn a_clean_restore_waits_for_confirmation_before_starting() {
         use egui_kittest::kittest::Queryable;
-
-        let engine = engine();
-        let mut dialog = RestoreDialog::new("c", "conn", "app", "postgres").unwrap();
-        dialog.state.path = "/tmp/in.sql".into();
-        let mut harness = egui_kittest::Harness::builder()
-            .with_size((900.0, 700.0))
+        let engine = Engine::new(
+            sqlr_engine::DriverRegistry::default(),
+            std::sync::Arc::new(|| {}),
+        );
+        let mut dialog = RestoreDialog::new("c", "Production", "orders", "postgres").unwrap();
+        dialog.state.path = "/tmp/orders.dump".into();
+        dialog.options.clean = true;
+        let mut h = egui_kittest::Harness::builder()
+            .with_size((1100.0, 900.0))
             .build_ui_state(
                 |ui, dialog: &mut RestoreDialog| {
-                    assert!(dialog.show(ui.ctx(), &engine, None));
+                    dialog.show(ui.ctx(), &engine, None);
                 },
                 dialog,
             );
-        harness.run_steps(2);
-        harness.get_by_label("Save as task").click();
-        harness.run_steps(2);
-        assert!(matches!(
-            harness.state_mut().take_task(),
-            Some((
-                TaskSpec::Restore {
-                    ref conn,
-                    ref input,
-                    ..
+        h.run_steps(3);
+        h.get_by_label("Restore").click();
+        h.run_steps(2);
+        assert!(
+            h.state().state.job.is_none(),
+            "no restore starts before confirmation"
+        );
+        h.get_by_label("Confirm restore");
+    }
+
+    #[test]
+    fn database_tools_offer_execution_without_task_saving() {
+        use egui_kittest::kittest::Queryable;
+
+        let engine = engine();
+        let mut dump = DumpDialog::new("c", "conn", "app", "postgres").unwrap();
+        dump.state.path = "/tmp/out.sql".into();
+        let mut h = egui_kittest::Harness::builder()
+            .with_size((900.0, 700.0))
+            .build_ui_state(
+                |ui, dialog: &mut DumpDialog| {
+                    dialog.show(ui.ctx(), &engine, None);
                 },
-                None
-            )) if conn == "c" && input == &PathBuf::from("/tmp/in.sql")
-        ));
+                dump,
+            );
+        h.run_steps(2);
+        assert!(h.query_by_label("Save as task").is_none());
+        h.get_by_label("Dump");
+
+        let mut restore = RestoreDialog::new("c", "conn", "app", "postgres").unwrap();
+        restore.state.path = "/tmp/in.sql".into();
+        let mut h = egui_kittest::Harness::builder()
+            .with_size((900.0, 700.0))
+            .build_ui_state(
+                |ui, dialog: &mut RestoreDialog| {
+                    dialog.show(ui.ctx(), &engine, None);
+                },
+                restore,
+            );
+        h.run_steps(2);
+        assert!(h.query_by_label("Save as task").is_none());
+        h.get_by_label("Restore");
     }
 
     #[test]
@@ -981,28 +1056,6 @@ mod tests {
                 dialog.show(ctx, &engine, None);
             });
         }
-    }
-
-    #[test]
-    fn a_dialog_hands_back_the_task_it_collected() {
-        let mut dump = DumpDialog::new("c", "conn", "app", "sqlite").unwrap();
-        dump.state.path = "/tmp/out.db".into();
-        dump.save_requested = true;
-        let (spec, editing) = dump.take_task().unwrap();
-        assert!(matches!(
-            spec,
-            TaskSpec::Dump { conn, ref out, .. } if conn == "c" && out == &PathBuf::from("/tmp/out.db")
-        ));
-        assert!(editing.is_none());
-
-        let mut restore = RestoreDialog::new("c", "conn", "app", "mysql").unwrap();
-        restore.state.path = "/tmp/in.sql".into();
-        restore.save_requested = true;
-        let (spec, _) = restore.take_task().unwrap();
-        assert!(matches!(
-            spec,
-            TaskSpec::Restore { conn, ref input, .. } if conn == "c" && input == &PathBuf::from("/tmp/in.sql")
-        ));
     }
 
     #[test]

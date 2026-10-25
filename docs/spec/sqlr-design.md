@@ -20,7 +20,7 @@ The product excludes:
 - Redis Cluster.
 - Process sandboxing for third-party drivers.
 - Telemetry of any kind.
-- Scheduled (cron-like) execution of saved tasks; saved tasks run on demand.
+- Scheduled (cron-like) execution of data tools.
 - Installers, code signing and notarization are outside the current scope.
 
 ### 1.3 Performance targets
@@ -54,7 +54,7 @@ These targets rule out Electron, any webview, and the JVM. They are why the UI i
 10. **Object editors:** forms to create and alter tables, columns, indexes, constraints, views, materialized views, functions/procedures, sequences, triggers, schemas and databases, always with a DDL preview before applying (§8.4).
 11. **DDL generation** for any object, and "generate SQL" helpers (SELECT/INSERT/UPDATE/DELETE templates, CREATE from an existing object).
 12. **Administration:** users, roles and grants; active sessions and locks with cancel/terminate; server and database properties and statistics (§8.4).
-13. **Data tools:** guided dump and restore, data transfer between any connections and files, advanced import/export, saved re-runnable tasks (§8.5).
+13. **Data tools:** guided dump and restore, data transfer between any connections and files, advanced import/export (§8.5).
 14. **Schema tools:** schema/database compare with a generated migration script, ER diagrams, visual explain plans, a test-data generator (§8.6).
 15. **Generic JDBC bridge** sidecar, so any database with a JDBC driver can be connected (§6).
 16. **Configurability:** the preferences window covers the editor, grid, data formats, keymap, themes and per-connection driver properties (§8.7). The client-side operations monitor supports per-operation cancellation, including a stalled connection attempt (§8.3).
@@ -442,7 +442,7 @@ All widgets take data in and return action values. None of them calls the engine
   - steps: source → target (existing table or a new one, with DDL generated and types mapped across dialects) → column mapping with type conversions → options (batch size, commit per batch or once, truncate target, upsert by key, disable constraints/indexes during load);
   - data flows as chunks (§7.2) with bounded memory, is cancellable, and ends with a summary of rows read, written and rejected (rejected rows can be saved to a file).
 - **Import and export** of §8.3 become presets of the transfer engine.
-- **Saved tasks:** any wizard can be saved as a named task (stored in `sqlr.db`, secrets excluded) and run again from a Tasks panel, which also shows running and past runs with their logs.
+- **Execution:** dump, restore and transfer run directly from their dialogs. Wizard configurations cannot be saved as reusable tasks.
 
 ### 8.6 Schema tools
 

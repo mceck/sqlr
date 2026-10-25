@@ -12,6 +12,7 @@ name = "integration"
 path = "tests/integration.rs"
 
 [dependencies]
+serde_json.workspace = true
 sqlr-core = { path = "../sqlr-core" }
 arboard.workspace = true
 egui.workspace = true

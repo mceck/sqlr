@@ -151,7 +151,6 @@ impl NativeMenu {
         let soft_wrap_item = CheckMenuItem::new("Soft wrap", true, soft_wrap, None);
         let commands = item("Command palette…");
         let open_object = item("Go to a table or view…");
-        let tasks = item("Tasks");
         let view = Submenu::with_items(
             "View",
             true,
@@ -164,7 +163,6 @@ impl NativeMenu {
                 &terminal_item,
                 &soft_wrap_item,
                 &PredefinedMenuItem::separator(),
-                &tasks,
             ],
         )?;
 
@@ -253,7 +251,6 @@ impl NativeMenu {
             (delete_rows.id().clone(), AppCommand::Key(A::DeleteRows)),
             (commands.id().clone(), AppCommand::Commands),
             (open_object.id().clone(), AppCommand::OpenObject),
-            (tasks.id().clone(), AppCommand::ShowTasks),
             (transfer.id().clone(), AppCommand::TransferData),
             (compare.id().clone(), AppCommand::CompareSchemas),
             (export_result.id().clone(), AppCommand::ExportResult),
@@ -314,7 +311,6 @@ impl NativeMenu {
             (delete_rows.clone(), A::DeleteRows),
             (commands.clone(), A::Commands),
             (open_object.clone(), A::OpenObject),
-            (tasks.clone(), A::ShowTasks),
             (explain.clone(), A::Explain),
             (explain_analyze.clone(), A::ExplainAnalyze),
             (commit.clone(), A::Commit),

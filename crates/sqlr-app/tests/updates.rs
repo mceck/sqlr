@@ -131,7 +131,10 @@ fn general_offers_a_manual_check_without_using_the_network() {
     h.run_steps(2);
     h.get_by_label_contains("Settings…").click();
     h.run_steps(3);
-    h.get_by_label("General").click();
+    h.get_all_by_label("General")
+        .min_by(|a, b| a.rect().left().total_cmp(&b.rect().left()))
+        .unwrap()
+        .click();
     h.run_steps(2);
 
     h.get_by_label("Check for updates now");

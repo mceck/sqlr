@@ -40,7 +40,8 @@ pub fn mapping_table(
     mapping: &mut Vec<ColumnMapping>,
 ) -> bool {
     let mut changed = false;
-    if mapping.len() != source.len() {
+    let remap = ui.button("Auto-map by name").clicked();
+    if mapping.len() != source.len() || remap {
         let names: Vec<String> = source.iter().map(|c| c.name.clone()).collect();
         *mapping = if targets.is_empty() {
             names
@@ -52,6 +53,21 @@ pub fn mapping_table(
             let target_names: Vec<String> = targets.iter().map(|t| t.name.clone()).collect();
             auto_mapping(&names, &target_names)
         };
+        changed = true;
+    }
+    let mut all = mapping.iter().all(|m| m.target.is_some());
+    if ui.checkbox(&mut all, "Include all columns").changed() {
+        for (index, m) in mapping.iter_mut().enumerate() {
+            m.target = if all {
+                targets
+                    .iter()
+                    .find(|t| t.name.eq_ignore_ascii_case(&source[index].name))
+                    .map(|t| t.name.clone())
+                    .or_else(|| targets.is_empty().then(|| source[index].name.clone()))
+            } else {
+                None
+            };
+        }
         changed = true;
     }
     let muted = theme::palette(ui.ctx()).text_muted;
@@ -83,7 +99,21 @@ pub fn mapping_table(
                             .or_else(|| targets.first().map(|t| t.name.clone()))
                     };
                 }
-                ui.label(RichText::new(&column.type_name).color(muted).small());
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(&column.type_name).color(muted));
+                    if let Some(target) =
+                        targets.iter().find(|t| Some(&t.name) == m.target.as_ref())
+                        && type_family(&column.type_name) != type_family(&target.type_name)
+                    {
+                        let p = theme::palette(ui.ctx());
+                        theme::icons::paint(ui, theme::icons::WARNING, p.warning).on_hover_text(
+                            format!(
+                                "Type conversion: {} → {}. Preview values before running.",
+                                column.type_name, target.type_name
+                            ),
+                        );
+                    }
+                });
                 match &mut m.target {
                     Some(name) if targets.is_empty() => {
                         changed |= ui
@@ -152,4 +182,29 @@ pub fn mapping_table(
             }
         });
     changed
+}
+
+fn type_family(name: &str) -> &'static str {
+    let name = name.to_ascii_lowercase();
+    if [
+        "int", "numeric", "decimal", "float", "double", "real", "number",
+    ]
+    .iter()
+    .any(|n| name.contains(n))
+    {
+        "number"
+    } else if ["char", "text", "string", "clob"]
+        .iter()
+        .any(|n| name.contains(n))
+    {
+        "text"
+    } else if name.contains("date") || name.contains("time") {
+        "time"
+    } else if name.contains("bool") || name == "bit" {
+        "boolean"
+    } else if name.contains("binary") || name.contains("blob") || name.contains("bytea") {
+        "binary"
+    } else {
+        "other"
+    }
 }

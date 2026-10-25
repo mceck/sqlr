@@ -110,6 +110,10 @@ pub const OPEN: &str = ph::ARROW_SQUARE_OUT;
 pub const INSERT: &str = ph::ARROW_SQUARE_IN;
 pub const EXPORT: &str = ph::EXPORT;
 pub const IMPORT: &str = ph::DOWNLOAD_SIMPLE;
+/// A driver that is fetched before use.
+pub const DOWNLOAD: &str = ph::CLOUD_ARROW_DOWN;
+/// Bringing something in from elsewhere (connections from another client).
+pub const ARRIVE: &str = ph::ARROW_SQUARE_IN;
 pub const FILTER: &str = ph::FUNNEL;
 pub const NULL: &str = ph::MINUS_CIRCLE;
 pub const TRUNCATE: &str = ph::BROOM;

@@ -178,7 +178,7 @@ impl CompareDialog {
                                 Self::side(&self.t_conn, &self.t_database, &self.t_schema),
                             ));
                         }
-                        f.cancel_as("Close");
+                        f.cancel();
                         if self.job.is_some() {
                             f.right().spinner();
                         }
@@ -208,6 +208,13 @@ impl CompareDialog {
     }
 
     fn header(&mut self, ui: &mut egui::Ui, engine: &Engine, conns: &[ConnChoice]) {
+        if ui.button("Swap source and target").clicked() {
+            std::mem::swap(&mut self.s_conn, &mut self.t_conn);
+            std::mem::swap(&mut self.s_database, &mut self.t_database);
+            std::mem::swap(&mut self.s_schema, &mut self.t_schema);
+            self.diffs = None;
+            self.error = None;
+        }
         let muted = theme::palette(ui.ctx()).text_muted;
         ui.columns(2, |columns| {
             for (ui, (title, hint, id, conn, database, schema)) in columns.iter_mut().zip([
@@ -251,13 +258,20 @@ impl CompareDialog {
                                 .desired_width(f32::INFINITY),
                         )
                         .labelled_by(label.id);
-                        let label = ui.label(format!("{title} schema"));
-                        ui.add(
-                            TextEdit::singleline(schema)
-                                .hint_text("Schema name")
-                                .desired_width(f32::INFINITY),
-                        )
-                        .labelled_by(label.id);
+                        theme::field_label(ui, "Schema");
+                        let names = crate::catalog_picker::schema_names(
+                            engine,
+                            conn,
+                            (!database.is_empty()).then_some(database.as_str()),
+                        );
+                        crate::catalog_picker::name(
+                            ui,
+                            id,
+                            schema,
+                            &names,
+                            "Schema name",
+                            ui.available_width(),
+                        );
                     });
             }
         });

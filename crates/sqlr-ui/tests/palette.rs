@@ -183,3 +183,15 @@ fn shortcuts_sit_in_a_right_aligned_column() {
     );
     assert!(run.left() > h.get_by_label("Run statement").rect().right() + 100.0);
 }
+
+#[test]
+fn object_structure_has_a_secondary_keyboard_action() {
+    let mut h = harness(objects());
+    open(&mut h, PaletteMode::Objects);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, Key::Enter);
+    h.run_steps(2);
+    assert_eq!(
+        format!("{:?}", h.state().outputs.last().unwrap()),
+        "EditChosen(0)"
+    );
+}

@@ -47,7 +47,7 @@ pub static TOOLS: std::sync::LazyLock<Vec<ToolSpec>> = std::sync::LazyLock::new(
                 "type": "object",
                 "required": ["target", "payload"],
                 "properties": {
-                    "target": {"type": "string", "enum": ["connection", "folder", "profile", "setting", "keymap", "task"], "description": "Singular configuration kind to write; each kind has a different payload."},
+                    "target": {"type": "string", "enum": ["connection", "folder", "profile", "setting", "keymap"], "description": "Singular configuration kind to write; each kind has a different payload."},
                     "payload": {"type": "object", "description": "Target-specific fields; see get_guide(topic=tools). Connection creation needs name and driver; updates use id. Driver fields go in values, credentials in secrets. Do not include agent_access."}
                 }
             }),

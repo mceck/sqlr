@@ -126,9 +126,7 @@ fn visual_audit() {
             "new-snippet",
             "delete-connection",
             "cancel-all",
-            "save-task",
             "snippets",
-            "tasks",
             "history",
             "operations",
             "shortcuts",
@@ -205,7 +203,7 @@ fn visual_audit_small() {
 }
 
 /// Opens the screen or dialog `case` of the audit on `app`.
-fn open_case(app: &mut SqlrApp, case: &str, dir: &Path) {
+fn open_case(app: &mut SqlrApp, case: &str, _dir: &Path) {
     {
         {
             let table = TableRef {
@@ -240,18 +238,7 @@ fn open_case(app: &mut SqlrApp, case: &str, dir: &Path) {
                 ),
                 "delete-connection" => app.delete_pending = Some("northwind".into()),
                 "cancel-all" => app.cancel_all_operations = true,
-                "save-task" => app.save_task_dialog(
-                    sqlr_core::TaskSpec::Dump {
-                        conn: "northwind".into(),
-                        database: "northwind".into(),
-                        options: Default::default(),
-                        out: dir.join("backup.sql"),
-                    },
-                    None,
-                ),
-
                 "snippets" => app.left = LeftPane::Snippets,
-                "tasks" => app.left = LeftPane::Tasks,
                 "history" => app.show_history = true,
                 "operations" => app.show_operations = true,
                 "shortcuts" => app.shortcuts.open = true,
@@ -333,7 +320,7 @@ fn capture_case(
                     std::thread::sleep(Duration::from_millis(5));
                 }
                 capture(h, out, "transfer-source-preview", suffix);
-                for step in ["target", "mapping", "options", "review", "run"] {
+                for step in ["target", "mapping", "options", "review"] {
                     h.get_by_label("Next").click();
                     for _ in 0..15 {
                         h.step();
@@ -372,7 +359,7 @@ fn capture_case(
                     "Drivers",
                 ] {
                     h.get_all_by_label(section)
-                        .max_by(|a, b| a.rect().left().total_cmp(&b.rect().left()))
+                        .min_by(|a, b| a.rect().left().total_cmp(&b.rect().left()))
                         .expect("preference section")
                         .click();
                     capture(
@@ -530,16 +517,17 @@ fn visual_audit_states() {
         let app = fixture(dir.path(), theme);
         let mut h = harness(app, (1400.0, 900.0));
         settle(&mut h, 20);
-        if let Some(n) = leftmost(&h, "Northwind · Development") {
+        // The rows' arrows expand them; a click on the name only selects.
+        if let Some(n) = leftmost(&h, "Expand Northwind · Development") {
             n.click();
             settle(&mut h, 30);
-            capture(&mut h, &out, "state-explorer-expanded", suffix);
-            for label in ["main", "Tables"] {
+            for label in ["Expand main", "Expand tables"] {
                 if let Some(n) = leftmost(&h, label) {
                     n.click();
                     settle(&mut h, 20);
                 }
             }
+            capture(&mut h, &out, "state-explorer-expanded", suffix);
             if let Some(n) = leftmost(&h, "orders") {
                 n.click_secondary();
                 settle(&mut h, 5);

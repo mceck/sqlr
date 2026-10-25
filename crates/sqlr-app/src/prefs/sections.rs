@@ -27,7 +27,22 @@ impl Editing<'_> {
 
     /// The rows of `defs` that apply here.
     pub(super) fn rows(&mut self, ui: &mut egui::Ui, defs: &[&'static SettingDef]) {
+        let mut group = "";
         for def in defs {
+            let next = match def.section {
+                "General" if def.id.starts_with("updates.") => "Updates",
+                "General" if def.id.starts_with("diagnostics.") => "Privacy & diagnostics",
+                "General" if def.id.starts_with("operations.") => "Operations",
+                "General" => "Execution",
+                "Drivers" if def.id.starts_with("drivers.postgres.") => "PostgreSQL",
+                "Drivers" if def.id.starts_with("drivers.mysql.") => "MySQL",
+                _ => "",
+            };
+            if next != group {
+                group = next;
+                ui.add_space(Spacing::M);
+                theme::section_title(ui, group);
+            }
             if self.applies(def) {
                 self.row(ui, def);
             }
@@ -94,6 +109,69 @@ impl Editing<'_> {
             ui.add_space(9.0 + 2.0 * ui.spacing().item_spacing.x);
             ui.add(egui::Label::new(RichText::new(def.description).small().weak()).wrap());
         });
+        if def.id.starts_with("formats.") {
+            let formats = sqlr_core::DataFormats::from_values(|id| {
+                if id == def.id {
+                    Some(edited.clone())
+                } else {
+                    Some(self.live.get(id, self.scopes.resolve_key(self.scope)).0)
+                }
+            });
+            let (kind, type_name, hint, sample) = match def.id {
+                "formats.date" => (
+                    sqlr_core::ColumnKind::Text,
+                    "date",
+                    sqlr_core::DisplayHint::Temporal,
+                    sqlr_core::Cell::Text("2026-10-25"),
+                ),
+                "formats.time" => (
+                    sqlr_core::ColumnKind::Text,
+                    "time",
+                    sqlr_core::DisplayHint::Temporal,
+                    sqlr_core::Cell::Text("14:35:20"),
+                ),
+                "formats.timestamp" => (
+                    sqlr_core::ColumnKind::Text,
+                    "timestamp",
+                    sqlr_core::DisplayHint::Temporal,
+                    sqlr_core::Cell::Text("2026-10-25 14:35:20"),
+                ),
+                "formats.timestamptz" => (
+                    sqlr_core::ColumnKind::Text,
+                    "timestamptz",
+                    sqlr_core::DisplayHint::Temporal,
+                    sqlr_core::Cell::Text("2026-10-25T14:35:20Z"),
+                ),
+                "formats.binary" => (
+                    sqlr_core::ColumnKind::Bytes,
+                    "binary",
+                    sqlr_core::DisplayHint::Binary,
+                    sqlr_core::Cell::Bytes(&[0x12, 0xab]),
+                ),
+                "formats.json" => (
+                    sqlr_core::ColumnKind::Text,
+                    "json",
+                    sqlr_core::DisplayHint::Json,
+                    sqlr_core::Cell::Text("{\"name\":\"sqlr\"}"),
+                ),
+                "formats.boolean" => (
+                    sqlr_core::ColumnKind::Bool,
+                    "boolean",
+                    sqlr_core::DisplayHint::Plain,
+                    sqlr_core::Cell::Bool(true),
+                ),
+                _ => (
+                    sqlr_core::ColumnKind::Float,
+                    "float",
+                    sqlr_core::DisplayHint::Number,
+                    sqlr_core::Cell::Float(1234567.89),
+                ),
+            };
+            if def.id != "formats.use_for_export" {
+                let meta = sqlr_core::ColumnMeta::new("sample", type_name, kind, hint);
+                theme::hint(ui, &format!("Preview → {}", formats.format(&meta, sample)));
+            }
+        }
         ui.add_space(Spacing::S);
 
         if reset {

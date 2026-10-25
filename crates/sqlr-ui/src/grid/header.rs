@@ -95,6 +95,7 @@ pub(crate) fn paint(
     columns: &[ColumnMeta],
     cols: std::ops::Range<usize>,
     sort: &[(usize, bool)],
+    selected: &[usize],
     palette: &Palette,
     fonts: (&FontId, &FontId),
 ) {
@@ -121,6 +122,9 @@ pub(crate) fn paint(
             continue;
         }
         let clipped = painter.with_clip_rect(visible);
+        if selected.contains(&col) {
+            clipped.rect_filled(cell, 0.0, palette.accent_soft);
+        }
         let arrow = sort.iter().position(|(c, _)| *c == col).map(|i| {
             let (_, desc) = sort[i];
             if desc { "▼" } else { "▲" }

@@ -67,11 +67,34 @@ impl SqlrApp {
                 installed: Vec::new(),
                 active: None,
                 manual: false,
-                description: String::new(),
-                homepage: String::new(),
+                description: format!(
+                    "Included with sqlr {} · {} connection fields",
+                    env!("CARGO_PKG_VERSION"),
+                    manifest.fields.len()
+                ),
+                homepage: "https://mceck.github.io/sqlr/usage/README.html".into(),
                 license: String::new(),
                 job: None,
             });
+        }
+        for db in sqlr_core::known_databases() {
+            if let sqlr_core::KnownStatus::Installable { driver } = db.status
+                && !rows.iter().any(|r| r.id == driver)
+            {
+                rows.push(DriverRow {
+                    id: driver.into(),
+                    name: db.name.into(),
+                    family: format!("{:?}", db.family),
+                    builtin: false,
+                    installed: vec![],
+                    active: None,
+                    manual: true,
+                    description: db.notes.into(),
+                    homepage: "https://github.com/mceck/sqlr/tree/main/docs/drivers".into(),
+                    license: String::new(),
+                    job: job_of(driver),
+                });
+            }
         }
         rows
     }

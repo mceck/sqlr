@@ -592,10 +592,10 @@ fn palette_opens_an_object_editor() {
     let (mut h, _, _dir) = harness(FakeScript::default());
     expand_to_orders(&mut h);
     h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::P);
-    wait_for_label(&mut h, "Edit s.orders");
-    h.event(egui::Event::Text("edit s.ord".into()));
+    wait_for_label(&mut h, "s.orders");
+    h.event(egui::Event::Text("s.ord".into()));
     h.run_steps(2);
-    h.key_press(egui::Key::Enter);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Enter);
     step_until(&mut h, "the editor", |h| h.query(field("total")).is_some());
     assert_eq!(h.state().tab_titles(), ["Query 1", "orders"]);
 }

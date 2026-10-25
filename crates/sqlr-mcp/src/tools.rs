@@ -1061,7 +1061,6 @@ async fn config_write(
         "profile" => write_profile(state, &payload).await?,
         "setting" => write_setting(state, &payload).await?,
         "keymap" => write_keymap(state, &payload).await?,
-        "task" => write_task(state, &payload).await?,
         other => {
             return Err(ToolError::invalid(format!(
                 "Unknown config_write target \"{other}\""
@@ -1682,46 +1681,6 @@ async fn write_keymap(state: &Arc<ServerState>, payload: &Args) -> ToolResult<Va
         .set_keymap(action_id.id(), Some(chords.clone()))
         .await?;
     Ok(json!({"action": action, "chords": chords}))
-}
-
-async fn write_task(state: &Arc<ServerState>, payload: &Args) -> ToolResult<Value> {
-    let tasks = state.host.tasks().await?;
-    let existing = payload
-        .opt_str("id")
-        .and_then(|id| tasks.iter().find(|task| task.id == id).cloned());
-    if payload.opt_str("id").is_some() && existing.is_none() {
-        return Err(ToolError::invalid("Unknown task"));
-    }
-    let name = payload
-        .opt_str("name")
-        .map(str::to_string)
-        .or_else(|| existing.as_ref().map(|t| t.name.clone()))
-        .ok_or_else(|| ToolError::invalid("A task needs a name"))?;
-    let spec = payload
-        .get("spec")
-        .cloned()
-        .or_else(|| {
-            existing
-                .as_ref()
-                .map(|task| serde_json::to_value(&task.spec).unwrap_or(Value::Null))
-        })
-        .ok_or_else(|| ToolError::invalid("A task needs a spec"))?;
-    let spec: sqlr_core::TaskSpec = serde_json::from_value(spec)
-        .map_err(|e| ToolError::invalid(format!("Invalid task spec: {e}")))?;
-    let now = now_ms();
-    let task = sqlr_core::SavedTask {
-        id: existing
-            .as_ref()
-            .map(|task| task.id.clone())
-            .unwrap_or_else(|| new_id("task")),
-        name,
-        spec,
-        created_ms: existing.as_ref().map(|task| task.created_ms).unwrap_or(now),
-        updated_ms: now,
-    };
-    let id = task.id.clone();
-    state.host.save_task(task).await?;
-    Ok(json!({"id": id, "created": existing.is_none()}))
 }
 
 async fn config_delete(

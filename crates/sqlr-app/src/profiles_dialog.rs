@@ -27,6 +27,7 @@ pub struct ProfilesDialog {
     /// The draft is a new user profile not saved yet.
     new: bool,
     error: Option<String>,
+    confirm_reset: bool,
 }
 
 impl ProfilesDialog {
@@ -35,6 +36,7 @@ impl ProfilesDialog {
             draft: profile.clone(),
             new: false,
             error: None,
+            confirm_reset: false,
         }
     }
 }
@@ -160,6 +162,19 @@ impl SqlrApp {
         .min_body_height(240.0)
         .body_margin(Margin::ZERO)
         .show(ctx, |d| {
+            if dialog.confirm_reset {
+                d.top(|ui| {
+                    ui.label(format!("Reset only {} to its defaults?", dialog.draft.name));
+                    ui.horizontal(|ui| {
+                        if ui.button("Cancel reset").clicked() {
+                            dialog.confirm_reset = false;
+                        }
+                        if ui.button("Confirm reset").clicked() {
+                            action = Some(ProfileAction::Delete);
+                        }
+                    });
+                });
+            }
             d.body(|ui| {
                 egui::Panel::left(Id::new("profiles_list"))
                     .resizable(false)
@@ -235,6 +250,7 @@ impl SqlrApp {
                                             }
                                         }
                                     });
+                                    theme::hint(ui, crate::transaction::mode_help(d.commit_mode));
                                     setting_row(ui, "Safety", |ui| {
                                         ui.vertical(|ui| {
                                             ui.checkbox(
@@ -275,14 +291,22 @@ impl SqlrApp {
                 .then_some("Enter a name");
             d.footer(|f| {
                 let builtin = ConnectionProfile::is_builtin(&dialog.draft.id);
-                let label = if builtin { "Reset" } else { "Delete" };
+                let label = if builtin {
+                    "Reset to defaults"
+                } else {
+                    "Delete"
+                };
                 if f.secondary(label, !dialog.new) {
-                    action = Some(ProfileAction::Delete);
+                    if builtin {
+                        dialog.confirm_reset = true;
+                    } else {
+                        action = Some(ProfileAction::Delete);
+                    }
                 }
                 if f.primary("Save", blocked) {
                     action = Some(ProfileAction::Save);
                 }
-                f.cancel_as("Close");
+                f.cancel();
             });
         });
         if response.closed && action.is_none() {
@@ -304,6 +328,7 @@ impl SqlrApp {
                     draft,
                     new: true,
                     error: None,
+                    confirm_reset: false,
                 });
             }
             Some(ProfileAction::Save) => {
@@ -359,6 +384,23 @@ mod tests {
 
     use super::*;
     use crate::app::AppDeps;
+
+    #[test]
+    fn resetting_a_profile_requires_a_second_action() {
+        use egui_kittest::kittest::Queryable;
+        let (mut app, _dir) = crate::palette::tests::bare_app();
+        app.open_profiles();
+        let mut h = egui_kittest::Harness::builder()
+            .with_size((1000.0, 850.0))
+            .build_ui_state(|ui, app: &mut SqlrApp| app.profiles_ui(ui.ctx()), app);
+        h.run_steps(3);
+        h.get_by_label("Reset to defaults").click();
+        h.run_steps(2);
+        h.get_by_label("Confirm reset");
+        h.get_by_label("Cancel reset").click();
+        h.run_steps(2);
+        assert!(h.query_by_label("Confirm reset").is_none());
+    }
 
     #[test]
     fn a_profile_in_use_cannot_be_deleted() {

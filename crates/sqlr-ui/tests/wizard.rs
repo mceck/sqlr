@@ -78,14 +78,11 @@ fn wizard_navigation() {
     assert_eq!(click(&mut h, "Back"), vec![WizardAction::Back]);
     assert_eq!(click(&mut h, "Next"), vec![WizardAction::Next]);
 
-    // The last step finishes instead, and can be saved as a task.
+    // The last step finishes without offering task persistence.
     let mut h = harness([true, true, true], 2);
     assert!(h.query_by_label("Next").is_none());
     assert_eq!(click(&mut h, "Finish"), vec![WizardAction::Finish]);
-    assert_eq!(
-        click(&mut h, "Save as task"),
-        vec![WizardAction::SaveAsTask]
-    );
+    assert!(h.query_by_label("Save as task").is_none());
 
     // Finish waits for a valid last step.
     let h = harness([true, true, false], 2);

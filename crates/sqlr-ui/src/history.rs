@@ -61,7 +61,9 @@ pub fn history_panel(
             .as_ref()
             .and_then(|id| conns.iter().find(|(i, _)| i == id))
             .map_or("All connections", |(_, name)| name.as_str());
-        if icons::icon_button(ui, icons::DELETE, None, "Clear history").clicked() {
+        if entries.is_some_and(|e| !e.is_empty())
+            && icons::icon_button(ui, icons::DELETE, None, "Clear history").clicked()
+        {
             actions.push(HistoryAction::Clear {
                 conn_id: state.conn_filter.clone(),
             });
@@ -107,8 +109,14 @@ pub fn history_panel(
             ui,
             icons::HISTORY,
             "No history",
-            "Queries you run appear here. Search or filter by connection, then reopen a query to use it again.",
+            "Queries you run appear here.",
         );
+        let hint = crate::keymap::tooltip(
+            ui.ctx(),
+            "Past queries also appear in Commands",
+            sqlr_core::ActionId::Commands,
+        );
+        theme::hint(ui, &hint);
         return actions;
     }
     let row_height = ui.spacing().interact_size.y;

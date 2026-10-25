@@ -89,7 +89,6 @@ actions! {
     ToggleValuePanel => ("toggle_value_panel", "Show or hide the value panel", "View", Global),
     ToggleTerminal => ("toggle_terminal", "Show or hide the terminal", "View", Global),
     ShowOperations => ("show_operations", "Show operations", "View", Global),
-    ShowTasks => ("show_tasks", "Show tasks", "View", Global),
     ExportResult => ("export_result", "Export the result", "Results", Global),
     DeleteRows => ("delete_rows", "Delete selected rows", "Results", Editor),
     RenameSelection => ("rename_selection", "Rename the selected explorer item", "Objects", Explorer),
