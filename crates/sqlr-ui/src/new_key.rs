@@ -1,10 +1,10 @@
 //! The "New key" dialog of the key browser: a name, a type and the key's first element.
 
-use egui::{Id, TextEdit};
+use egui::TextEdit;
 use sqlr_core::KvEdit;
 
 use crate::key_browser::name_edit;
-use crate::theme::{self, Spacing};
+use crate::theme::{self};
 
 /// The type of a key the "New key" dialog creates.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -125,57 +125,55 @@ pub fn new_key_dialog(
 ) -> Option<(Vec<u8>, KvEdit)> {
     let d = draft.as_mut()?;
     let mut result = None;
-    let mut cancel = false;
-    let response = egui::Modal::new(Id::new("kv_new_key")).show(ctx, |ui| {
-        ui.set_width(380.0);
-        theme::section_title(ui, "New key");
-        ui.add_space(Spacing::S);
-        theme::field_label(ui, "Key name");
-        let name = crate::text_menu::text_edit(
-            ui,
-            TextEdit::singleline(&mut d.name).desired_width(f32::INFINITY),
-        );
-        name_edit(&name, "Key name");
-        theme::field_label(ui, "Type");
-        egui::ComboBox::from_id_salt("kv_new_key_type")
-            .selected_text(d.ty.label())
-            .show_ui(ui, |ui| {
-                for ty in NewKeyType::ALL {
-                    ui.selectable_value(&mut d.ty, ty, ty.label());
+    let response = theme::Dialog::new("kv_new_key", theme::icons::ADD, "New key")
+        .width(420.0)
+        .show(ctx, |dialog| {
+            dialog.body(|ui| {
+                theme::field_label(ui, "Key name");
+                let name = crate::text_menu::text_edit(
+                    ui,
+                    TextEdit::singleline(&mut d.name).desired_width(f32::INFINITY),
+                );
+                name_edit(&name, "Key name");
+                theme::field_label(ui, "Type");
+                egui::ComboBox::from_id_salt("kv_new_key_type")
+                    .selected_text(d.ty.label())
+                    .show_ui(ui, |ui| {
+                        for ty in NewKeyType::ALL {
+                            ui.selectable_value(&mut d.ty, ty, ty.label());
+                        }
+                    });
+                let (first, second) = d.ty.fields();
+                theme::field_label(ui, first);
+                let field = crate::text_menu::text_edit(
+                    ui,
+                    TextEdit::singleline(&mut d.first).desired_width(f32::INFINITY),
+                );
+                name_edit(&field, first);
+                if let Some(second) = second {
+                    theme::field_label(ui, second);
+                    let field = crate::text_menu::text_edit(
+                        ui,
+                        TextEdit::singleline(&mut d.second).desired_width(f32::INFINITY),
+                    );
+                    name_edit(&field, second);
+                }
+                if let Some(error) = &d.error {
+                    ui.colored_label(theme::palette(ui.ctx()).error, error);
                 }
             });
-        let (first, second) = d.ty.fields();
-        theme::field_label(ui, first);
-        let field = crate::text_menu::text_edit(
-            ui,
-            TextEdit::singleline(&mut d.first).desired_width(f32::INFINITY),
-        );
-        name_edit(&field, first);
-        if let Some(second) = second {
-            theme::field_label(ui, second);
-            let field = crate::text_menu::text_edit(
-                ui,
-                TextEdit::singleline(&mut d.second).desired_width(f32::INFINITY),
-            );
-            name_edit(&field, second);
-        }
-        if let Some(error) = &d.error {
-            ui.colored_label(theme::palette(ui.ctx()).error, error);
-        }
-        ui.add_space(Spacing::L);
-        ui.horizontal(|ui| {
-            if ui.add(theme::primary_button(ui.ctx(), "Create")).clicked() {
-                match d.build() {
-                    Ok(done) => result = Some(done),
-                    Err(e) => d.error = Some(e),
+            let blocked = d.name.is_empty().then_some("Enter a key name");
+            dialog.footer(|f| {
+                if f.primary("Create", blocked) {
+                    match d.build() {
+                        Ok(done) => result = Some(done),
+                        Err(e) => d.error = Some(e),
+                    }
                 }
-            }
-            if ui.button("Cancel").clicked() {
-                cancel = true;
-            }
+                f.cancel();
+            });
         });
-    });
-    if cancel || response.should_close() || result.is_some() {
+    if response.closed || result.is_some() {
         *draft = None;
     }
     result

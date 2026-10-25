@@ -16,7 +16,7 @@ pub use server_tab::ServerTab;
 pub use sessions_tab::SessionsTab;
 pub use users_tab::{UsersDiscard, UsersTab};
 
-use egui::{Id, RichText};
+use egui::Id;
 use sqlr_core::{ColumnKind, ColumnMeta, Dialect, DisplayHint, RoleDef, SqlSyntax, script};
 use sqlr_engine::{AdminAction, ApplyOptions, Engine, JobId, JobOutcome};
 use sqlr_ui::ToastKind;
@@ -327,14 +327,27 @@ impl SqlrApp {
             Asked::Drop { .. } => "Cancel",
             Asked::Session { .. } => "Close",
         };
+        let heading = match &ask.what {
+            Asked::Drop { role, .. } => format!("Drop role {}", role.name),
+            Asked::Session {
+                action: SessionsAction::Cancel(_),
+                ..
+            } => "Cancel query".to_string(),
+            Asked::Session { .. } => "Terminate session".to_string(),
+        };
+        let spec = crate::confirm::ConfirmSpec::new(
+            Id::new(("admin_confirm", ask.again)),
+            theme::icons::WARNING,
+            &heading,
+            confirm,
+        )
+        .dismiss(dismiss)
+        .width(560.0);
         let answer = crate::confirm::confirm_modal(
             ctx,
-            Id::new(("admin_confirm", ask.again)),
-            confirm,
-            dismiss,
+            spec,
             |ui| {
-                ui.set_width(520.0);
-                ui.label(RichText::new(&title).font(theme::semibold(ui.ctx(), 15.0)));
+                ui.label(&title);
                 ui.add_space(Spacing::S);
                 if let Asked::Drop { statements, .. } = &ask.what {
                     sql_view(ui, "drop_role_sql", &script(statements), &syntax, 120.0);

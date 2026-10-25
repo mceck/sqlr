@@ -1,8 +1,8 @@
 use egui::vec2;
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
-use sqlr_ui::theme::{self, Palette};
-use sqlr_ui::{WizardAction, WizardStep, wizard_frame};
+use sqlr_ui::theme::{self, Dialog, Palette, icons};
+use sqlr_ui::{WizardAction, WizardStep, wizard_footer, wizard_steps};
 
 struct App {
     steps: Vec<WizardStep>,
@@ -14,22 +14,26 @@ fn harness(valid: [bool; 3], current: usize) -> Harness<'static, App> {
     let steps = ["Source", "Target", "Review"]
         .iter()
         .zip(valid)
-        .map(|(title, valid)| WizardStep {
-            title: (*title).into(),
-            valid,
+        .map(|(title, valid)| {
+            WizardStep::new(*title, (!valid).then(|| format!("Complete {title}")))
         })
         .collect();
     let mut h = Harness::builder()
-        .with_size(vec2(700.0, 400.0))
+        .with_size(vec2(900.0, 600.0))
         .with_step_dt(0.01)
         .build_ui_state(
             |ui, app: &mut App| {
                 theme::apply(ui.ctx(), &Palette::dark(), 13.0);
                 let current = app.current;
-                let action = wizard_frame(ui, &app.steps, current, |ui| {
-                    ui.label(format!("Body of step {current}"));
-                });
-                if let Some(action) = action {
+                let response =
+                    Dialog::new("wizard", icons::ROWS, "Transfer data").show(ui.ctx(), |d| {
+                        d.top(|ui| wizard_steps(ui, &app.steps, current));
+                        d.body(|ui| {
+                            ui.label(format!("Body of step {current}"));
+                        });
+                        d.footer(|f| wizard_footer(f, &app.steps, current))
+                    });
+                if let Some(action) = response.inner {
                     app.actions.push(action);
                 }
             },
@@ -39,7 +43,7 @@ fn harness(valid: [bool; 3], current: usize) -> Harness<'static, App> {
                 actions: Vec::new(),
             },
         );
-    h.run_steps(2);
+    h.run_steps(3);
     h
 }
 
@@ -52,7 +56,8 @@ fn click(h: &mut Harness<'static, App>, label: &str) -> Vec<WizardAction> {
 
 #[test]
 fn wizard_navigation() {
-    // The first step: no Back; Next is disabled while the step is invalid.
+    // The first step: Back is disabled; Next is disabled, with the reason, while the step
+    // is invalid.
     let mut h = harness([false, true, true], 0);
     h.get_by_label("Body of step 0");
     for title in ["1. Source", "2. Target", "3. Review"] {
@@ -60,11 +65,16 @@ fn wizard_navigation() {
     }
     assert!(h.get_by_label("Back").accesskit_node().is_disabled());
     assert!(h.get_by_label("Next").accesskit_node().is_disabled());
+    h.get_by_label("Complete Source");
     assert!(click(&mut h, "Next").is_empty(), "a disabled Next is inert");
     assert_eq!(click(&mut h, "Cancel"), vec![WizardAction::Cancel]);
 
-    // A valid middle step: Back and Next both work.
+    // A valid middle step: Back and Next both work; Cancel, Back and Next read left to right.
     let mut h = harness([true, true, true], 1);
+    let cancel = h.get_by_label("Cancel").rect();
+    let back = h.get_by_label("Back").rect();
+    let next = h.get_by_label("Next").rect();
+    assert!(cancel.right() < back.left() && back.right() < next.left());
     assert_eq!(click(&mut h, "Back"), vec![WizardAction::Back]);
     assert_eq!(click(&mut h, "Next"), vec![WizardAction::Next]);
 

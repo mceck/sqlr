@@ -137,6 +137,47 @@ impl ToolDialog {
         }
     }
 
+    /// Why the run button is disabled: `missing_file` when no file is chosen.
+    fn blocked(&self, missing_file: &'static str, both: bool) -> Option<&'static str> {
+        if self.path.trim().is_empty() {
+            Some(missing_file)
+        } else if both {
+            Some("Choose Schema only or Data only, not both")
+        } else {
+            None
+        }
+    }
+
+    /// The shared footer: "Save as task" on the left, the progress and a stop button while
+    /// the job runs, otherwise Cancel and the `verb` primary. `true` when it was clicked.
+    fn footer(
+        &mut self,
+        f: &mut theme::DialogFooter,
+        engine: &Engine,
+        verb: &str,
+        blocked: Option<&str>,
+        save_requested: &mut bool,
+    ) -> bool {
+        if f.secondary("Save as task", blocked.is_none() && !self.running()) {
+            *save_requested = true;
+        }
+        if let Some(id) = self.job {
+            f.left().spinner();
+            f.left().label(self.progress_text());
+            if f.button(&format!("Stop {}", verb.to_lowercase()), true) {
+                engine.cancel_job(id);
+            }
+            return false;
+        }
+        let run = f.primary(verb, blocked);
+        f.cancel_as(if self.outcome.is_some() {
+            "Close"
+        } else {
+            "Cancel"
+        });
+        run
+    }
+
     fn log_ui(&self, ui: &mut egui::Ui) {
         if self.log.is_empty() {
             return;
@@ -242,32 +283,49 @@ impl DumpDialog {
                 }
             }
         }
-        let mut open = true;
-        theme::tool_dialog(
-            ctx,
-            &mut open,
-            "Dump database",
-            theme::icons::EXPORT,
-            "Back up a database to a file or archive",
-            680.0,
-            |ui| {
-                self.body(ui, engine, answer);
-            },
+        let title = format!("Dump {}", self.state.database);
+        let subtitle = format!(
+            "Back up {} on {} to a file or archive",
+            self.state.database, self.state.conn_name
         );
-        if !open {
+        let response = theme::Dialog::new("dump_dialog", theme::icons::EXPORT, &title)
+            .subtitle(&subtitle)
+            .width(680.0)
+            .show(ctx, |d| {
+                d.body(|ui| self.body(ui, answer));
+                let blocked = self.state.blocked(
+                    "Choose where to save the backup",
+                    self.options.schema_only && self.options.data_only,
+                );
+                d.footer(|f| {
+                    if self
+                        .state
+                        .footer(f, engine, "Dump", blocked, &mut self.save_requested)
+                    {
+                        self.start(engine);
+                    }
+                });
+            });
+        if response.closed {
             self.state.close(engine);
         }
-        open
+        !response.closed
     }
 
-    fn body(&mut self, ui: &mut egui::Ui, engine: &Engine, answer: Option<&PathBuf>) {
-        ui.label(
-            RichText::new(format!(
-                "{} · {}",
-                self.state.database, self.state.conn_name
-            ))
-            .font(theme::semibold(ui.ctx(), 13.0)),
+    fn start(&mut self, engine: &Engine) {
+        let path = PathBuf::from(self.state.path.trim());
+        let id = engine.run_dump(
+            &self.state.conn,
+            &self.state.database,
+            self.options.clone(),
+            path,
         );
+        self.state.job = Some(id);
+        self.state.log.clear();
+        self.state.outcome = None;
+    }
+
+    fn body(&mut self, ui: &mut egui::Ui, answer: Option<&PathBuf>) {
         ui.label(
             RichText::new(
                 "Dumps the whole database with its native tool. The password is passed to \
@@ -329,43 +387,6 @@ impl DumpDialog {
         self.advanced(ui);
         self.state.log_ui(ui);
         self.state.outcome_ui(ui);
-
-        ui.add_space(Spacing::L);
-        theme::hairline(ui);
-        ui.add_space(Spacing::M);
-        ui.horizontal(|ui| {
-            let valid = !self.state.path.trim().is_empty()
-                && !(self.options.schema_only && self.options.data_only)
-                && !self.state.running();
-            if ui
-                .add_enabled(valid, egui::Button::new("Save as task"))
-                .clicked()
-            {
-                self.save_requested = true;
-            }
-            let button = theme::primary_button_state(ui.ctx(), valid, "Dump");
-            if ui.add_enabled(valid, button).clicked() {
-                let path = PathBuf::from(self.state.path.trim());
-                let id = engine.run_dump(
-                    &self.state.conn,
-                    &self.state.database,
-                    self.options.clone(),
-                    path,
-                );
-                self.state.job = Some(id);
-                self.state.log.clear();
-                self.state.outcome = None;
-            }
-            if self.state.running() {
-                if ui.button("Cancel").clicked()
-                    && let Some(id) = self.state.job
-                {
-                    engine.cancel_job(id);
-                }
-                ui.spinner();
-                ui.label(self.state.progress_text());
-            }
-        });
     }
 
     fn postgres_options(&mut self, ui: &mut egui::Ui) {
@@ -552,32 +573,49 @@ impl RestoreDialog {
                 }
             }
         }
-        let mut open = true;
-        theme::tool_dialog(
-            ctx,
-            &mut open,
-            "Restore database",
-            theme::icons::IMPORT,
-            "Restore objects and data from an existing backup",
-            680.0,
-            |ui| {
-                self.body(ui, engine, answer);
-            },
+        let title = format!("Restore {}", self.state.database);
+        let subtitle = format!(
+            "Restore objects and data into {} on {} from a backup",
+            self.state.database, self.state.conn_name
         );
-        if !open {
+        let response = theme::Dialog::new("restore_dialog", theme::icons::IMPORT, &title)
+            .subtitle(&subtitle)
+            .width(680.0)
+            .show(ctx, |d| {
+                d.body(|ui| self.body(ui, answer));
+                let blocked = self.state.blocked(
+                    "Choose a backup file",
+                    self.options.schema_only && self.options.data_only,
+                );
+                d.footer(|f| {
+                    if self
+                        .state
+                        .footer(f, engine, "Restore", blocked, &mut self.save_requested)
+                    {
+                        self.start(engine);
+                    }
+                });
+            });
+        if response.closed {
             self.state.close(engine);
         }
-        open
+        !response.closed
     }
 
-    fn body(&mut self, ui: &mut egui::Ui, engine: &Engine, answer: Option<&PathBuf>) {
-        ui.label(
-            RichText::new(format!(
-                "{} · {}",
-                self.state.database, self.state.conn_name
-            ))
-            .font(theme::semibold(ui.ctx(), 13.0)),
+    fn start(&mut self, engine: &Engine) {
+        let path = PathBuf::from(self.state.path.trim());
+        let id = engine.run_restore(
+            &self.state.conn,
+            &self.state.database,
+            self.options.clone(),
+            path,
         );
+        self.state.job = Some(id);
+        self.state.log.clear();
+        self.state.outcome = None;
+    }
+
+    fn body(&mut self, ui: &mut egui::Ui, answer: Option<&PathBuf>) {
         ui.label(
             RichText::new(
                 "Restores an archive with the database's native tool. Restoring can replace \
@@ -630,42 +668,6 @@ impl RestoreDialog {
         self.advanced(ui);
         self.state.log_ui(ui);
         self.state.outcome_ui(ui);
-        ui.add_space(Spacing::L);
-        theme::hairline(ui);
-        ui.add_space(Spacing::M);
-        ui.horizontal(|ui| {
-            let valid = !self.state.path.trim().is_empty()
-                && !(self.options.schema_only && self.options.data_only)
-                && !self.state.running();
-            if ui
-                .add_enabled(valid, egui::Button::new("Save as task"))
-                .clicked()
-            {
-                self.save_requested = true;
-            }
-            let button = theme::primary_button_state(ui.ctx(), valid, "Restore");
-            if ui.add_enabled(valid, button).clicked() {
-                let path = PathBuf::from(self.state.path.trim());
-                let id = engine.run_restore(
-                    &self.state.conn,
-                    &self.state.database,
-                    self.options.clone(),
-                    path,
-                );
-                self.state.job = Some(id);
-                self.state.log.clear();
-                self.state.outcome = None;
-            }
-            if self.state.running() {
-                if ui.button("Cancel").clicked()
-                    && let Some(id) = self.state.job
-                {
-                    engine.cancel_job(id);
-                }
-                ui.spinner();
-                ui.label(self.state.progress_text());
-            }
-        });
     }
 
     fn is_plain_sql(&self) -> bool {

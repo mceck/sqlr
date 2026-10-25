@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use egui::{
     Align, Align2, Color32, ComboBox, CornerRadius, FontId, Frame, Id, Layout, Margin, RichText,
-    Sense, Stroke, WidgetInfo, WidgetType, vec2,
+    Sense, WidgetInfo, WidgetType, vec2,
 };
 use sqlr_core::{
     AgentAccess, ConnectionConfig, ConnectionProfile, DriverManifest, FieldType, KnownDatabase,
@@ -549,153 +549,118 @@ impl ConnDialog {
             }
         }
         let p = theme::palette(ctx);
-        let mut open = true;
         let mut action = FormAction::None;
         let mut switch_to = None;
         let mut new_clicked = false;
-        egui::Window::new("Data Sources and Drivers")
-            .id(Id::new("connection_dialog"))
-            .open(&mut open)
-            .title_bar(false)
-            .collapsible(false)
-            .resizable(true)
-            .default_size(vec2(
-                880.0_f32.min(ctx.content_rect().width() - 32.0),
-                580.0_f32.min(ctx.content_rect().height() - 32.0),
-            ))
-            .default_pos(
-                ctx.content_rect().center()
-                    - vec2(
-                        440.0_f32.min((ctx.content_rect().width() - 32.0) / 2.0),
-                        290.0_f32.min((ctx.content_rect().height() - 32.0) / 2.0),
-                    ),
-            )
-            .min_width(640.0)
-            .min_height(460.0)
-            .frame(Frame::window(&ctx.global_style()).inner_margin(Margin::ZERO))
-            .show(ctx, |ui| {
-                ui.set_min_width(640.0_f32.min(ctx.content_rect().width() - 32.0));
-                ui.set_min_height(400.0_f32.min(ctx.content_rect().height() - 32.0));
-
-                if theme::dialog_header(
-                    ui,
-                    icons::DATA_SOURCE,
-                    "Data Sources and Drivers",
-                    Some("Saved connections and driver settings"),
-                ) {
-                    action = FormAction::Cancel;
-                }
-
-                // Footer first, so the list and the form share the remaining height.
-                egui::Panel::bottom(Id::new("conn_dialog_footer"))
-                    .frame(
-                        Frame::new()
-                            .fill(p.bg_panel)
-                            .inner_margin(Margin::symmetric(16, 10)),
-                    )
-                    .show(ui, |ui| {
-                        ui.painter().hline(
-                            ui.max_rect().x_range(),
-                            ui.max_rect().top() - 0.5,
-                            Stroke::new(1.0, p.border),
-                        );
-                        let test = self.test_status(engine);
-                        let valid = manifests
-                            .iter()
-                            .find(|m| m.id == self.driver)
-                            .is_some_and(|m| self.form.validate(m).is_empty());
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = Spacing::M;
-                            if ui.button("Test Connection").clicked() {
-                                action = FormAction::Test;
-                            }
-                            connection_form_status(ui, test.as_ref());
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                let valid = valid && !self.saving;
-                                let save = theme::primary_button_state(ui.ctx(), valid, "Save");
-                                if ui.add_enabled(valid, save).clicked() {
-                                    action = FormAction::Save;
-                                }
-                                if ui.button("Cancel").clicked() {
-                                    action = FormAction::Cancel;
-                                }
-                            });
-                        });
-                    });
-
-                // The saved data sources.
-                egui::Panel::left(Id::new("conn_dialog_list"))
-                    .resizable(false)
-                    .exact_size(220.0)
-                    .frame(
-                        Frame::new()
-                            .fill(p.bg_subtle)
-                            .inner_margin(Margin::same(10)),
-                    )
-                    .show(ui, |ui| {
-                        self.source_list(
-                            ui,
-                            connections,
-                            profiles,
-                            &mut switch_to,
-                            &mut new_clicked,
-                        );
-                    });
-
-                egui::CentralPanel::no_frame().show(ui, |ui| {
-                    Frame::new()
-                        .fill(p.bg_raised)
-                        .inner_margin(Margin::symmetric(20, 14))
+        let title = if self.editing.is_some() {
+            "Edit connection"
+        } else {
+            "New connection"
+        };
+        let response = theme::Dialog::new("connection_dialog", icons::DATA_SOURCE, title)
+            .subtitle("Saved connections and driver settings")
+            .width(960.0)
+            .body_height(540.0)
+            .min_body_height(240.0)
+            .body_margin(Margin::ZERO)
+            .show(ctx, |d| {
+                d.body(|ui| {
+                    // The saved data sources.
+                    egui::Panel::left(Id::new("conn_dialog_list"))
+                        .resizable(false)
+                        .exact_size(220.0)
+                        .frame(
+                            Frame::new()
+                                .fill(p.bg_subtle)
+                                .inner_margin(Margin::same(10)),
+                        )
                         .show(ui, |ui| {
-                            let Some(manifest) = manifests.iter().find(|m| m.id == self.driver)
-                            else {
-                                ui.colored_label(
-                                    p.error,
-                                    format!("Driver \"{}\" is not available", self.driver),
-                                );
-                                return;
-                            };
-                            connection_identity(ui, &mut self.form);
-                            self.driver_row(ui, &manifests);
-                            self.profile_row(ui, profiles);
-                            Self::agent_access_row(ui, &mut self.form.agent_access);
-                            ui.add_space(Spacing::M);
-                            ui.horizontal(|ui| {
-                                let label_width = 96.0;
-                                ui.allocate_ui_with_layout(
-                                    vec2(label_width, ui.spacing().interact_size.y),
-                                    Layout::left_to_right(Align::Center),
-                                    |ui| {
-                                        ui.set_min_width(label_width);
-                                        ui.label("");
-                                    },
-                                );
-                                ui.checkbox(
-                                    &mut self.form.save_secrets,
-                                    "Save password securely on this device",
-                                )
-                                .on_hover_text(
-                                    "Otherwise sqlr asks for the secrets when it connects",
-                                );
-                            });
-                            ui.add_space(Spacing::M);
-                            theme::hairline(ui);
-                            ui.add_space(Spacing::S);
-                            egui::ScrollArea::vertical()
-                                .id_salt("conn_dialog_form")
-                                .auto_shrink(false)
-                                .show(ui, |ui| {
+                            self.source_list(
+                                ui,
+                                connections,
+                                profiles,
+                                &mut switch_to,
+                                &mut new_clicked,
+                            );
+                        });
+
+                    egui::CentralPanel::no_frame().show(ui, |ui| {
+                        Frame::new()
+                            .fill(p.bg_raised)
+                            .inner_margin(Margin::symmetric(20, 14))
+                            .show(ui, |ui| {
+                                let Some(manifest) = manifests.iter().find(|m| m.id == self.driver)
+                                else {
+                                    ui.colored_label(
+                                        p.error,
+                                        format!("Driver \"{}\" is not available", self.driver),
+                                    );
+                                    return;
+                                };
+                                // The whole form scrolls, with a fade where fields hide, so
+                                // nothing is cut off on a short window.
+                                let error_room = if self.error.is_some() { 28.0 } else { 0.0 };
+                                let height = (ui.available_height() - error_room).max(80.0);
+                                theme::scroll_body(ui, "conn_dialog_form", height, height, |ui| {
+                                    connection_identity(ui, &mut self.form);
+                                    self.driver_row(ui, &manifests);
+                                    self.profile_row(ui, profiles);
+                                    Self::agent_access_row(ui, &mut self.form.agent_access);
+                                    ui.add_space(Spacing::M);
+                                    ui.horizontal(|ui| {
+                                        let label_width = 96.0;
+                                        ui.allocate_ui_with_layout(
+                                            vec2(label_width, ui.spacing().interact_size.y),
+                                            Layout::left_to_right(Align::Center),
+                                            |ui| {
+                                                ui.set_min_width(label_width);
+                                                ui.label("");
+                                            },
+                                        );
+                                        ui.checkbox(
+                                            &mut self.form.save_secrets,
+                                            "Save password securely on this device",
+                                        )
+                                        .on_hover_text(
+                                            "Otherwise sqlr asks for the secrets when it connects",
+                                        );
+                                    });
+                                    ui.add_space(Spacing::M);
+                                    theme::hairline(ui);
+                                    ui.add_space(Spacing::S);
                                     let body = connection_form_body(ui, &mut self.form, manifest);
                                     if body != FormAction::None {
                                         action = body;
                                     }
+                                    ui.add_space(Spacing::M);
                                 });
-                            if let Some(message) = &self.error {
-                                ui.colored_label(p.error, message);
-                            }
-                        });
+                                if let Some(message) = &self.error {
+                                    ui.colored_label(p.error, message);
+                                }
+                            });
+                    });
+                });
+                let test = self.test_status(engine);
+                let blocked = match manifests.iter().find(|m| m.id == self.driver) {
+                    None => Some("The driver is not available".to_string()),
+                    // Saving: the button waits silently for the store.
+                    Some(_) if self.saving => Some(String::new()),
+                    Some(m) => self.form.validate(m).into_iter().next(),
+                };
+                d.footer(|f| {
+                    if f.secondary("Test connection", true) {
+                        action = FormAction::Test;
+                    }
+                    connection_form_status(f.left(), test.as_ref());
+                    if f.primary("Save", blocked.as_deref()) {
+                        action = FormAction::Save;
+                    }
+                    f.cancel();
                 });
             });
+        if response.closed && action == FormAction::None {
+            action = FormAction::Cancel;
+        }
 
         if new_clicked {
             let preferred = manifests
@@ -730,10 +695,6 @@ impl ConnDialog {
                 DialogEvent::None
             }
             (FormAction::Cancel, _) => {
-                self.finish(engine);
-                DialogEvent::Closed
-            }
-            _ if !open => {
                 self.finish(engine);
                 DialogEvent::Closed
             }
@@ -924,31 +885,42 @@ pub enum Confirm {
     No,
 }
 
-/// Asks `prompt` (with an optional `detail` line) before deleting something.
-pub fn confirm_delete(ctx: &egui::Context, prompt: &str, detail: Option<&str>) -> Confirm {
-    let mut answer = Confirm::Pending;
-    let response = egui::Modal::new(Id::new("confirm_delete")).show(ctx, |ui| {
-        ui.label(prompt);
-        if let Some(detail) = detail {
-            ui.label(egui::RichText::new(detail).color(theme::palette(ui.ctx()).text_muted));
-        }
-        ui.add_space(Spacing::L);
-        ui.horizontal(|ui| {
-            let p = theme::palette(ui.ctx());
-            let delete =
-                egui::Button::new(egui::RichText::new("Delete").color(p.accent_text)).fill(p.error);
-            if ui.add(delete).clicked() {
-                answer = Confirm::Yes;
+/// What a deletion confirmation says.
+pub struct DeleteAsk<'a> {
+    /// Names the action and its object: "Delete connection".
+    pub title: &'a str,
+    /// The red button: "Delete", "Remove", "Clear history".
+    pub action: &'a str,
+    pub prompt: &'a str,
+    /// A muted line on what else goes away.
+    pub detail: Option<&'a str>,
+}
+
+/// Asks before deleting something: the shared confirmation, Cancel focused.
+pub fn confirm_delete(ctx: &egui::Context, ask: DeleteAsk<'_>) -> Confirm {
+    let spec = crate::confirm::ConfirmSpec::new(
+        Id::new("confirm_delete"),
+        icons::DELETE,
+        ask.title,
+        ask.action,
+    )
+    .width(480.0);
+    let answer = crate::confirm::confirm_modal(
+        ctx,
+        spec,
+        |ui| {
+            ui.label(ask.prompt);
+            if let Some(detail) = ask.detail {
+                ui.add_space(Spacing::XS);
+                ui.label(egui::RichText::new(detail).color(theme::palette(ui.ctx()).text_muted));
             }
-            if ui.button("Cancel").clicked() {
-                answer = Confirm::No;
-            }
-        });
-    });
-    if answer == Confirm::Pending && response.should_close() {
-        Confirm::No
-    } else {
-        answer
+        },
+        |_| {},
+    );
+    match answer {
+        None => Confirm::Pending,
+        Some(true) => Confirm::Yes,
+        Some(false) => Confirm::No,
     }
 }
 
@@ -1051,7 +1023,13 @@ impl SqlrApp {
                     Some("Every stored history entry is deleted; snippets are kept."),
                 ),
             };
-            match confirm_delete(ctx, &prompt, detail) {
+            let ask = DeleteAsk {
+                title: "Clear query history",
+                action: "Delete",
+                prompt: &prompt,
+                detail,
+            };
+            match confirm_delete(ctx, ask) {
                 Confirm::Pending => {}
                 Confirm::Yes => {
                     self.engine.clear_history(target.as_deref());
@@ -1065,8 +1043,13 @@ impl SqlrApp {
                 .connection(&id)
                 .map_or_else(|| id.clone(), |c| c.name.clone());
             let prompt = format!("Delete the connection \"{name}\"?");
-            let detail = "Its saved secrets are removed from the keychain too.";
-            match confirm_delete(ctx, &prompt, Some(detail)) {
+            let ask = DeleteAsk {
+                title: "Delete connection",
+                action: "Delete",
+                prompt: &prompt,
+                detail: Some("Saved passwords for this connection will also be deleted."),
+            };
+            match confirm_delete(ctx, ask) {
                 Confirm::Pending => {}
                 Confirm::No => self.delete_pending = None,
                 Confirm::Yes => {
@@ -1077,8 +1060,13 @@ impl SqlrApp {
         }
         if let Some(name) = self.folder_delete_pending.clone() {
             let prompt = format!("Delete the folder \"{name}\"?");
-            let detail = "Its connections move to the top level; none is deleted.";
-            match confirm_delete(ctx, &prompt, Some(detail)) {
+            let ask = DeleteAsk {
+                title: "Delete folder",
+                action: "Delete",
+                prompt: &prompt,
+                detail: Some("Its connections move to the top level; none is deleted."),
+            };
+            match confirm_delete(ctx, ask) {
                 Confirm::Pending => {}
                 Confirm::No => self.folder_delete_pending = None,
                 Confirm::Yes => {
@@ -1109,33 +1097,37 @@ impl SqlrApp {
         let Some(prompt) = &mut self.secret_prompt else {
             return;
         };
-        let mut answer = None;
-        let response = egui::Modal::new(Id::new("secret_prompt")).show(ctx, |ui| {
-            ui.label(format!("Secrets for {}", prompt.name));
-            ui.label(
-                egui::RichText::new("They are kept in memory until sqlr quits.")
-                    .color(theme::palette(ui.ctx()).text_muted),
-            );
-            ui.add_space(Spacing::S);
-            for (key, label) in &prompt.fields {
-                let caption = ui.label(label);
-                let value = prompt.values.entry(key.clone()).or_default();
-                text_edit_secret(ui, egui::TextEdit::singleline(value).password(true))
-                    .labelled_by(caption.id);
-            }
-            ui.add_space(Spacing::L);
-            ui.horizontal(|ui| {
-                if ui.add(theme::primary_button(ui.ctx(), "Connect")).clicked() {
-                    answer = Some(true);
-                }
-                if ui.button("Cancel").clicked() {
-                    answer = Some(false);
-                }
+        let title = format!("Connect to {}", prompt.name);
+        let response = theme::Dialog::new("secret_prompt", icons::KEY, &title)
+            .subtitle("Secrets stay in memory until sqlr quits")
+            .width(420.0)
+            .show(ctx, |d| {
+                d.body(|ui| {
+                    for (key, label) in &prompt.fields {
+                        let caption = ui.label(label);
+                        let value = prompt.values.entry(key.clone()).or_default();
+                        text_edit_secret(
+                            ui,
+                            egui::TextEdit::singleline(value)
+                                .password(true)
+                                .desired_width(f32::INFINITY),
+                        )
+                        .labelled_by(caption.id);
+                    }
+                });
+                d.footer(|f| {
+                    let connect = f.primary("Connect", None);
+                    f.cancel();
+                    connect
+                })
             });
-        });
-        if answer.is_none() && response.should_close() {
-            answer = Some(false);
-        }
+        let answer = if response.inner {
+            Some(true)
+        } else if response.closed {
+            Some(false)
+        } else {
+            None
+        };
         let Some(connect) = answer else {
             return;
         };

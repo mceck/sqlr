@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use egui::{Id, RichText};
+use egui::RichText;
 use sqlr_engine::{DriverJobState, ManualState};
 use sqlr_ui::theme::{self, Spacing};
 use sqlr_ui::{
@@ -11,7 +11,7 @@ use sqlr_ui::{
 
 use super::ManualPick;
 use crate::app::SqlrApp;
-use crate::dialogs::{Confirm, confirm_delete};
+use crate::dialogs::{Confirm, DeleteAsk, confirm_delete};
 
 impl SqlrApp {
     /// Opens the Driver Manager. Non-bundled drivers install only from a local file.
@@ -104,22 +104,16 @@ impl SqlrApp {
             return;
         };
         let rows = self.driver_rows();
-        let mut action = None;
-        let mut close = false;
-        let response = egui::Modal::new(Id::new("driver_manager")).show(ctx, |ui| {
-            ui.set_width(780.0);
-            ui.label(RichText::new("Drivers").font(theme::semibold(ui.ctx(), 15.0)));
-            ui.add_space(Spacing::S);
-            action = driver_manager(ui, &mut state, &rows);
-            ui.add_space(Spacing::M);
-            if ui.button("Close").clicked() {
-                close = true;
-            }
-        });
-        if response.should_close() {
-            close = true;
-        }
-        if !close {
+        let response = theme::Dialog::new("driver_manager", theme::icons::DATABASE, "Drivers")
+            .subtitle("The database drivers sqlr can connect with")
+            .width(800.0)
+            .show(ctx, |d| {
+                let action = d.body(|ui| driver_manager(ui, &mut state, &rows));
+                d.footer(|f| f.cancel_as("Close"));
+                action
+            });
+        let action = response.inner;
+        if !response.closed {
             self.drivers_ui.manager = Some(state);
         }
         match action {
@@ -164,42 +158,48 @@ impl SqlrApp {
                 );
             }
             ManualState::Review(inspection) => {
-                let mut decision = None;
-                egui::Modal::new(Id::new("manual_driver_review")).show(ctx, |ui| {
-                    ui.set_width(520.0);
-                    ui.label(
-                        RichText::new("Install a driver from a file?")
-                            .font(theme::semibold(ui.ctx(), 15.0)),
-                    );
-                    ui.add_space(Spacing::S);
-                    let palette = theme::palette(ui.ctx());
-                    ui.label(
-                        RichText::new(
-                            "This driver was not checked by sqlr. It is a program that will \
-                             run on this computer with your rights and will receive the \
-                             passwords of the connections that use it. Install it only if you \
-                             trust where it came from.",
-                        )
-                        .color(palette.warning),
-                    );
-                    ui.add_space(Spacing::S);
-                    ui.label(format!("File: {}", inspection.file.display()));
-                    ui.label(format!("Driver: {} {}", inspection.id, inspection.version));
-                    ui.label(format!("Size: {} bytes", inspection.size));
-                    ui.horizontal(|ui| {
-                        ui.label("SHA-256:");
-                        ui.monospace(&inspection.sha256);
+                let response = theme::Dialog::new(
+                    "manual_driver_review",
+                    theme::icons::WARNING,
+                    "Install driver from file",
+                )
+                .subtitle("Review the file before sqlr runs it")
+                .width(560.0)
+                .danger()
+                .show(ctx, |d| {
+                    d.body(|ui| {
+                        let palette = theme::palette(ui.ctx());
+                        ui.label(
+                            RichText::new(
+                                "This driver was not checked by sqlr. It is a program that will \
+                                 run on this computer with your rights and will receive the \
+                                 passwords of the connections that use it. Install it only if \
+                                 you trust where it came from.",
+                            )
+                            .color(palette.warning),
+                        );
+                        ui.add_space(Spacing::M);
+                        ui.label(format!("File: {}", inspection.file.display()));
+                        ui.label(format!("Driver: {} {}", inspection.id, inspection.version));
+                        ui.label(format!("Size: {} bytes", inspection.size));
+                        ui.horizontal(|ui| {
+                            ui.label("SHA-256:");
+                            ui.monospace(&inspection.sha256);
+                        });
                     });
-                    ui.add_space(Spacing::M);
-                    ui.horizontal(|ui| {
-                        if ui.button("Cancel").clicked() {
-                            decision = Some(false);
-                        }
-                        if ui.button("Install anyway").clicked() {
-                            decision = Some(true);
-                        }
-                    });
+                    d.footer(|f| {
+                        let install = f.danger("Install anyway", None);
+                        f.cancel();
+                        install
+                    })
                 });
+                let decision = if response.inner {
+                    Some(true)
+                } else if response.closed {
+                    Some(false)
+                } else {
+                    None
+                };
                 match decision {
                     Some(true) => self.engine.confirm_manual_install(),
                     Some(false) => {
@@ -217,8 +217,13 @@ impl SqlrApp {
             return;
         };
         let prompt = format!("Remove the driver \"{id}\" and all its versions?");
-        let detail = Some("Connections that use it stop working until it is installed again.");
-        match confirm_delete(ctx, &prompt, detail) {
+        let ask = DeleteAsk {
+            title: "Remove driver",
+            action: "Remove",
+            prompt: &prompt,
+            detail: Some("Connections that use it stop working until it is installed again."),
+        };
+        match confirm_delete(ctx, ask) {
             Confirm::Pending => {}
             Confirm::Yes => {
                 self.engine.remove_driver(&id, None);

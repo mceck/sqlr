@@ -147,73 +147,20 @@ impl SqlrApp {
             return;
         };
         let p = theme::palette(ctx);
-        let mut open = true;
         let mut action = None;
         let profiles = &self.profiles;
-        egui::Window::new("Connection profiles")
-            .open(&mut open)
-            .title_bar(false)
-            .collapsible(false)
-            .resizable(true)
-            .default_size(vec2(
-                720.0_f32.min(ctx.content_rect().width() - 32.0),
-                540.0_f32.min(ctx.content_rect().height() - 32.0),
-            ))
-            .default_pos(
-                ctx.content_rect().center()
-                    - vec2(
-                        360.0_f32.min((ctx.content_rect().width() - 32.0) / 2.0),
-                        270.0_f32.min((ctx.content_rect().height() - 32.0) / 2.0),
-                    ),
-            )
-            .min_width(560.0)
-            .min_height(400.0)
-            .frame(Frame::window(&ctx.global_style()).inner_margin(Margin::ZERO))
-            .show(ctx, |ui| {
-                ui.set_min_width(560.0_f32.min(ctx.content_rect().width() - 32.0));
-                ui.set_min_height(400.0_f32.min(ctx.content_rect().height() - 32.0));
-                if theme::dialog_header(
-                    ui,
-                    theme::icons::CONNECTION,
-                    "Connection profiles",
-                    Some("Colors and transaction behavior of connections"),
-                ) {
-                    action = Some(ProfileAction::Close);
-                }
-                egui::Panel::bottom(Id::new("profiles_footer"))
-                    .frame(
-                        Frame::new()
-                            .fill(p.bg_panel)
-                            .inner_margin(Margin::symmetric(16, 10)),
-                    )
-                    .show(ui, |ui| {
-                        ui.painter().hline(
-                            ui.max_rect().x_range(),
-                            ui.max_rect().top() - 0.5,
-                            Stroke::new(1.0, p.border),
-                        );
-                        let valid = !dialog.draft.name.trim().is_empty();
-                        ui.horizontal(|ui| {
-                            let builtin = ConnectionProfile::is_builtin(&dialog.draft.id);
-                            let label = if builtin { "Reset" } else { "Delete" };
-                            if ui
-                                .add_enabled(!dialog.new, egui::Button::new(label))
-                                .clicked()
-                            {
-                                action = Some(ProfileAction::Delete);
-                            }
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                let save = theme::primary_button_state(ui.ctx(), valid, "Save");
-                                if ui.add_enabled(valid, save).clicked() {
-                                    action = Some(ProfileAction::Save);
-                                }
-                                if ui.button("Close").clicked() {
-                                    action = Some(ProfileAction::Close);
-                                }
-                            });
-                        });
-                    });
-
+        let response = theme::Dialog::new(
+            "connection_profiles",
+            theme::icons::CONNECTION,
+            "Connection profiles",
+        )
+        .subtitle("Colors and transaction behavior of connections")
+        .width(740.0)
+        .body_height(460.0)
+        .min_body_height(240.0)
+        .body_margin(Margin::ZERO)
+        .show(ctx, |d| {
+            d.body(|ui| {
                 egui::Panel::left(Id::new("profiles_list"))
                     .resizable(false)
                     .exact_size(200.0)
@@ -228,6 +175,8 @@ impl SqlrApp {
                         egui::ScrollArea::vertical()
                             .id_salt("profiles_scroll")
                             .auto_shrink(false)
+                            // Leaves room for "New profile" under the list.
+                            .max_height((ui.available_height() - 40.0).max(60.0))
                             .show(ui, |ui| {
                                 for profile in profiles {
                                     let selected = !dialog.new && profile.id == dialog.draft.id;
@@ -318,7 +267,25 @@ impl SqlrApp {
                         });
                 });
             });
-        if !open {
+            let blocked = dialog
+                .draft
+                .name
+                .trim()
+                .is_empty()
+                .then_some("Enter a name");
+            d.footer(|f| {
+                let builtin = ConnectionProfile::is_builtin(&dialog.draft.id);
+                let label = if builtin { "Reset" } else { "Delete" };
+                if f.secondary(label, !dialog.new) {
+                    action = Some(ProfileAction::Delete);
+                }
+                if f.primary("Save", blocked) {
+                    action = Some(ProfileAction::Save);
+                }
+                f.cancel_as("Close");
+            });
+        });
+        if response.closed && action.is_none() {
             action = Some(ProfileAction::Close);
         }
         match action {

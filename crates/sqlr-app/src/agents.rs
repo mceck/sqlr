@@ -1078,94 +1078,88 @@ impl SqlrApp {
             None
         };
         let p = sqlr_ui::theme::palette(ctx);
-        let modal = egui::Modal::new(egui::Id::new("agent_approval")).show(ctx, |ui| {
-            ui.set_width(560.0_f32.min(ctx.content_rect().width() - 64.0));
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("Agent request").strong().size(18.0));
-                ui.add_space(8.0);
-                let risk = egui::RichText::new(request.risk.label())
-                    .small()
-                    .color(p.accent_text);
-                ui.label(risk);
-            });
-            ui.add_space(6.0);
-            ui.label(format!(
-                "{} (MCP session {})",
-                request.client_name, request.session_id
-            ));
-            let mut target = String::new();
-            if let Some(connection) = &request.connection {
-                target.push_str(connection);
-            }
-            if let Some(profile) = &request.profile {
-                target.push_str(&format!(" · profile {profile}"));
-            }
-            if let Some(database) = &request.database {
-                target.push_str(&format!(" · database {database}"));
-            }
-            if let Some(exposure) = &request.exposure {
-                target.push_str(&format!(" · agents: {exposure}"));
-            }
-            if !target.is_empty() {
-                ui.label(egui::RichText::new(target).small().weak());
-            }
-            ui.add_space(8.0);
-            if let Some(statement) = &request.statement {
-                egui::ScrollArea::vertical()
-                    .id_salt("agent_statement")
-                    .max_height(260.0)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.add(
-                            egui::Label::new(egui::RichText::new(statement).monospace().size(13.0))
-                                .wrap(),
-                        );
-                    });
-            } else {
-                if let Some(target) = &request.target {
-                    ui.label(egui::RichText::new(target).monospace());
-                }
-                if let Some(consequences) = &request.consequences {
-                    ui.add_space(4.0);
-                    ui.label(egui::RichText::new(consequences).small().weak());
-                }
-            }
-            ui.add_space(10.0);
-            ui.horizontal(|ui| {
+        let subtitle = format!(
+            "{} (MCP session {})",
+            request.client_name, request.session_id
+        );
+        let focus_deny = std::mem::take(&mut self.approval_focus_pending);
+        let response = sqlr_ui::theme::Dialog::new(
+            "agent_approval",
+            sqlr_ui::theme::icons::MCP,
+            "Agent request",
+        )
+        .subtitle(&subtitle)
+        .width(580.0)
+        .show(ctx, |d| {
+            d.body(|ui| {
                 ui.label(
+                    egui::RichText::new(format!("Risk: {}", request.risk.label()))
+                        .small()
+                        .strong()
+                        .color(p.warning),
+                );
+                ui.add_space(sqlr_ui::theme::Spacing::XS);
+                let mut target = String::new();
+                if let Some(connection) = &request.connection {
+                    target.push_str(connection);
+                }
+                if let Some(profile) = &request.profile {
+                    target.push_str(&format!(" · profile {profile}"));
+                }
+                if let Some(database) = &request.database {
+                    target.push_str(&format!(" · database {database}"));
+                }
+                if let Some(exposure) = &request.exposure {
+                    target.push_str(&format!(" · agents: {exposure}"));
+                }
+                if !target.is_empty() {
+                    ui.label(egui::RichText::new(target).small().weak());
+                }
+                ui.add_space(8.0);
+                if let Some(statement) = &request.statement {
+                    egui::ScrollArea::vertical()
+                        .id_salt("agent_statement")
+                        .max_height(260.0)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(statement).monospace().size(13.0),
+                                )
+                                .wrap(),
+                            );
+                        });
+                } else {
+                    if let Some(target) = &request.target {
+                        ui.label(egui::RichText::new(target).monospace());
+                    }
+                    if let Some(consequences) = &request.consequences {
+                        ui.add_space(4.0);
+                        ui.label(egui::RichText::new(consequences).small().weak());
+                    }
+                }
+            });
+            d.footer(|f| {
+                // Approving takes a click: Enter never allows, and the safe answer holds the
+                // focus when a request appears. Escape and ✕ deny.
+                f.without_enter();
+                f.left().label(
                     egui::RichText::new(format!(
                         "Denied automatically in {remaining}s if you do not answer."
                     ))
                     .small()
                     .weak(),
                 );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let allow =
-                        egui::Button::new(egui::RichText::new("Allow").color(p.accent_text))
-                            .fill(p.accent);
-                    if ui.add(allow).clicked() {
-                        decision = Some(Ok(()));
-                    }
-                    let deny = ui.add(egui::Button::new("Deny"));
-                    if deny.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                        decision = Some(Err(ToolError::denied()));
-                    }
-                    if deny.clicked() {
-                        decision = Some(Err(ToolError::denied()));
-                    }
-                    // The safe action is focused when the dialog opens; Escape denies.
-                    if self.approval_focus_pending {
-                        self.approval_focus_pending = false;
-                        deny.request_focus();
-                    }
-                });
+                if f.primary("Allow", None) {
+                    decision = Some(Ok(()));
+                }
+                f.cancel_as("Deny");
+                if focus_deny {
+                    f.focus_cancel();
+                }
             });
         });
-        let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
-        if escape && decision.is_none() {
-            decision = Some(Err(ToolError::denied()));
-        }
-        if modal.should_close() && decision.is_none() {
+        if response.closed && decision.is_none() {
             decision = Some(Err(ToolError::denied()));
         }
         if let Some(result) = decision

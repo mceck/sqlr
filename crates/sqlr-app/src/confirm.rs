@@ -99,7 +99,6 @@ pub(crate) fn confirmation_for(
 
 /// A prompt above muted monospace lines (the statements a confirmation is about).
 pub(crate) fn prompt_lines(ui: &mut egui::Ui, prompt: &str, lines: &[String]) {
-    ui.set_max_width(560.0);
     ui.label(prompt);
     ui.add_space(Spacing::S);
     let p = theme::palette(ui.ctx());
@@ -108,38 +107,71 @@ pub(crate) fn prompt_lines(ui: &mut egui::Ui, prompt: &str, lines: &[String]) {
     }
 }
 
-/// A confirmation modal: `body` (which sets the width), then a red `confirm` button, a
-/// `dismiss` button and `extra` buttons after them. `Some(true)` once confirmed,
-/// `Some(false)` once dismissed (the button, Escape or a click outside), `None` while open.
+/// How a confirmation looks: its header, buttons and width.
+pub(crate) struct ConfirmSpec<'a> {
+    pub id: Id,
+    pub icon: &'a str,
+    /// Names the action and its object ("Delete connection", "Run on Northwind").
+    pub title: &'a str,
+    /// The destructive button, in the error color.
+    pub confirm: &'a str,
+    pub dismiss: &'a str,
+    pub width: f32,
+}
+
+impl<'a> ConfirmSpec<'a> {
+    pub fn new(id: Id, icon: &'a str, title: &'a str, confirm: &'a str) -> Self {
+        Self {
+            id,
+            icon,
+            title,
+            confirm,
+            dismiss: "Cancel",
+            width: 460.0,
+        }
+    }
+
+    pub fn dismiss(mut self, dismiss: &'a str) -> Self {
+        self.dismiss = dismiss;
+        self
+    }
+
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = width;
+        self
+    }
+}
+
+/// A confirmation in the shared dialog: `body`, then the dismiss button and a red `confirm`
+/// button (the dismiss button holds the focus); `extra` adds secondary actions on the
+/// footer's left. `Some(true)` once confirmed, `Some(false)` once dismissed (the button, ✕,
+/// Escape or a click outside), `None` while open.
 pub(crate) fn confirm_modal(
     ctx: &egui::Context,
-    id: Id,
-    confirm: &str,
-    dismiss: &str,
+    spec: ConfirmSpec<'_>,
     body: impl FnOnce(&mut egui::Ui),
-    extra: impl FnOnce(&mut egui::Ui),
+    extra: impl FnOnce(&mut theme::DialogFooter),
 ) -> Option<bool> {
-    let mut answer = None;
-    let response = egui::Modal::new(id).show(ctx, |ui| {
-        body(ui);
-        ui.add_space(Spacing::L);
-        ui.horizontal(|ui| {
-            let p = theme::palette(ui.ctx());
-            let button =
-                egui::Button::new(RichText::new(confirm).color(p.accent_text)).fill(p.error);
-            if ui.add(button).clicked() {
-                answer = Some(true);
-            }
-            if ui.button(dismiss).clicked() {
-                answer = Some(false);
-            }
-            extra(ui);
+    let response = theme::Dialog::new(spec.id, spec.icon, spec.title)
+        .width(spec.width)
+        .danger()
+        .dismiss_on_backdrop()
+        .show(ctx, |d| {
+            d.body(body);
+            d.footer(|f| {
+                let confirmed = f.danger(spec.confirm, None);
+                f.cancel_as(spec.dismiss);
+                extra(f);
+                confirmed
+            })
         });
-    });
-    if answer.is_none() && response.should_close() {
-        answer = Some(false);
+    if response.inner {
+        Some(true)
+    } else if response.closed {
+        Some(false)
+    } else {
+        None
     }
-    answer
 }
 
 /// The first line of each statement, cut; at most `LISTED`, then how many more.
@@ -189,11 +221,13 @@ impl SqlrApp {
         let Some(pending) = &self.confirm else {
             return;
         };
+        let name = self
+            .connection(&pending.conn)
+            .map_or_else(|| pending.conn.clone(), |c| c.name.clone());
+        let title = format!("Run on {name}");
         let answer = confirm_modal(
             ctx,
-            Id::new("confirm_run"),
-            "Run",
-            "Cancel",
+            ConfirmSpec::new(Id::new("confirm_run"), theme::icons::RUN, &title, "Run").width(560.0),
             |ui| prompt_lines(ui, &pending.prompt, &pending.statements),
             |_| {},
         );

@@ -239,6 +239,9 @@ fn save_transfer_as_task_and_rerun() {
     h.run_steps(5);
     h.get_by_label("Copy").click();
     h.run_steps(2);
+    // The log is a modal dialog: Escape closes it.
+    h.key_press(egui::Key::Escape);
+    h.run_steps(2);
 
     // Duplicate the task, edit the copy, then delete it.
     h.get_by_label("Transfer data").click();
@@ -250,7 +253,7 @@ fn save_transfer_as_task_and_rerun() {
         .expect("the tasks pane's Edit")
         .click();
     wait_for_label(&mut h, "Load preview");
-    h.get_by_label("Cancel").click();
+    h.get_by_label("Cancel").click_accesskit();
     h.run_steps(3);
     h.get_by_label("Transfer data (copy)").click();
     h.run_steps(2);
@@ -279,9 +282,9 @@ fn compare_wizard_opens_script_tab() {
     wait_for_label(&mut h, "Expand main");
     context_menu(&mut h, "main", "Compare with…");
     wait_for_label(&mut h, "Compare");
-    h.get_by_label("Compare").click();
+    h.get_by_label("Compare").click_accesskit();
     wait_for_label_containing(&mut h, "1 to create");
-    h.get_by_label("Open migration script").click();
+    h.get_by_label("Open migration script").click_accesskit();
     wait_for_label(&mut h, "Migrate main.sql");
 }
 
@@ -299,7 +302,7 @@ fn er_diagram_from_schema() {
     h.get_by_label("Expand db-a").click();
     wait_for_label(&mut h, "Expand main");
     context_menu(&mut h, "main", "ER diagram");
-    wait_for_label(&mut h, "ER diagram · main");
+    wait_for_label(&mut h, "ER diagram of main");
     wait_for_label(&mut h, "Export SVG");
 }
 
@@ -370,7 +373,7 @@ fn grid_clipboard_transfers_between_databases_with_mapping_and_new_ids() {
     h.run_steps(2);
     h.event(egui::Event::Paste(text.into()));
     wait_for_label(&mut h, "Add pending rows");
-    h.get_by_label("Add pending rows").click();
+    h.get_by_label("Add pending rows").click_accesskit();
     wait_for_label(&mut h, "3 pending changes");
     let db = rusqlite::Connection::open(&b_path).unwrap();
     assert_eq!(

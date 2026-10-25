@@ -177,15 +177,12 @@ impl DatagenDialog {
             }
         }
         let mut event = DatagenEvent::None;
-        let mut open = true;
-        theme::tool_dialog(
-            ctx,
-            &mut open,
-            &format!("Generate data · {}", self.table.name),
-            theme::icons::CREATE,
-            "Configure generators, preview sample rows, then write to the table",
-            900.0,
-            |ui| {
+        let title = format!("Generate data for {}", self.table.name);
+        let response = theme::Dialog::new("datagen_dialog", theme::icons::CREATE, &title)
+            .subtitle("Configure generators, preview sample rows, then write to the table")
+            .width(900.0)
+            .show(ctx, |d| {
+            d.body(|ui| {
                 let p = theme::palette(ui.ctx());
                 if let Some(e) = &self.error {
                     ui.colored_label(p.error, e);
@@ -220,31 +217,6 @@ impl DatagenDialog {
                 egui::ScrollArea::both().max_height(260.0).show(ui, |ui| {
                     if datagen_table(ui, &mut self.columns, &self.types) {
                         self.preview = None;
-                    }
-                });
-                ui.add_space(Spacing::L);
-                theme::hairline(ui);
-                ui.add_space(Spacing::M);
-                ui.horizontal_wrapped(|ui| {
-                    if ui.button("Preview").clicked() {
-                        self.make_preview();
-                    }
-                    let running = self.run.is_some();
-                    let button = theme::primary_button_state(ui.ctx(), !running, "Generate");
-                    if ui.add_enabled(!running, button).clicked() {
-                        self.outcome = None;
-                        self.run = Some(engine.transfer(self.transfer()));
-                    }
-                    if ui.button("Save as task").clicked() {
-                        event =
-                            DatagenEvent::SaveAsTask(Box::new(TaskSpec::Transfer(self.transfer())));
-                    }
-                    if let Some(id) = self.run {
-                        if ui.button("Cancel").clicked() {
-                            engine.cancel_job(id);
-                        }
-                        ui.spinner();
-                        ui.label(format!("{} rows", self.progress.rows));
                     }
                 });
                 match &self.outcome {
@@ -282,9 +254,39 @@ impl DatagenDialog {
                     }
                     None => {}
                 }
-            },
-        );
-        if !open {
+            });
+            let ready = self.error.is_none() && self.load.is_none();
+            d.footer(|f| {
+                if !ready {
+                    f.cancel_as("Close");
+                    return;
+                }
+                if f.secondary("Preview", true) {
+                    self.make_preview();
+                }
+                if f.secondary("Save as task", true) {
+                    event = DatagenEvent::SaveAsTask(Box::new(TaskSpec::Transfer(self.transfer())));
+                }
+                if let Some(id) = self.run {
+                    f.left().spinner();
+                    f.left().label(format!("{} rows", self.progress.rows));
+                    if f.button("Stop", true) {
+                        engine.cancel_job(id);
+                    }
+                    return;
+                }
+                if f.primary("Generate", None) {
+                    self.outcome = None;
+                    self.run = Some(engine.transfer(self.transfer()));
+                }
+                f.cancel_as(if self.outcome.is_some() {
+                    "Close"
+                } else {
+                    "Cancel"
+                });
+            });
+            });
+        if response.closed {
             if let Some(id) = self.run.take() {
                 engine.cancel_job(id);
                 engine.forget_job(id);

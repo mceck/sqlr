@@ -3,6 +3,7 @@
 mod admin;
 mod chrome;
 mod datagen;
+mod dialog;
 mod diff;
 mod docs;
 mod driver_manager;

@@ -73,47 +73,51 @@ impl DatabasesDialog {
     /// cannot be picked.
     fn show(&mut self, ctx: &egui::Context, drivers: &HashSet<String>) -> Option<Event> {
         let mut event = None;
-        let title = match self.mode {
-            Mode::Catalog => "New connection",
-            Mode::Matrix => "Databases",
+        let (title, subtitle, icon, width) = match self.mode {
+            Mode::Catalog => (
+                "New connection",
+                "Choose the database to connect to",
+                icons::ADD,
+                520.0,
+            ),
+            Mode::Matrix => (
+                "Databases",
+                "What sqlr connects to, and through which driver",
+                icons::DATABASE,
+                760.0,
+            ),
         };
-        let response = egui::Modal::new(Id::new("databases_dialog")).show(ctx, |ui| {
-            ui.set_width(match self.mode {
-                Mode::Catalog => 480.0,
-                Mode::Matrix => 720.0,
-            });
-            ui.label(RichText::new(title).font(theme::semibold(ui.ctx(), 15.0)));
-            ui.add_space(Spacing::S);
-            ui.horizontal(|ui| {
-                icons::paint(ui, icons::SEARCH, theme::palette(ui.ctx()).text_muted);
-                sqlr_ui::text_edit(
-                    ui,
-                    egui::TextEdit::singleline(&mut self.filter)
-                        .hint_text("Search databases")
-                        .desired_width(f32::INFINITY),
-                );
-            });
-            ui.add_space(Spacing::S);
-            egui::ScrollArea::vertical()
-                .id_salt("databases_list")
-                .max_height(420.0)
-                .auto_shrink([false, true])
-                .show(ui, |ui| match self.mode {
-                    Mode::Catalog => {
-                        if let Some(id) = catalog_list(ui, &self.filter, drivers) {
-                            event = Some(Event::Picked(id));
+        // The list scrolls under a fixed search field, within the window's height.
+        let list_height = (ctx.content_rect().height() - 300.0).clamp(160.0, 440.0);
+        let response = theme::Dialog::new("databases_dialog", icon, title)
+            .subtitle(subtitle)
+            .width(width)
+            .show(ctx, |d| {
+                d.body(|ui| {
+                    ui.horizontal(|ui| {
+                        icons::paint(ui, icons::SEARCH, theme::palette(ui.ctx()).text_muted);
+                        sqlr_ui::text_edit(
+                            ui,
+                            egui::TextEdit::singleline(&mut self.filter)
+                                .hint_text("Search databases")
+                                .desired_width(f32::INFINITY),
+                        );
+                    });
+                    ui.add_space(Spacing::S);
+                    theme::scroll_body(ui, "databases_list", 0.0, list_height, |ui| {
+                        match self.mode {
+                            Mode::Catalog => {
+                                if let Some(id) = catalog_list(ui, &self.filter, drivers) {
+                                    event = Some(Event::Picked(id));
+                                }
+                            }
+                            Mode::Matrix => matrix(ui, &self.filter, drivers),
                         }
-                    }
-                    Mode::Matrix => matrix(ui, &self.filter, drivers),
+                    });
                 });
-            ui.add_space(Spacing::M);
-            ui.horizontal(|ui| {
-                if ui.button("Close").clicked() {
-                    event = Some(Event::Closed);
-                }
+                d.footer(|f| f.cancel_as("Close"));
             });
-        });
-        if event.is_none() && response.should_close() {
+        if event.is_none() && response.closed {
             event = Some(Event::Closed);
         }
         event
@@ -216,13 +220,26 @@ fn catalog_row(ui: &mut egui::Ui, db: &KnownDatabase, usable: bool, installable:
 /// The read-only matrix: database, family, how sqlr reaches it, driver, port, notes.
 fn matrix(ui: &mut egui::Ui, filter: &str, drivers: &HashSet<String>) {
     let palette = theme::palette(ui.ctx());
+    // The header cells share the full width, so the table and its stripes span the dialog.
+    let shares = [0.27, 0.15, 0.28, 0.17, 0.13];
+    let room = ui.available_width() - Spacing::L * (shares.len() - 1) as f32 - Spacing::M;
     egui::Grid::new("databases_matrix")
         .striped(true)
         .num_columns(5)
         .spacing(vec2(Spacing::L, Spacing::S))
         .show(ui, |ui| {
-            for head in ["Database", "Family", "Support", "Driver", "Port"] {
-                ui.label(RichText::new(head).font(theme::semibold(ui.ctx(), 12.0)));
+            for (head, share) in ["Database", "Family", "Support", "Driver", "Port"]
+                .into_iter()
+                .zip(shares)
+            {
+                ui.allocate_ui_with_layout(
+                    vec2(room * share, ui.spacing().interact_size.y),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.set_min_width(room * share);
+                        ui.label(RichText::new(head).font(theme::semibold(ui.ctx(), 12.0)));
+                    },
+                );
             }
             ui.end_row();
             for db in known_databases().iter().filter(|db| matches(db, filter)) {

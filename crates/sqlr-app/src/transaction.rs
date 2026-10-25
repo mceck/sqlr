@@ -6,11 +6,11 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use egui::{ComboBox, Id, RichText, WidgetInfo, WidgetType};
+use egui::{ComboBox, RichText, WidgetInfo, WidgetType};
 use sqlr_core::CommitMode;
 use sqlr_engine::{SessionKey, Slot, TxPhase, TxState};
 use sqlr_ui::format_when;
-use sqlr_ui::theme::{self, Spacing, icons};
+use sqlr_ui::theme::{self, icons};
 
 use crate::app::{SqlrApp, tab_mut};
 
@@ -615,29 +615,30 @@ impl SqlrApp {
                 "Cancel",
             ),
         };
-        let mut answer = None;
-        let response = egui::Modal::new(Id::new("end_transactions")).show(ctx, |ui| {
-            ui.label(&prompt);
-            ui.label(
-                RichText::new("Commit or roll back before continuing?")
-                    .color(theme::palette(ui.ctx()).text_muted),
-            );
-            ui.add_space(Spacing::L);
-            ui.horizontal(|ui| {
-                if ui.add(theme::primary_button(ui.ctx(), "Commit")).clicked() {
-                    answer = Some(Some(true));
-                }
-                if ui.button("Roll back").clicked() {
-                    answer = Some(Some(false));
-                }
-                if ui.button(keep_label).clicked() {
-                    answer = Some(None);
-                }
-            });
-        });
-        if answer.is_none() && response.should_close() {
-            answer = Some(None);
-        }
+        let response =
+            theme::Dialog::new("end_transactions", theme::icons::COMMIT, "Open transaction")
+                .subtitle("Commit or roll back before continuing")
+                .width(480.0)
+                .show(ctx, |d| {
+                    d.body(|ui| {
+                        ui.label(&prompt);
+                    });
+                    d.footer(|f| {
+                        if f.primary("Commit", None) {
+                            return Some(true);
+                        }
+                        if f.button("Roll back", true) {
+                            return Some(false);
+                        }
+                        f.cancel_as(keep_label);
+                        None
+                    })
+                });
+        let answer = match response.inner {
+            Some(commit) => Some(Some(commit)),
+            None if response.closed => Some(None),
+            None => None,
+        };
         match answer {
             None => {}
             Some(None) => self.ending = None,

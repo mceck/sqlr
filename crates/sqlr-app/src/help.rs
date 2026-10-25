@@ -1,6 +1,6 @@
 //! The Help > Keyboard Shortcuts window.
 
-use egui::{Context, Frame, Margin, Window, vec2};
+use egui::Context;
 use sqlr_core::Keymap;
 use sqlr_ui::shortcuts::{ShortcutsAction, ShortcutsView};
 use sqlr_ui::theme;
@@ -24,33 +24,19 @@ impl ShortcutsDialog {
             return None;
         }
         let mut action = None;
-        let mut open = self.open;
-        let mut close = false;
-        Window::new("Keyboard shortcuts")
-            .open(&mut open)
-            .title_bar(false)
-            .collapsible(false)
-            .resizable(true)
-            .default_size(vec2(560.0, 560.0))
-            .min_width(460.0)
-            .default_pos(ctx.content_rect().center() - vec2(280.0, 280.0))
-            .frame(Frame::window(&ctx.global_style()).inner_margin(Margin::ZERO))
-            .show(ctx, |ui| {
-                if theme::dialog_header(
-                    ui,
-                    theme::icons::KEYBOARD,
-                    "Keyboard shortcuts",
-                    Some("Every command and its keys"),
-                ) {
-                    close = true;
-                }
-                Frame::new()
-                    .inner_margin(Margin::symmetric(16, 14))
-                    .show(ui, |ui| {
-                        action = self.view.show(ui, keymap, preset);
-                    });
-            });
-        self.open = open && !close && action.is_none();
+        let response = theme::Dialog::new(
+            "keyboard_shortcuts",
+            theme::icons::KEYBOARD,
+            "Keyboard shortcuts",
+        )
+        .subtitle("Every command and its keys")
+        .width(580.0)
+        .body_height(560.0)
+        .show(ctx, |d| {
+            d.body(|ui| action = self.view.show(ui, keymap, preset));
+            d.footer(|f| f.cancel_as("Close"));
+        });
+        self.open = !response.closed && action.is_none();
         action
     }
 }

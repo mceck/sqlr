@@ -237,6 +237,12 @@ impl KeymapEditor {
                 })
             });
             if let Some(chord) = chord {
+                // The recorded keys are not also commands: Escape does not close the
+                // dialog around the editor, Enter does not press its primary button.
+                ui.input_mut(|i| {
+                    i.events
+                        .retain(|e| !matches!(e, egui::Event::Key { pressed: true, .. }));
+                });
                 if chord.key != "Escape" {
                     map.set_chords(action, vec![chord]);
                 }

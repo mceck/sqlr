@@ -14,7 +14,7 @@ use sqlr_ui::{
 };
 
 use crate::app::SqlrApp;
-use crate::dialogs::{Confirm, confirm_delete};
+use crate::dialogs::{Confirm, DeleteAsk, confirm_delete};
 
 /// Opens `sqlr.db` at `path`. When that fails (corrupt file, unwritable directory, no data
 /// directory at all), history and snippets live in memory for the session and the returned
@@ -223,7 +223,14 @@ impl SqlrApp {
                 .iter()
                 .find(|s| s.id == id)
                 .map_or(id.as_str(), |s| s.name.as_str());
-            match confirm_delete(ctx, &format!("Delete the snippet \"{name}\"?"), None) {
+            let prompt = format!("Delete the snippet \"{name}\"?");
+            let ask = DeleteAsk {
+                title: "Delete snippet",
+                action: "Delete",
+                prompt: &prompt,
+                detail: None,
+            };
+            match confirm_delete(ctx, ask) {
                 Confirm::Pending => {}
                 Confirm::No => self.library.delete_pending = None,
                 Confirm::Yes => {

@@ -3,10 +3,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use egui::{
-    Align2, ComboBox, Frame, Id, Key, Margin, RichText, Sense, TextEdit, WidgetInfo, WidgetType,
-    vec2,
-};
+use egui::{Align2, ComboBox, Id, RichText, Sense, TextEdit, WidgetInfo, WidgetType, vec2};
 use sqlr_core::Snippet;
 
 use crate::theme::{self, Spacing, icons, menu};
@@ -338,7 +335,6 @@ pub fn snippet_dialog(
     conns: &[(String, String)],
 ) -> DraftResult {
     let mut result = DraftResult::Open;
-    let mut open = true;
     let id = Id::new("snippet_dialog");
     // Not drawn in the previous frame: the dialog has just opened, so focus its name field.
     let frame = ctx.cumulative_frame_nr();
@@ -356,22 +352,12 @@ pub fn snippet_dialog(
     } else {
         "Keep this SQL for reuse"
     };
-    let mut close = false;
-    egui::Window::new(title)
-        .id(id)
-        .open(&mut open)
-        .title_bar(false)
-        .collapsible(false)
-        .resizable(true)
-        .default_width(480.0)
-        .frame(Frame::window(&ctx.global_style()).inner_margin(Margin::ZERO))
-        .show(ctx, |ui| {
-            if theme::dialog_header(ui, icons::SNIPPET, title, Some(subtitle)) {
-                close = true;
-            }
-            Frame::new()
-                .inner_margin(Margin::symmetric(16, 14))
-                .show(ui, |ui| {
+    let response = theme::Dialog::new("snippet_dialog", icons::SNIPPET, title)
+        .subtitle(subtitle)
+        .width(500.0)
+        .show(ctx, |d| {
+            d.body(|ui| {
+                {
                     theme::field_label(ui, "Name");
                     let name = crate::text_menu::text_edit(
                         ui,
@@ -431,25 +417,17 @@ pub fn snippet_dialog(
                                     .desired_width(f32::INFINITY),
                             );
                         });
-                    ui.add_space(Spacing::L);
-                    ui.horizontal(|ui| {
-                        let named = !draft.name.trim().is_empty();
-                        let save = theme::primary_button_state(ui.ctx(), named, "Save");
-                        if ui.add_enabled(named, save).clicked() {
-                            result = DraftResult::Save;
-                        }
-                        if ui.button("Cancel").clicked() {
-                            result = DraftResult::Cancel;
-                        }
-                    });
-                });
+                }
+            });
+            let blocked = draft.name.trim().is_empty().then_some("Enter a name");
+            d.footer(|f| {
+                if f.primary("Save", blocked) {
+                    result = DraftResult::Save;
+                }
+                f.cancel();
+            });
         });
-    if close {
-        open = false;
-    }
-    if result == DraftResult::Open
-        && (!open || ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape)))
-    {
+    if result == DraftResult::Open && response.closed {
         result = DraftResult::Cancel;
     }
     result

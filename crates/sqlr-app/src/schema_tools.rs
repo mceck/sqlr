@@ -231,26 +231,27 @@ impl ErDialog {
                 self.export_jobs.push(engine.save_text(path, text));
             }
         }
-        let mut open = true;
         let mut action = None;
-        theme::tool_dialog(
-            ctx,
-            &mut open,
-            &format!("ER diagram · {}", self.schema),
-            theme::icons::SCHEMA,
-            "Explore tables and relationships · Drag to arrange, scroll to zoom",
-            960.0,
-            |ui| {
-                ui.set_height((ctx.content_rect().height() - 260.0).clamp(180.0, 520.0));
-                if let Some(e) = &self.error {
-                    ui.colored_label(theme::palette(ui.ctx()).error, e);
-                } else if let Some(model) = &self.model {
-                    action = er_canvas(ui, model, &mut self.layout, &mut self.view);
-                } else {
-                    ui.spinner();
-                }
-            },
-        );
+        let title = format!("ER diagram of {}", self.schema);
+        // The canvas zooms on scroll, so the body has a fixed height and never scrolls.
+        let height = (ctx.content_rect().height() - 200.0).clamp(220.0, 640.0);
+        let response = theme::Dialog::new("er_dialog", theme::icons::SCHEMA, &title)
+            .subtitle("Explore tables and relationships · Drag to arrange, scroll to zoom")
+            .width(1000.0)
+            .body_height(height)
+            .show(ctx, |d| {
+                d.body(|ui| {
+                    if let Some(e) = &self.error {
+                        ui.colored_label(theme::palette(ui.ctx()).error, e);
+                    } else if let Some(model) = &self.model {
+                        action = er_canvas(ui, model, &mut self.layout, &mut self.view);
+                    } else {
+                        ui.spinner();
+                    }
+                });
+                d.footer(|f| f.cancel_as("Close"));
+            });
+        let open = !response.closed;
         match action {
             Some(ErAction::Moved(..)) => self.save(engine),
             Some(ErAction::Relayout) => {

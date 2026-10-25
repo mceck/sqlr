@@ -334,92 +334,77 @@ impl ExportDialog {
             }
         }
         let mut event = ExportEvent::None;
-        let mut open = true;
-        theme::tool_dialog(
-            ctx,
-            &mut open,
-            "Export data",
-            theme::icons::EXPORT,
-            "Choose which rows to export and how to format them",
-            520.0,
-            |ui| {
-                ui.label(RichText::new(&self.name).font(theme::semibold(ui.ctx(), 13.0)));
-                ui.add_space(Spacing::S);
-                if let Some((_, rows)) = self.loaded {
-                    ui.radio_value(&mut self.whole, false, format!("Loaded rows ({rows})"));
-                }
-                match &self.endpoint {
-                    Some(Endpoint::RedisKeys { pattern, .. }) => {
-                        ui.label(format!(
-                            "Keys matching {}: name, type, TTL, value as JSON",
-                            sqlr_core::display_key(pattern)
-                        ));
+        let title = format!("Export {}", self.name);
+        let response = theme::Dialog::new("export_dialog", theme::icons::EXPORT, &title)
+            .subtitle("Choose which rows to export and how to format them")
+            .width(520.0)
+            .show(ctx, |d| {
+                d.body(|ui| {
+                    if let Some((_, rows)) = self.loaded {
+                        ui.radio_value(&mut self.whole, false, format!("Loaded rows ({rows})"));
                     }
-                    Some(_) => {
-                        ui.label(
-                            "Every document: JSON keeps them whole, other formats flatten them \
-                             (nested values as JSON text)",
-                        );
-                    }
-                    None => {}
-                }
-                if self.rerun.is_some() {
-                    ui.radio_value(&mut self.whole, true, "Whole result (re-run)");
-                    if self.whole {
-                        ui.label(
-                            RichText::new(
-                                "Runs the statement again on a separate session: rows this tab \
-                                 has not committed and its session settings are not seen.",
-                            )
-                            .color(theme::palette(ui.ctx()).text_muted),
-                        );
-                    }
-                }
-                ui.add_space(Spacing::L);
-                theme::section_title(ui, "File format");
-                ui.add_space(Spacing::M);
-                ComboBox::from_label("Format")
-                    .selected_text(self.format.label())
-                    .show_ui(ui, |ui| {
-                        for f in ExportFormat::ALL {
-                            ui.selectable_value(&mut self.format, f, f.label());
+                    match &self.endpoint {
+                        Some(Endpoint::RedisKeys { pattern, .. }) => {
+                            ui.label(format!(
+                                "Keys matching {}: name, type, TTL, value as JSON",
+                                sqlr_core::display_key(pattern)
+                            ));
                         }
-                    });
-                match self.format {
-                    ExportFormat::Csv => self.csv.ui(ui, true),
-                    ExportFormat::SqlInsert => {
-                        ui.horizontal(|ui| {
-                            ui.label("Table");
-                            ui.text_edit_singleline(&mut self.table);
-                        });
+                        Some(_) => {
+                            ui.label(
+                                "Every document: JSON keeps them whole, other formats flatten them \
+                             (nested values as JSON text)",
+                            );
+                        }
+                        None => {}
                     }
-                    _ => {}
-                }
-                ui.add_space(Spacing::L);
-                theme::hairline(ui);
-                ui.add_space(Spacing::M);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if self.rerun.is_some() {
+                        ui.radio_value(&mut self.whole, true, "Whole result (re-run)");
+                        if self.whole {
+                            ui.label(
+                                RichText::new(
+                                    "Runs the statement again on a separate session: rows this tab \
+                                 has not committed and its session settings are not seen.",
+                                )
+                                .color(theme::palette(ui.ctx()).text_muted),
+                            );
+                        }
+                    }
+                    ui.add_space(Spacing::L);
+                    theme::section_title(ui, "File format");
+                    ui.add_space(Spacing::M);
+                    ComboBox::from_label("Format")
+                        .selected_text(self.format.label())
+                        .show_ui(ui, |ui| {
+                            for f in ExportFormat::ALL {
+                                ui.selectable_value(&mut self.format, f, f.label());
+                            }
+                        });
+                    match self.format {
+                        ExportFormat::Csv => self.csv.ui(ui, true),
+                        ExportFormat::SqlInsert => {
+                            ui.horizontal(|ui| {
+                                ui.label("Table");
+                                ui.text_edit_singleline(&mut self.table);
+                            });
+                        }
+                        _ => {}
+                    }
+                });
+                d.footer(|f| {
                     let waiting = self.ask.is_some();
-                    if ui
-                        .add_enabled(
-                            !waiting,
-                            theme::primary_button_state(ui.ctx(), !waiting, "Export"),
-                        )
-                        .clicked()
-                    {
+                    // While the save dialog is open the button waits for its answer.
+                    if f.primary("Export", waiting.then_some("")) {
                         let name = suggested_name(&self.name, self.format.extension());
                         self.ask = Some(FileAsk::save(answer, "Export to", &name));
                     }
-                    if ui.button("Cancel").clicked() {
-                        event = ExportEvent::Close;
-                    }
+                    f.cancel();
                     if waiting {
-                        ui.spinner();
+                        f.right().spinner();
                     }
                 });
-            },
-        );
-        if !open {
+            });
+        if response.closed {
             event = ExportEvent::Close;
         }
         event
@@ -644,21 +629,14 @@ impl ImportDialog {
     ) -> bool {
         self.poll(ctx, engine);
         let targets = self.target_columns(engine);
-        let mut open = true;
         let mut close = false;
-        theme::tool_dialog(
-            ctx,
-            &mut open,
-            &format!("Import into {}", self.target.name),
-            theme::icons::IMPORT,
-            "Preview a file, map its columns and review import options",
-            700.0,
-            |ui| {
-                egui::ScrollArea::vertical()
-                    .id_salt("import-options")
-                    .max_height((ctx.content_rect().height() - 340.0).max(140.0))
-                    .auto_shrink([false, true])
-                    .show(ui, |ui| {
+        let title = format!("Import into {}", self.target.name);
+        let response = theme::Dialog::new("import_dialog", theme::icons::IMPORT, &title)
+            .subtitle("Preview a file, map its columns and review import options")
+            .width(720.0)
+            .show(ctx, |d| {
+                d.body(|ui| {
+                    {
                         ui.horizontal(|ui| {
                             let shown = self
                                 .path
@@ -713,36 +691,39 @@ impl ImportDialog {
                         theme::section_title(ui, "Import options");
                         ui.add_space(Spacing::S);
                         options_ui(ui, &mut self.options, self.collection.is_none());
-                    });
-                ui.add_space(Spacing::M);
-                theme::hairline(ui);
-                ui.add_space(Spacing::M);
-                self.run_ui(ui, engine, answer, &mut close);
-            },
-        );
-        open && !close
+                    }
+                    self.run_status(ui);
+                });
+                d.footer(|f| self.run_footer(f, engine, answer, &mut close));
+            });
+        !response.closed && !close
     }
 
-    fn run_ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        engine: &sqlr_engine::Engine,
-        answer: Option<&PathBuf>,
-        close: &mut bool,
-    ) {
+    /// Why Run import is disabled, if it is.
+    fn run_blocked(&self) -> Option<&'static str> {
+        if self.path.is_none() {
+            Some("Choose a file to import")
+        } else if self.preview_job.is_some() {
+            Some("Reading the file…")
+        } else if self.preview.is_none() {
+            Some("The file could not be read")
+        } else if !self.mapping.iter().any(Option::is_some) {
+            Some("Map at least one column")
+        } else {
+            None
+        }
+    }
+
+    /// The outcome of the last run, or the question before a risky one, under the options.
+    fn run_status(&self, ui: &mut egui::Ui) {
         let palette = theme::palette(ui.ctx());
-        if let Some(job) = self.run {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                let rows = engine.job(job).map_or(0, |j| j.progress.rows);
-                ui.label(format!("Importing… {rows} rows"));
-                if ui.button("Cancel import").clicked() {
-                    engine.cancel_job(job);
-                }
-            });
+        if self.run.is_some() {
             return;
         }
         if let Some((read, written, rejected)) = &self.summary {
+            ui.add_space(Spacing::M);
+            theme::hairline(ui);
+            ui.add_space(Spacing::M);
             ui.label(format!(
                 "Read {read} rows, wrote {written}, rejected {}",
                 rejected.len()
@@ -765,53 +746,65 @@ impl ImportDialog {
                 }
                 None => {}
             }
-            ui.horizontal(|ui| {
-                if !rejected.is_empty() && ui.button("Save rejected rows…").clicked() {
-                    let name = suggested_name(&format!("{}_rejected", self.target.name), "csv");
-                    self.save_rejected = Some(FileAsk::save(answer, "Save rejected rows", &name));
-                }
-                if ui.button("Close").clicked() {
-                    *close = true;
-                }
-            });
             return;
         }
         if let Some(prompt) = &self.confirming {
+            ui.add_space(Spacing::M);
             ui.colored_label(palette.warning, prompt);
-            let go = if self.options.truncate_first {
-                "Delete and import"
-            } else {
-                "Import"
-            };
-            ui.horizontal(|ui| {
-                if ui.button(go).clicked() {
-                    self.confirming = None;
-                    self.start(engine);
-                }
-                if ui.button("Back").clicked() {
-                    self.confirming = None;
-                }
-            });
+        }
+    }
+
+    /// The footer's actions for the dialog's state: running, done, confirming or ready.
+    fn run_footer(
+        &mut self,
+        f: &mut theme::DialogFooter,
+        engine: &sqlr_engine::Engine,
+        answer: Option<&PathBuf>,
+        close: &mut bool,
+    ) {
+        if let Some(job) = self.run {
+            let rows = engine.job(job).map_or(0, |j| j.progress.rows);
+            f.left().spinner();
+            f.left().label(format!("Importing… {rows} rows"));
+            if f.button("Cancel import", true) {
+                engine.cancel_job(job);
+            }
             return;
         }
-        let ready = self.preview.is_some() && self.mapping.iter().any(Option::is_some);
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled(
-                    ready,
-                    theme::primary_button_state(ui.ctx(), ready, "Run import"),
-                )
-                .clicked()
-            {
-                match self.run_prompt() {
-                    Some(prompt) => self.confirming = Some(prompt),
-                    None => self.start(engine),
-                }
+        if let Some((_, _, rejected)) = &self.summary {
+            if !rejected.is_empty() && f.secondary("Save rejected rows…", true) {
+                let name = suggested_name(&format!("{}_rejected", self.target.name), "csv");
+                self.save_rejected = Some(FileAsk::save(answer, "Save rejected rows", &name));
             }
-            if ui.button("Cancel").clicked() {
+            if f.cancel_as("Close") {
                 *close = true;
             }
-        });
+            return;
+        }
+        if self.confirming.is_some() {
+            let go = if self.options.truncate_first {
+                f.danger("Delete and import", None)
+            } else {
+                f.primary("Import", None)
+            };
+            if go {
+                self.confirming = None;
+                self.start(engine);
+            }
+            if f.button("Back", true) {
+                self.confirming = None;
+            }
+            return;
+        }
+        if f.primary("Run import", self.run_blocked()) {
+            match self.run_prompt() {
+                Some(prompt) => self.confirming = Some(prompt),
+                None => self.start(engine),
+            }
+        }
+        if f.cancel() {
+            *close = true;
+        }
     }
 
     fn start(&mut self, engine: &sqlr_engine::Engine) {

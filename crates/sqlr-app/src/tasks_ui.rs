@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use egui::TextEdit;
 use sqlr_core::{SavedTask, TaskRun, TaskSpec};
 use sqlr_engine::{JobId, JobOutcome, SessionStatus};
-use sqlr_ui::theme::{self, Spacing};
+use sqlr_ui::theme::{self};
 use sqlr_ui::{RunningTask, TasksAction, ToastKind, tasks_panel};
 
 use crate::app::{LeftPane, SqlrApp};
@@ -304,36 +304,23 @@ impl SqlrApp {
     /// The name prompt and the run log windows.
     pub(crate) fn tasks_windows(&mut self, ctx: &egui::Context) {
         if let Some(prompt) = &mut self.tasks_ui.name_prompt {
-            let mut save = false;
-            let mut close = false;
-            let mut open = true;
-            theme::tool_dialog(
-                ctx,
-                &mut open,
-                "Save as task",
-                theme::icons::SAVEPOINT,
-                "Save these options so you can run this task again",
-                480.0,
-                |ui| {
-                    ui.label("Name");
-                    let edit =
-                        ui.add(TextEdit::singleline(&mut prompt.name).desired_width(f32::INFINITY));
-                    let valid = !prompt.name.trim().is_empty();
-                    if edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && valid {
-                        save = true;
-                    }
-                    ui.add_space(Spacing::M);
-                    ui.horizontal(|ui| {
-                        let button = theme::primary_button_state(ui.ctx(), valid, "Save task");
-                        if ui.add_enabled(valid, button).clicked() {
-                            save = true;
-                        }
-                        if ui.button("Cancel").clicked() {
-                            close = true;
-                        }
+            let response = theme::Dialog::new("save_task", theme::icons::SAVEPOINT, "Save as task")
+                .subtitle("Save these options so you can run this task again")
+                .width(440.0)
+                .show(ctx, |d| {
+                    d.body(|ui| {
+                        let label = ui.label("Name");
+                        ui.add(TextEdit::singleline(&mut prompt.name).desired_width(f32::INFINITY))
+                            .labelled_by(label.id);
                     });
-                },
-            );
+                    let blocked = prompt.name.trim().is_empty().then_some("Enter a name");
+                    d.footer(|f| {
+                        let save = f.primary("Save task", blocked);
+                        f.cancel();
+                        save
+                    })
+                });
+            let (save, close) = (response.inner, response.closed);
             if save {
                 if let Some(prompt) = self.tasks_ui.name_prompt.take() {
                     let id = prompt
@@ -341,38 +328,36 @@ impl SqlrApp {
                         .map_or_else(|| uuid::Uuid::new_v4().to_string(), |(id, _)| id);
                     self.store_task(id, prompt.name.trim().to_string(), prompt.spec, false);
                 }
-            } else if close || !open {
+            } else if close {
                 self.tasks_ui.name_prompt = None;
             }
         }
         if let Some((title, text)) = &self.tasks_ui.log {
-            let mut open = true;
-            let mut copy = false;
             let mut shown = text.as_str();
-            theme::tool_dialog(
-                ctx,
-                &mut open,
-                &format!("Run log · {title}"),
-                theme::icons::HISTORY,
-                "Task output and execution details",
-                720.0,
-                |ui| {
-                    if ui.button("Copy").clicked() {
-                        copy = true;
-                    }
-                    egui::ScrollArea::both().show(ui, |ui| {
-                        ui.add(
-                            TextEdit::multiline(&mut shown)
-                                .code_editor()
-                                .desired_width(f32::INFINITY),
-                        );
+            let heading = format!("Run log · {title}");
+            let response = theme::Dialog::new("task_run_log", theme::icons::HISTORY, &heading)
+                .subtitle("Task output and execution details")
+                .width(760.0)
+                .show(ctx, |d| {
+                    d.body(|ui| {
+                        egui::ScrollArea::horizontal().show(ui, |ui| {
+                            ui.add(
+                                TextEdit::multiline(&mut shown)
+                                    .code_editor()
+                                    .desired_width(f32::INFINITY),
+                            );
+                        });
                     });
-                },
-            );
-            if copy {
+                    d.footer(|f| {
+                        let copy = f.secondary("Copy", true);
+                        f.cancel_as("Close");
+                        copy
+                    })
+                });
+            if response.inner {
                 ctx.copy_text(text.clone());
             }
-            if !open {
+            if response.closed {
                 self.tasks_ui.log = None;
             }
         }

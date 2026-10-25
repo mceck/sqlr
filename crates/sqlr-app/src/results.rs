@@ -252,48 +252,36 @@ impl SqlrApp {
             return;
         };
         let (tab, q) = (dialog.tab, dialog.q);
-        let mut open = true;
-        let mut apply = false;
-        let mut close = false;
-        theme::tool_dialog(
-            ctx,
-            &mut open,
-            "Pending changes",
-            theme::icons::EDIT,
-            "Review the SQL before applying your edits",
-            720.0,
-            |ui| {
-                if dialog.confirm {
-                    ui.colored_label(
-                        theme::palette(ui.ctx()).warning,
-                        "This connection's profile asks before writing: review the changes.",
-                    );
-                }
-                ui.allocate_ui(egui::vec2(ui.available_width(), 220.0), |ui| {
-                    query_editor(ui, &mut dialog.editor, &NoCatalog);
-                });
-                // Read-only: typing is undone.
-                if dialog.editor.text() != dialog.text {
-                    dialog.editor = EditorState::new(&dialog.text, dialog.syntax.clone());
-                }
-                ui.add_space(Spacing::S);
-                ui.horizontal(|ui| {
-                    if ui
-                        .add(theme::primary_button(ui.ctx(), "Apply changes"))
-                        .clicked()
-                    {
-                        apply = true;
+        let response = theme::Dialog::new("pending_changes", theme::icons::EDIT, "Pending changes")
+            .subtitle("Review the SQL before applying your edits")
+            .width(720.0)
+            .show(ctx, |d| {
+                d.body(|ui| {
+                    if dialog.confirm {
+                        ui.colored_label(
+                            theme::palette(ui.ctx()).warning,
+                            "This connection's profile asks before writing: review the changes.",
+                        );
+                        ui.add_space(Spacing::S);
                     }
-                    if ui.button("Close").clicked() {
-                        close = true;
+                    ui.allocate_ui(egui::vec2(ui.available_width(), 220.0), |ui| {
+                        query_editor(ui, &mut dialog.editor, &NoCatalog);
+                    });
+                    // Read-only: typing is undone.
+                    if dialog.editor.text() != dialog.text {
+                        dialog.editor = EditorState::new(&dialog.text, dialog.syntax.clone());
                     }
                 });
-            },
-        );
-        if apply {
+                d.footer(|f| {
+                    let apply = f.primary("Apply changes", None);
+                    f.cancel_as("Close");
+                    apply
+                })
+            });
+        if response.inner {
             self.changes_dialog = None;
             self.start_apply(tab, q);
-        } else if close || !open {
+        } else if response.closed {
             self.changes_dialog = None;
         }
     }
@@ -567,21 +555,30 @@ impl SqlrApp {
             return;
         };
         let cells = pending.cells();
-        let mut choice = None;
-        egui::Window::new("Copy a large selection")
-            .collapsible(false)
-            .resizable(false)
-            .show(ctx, |ui| {
+        let response = theme::Dialog::new(
+            "copy_large_selection",
+            theme::icons::COPY,
+            "Copy a large selection",
+        )
+        .width(420.0)
+        .dismiss_on_backdrop()
+        .show(ctx, |d| {
+            d.body(|ui| {
                 ui.label(format!("Copy {cells} cells to the clipboard?"));
-                ui.horizontal(|ui| {
-                    if ui.button("Copy").clicked() {
-                        choice = Some(true);
-                    }
-                    if ui.button("Cancel").clicked() {
-                        choice = Some(false);
-                    }
-                });
             });
+            d.footer(|f| {
+                let copy = f.primary("Copy", None);
+                f.cancel();
+                copy
+            })
+        });
+        let choice = if response.inner {
+            Some(true)
+        } else if response.closed {
+            Some(false)
+        } else {
+            None
+        };
         match choice {
             Some(true) => {
                 if let Some(pending) = self.copy_pending.take() {

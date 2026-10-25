@@ -321,34 +321,26 @@ pub fn status_bar(
         });
     });
     if let Some(value) = &mut state.custom {
-        let mut open = true;
-        let mut done = None;
-        theme::tool_dialog(
-            ui.ctx(),
-            &mut open,
-            "Custom fetch size",
-            icons::ROWS,
-            "Choose how many rows to load in each result page",
-            440.0,
-            |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Rows per fetch");
-                    ui.add(DragValue::new(value).range(PAGE_SIZES));
+        let response = theme::Dialog::new("custom_fetch_size", icons::ROWS, "Custom fetch size")
+            .subtitle("Choose how many rows to load in each result page")
+            .width(420.0)
+            .show(ui.ctx(), |d| {
+                d.body(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.label("Rows per fetch");
+                        ui.add(DragValue::new(value).range(PAGE_SIZES));
+                    });
                 });
-                ui.horizontal(|ui| {
-                    if ui.button("Apply").clicked() {
-                        done = Some(Some(*value));
-                    }
-                    if ui.button("Cancel").clicked() {
-                        done = Some(None);
-                    }
-                });
-            },
-        );
-        if let Some(applied) = done {
-            action = applied.map(StatusAction::SetPageSize).or(action);
+                d.footer(|f| {
+                    let apply = f.primary("Apply", None);
+                    f.cancel();
+                    apply
+                })
+            });
+        if response.inner {
+            action = Some(StatusAction::SetPageSize(*value)).or(action);
             state.custom = None;
-        } else if !open {
+        } else if response.closed {
             state.custom = None;
         }
     }
