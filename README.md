@@ -4,6 +4,8 @@
 
 A universal database client: native Rust, egui, no webview. One app for relational, document and key-value databases and any other database you add through a driver you write in Rust. MIT licensed.
 
+![screen](docs/media/screenshots/screen1.png)
+
 
 ## Install
 

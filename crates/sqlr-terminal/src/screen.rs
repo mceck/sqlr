@@ -157,6 +157,7 @@ pub struct Emulator {
     parser: Mutex<vt100::Parser>,
     kitty: Mutex<KittyKeyboard>,
     bell: std::sync::atomic::AtomicBool,
+    bell_scan: Mutex<BellScan>,
 }
 
 impl Emulator {
@@ -165,11 +166,12 @@ impl Emulator {
             parser: Mutex::new(vt100::Parser::new(nz(rows), nz(cols), scrollback)),
             kitty: Mutex::new(KittyKeyboard::default()),
             bell: std::sync::atomic::AtomicBool::new(false),
+            bell_scan: Mutex::new(BellScan::default()),
         }
     }
 
     pub fn feed(&self, bytes: &[u8]) {
-        if bytes.contains(&0x07) {
+        if self.bell_scan.lock().unwrap().rings(bytes) {
             self.bell.store(true, std::sync::atomic::Ordering::Relaxed);
         }
         self.parser.lock().unwrap().process(bytes);
@@ -212,6 +214,49 @@ impl Emulator {
         screen.set_scrollback(previous);
         snapshot.kitty_flags = self.kitty.lock().unwrap().flags;
         snapshot
+    }
+}
+
+/// Finds the real bells in the output. BEL (0x07) also terminates OSC strings such as the
+/// window title, which full-screen agents rewrite on every frame; those are not bells.
+#[derive(Debug, Default)]
+struct BellScan {
+    state: BellState,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum BellState {
+    #[default]
+    Ground,
+    Escape,
+    /// Inside an OSC, DCS, SOS, PM or APC string.
+    String,
+    StringEscape,
+}
+
+impl BellScan {
+    fn rings(&mut self, bytes: &[u8]) -> bool {
+        let mut rang = false;
+        for &byte in bytes {
+            self.state = match (self.state, byte) {
+                (BellState::Ground, 0x07) => {
+                    rang = true;
+                    BellState::Ground
+                }
+                (BellState::Ground, 0x1b) => BellState::Escape,
+                (BellState::Escape, b']' | b'P' | b'X' | b'^' | b'_') => BellState::String,
+                (BellState::Escape, 0x1b) => BellState::Escape,
+                (BellState::Escape, _) => BellState::Ground,
+                (BellState::String, 0x07 | 0x18 | 0x1a) => BellState::Ground,
+                (BellState::String, 0x1b) => BellState::StringEscape,
+                (BellState::String, _) => BellState::String,
+                (BellState::StringEscape, b'\\') => BellState::Ground,
+                (BellState::StringEscape, 0x1b) => BellState::StringEscape,
+                (BellState::StringEscape, _) => BellState::String,
+                (state, _) => state,
+            };
+        }
+        rang
     }
 }
 
@@ -367,6 +412,20 @@ mod tests {
 
     fn emulator() -> Emulator {
         Emulator::new(4, 20, 100)
+    }
+
+    #[test]
+    fn bell_rings_only_outside_strings() {
+        let em = emulator();
+        em.feed(b"\x1b]0;title\x07");
+        assert!(!em.take_bell());
+        em.feed(b"\x1b]0;spl");
+        em.feed(b"it\x07\x1b]2;x\x1b\\");
+        assert!(!em.take_bell());
+        em.feed(b"\x07");
+        assert!(em.take_bell());
+        em.feed(b"\x1b]0;t\x07\x07");
+        assert!(em.take_bell());
     }
 
     #[test]
