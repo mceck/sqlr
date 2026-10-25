@@ -5,7 +5,7 @@
 use egui::{Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, Vec2, pos2, vec2};
 use sqlr_core::{ErEdge, ErLayout, ErModel, ErTable};
 
-use crate::theme;
+use crate::theme::{self, Spacing};
 
 const HEADER: f32 = 26.0;
 const LINE: f32 = 18.0;
@@ -137,7 +137,14 @@ pub fn er_canvas(
     });
     let (response, painter) = ui.allocate_painter(ui.available_size(), Sense::click_and_drag());
     let canvas = response.rect;
-    painter.rect_filled(canvas, 0.0, p.bg_editor);
+    // The canvas is a framed surface, so it separates from the page in both themes.
+    painter.rect_filled(canvas, Spacing::RADIUS_M, p.bg_editor);
+    painter.rect_stroke(
+        canvas,
+        Spacing::RADIUS_M,
+        Stroke::new(1.0, p.border_input),
+        egui::StrokeKind::Inside,
+    );
     if view.fit && !layout.positions.is_empty() {
         view.fit = false;
         let (mut w, mut h) = (1f32, 1f32);
