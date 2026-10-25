@@ -115,7 +115,9 @@ impl Platform {
         match self {
             Platform::Macos if cfg!(target_arch = "aarch64") => "macos-arm64.dmg",
             Platform::Macos => "macos-x86_64.dmg",
+            Platform::Linux if cfg!(target_arch = "aarch64") => "linux-aarch64.tar.gz",
             Platform::Linux => "linux-x86_64.tar.gz",
+            Platform::LinuxAppImage if cfg!(target_arch = "aarch64") => "linux-aarch64.AppImage",
             Platform::LinuxAppImage => "linux-x86_64.AppImage",
             Platform::Windows => "windows-x86_64.zip",
         }
@@ -1400,9 +1402,16 @@ mod tests {
             "sqlr_0.2.0_macos-x86_64.dmg",
             "sqlr_0.2.0_linux-x86_64.tar.gz",
             "sqlr_0.2.0_linux-x86_64.AppImage",
+            "sqlr_0.2.0_linux-aarch64.tar.gz",
+            "sqlr_0.2.0_linux-aarch64.AppImage",
             "sqlr_0.2.0_windows-x86_64.zip",
             "SHA256SUMS.txt",
         ]);
+        let linux_arch = if cfg!(target_arch = "aarch64") {
+            "aarch64"
+        } else {
+            "x86_64"
+        };
         let mac = if cfg!(target_arch = "aarch64") {
             "sqlr_0.2.0_macos-arm64.dmg"
         } else {
@@ -1414,11 +1423,11 @@ mod tests {
         );
         assert_eq!(
             pick_asset(&latest, Platform::Linux).map(|a| a.name.as_str()),
-            Some("sqlr_0.2.0_linux-x86_64.tar.gz")
+            Some(format!("sqlr_0.2.0_linux-{linux_arch}.tar.gz").as_str())
         );
         assert_eq!(
             pick_asset(&latest, Platform::LinuxAppImage).map(|a| a.name.as_str()),
-            Some("sqlr_0.2.0_linux-x86_64.AppImage")
+            Some(format!("sqlr_0.2.0_linux-{linux_arch}.AppImage").as_str())
         );
         assert_eq!(
             pick_asset(&latest, Platform::Windows).map(|a| a.name.as_str()),

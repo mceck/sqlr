@@ -75,9 +75,18 @@ jobs:
 
   linux:
     needs: version
-    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      ARCH: ${{ matrix.arch }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
@@ -91,7 +100,7 @@ jobs:
         run: target/release/sqlr --version
       - name: Stage the distribution
         run: |
-          stage="sqlr_${VERSION}_linux-x86_64"
+          stage="sqlr_${VERSION}_linux-${ARCH}"
           mkdir -p "$stage/bin" "$stage/share/applications" "$stage/share/icons/hicolor/1024x1024/apps"
           cp target/release/sqlr "$stage/bin/sqlr"
           cp docs/media/icon.png "$stage/share/icons/hicolor/1024x1024/apps/sqlr.png"
@@ -107,9 +116,9 @@ jobs:
           Categories=Development;Database;
           Keywords=sql;database;db;client;
           EOF
-          cat > "$stage/README.txt" <<'EOF'
-          sqlr for Linux (x86_64)
-          =======================
+          cat > "$stage/README.txt" <<EOF
+          sqlr for Linux (${ARCH})
+          ========================
 
           Run it directly:            ./bin/sqlr
           Or install it system-wide:   sudo cp -r bin share /usr/local/
@@ -135,15 +144,15 @@ jobs:
           EOF
           printf '#!/bin/sh\nexec "$(dirname "$(readlink -f "$0")")/usr/bin/sqlr" "$@"\n' > "$appdir/AppRun"
           chmod +x "$appdir/AppRun"
-          curl -fsSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          curl -fsSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-${ARCH}.AppImage
           chmod +x appimagetool
-          ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool "$appdir" "sqlr_${VERSION}_linux-x86_64.AppImage"
+          APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool "$appdir" "sqlr_${VERSION}_linux-${ARCH}.AppImage"
       - uses: actions/upload-artifact@v4
         with:
-          name: linux
+          name: linux-${{ matrix.arch }}
           path: |
-            sqlr_${{ env.VERSION }}_linux-x86_64.tar.gz
-            sqlr_${{ env.VERSION }}_linux-x86_64.AppImage
+            sqlr_${{ env.VERSION }}_linux-${{ matrix.arch }}.tar.gz
+            sqlr_${{ env.VERSION }}_linux-${{ matrix.arch }}.AppImage
           if-no-files-found: error
 
   windows:
