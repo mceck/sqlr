@@ -29,7 +29,7 @@ fn main() -> ExitCode {
     let path: Vec<PathBuf> = std::env::var_os("PATH")
         .map(|p| std::env::split_paths(&p).collect())
         .unwrap_or_default();
-    let homes = sqlr_driver_jdbc::macos_java_homes_for_launcher();
+    let homes = sqlr_driver_jdbc::system_java_homes();
     let java = match find_java(&env, &path, &homes, &java_major) {
         Ok(java) => java,
         Err(e) => return fail(&e.to_string()),

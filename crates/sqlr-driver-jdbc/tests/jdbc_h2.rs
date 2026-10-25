@@ -32,7 +32,7 @@ fn have_java() -> bool {
     find_java(
         &env,
         &path,
-        &sqlr_driver_jdbc::macos_java_homes_for_launcher(),
+        &sqlr_driver_jdbc::system_java_homes(),
         &java_major,
     )
     .is_ok()
