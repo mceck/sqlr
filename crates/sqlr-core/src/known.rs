@@ -169,6 +169,14 @@ static KNOWN: &[KnownDatabase] = &[
     ),
     bundled("sqlite", "SQLite", Relational, "sqlite", None, "File"),
     bundled(
+        "snowflake",
+        "Snowflake",
+        Relational,
+        "snowflake",
+        Some(443),
+        "SQL API over HTTPS, token authentication",
+    ),
+    bundled(
         "mongodb",
         "MongoDB",
         Document,
@@ -287,6 +295,13 @@ static KNOWN: &[KnownDatabase] = &[
         Some(30015),
         "install from a file (hdbconnect sidecar)",
     ),
+    installable(
+        "duckdb",
+        "DuckDB",
+        "duckdb",
+        None,
+        "install from a file (embedded DuckDB sidecar)",
+    ),
     installable("jdbc", "Generic JDBC", "jdbc", None, JDBC),
     installable("db2", "Db2", "jdbc-db2", Some(50000), JDBC),
     installable(
@@ -296,8 +311,6 @@ static KNOWN: &[KnownDatabase] = &[
         Some(8123),
         JDBC,
     ),
-    installable("snowflake", "Snowflake", "jdbc-snowflake", None, JDBC),
-    installable("duckdb", "DuckDB", "jdbc-duckdb", None, JDBC),
     installable("h2", "H2", "jdbc-h2", None, JDBC),
     planned("bigquery", "BigQuery", Relational, "later", None),
     planned("cassandra", "Cassandra", Document, "later", Some(9042)),
@@ -320,7 +333,7 @@ mod tests {
     use super::*;
 
     /// The driver ids sqlr ships.
-    const DRIVERS: [&str; 8] = [
+    const DRIVERS: [&str; 9] = [
         "postgres",
         "mysql",
         "sqlite",
@@ -329,7 +342,23 @@ mod tests {
         "mongodb",
         "elasticsearch",
         "redis",
+        "snowflake",
     ];
+
+    #[test]
+    fn snowflake_is_built_in_and_duckdb_installs_from_a_file() {
+        let snowflake = known_database("snowflake").unwrap();
+        assert_eq!(
+            snowflake.status,
+            KnownStatus::Bundled {
+                driver: "snowflake"
+            }
+        );
+        // The embedded engine would double the app's size: it is a sidecar driver file.
+        let duckdb = known_database("duckdb").unwrap();
+        assert_eq!(duckdb.status, KnownStatus::Installable { driver: "duckdb" });
+        assert_eq!(duckdb.family, Family::Relational);
+    }
 
     #[test]
     fn known_catalog_is_consistent() {

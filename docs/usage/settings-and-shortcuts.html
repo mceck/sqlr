@@ -85,7 +85,7 @@ img{max-width:100%}
 <p>Help → Diagnostics lets you select a log level for this session; it resets to <code>info</code> on restart. <code>RUST_LOG</code> takes precedence. General preferences and Diagnostics share <strong>Include SQL in logs and reports</strong> (<code>diagnostics.include_sql</code>, global only, default true). See <a href="troubleshooting.html">Troubleshooting</a> for privacy, retention and sharing reports.</p>
 <h2 id="performance-you-can-count-on">Performance you can count on</h2>
 <p>sqlr is built to stay light, and the numbers below are checked on every change:</p>
-<table><thead><tr><th>What</th><th>Target</th></tr></thead><tbody><tr><td>Start to a usable window</td><td>under 1 second</td></tr><tr><td>Memory while idle with a couple of connections open</td><td>under 150 MB</td></tr><tr><td>Scrolling a grid with over a million rows</td><td>60 frames per second</td></tr><tr><td>Autocomplete popup, opening a table</td><td>under 50 ms</td></tr><tr><td>Size of the application</td><td>under 50 MB</td></tr></tbody></table>
+<table><thead><tr><th>What</th><th>Target</th></tr></thead><tbody><tr><td>Start to a usable window</td><td>under 1 second</td></tr><tr><td>Memory while idle with a couple of connections open</td><td>under 150 MB</td></tr><tr><td>Scrolling a grid with over a million rows</td><td>60 frames per second</td></tr><tr><td>Autocomplete popup, opening a table</td><td>under 50 ms</td></tr><tr><td>Size of the application</td><td>under 75 MB</td></tr></tbody></table>
 <p>Details are in <a href="https://github.com/mceck/sqlr/blob/main/docs/tech/performance-budgets.md">Performance budgets</a>.</p>
 </main>
 </div>

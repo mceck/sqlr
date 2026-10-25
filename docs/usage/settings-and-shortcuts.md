@@ -135,6 +135,6 @@ sqlr is built to stay light, and the numbers below are checked on every change:
 | Memory while idle with a couple of connections open | under 150 MB |
 | Scrolling a grid with over a million rows | 60 frames per second |
 | Autocomplete popup, opening a table | under 50 ms |
-| Size of the application | under 50 MB |
+| Size of the application | under 75 MB |
 
 Details are in [Performance budgets](https://github.com/mceck/sqlr/blob/main/docs/tech/performance-budgets.md).

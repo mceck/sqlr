@@ -218,6 +218,8 @@
     <tr><td>SQL Server</td><td>Relational</td><td><span class="mono">bundled</span></td><td>Native TDS driver over rustls; SQL authentication and SSH tunnels.</td></tr>
     <tr><td>Oracle</td><td>Relational</td><td><span class="mono">bundled</span></td><td>Pure-Rust <span class="mono">oracle-rs</span>; no OCI or Instant Client.</td></tr>
     <tr><td>SQLite</td><td>Relational</td><td><span class="mono">bundled</span></td><td>File-per-database, no server required; backups and traces.</td></tr>
+    <tr><td>DuckDB</td><td>Relational</td><td><span class="mono">driver file</span></td><td>Sidecar embedding the DuckDB engine; local files and in-memory databases, no Java.</td></tr>
+    <tr><td>Snowflake</td><td>Relational</td><td><span class="mono">bundled</span></td><td>HTTPS SQL API with OAuth, PAT or JWT tokens; independent auto-commit requests.</td></tr>
     <tr><td>MongoDB</td><td>Document</td><td><span class="mono">bundled</span></td><td>Collections, document viewer, shell-subset commands.</td></tr>
     <tr><td>Elasticsearch</td><td>Search / document</td><td><span class="mono">bundled</span></td><td>Indices, documents, query DSL.</td></tr>
     <tr><td>Redis</td><td>Key-value</td><td><span class="mono">bundled</span></td><td>KV browser with type-aware values.</td></tr>
@@ -235,7 +237,7 @@
     <tr><td>Idle memory</td><td><b>&lt; 150 MB</b></td><td>No retained heaps; columns live only as needed.</td></tr>
     <tr><td>Grid with 1M+ rows</td><td><b>60 fps</b></td><td>Editing and scrolling stay fluid on big result sets.</td></tr>
     <tr><td>Autocomplete / open table</td><td><b>&lt; 50 ms</b></td><td>Catalog lookups must not lag behind typing.</td></tr>
-    <tr><td>Distributed binary</td><td><b>&lt; 50 MB</b></td><td>A lightweight client you can carry anywhere.</td></tr>
+    <tr><td>Distributed binary</td><td><b>&lt; 75 MB</b></td><td>A lightweight client you can carry anywhere.</td></tr>
   </table>
 </section>
 

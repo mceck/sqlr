@@ -4,6 +4,8 @@ Any database with a JDBC driver — SQL Server, Oracle, Db2, ClickHouse, Snowfla
 anything else — through one sidecar: a small Java 17 program (`drivers/jdbc-bridge`, built with
 `javac` and `jar`, no build tool) started by a Rust launcher (`crates/sqlr-driver-jdbc`).
 
+Snowflake also has a built-in native driver and DuckDB a native sidecar driver; these JDBC presets remain available for existing profiles. See [Snowflake](snowflake.md) and [DuckDB](duckdb.md).
+
 ## Requirements
 
 Java 17 or newer: `JAVA_HOME`, the system Java on macOS, or `java` on `PATH`. Without one, the

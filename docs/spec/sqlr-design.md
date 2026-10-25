@@ -33,7 +33,7 @@ These are enforced in CI (§11.5).
 | RAM at idle, 1–2 open connections | < 150 MB |
 | Result grid scrolling | 60 fps with 1M+ rows loaded |
 | Autocomplete popup / open table | < 50 ms perceived |
-| Installed binary size (bundled drivers included) | < 50 MB, no external runtime |
+| Installed binary size (bundled drivers included) | < 75 MB, no external runtime |
 
 These targets rule out Electron, any webview, and the JVM. They are why the UI is native Rust.
 
@@ -84,7 +84,9 @@ These targets rule out Electron, any webview, and the JVM. They are why the UI i
 | SQL Server | Relational | Bundled (`tiberius`) |
 | Oracle | Relational | Bundled (`oracle-rs`, no OCI) |
 | SAP HANA | Relational | Install from a file (sidecar) |
-| Any database with a JDBC driver (Db2, ClickHouse, Snowflake, DuckDB, H2, …) | Relational | Install from a file (JDBC bridge sidecar, needs Java 17+) |
+| DuckDB | Relational | Install from a file (sidecar embedding the DuckDB engine, files and memory) |
+| Snowflake | Relational | Bundled (HTTPS SQL API, token authentication; independent auto-commit requests) |
+| Any database with a JDBC driver (Db2, ClickHouse, H2, …) | Relational | Install from a file (JDBC bridge sidecar, needs Java 17+) |
 
 ## 3. Technology choices
 

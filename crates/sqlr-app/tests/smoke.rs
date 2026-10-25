@@ -7,8 +7,8 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::{By, NodeT, Queryable};
 use sqlr_app::{AppDeps, SqlrApp};
 use sqlr_core::{
-    CatalogColumn, CatalogRelation, ConnectionConfig, DriverError, ErrorKind, HistoryEntry,
-    HistoryOutcome, Node, NodeKind, NodePath, RelationKind, SchemaCatalog, Secrets,
+    CatalogColumn, CatalogRelation, ConnectionConfig, ConnectionProfile, DriverError, ErrorKind,
+    HistoryEntry, HistoryOutcome, Node, NodeKind, NodePath, RelationKind, SchemaCatalog, Secrets,
 };
 use sqlr_engine::{DriverRegistry, Engine};
 use sqlr_store::{ConnectionRepo, Db, MemorySecretStore, Settings};
@@ -2493,17 +2493,15 @@ fn driver_manager_opens_from_the_palette_and_lists_bundled_drivers() {
     h.get_by_label("Install from file…");
 }
 
-#[test]
-fn hana_connection_form_from_manifest() {
-    // The real HANA sidecar, packaged and installed like a user would: its form (and its
-    // TLS and redirect options) comes from the manifest it announces.
+/// App dependencies with the sidecar driver `id` packaged by `scripts/package-driver.sh`
+/// from the workspace's `exe` and installed from that file, like a user would.
+fn deps_with_driver_file(dir: &std::path::Path, id: &str, exe: &str) -> AppDeps {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let binary = sqlr_testkit::workspace_binary("sqlr-driver-hana");
-    let dir = tempfile::tempdir().unwrap();
-    let archive = dir.path().join("hana.tar.gz");
+    let binary = sqlr_testkit::workspace_binary(exe);
+    let archive = dir.join(format!("{id}.tar.gz"));
     let packed = std::process::Command::new("sh")
         .arg(root.join("scripts/package-driver.sh"))
-        .args(["hana"])
+        .arg(id)
         .arg(&archive)
         .arg("--bin")
         .arg(binary)
@@ -2515,8 +2513,8 @@ fn hana_connection_form_from_manifest() {
         String::from_utf8_lossy(&packed.stderr)
     );
 
-    let (deps, _driver) = deps_with(dir.path(), FakeScript::default());
-    deps.engine.configure_drivers(&dir.path().join("data"), 5);
+    let (deps, _driver) = deps_with(dir, FakeScript::default());
+    deps.engine.configure_drivers(&dir.join("data"), 5);
     deps.engine.inspect_manual_install(archive);
     let deadline = Instant::now() + Duration::from_secs(10);
     while !matches!(
@@ -2532,10 +2530,71 @@ fn hana_connection_form_from_manifest() {
     }
     deps.engine.confirm_manual_install();
     let deadline = Instant::now() + Duration::from_secs(20);
-    while deps.engine.drivers().get("hana").is_none() {
+    while deps.engine.drivers().get(id).is_none() {
         assert!(Instant::now() < deadline, "the driver never registered");
         std::thread::sleep(Duration::from_millis(10));
     }
+    deps
+}
+
+#[test]
+fn duckdb_installs_from_a_driver_file() {
+    // DuckDB is not bundled (the embedded engine would double the app): its sidecar,
+    // packaged and installed, announces the file form and runs queries in the engine.
+    let dir = tempfile::tempdir().unwrap();
+    let deps = deps_with_driver_file(dir.path(), "duckdb", "sqlr-driver-duckdb");
+    let cfg = ConnectionConfig {
+        id: "duck".into(),
+        name: "duck".into(),
+        driver: "duckdb".into(),
+        group: None,
+        color: None,
+        values: [("path".to_string(), ":memory:".to_string())].into(),
+        profile: None,
+        save_secrets: true,
+        agent_access: Default::default(),
+    };
+    deps.engine.connect(
+        cfg,
+        Secrets::default(),
+        ConnectionProfile::builtins().remove(0),
+    );
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !matches!(
+        deps.engine.session_status("duck"),
+        Some(sqlr_engine::SessionStatus::Connected(_))
+    ) {
+        assert!(
+            Instant::now() < deadline,
+            "{:?}",
+            deps.engine.session_status("duck")
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    let app = SqlrApp::new(deps, &egui::Context::default());
+    let mut h = Harness::builder()
+        .with_size((1400.0, 900.0))
+        .with_step_dt(0.01)
+        .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    h.run_steps(2);
+    h.state_mut().open_known_connection_for_tests("duckdb");
+    h.run_steps(5);
+    let (driver, values, _) = h.state().conn_dialog_form().expect("the connection dialog");
+    assert_eq!(driver, "duckdb");
+    assert_eq!(
+        values.get("path").map(String::as_str),
+        Some(":memory:"),
+        "{values:?}"
+    );
+}
+
+#[test]
+fn hana_connection_form_from_manifest() {
+    // The real HANA sidecar, packaged and installed like a user would: its form (and its
+    // TLS and redirect options) comes from the manifest it announces.
+    let dir = tempfile::tempdir().unwrap();
+    let deps = deps_with_driver_file(dir.path(), "hana", "sqlr-driver-hana");
     let app = SqlrApp::new(deps, &egui::Context::default());
     let mut h = Harness::builder()
         .with_size((1400.0, 900.0))
