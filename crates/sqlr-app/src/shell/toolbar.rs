@@ -3,13 +3,10 @@
 //! one button and the transaction controls into an overflow button, so nothing overlaps or
 //! leaves the window.
 
-use egui::{
-    Align, Button, FontId, Id, KeyboardShortcut, Layout, PopupCloseBehavior, Stroke, TextStyle,
-    WidgetInfo, WidgetType,
-};
+use egui::{Align, FontId, Id, KeyboardShortcut, Layout, PopupCloseBehavior, Stroke, TextStyle};
 use sqlr_core::ConnectionConfig;
 use sqlr_engine::SessionStatus;
-use sqlr_ui::theme::{self, Spacing, icons};
+use sqlr_ui::theme::{self, Spacing, icons, menu};
 use sqlr_ui::{ChipAction, ChipItem, ChipState, PaletteMode, connection_chip};
 
 use crate::agents::McpStatus;
@@ -36,19 +33,13 @@ fn command_item(
     _shortcut: Option<KeyboardShortcut>,
     command: AppCommand,
 ) {
-    let button = Button::new(label);
-    let button = if let Some(c) = command
+    let shortcut = command
         .action_id()
         .and_then(|a| app.keymap.keymap.chord_for(a))
-    {
-        button.shortcut_text(c.label(cfg!(target_os = "macos")))
-    } else {
-        button
-    };
-    let response = ui.add(button);
+        .map(|c| c.label(cfg!(target_os = "macos")));
     // The shortcut is decoration: the menu entry keeps its plain label for accessibility
     // and for tests.
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, label));
+    let response = menu::MenuItem::new(label).shortcut(shortcut).ui(ui);
     if response.clicked() {
         app.run_command(command, ui.ctx());
     }
@@ -82,7 +73,7 @@ fn chip_state(status: Option<&SessionStatus>) -> ChipState {
 
 impl SqlrApp {
     fn menu(&mut self, ui: &mut egui::Ui) {
-        ui.menu_button("File", |ui| {
+        menu::bar_menu(ui, "File", |ui| {
             command_item(ui, self, "New query tab", Some(NEW_TAB), AppCommand::NewTab);
             command_item(ui, self, "Close tab", Some(CLOSE_TAB), AppCommand::CloseTab);
             ui.separator();
@@ -97,7 +88,7 @@ impl SqlrApp {
             command_item(ui, self, "Operations", None, AppCommand::ShowOperations);
             command_item(ui, self, "Quit", None, AppCommand::Quit);
         });
-        ui.menu_button("Edit", |ui| {
+        menu::bar_menu(ui, "Edit", |ui| {
             command_item(ui, self, "Undo", Some(UNDO), AppCommand::Undo);
             command_item(ui, self, "Redo", Some(REDO), AppCommand::Redo);
             ui.separator();
@@ -114,19 +105,21 @@ impl SqlrApp {
                 AppCommand::SelectAll,
             );
         });
-        ui.menu_button("View", |ui| {
-            ui.checkbox(&mut self.show_value_panel, "Value panel");
-            ui.checkbox(&mut self.show_history, "History");
-            let mut terminal = self.terminal.is_open();
-            if ui.checkbox(&mut terminal, "Terminal").changed() {
+        menu::bar_menu(ui, "View", |ui| {
+            if menu::check_item(ui, self.show_value_panel, "Value panel").clicked() {
+                self.show_value_panel = !self.show_value_panel;
+            }
+            if menu::check_item(ui, self.show_history, "History").clicked() {
+                self.show_history = !self.show_history;
+            }
+            if menu::check_item(ui, self.terminal.is_open(), "Terminal").clicked() {
                 self.terminal.toggle();
             }
-            let mut soft_wrap = self.settings.soft_wrap;
-            if ui.checkbox(&mut soft_wrap, "Soft wrap").changed() {
+            if menu::check_item(ui, self.settings.soft_wrap, "Soft wrap").clicked() {
                 self.toggle_soft_wrap(ui.ctx());
             }
         });
-        ui.menu_button("Query", |ui| {
+        menu::bar_menu(ui, "Query", |ui| {
             command_item(ui, self, "Run statement", Some(RUN), AppCommand::Run);
             command_item(
                 ui,
@@ -148,7 +141,7 @@ impl SqlrApp {
             ui.separator();
             command_item(ui, self, "Save as snippet…", None, AppCommand::SaveSnippet);
         });
-        ui.menu_button("Help", |ui| {
+        menu::bar_menu(ui, "Help", |ui| {
             command_item(ui, self, "Keyboard Shortcuts", None, AppCommand::Shortcuts);
             ui.separator();
             command_item(
@@ -297,6 +290,11 @@ impl SqlrApp {
                     .on_hover_text("Menu");
                 egui::Popup::menu(&menu)
                     .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
+                    .style(theme::menu_style(ui.ctx()))
+                    .info(egui::UiStackInfo::new(egui::UiKind::Menu).with_tag_value(
+                        egui::containers::menu::MenuConfig::MENU_CONFIG_TAG,
+                        theme::menu_config(ui.ctx()),
+                    ))
                     .show(|ui| self.menu(ui));
             }
             icons::toolbar_divider(ui);

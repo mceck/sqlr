@@ -623,11 +623,18 @@ impl Shared {
         };
         {
             let mut inner = self.inner.lock();
+            let transactions = inner.supports_transactions(&key.conn);
             let Some(s) = inner.session(key, io) else {
                 return JobOutcome::Failed(not_connected());
             };
             if s.tx.read_only {
                 return JobOutcome::Failed(DriverError::new(ErrorKind::Permission, READ_ONLY));
+            }
+            if !transactions {
+                return JobOutcome::Failed(DriverError::new(
+                    ErrorKind::Unsupported,
+                    "Importing into this SQL driver requires transaction support",
+                ));
             }
             if s.tx.is_open() {
                 return JobOutcome::Failed(DriverError::new(

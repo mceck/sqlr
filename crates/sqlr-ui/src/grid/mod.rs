@@ -23,7 +23,7 @@ use std::sync::Arc;
 use egui::text::{CCursor, CCursorRange, LayoutJob};
 use egui::{Color32, Event, Key, Modifiers, Rect, RichText, Sense, Stroke, TextEdit, pos2, vec2};
 use sqlr_core::{
-    Cell, ColumnKind, ColumnMeta, DataFormats, Dialect, DisplayHint, RowBuffer, Value,
+    ActionId, Cell, ColumnKind, ColumnMeta, DataFormats, Dialect, DisplayHint, RowBuffer, Value,
 };
 
 pub use clipboard::set_grid_clipboard;
@@ -34,6 +34,7 @@ use selection::subtract;
 pub use selection::{CopyFormat, Selection};
 use sort::{RowOrder, ViewKey};
 
+use crate::theme::menu::MenuItem;
 use crate::theme::{self, Spacing, icons};
 
 /// Rows before the end of the buffer that trigger `need_more`.
@@ -1430,13 +1431,30 @@ fn paint_rows(
     }
 }
 
-/// A context-menu button; closes the menu when clicked.
-fn menu_item(ui: &mut egui::Ui, enabled: bool, icon: &str, label: &str) -> bool {
-    let clicked = icons::menu_item_enabled(ui, enabled, icon, label).clicked();
+/// A context-menu entry with an optional shortcut; closes the menu when clicked.
+fn menu_entry(
+    ui: &mut egui::Ui,
+    enabled: bool,
+    icon: &str,
+    label: &str,
+    shortcut: Option<ActionId>,
+) -> bool {
+    let shortcut = shortcut.and_then(|a| crate::keymap::ui_keymap(ui.ctx()).label(a));
+    let clicked = MenuItem::new(label)
+        .icon(icon)
+        .enabled(enabled)
+        .shortcut(shortcut)
+        .ui(ui)
+        .clicked();
     if clicked {
         ui.close();
     }
     clicked
+}
+
+/// [`menu_entry`] with no shortcut.
+fn menu_item(ui: &mut egui::Ui, enabled: bool, icon: &str, label: &str) -> bool {
+    menu_entry(ui, enabled, icon, label, None)
 }
 
 fn copy_format_icon(format: CopyFormat) -> &'static str {
@@ -1452,56 +1470,49 @@ fn copy_format_icon(format: CopyFormat) -> &'static str {
 /// The context menu of the selection; returns the item clicked.
 fn context_menu(ui: &mut egui::Ui, state: &GridState, allow_copy_all: bool) -> Option<MenuChoice> {
     let mut choice = None;
-    if ui
-        .add_enabled(state.can_undo(), egui::Button::new("Undo"))
-        .clicked()
-    {
-        choice = Some(MenuChoice::Undo);
-        ui.close();
-    }
-    if ui
-        .add_enabled(state.can_redo(), egui::Button::new("Redo"))
-        .clicked()
-    {
-        choice = Some(MenuChoice::Redo);
-        ui.close();
-    }
-    ui.separator();
-    if allow_copy_all && ui.button("Copy all results").clicked() {
-        choice = Some(MenuChoice::CopyAll);
-        ui.close();
-    }
-    if menu_item(ui, true, icons::COPY, "Copy") {
+    // Copy first: it is what a result menu is opened for most.
+    if menu_entry(ui, true, icons::COPY, "Copy", Some(ActionId::Copy)) {
         choice = Some(MenuChoice::Copy(CopyFormat::Tsv));
     }
-    icons::menu_button(ui, icons::COPY, "Copy as", |ui| {
+    icons::menu_button(ui, icons::COPY_AS, "Copy as", |ui| {
         for format in CopyFormat::ALL {
             if menu_item(ui, true, copy_format_icon(format), format.label()) {
                 choice = Some(MenuChoice::Copy(format));
             }
         }
     });
-    if ui
-        .add_enabled(state.edits.is_some(), egui::Button::new("Paste"))
-        .clicked()
-    {
-        choice = Some(MenuChoice::Paste);
-        ui.close();
+    if allow_copy_all && menu_item(ui, true, icons::COPY_ALL, "Copy all results") {
+        choice = Some(MenuChoice::CopyAll);
     }
-    if ui
-        .add_enabled(
-            state.edits.is_some(),
-            egui::Button::new("Paste as new rows…"),
-        )
-        .clicked()
-    {
+    let editable = state.edits.is_some();
+    if menu_entry(ui, editable, icons::PASTE, "Paste", Some(ActionId::Paste)) {
+        choice = Some(MenuChoice::Paste);
+    }
+    if menu_item(ui, editable, icons::PASTE_ROWS, "Paste as new rows…") {
         choice = Some(MenuChoice::PasteRows);
-        ui.close();
+    }
+    ui.separator();
+    if menu_entry(
+        ui,
+        state.can_undo(),
+        icons::UNDO,
+        "Undo",
+        Some(ActionId::Undo),
+    ) {
+        choice = Some(MenuChoice::Undo);
+    }
+    if menu_entry(
+        ui,
+        state.can_redo(),
+        icons::REDO,
+        "Redo",
+        Some(ActionId::Redo),
+    ) {
+        choice = Some(MenuChoice::Redo);
     }
     ui.separator();
     let rows = state.selected_rows();
     let (_, col) = state.selection.cursor;
-    let editable = state.edits.is_some();
     let writable = state.edits.as_ref().is_some_and(|e| e.writable(col));
     let not_null = state.edits.as_ref().is_some_and(|e| e.not_null(col));
     let plural = if rows.len() > 1 { "s" } else { "" };
@@ -1538,21 +1549,11 @@ fn context_menu(ui: &mut egui::Ui, state: &GridState, allow_copy_all: bool) -> O
     }
     if menu_item(
         ui,
-        editable && !rows.is_empty(),
-        icons::DELETE,
-        &format!("Delete row{plural}"),
+        editable && state.selected.is_some(),
+        icons::ROLLBACK_TO,
+        "Revert selected cells",
     ) {
-        choice = Some(MenuChoice::Delete);
-    }
-    if ui
-        .add_enabled(
-            editable && state.selected.is_some(),
-            egui::Button::new("Revert selected cells"),
-        )
-        .clicked()
-    {
         choice = Some(MenuChoice::RevertCells);
-        ui.close();
     }
     let changed = state
         .edits
@@ -1567,6 +1568,17 @@ fn context_menu(ui: &mut egui::Ui, state: &GridState, allow_copy_all: bool) -> O
     }
     if menu_item(ui, true, icons::FILTER, "Filter by this value") {
         choice = Some(MenuChoice::FilterByValue);
+    }
+    ui.separator();
+    let delete_rows = MenuItem::new(&format!("Delete row{plural}"))
+        .icon(icons::DELETE)
+        .enabled(editable && !rows.is_empty())
+        .shortcut(crate::keymap::ui_keymap(ui.ctx()).label(ActionId::DeleteRows))
+        .danger()
+        .ui(ui);
+    if delete_rows.clicked() {
+        choice = Some(MenuChoice::Delete);
+        ui.close();
     }
     choice
 }

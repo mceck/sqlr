@@ -25,7 +25,7 @@ pub struct ConnectionUrl {
 }
 
 /// Schemes whose URL names a file instead of a server.
-const FILE_SCHEMES: &[&str] = &["sqlite", "sqlite3", "file"];
+const FILE_SCHEMES: &[&str] = &["sqlite", "sqlite3", "duckdb", "file"];
 
 fn percent_decode(text: &str) -> Result<String, String> {
     let bytes = text.as_bytes();
@@ -345,6 +345,22 @@ pub fn connection_url(
     };
     if FILE_SCHEMES.contains(&scheme.as_str()) {
         let path = value("path").unwrap_or_default();
+        if scheme == "duckdb" {
+            if path == ":memory:" {
+                return Some("duckdb::memory:".into());
+            }
+            let path = path
+                .split('/')
+                .map(percent_encode)
+                .collect::<Vec<_>>()
+                .join("/");
+            // A relative path must stay relative; `//` would create an authority.
+            return Some(if path.starts_with('/') {
+                format!("{scheme}://{path}")
+            } else {
+                format!("{scheme}:{path}")
+            });
+        }
         let slash = if path.starts_with('/') { "" } else { "/" };
         return Some(format!("{scheme}://{slash}{path}"));
     }
@@ -374,6 +390,52 @@ pub fn connection_url(
 mod tests {
     use super::*;
     use crate::manifest::{Capabilities, Family, FieldSpec, FieldType};
+
+    #[test]
+    fn duckdb_urls_name_local_files_and_memory() {
+        let file = parse_connection_url("duckdb:///tmp/my%20data.duckdb?read_only=true")
+            .expect("DuckDB file URL");
+        assert_eq!(file.path.as_deref(), Some("/tmp/my data.duckdb"));
+        assert_eq!(file.host, None);
+        assert_eq!(file.params, vec![("read_only".into(), "true".into())]);
+        let memory = parse_connection_url("duckdb::memory:").expect("in-memory URL");
+        assert_eq!(memory.path.as_deref(), Some(":memory:"));
+        assert!(parse_connection_url("duckdb://remote/data.duckdb").is_err());
+    }
+
+    #[test]
+    fn saved_duckdb_urls_round_trip_memory_and_reserved_path_characters() {
+        let manifest = DriverManifest {
+            id: "duckdb".into(),
+            name: "DuckDB".into(),
+            family: Family::Relational,
+            capabilities: Capabilities::default(),
+            fields: vec![field("path", FieldType::Text)],
+            dialect: "duckdb".into(),
+            url_schemes: vec!["duckdb".into()],
+            default_port: None,
+            editing: None,
+        };
+        let mut cfg = crate::config::ConnectionConfig {
+            id: "c".into(),
+            name: "DuckDB".into(),
+            driver: "duckdb".into(),
+            group: None,
+            color: None,
+            values: Default::default(),
+            profile: None,
+            save_secrets: true,
+            agent_access: Default::default(),
+        };
+        for path in [":memory:", "/tmp/data?#%.duckdb", "relative.duckdb"] {
+            cfg.values.insert("path".into(), path.into());
+            let url = connection_url(&cfg, &manifest).unwrap();
+            assert_eq!(
+                parse_connection_url(&url).unwrap().path.as_deref(),
+                Some(path)
+            );
+        }
+    }
 
     #[test]
     fn connection_url_reads_back() {

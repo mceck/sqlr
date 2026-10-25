@@ -778,7 +778,13 @@ impl egui_dock::TabViewer for Viewer<'_> {
             .show(ui, |ui| {
                 let cfg = conn.and_then(|c| self.connections.iter().find(|x| x.id == c));
                 let name = cfg.map(|c| c.name.as_str());
-                let mode = cfg.map(|c| crate::app::profile_of(self.profiles, c).commit_mode);
+                let mode = cfg.map(|c| {
+                    crate::transaction::supported_commit_mode(
+                        self.engine,
+                        &c.driver,
+                        crate::app::profile_of(self.profiles, c).commit_mode,
+                    )
+                });
                 if let Some(command) =
                     crate::shell::tab_breadcrumb(ui, self.engine, tab, name, mode)
                 {
@@ -987,16 +993,18 @@ fn explain_controls(ui: &mut egui::Ui, tab: &mut QueryTab, cx: &mut ViewCx<'_>) 
             egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, "Explain options")
         });
         if enabled {
-            egui::Popup::menu(&chevron).show(|ui| {
-                if icons::menu_item(ui, icons::PLAN, "Explain").clicked() {
-                    requested = Some(false);
-                    ui.close();
-                }
-                if icons::menu_item(ui, icons::PLAN, "Explain Analyze").clicked() {
-                    requested = Some(true);
-                    ui.close();
-                }
-            });
+            egui::Popup::menu(&chevron)
+                .style(theme::menu_style(ui.ctx()))
+                .show(|ui| {
+                    if icons::menu_item(ui, icons::PLAN, "Explain").clicked() {
+                        requested = Some(false);
+                        ui.close();
+                    }
+                    if icons::menu_item(ui, icons::PLAN, "Explain Analyze").clicked() {
+                        requested = Some(true);
+                        ui.close();
+                    }
+                });
         }
         let glyph = icons::text(ui, icons::PLAN, icons::SIZE).color(if enabled {
             p.text_muted

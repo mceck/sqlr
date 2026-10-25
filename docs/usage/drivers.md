@@ -1,6 +1,6 @@
 # Drivers
 
-A driver is what lets sqlr talk to a particular database. PostgreSQL, MySQL and MariaDB, SQL Server, Oracle, SQLite, MongoDB, Elasticsearch and Redis come with the app, ready to use. Every other database comes from a **driver file** that you install yourself.
+A driver is what lets sqlr talk to a particular database. PostgreSQL, MySQL and MariaDB, SQL Server, Oracle, SQLite, Snowflake, MongoDB, Elasticsearch and Redis come with the app, ready to use. Every other database comes from a **driver file** that you install yourself.
 
 ## Installing a driver from a file
 
@@ -33,11 +33,15 @@ A driver installed from a file runs as its own process. sqlr starts it when the 
 
 Package the driver with `scripts/package-driver.sh hana hana.tar.gz`, then install the archive. The connection form asks for host, port, tenant database, user, password and default schema, and offers TLS with a custom CA. Behind Docker, NAT or an SSH tunnel, **Pin the redirect to this host** makes sqlr connect straight to the tenant's SQL port instead of following the address HANA advertises. Details are in [the HANA notes](https://github.com/mceck/sqlr/blob/main/docs/drivers/hana.md).
 
+## DuckDB
+
+The DuckDB engine is large, so it ships as a driver file instead of inside the app. Package it with `scripts/package-driver.sh duckdb duckdb.tar.gz`, then install the archive. The driver embeds DuckDB itself: no Java, server or system library is needed. The connection form asks for a database file (or `:memory:`) and whether to open it read-only. Details are in [the DuckDB notes](https://github.com/mceck/sqlr/blob/main/docs/drivers/duckdb.md).
+
 ## JDBC databases
 
 Any database that has a JDBC driver can be reached through the JDBC bridge. It needs Java 17 or newer on your machine, found through `JAVA_HOME`, the system Java on macOS or `java` on your `PATH`.
 
-Presets exist for Db2, ClickHouse, Snowflake, DuckDB and H2, and a generic one takes any JDBC URL, driver class and jar. The JDBC jar for your database is packaged with the driver or picked in the connection form:
+Presets exist for Db2, ClickHouse and H2, with Snowflake and DuckDB presets retained for existing connections, and a generic one takes any JDBC URL, driver class and jar. The JDBC jar for your database is packaged with the driver or picked in the connection form:
 
 ```sh
 scripts/package-driver.sh jdbc-h2 jdbc-h2.tar.gz --jar ~/Downloads/h2-2.3.232.jar

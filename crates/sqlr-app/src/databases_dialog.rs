@@ -345,6 +345,7 @@ mod tests {
             sqlr_driver_mssql::SqlServerDriver::new(),
             sqlr_driver_oracle::OracleDriver::new(),
             sqlr_driver_sqlite::SqliteDriver::new(),
+            sqlr_driver_snowflake::SnowflakeDriver::new(),
             sqlr_driver_mongo::MongoDriver::new(),
             sqlr_driver_elastic::ElasticDriver::new(),
             sqlr_driver_redis::RedisDriver::new(),

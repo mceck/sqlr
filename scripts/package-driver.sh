@@ -3,6 +3,7 @@
 # a registry download once it is signed with tools/sign-index):
 #
 #   scripts/package-driver.sh hana            out.tar.gz [--bin PATH]
+#   scripts/package-driver.sh duckdb          out.tar.gz [--bin PATH]
 #   scripts/package-driver.sh jdbc            out.tar.gz [--bin PATH] [--bridge PATH]
 #   scripts/package-driver.sh jdbc-h2         out.tar.gz [--jar PATH ...]
 #
@@ -12,7 +13,7 @@
 # bridge jar.
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
-id=${1:?usage: package-driver.sh <hana|jdbc|jdbc-NAME> <out.tar.gz> [--bin PATH] [--bridge PATH] [--jar PATH]...}
+id=${1:?usage: package-driver.sh <hana|duckdb|jdbc|jdbc-NAME> <out.tar.gz> [--bin PATH] [--bridge PATH] [--jar PATH]...}
 out=${2:?missing output file}
 shift 2
 bin=""
@@ -28,11 +29,11 @@ while [ $# -gt 0 ]; do
 done
 
 case "$id" in
-    hana) package=sqlr-driver-hana; exe=sqlr-driver-hana; args='[]' ;;
-    jdbc|jdbc-*) package=sqlr-driver-jdbc; exe=sqlr-driver-jdbc; args="[\"--preset\", \"$id\"]" ;;
+    hana|duckdb) package=sqlr-driver-$id; exe=$package; dir=drivers/$package; args='[]' ;;
+    jdbc|jdbc-*) package=sqlr-driver-jdbc; exe=$package; dir=crates/$package; args="[\"--preset\", \"$id\"]" ;;
     *) echo "unknown driver $id" >&2; exit 2 ;;
 esac
-version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' "$root/$( [ "$package" = sqlr-driver-hana ] && echo drivers/sqlr-driver-hana || echo crates/sqlr-driver-jdbc)/Cargo.toml" | head -1)
+version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' "$root/$dir/Cargo.toml" | head -1)
 
 if [ -z "$bin" ]; then
     (cd "$root" && cargo build --release -p "$package")

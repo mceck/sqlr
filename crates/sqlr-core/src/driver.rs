@@ -34,6 +34,11 @@ pub trait Driver: Send + Sync {
     fn dialect(&self) -> Option<Arc<dyn Dialect>> {
         None
     }
+    /// Dialect defaults for a saved connection, available before any network work.
+    /// Drivers with a configured default schema can specialize editor completion here.
+    fn dialect_for(&self, _cfg: &ConnectionConfig) -> Option<Arc<dyn Dialect>> {
+        self.dialect()
+    }
 }
 
 #[async_trait::async_trait]

@@ -11,11 +11,13 @@ A connection tells sqlr how to reach a database: where it is, who you are, and h
 | SQL Server | SQL authentication, TLS, SSH tunnel |
 | Oracle | Works directly; the Oracle Instant Client is not needed |
 | SQLite | A file on disk, optionally opened read-only |
+| DuckDB | Installed from a driver file; a file on disk or `:memory:`, optionally opened read-only. No Java needed |
+| Snowflake | Built in; HTTPS SQL API with OAuth, PAT or JWT token authentication |
 | MongoDB | TLS, SSH tunnel |
 | Elasticsearch | Versions 7.17 and 8.x |
 | Redis | A standalone server, with TLS and ACL users |
 | SAP HANA | Installed from a driver file, see [Drivers](drivers.md) |
-| Db2, ClickHouse, Snowflake, DuckDB, H2 and any other JDBC database | Through the JDBC bridge, installed from a driver file. Needs Java 17 or newer |
+| Db2, ClickHouse, H2 and any other JDBC database | Through the JDBC bridge, installed from a driver file. Needs Java 17 or newer |
 
 Several databases that speak the PostgreSQL or MySQL protocol are listed in the new-connection dialog with their usual port and defaults already filled in: CockroachDB, YugabyteDB, Amazon Redshift, Greenplum, TimescaleDB, Neon, Supabase, Amazon Aurora (both flavors), TiDB and SingleStore.
 
@@ -25,11 +27,17 @@ Open **New connection** and pick the database. The form comes from the driver, s
 
 Some things worth knowing:
 
-- **Paste a URL.** Paste something like `postgresql://alice@db.example.com:5432/shop` into the URL field and the form fills itself. `mysql://...` and `sqlite:/path/to/file.db` work the same way.
+- **Paste a URL.** Paste something like `postgresql://alice@db.example.com:5432/shop` into the URL field and the form fills itself. `mysql://...`, `sqlite:/path/to/file.db`, `duckdb:/path/to/file.duckdb` and `snowflake://account.snowflakecomputing.com/database` work the same way.
 - **Passwords stay out of URLs.** If a URL contains a password, sqlr asks you to remove it and type the password in the Password field. This keeps passwords out of your clipboard history and your logs.
 - **Save password.** Turn it on to keep the password in sqlr's encrypted credential vault, protected by your operating system's keychain (macOS Keychain, Windows Credential Manager, Linux Secret Service). sqlr unlocks it on first use and shares that unlock across connections until you quit. Turn it off and sqlr asks every time you connect.
 - **Test.** Tries the connection and reports the server version and the round-trip time, so you know the details are right before you rely on them.
 - **Profile.** Pick Development, Test or Production. The profile sets the connection's color and how careful sqlr is with writes. See [Profiles, transactions and safety](profiles-and-transactions.md).
+
+## DuckDB and Snowflake
+
+DuckDB comes from a driver file (see [Drivers](drivers.md)) that embeds the whole engine, so nothing else is needed. Pick a database file, or use `:memory:` for a temporary database. Snowflake uses its public SQL API. Enter the account hostname, optional database, schema, warehouse and role, then choose the token type and paste the token in its secret field. Tokens use the same encrypted vault as passwords.
+
+Snowflake requests run independently in auto-commit mode. Persistent transactions, temporary tables, session variables and `USE` changes across requests are unavailable; select the context in the connection form. Editing result cells is unavailable. Existing JDBC connections still work with their installed driver. More in [the Snowflake notes](https://github.com/mceck/sqlr/blob/main/docs/drivers/snowflake.md).
 
 ## SSH tunnels
 
@@ -45,7 +53,7 @@ sqlr opens the tunnel, connects through it and closes it when you disconnect. Du
 
 For databases that support it, the connection form has the TLS fields. For PostgreSQL the SSL mode ranges from `disable` to `verify-full`, and you can provide a root certificate, a client certificate and a client key.
 
-A connection starts unencrypted unless the driver configuration turns TLS on, so for any server outside your own machine, choose a mode that suits it. sqlr supports TLS 1.2 and newer. Servers that only offer TLS 1.0 or 1.1 cannot be reached.
+Snowflake always uses HTTPS with certificate verification. Other network connections start unencrypted unless the driver configuration turns TLS on, so for any server outside your own machine, choose a mode that suits it. sqlr supports TLS 1.2 and newer. Servers that only offer TLS 1.0 or 1.1 cannot be reached.
 
 ## Working with a connection
 

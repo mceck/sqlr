@@ -38,7 +38,7 @@ impl SqlrApp {
                 .engine
                 .drivers()
                 .get(&c.driver)
-                .and_then(|d| d.dialect())
+                .and_then(|d| d.dialect_for(c))
             {
                 self.dialects.insert(c.id.clone(), dialect);
                 added = true;

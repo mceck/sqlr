@@ -19,6 +19,7 @@ use sqlr_driver_mysql::MysqlDriver;
 use sqlr_driver_oracle::OracleDriver;
 use sqlr_driver_postgres::PostgresDriver;
 use sqlr_driver_redis::RedisDriver;
+use sqlr_driver_snowflake::SnowflakeDriver;
 use sqlr_driver_sqlite::SqliteDriver;
 use sqlr_engine::{DriverRegistry, Engine, Repaint, SessionStatus};
 use sqlr_store::{ConnectionRepo, KeyringStore, LayeredSettings, MoveTarget, Settings};
@@ -136,6 +137,7 @@ pub fn production_deps_with(
     drivers.register(SqlServerDriver::new());
     drivers.register(OracleDriver::new());
     drivers.register(SqliteDriver::new());
+    drivers.register(SnowflakeDriver::new());
     drivers.register(MongoDriver::new());
     drivers.register(ElasticDriver::new());
     drivers.register(RedisDriver::new());
@@ -1359,7 +1361,7 @@ impl SqlrApp {
         self.dialects = self
             .connections
             .iter()
-            .filter_map(|c| Some((c.id.clone(), drivers.get(&c.driver)?.dialect()?)))
+            .filter_map(|c| Some((c.id.clone(), drivers.get(&c.driver)?.dialect_for(c)?)))
             .collect();
         for id in std::mem::take(&mut self.reconnect_on_listing) {
             if self.is_live(&id) {
@@ -1889,6 +1891,52 @@ mod tests {
     use sqlr_testkit::{FakeDriver, FakeScript};
 
     use super::*;
+
+    #[test]
+    fn production_registers_snowflake_but_not_duckdb() {
+        let dir = tempfile::tempdir().unwrap();
+        let deps = production_deps_in(
+            Arc::new(|| {}),
+            Some(dir.path().join("config")),
+            Some(dir.path().join("data")),
+        )
+        .unwrap();
+        let manifest = deps
+            .engine
+            .manifest("snowflake")
+            .expect("built-in Snowflake");
+        assert_eq!(manifest.family, sqlr_core::Family::Relational);
+        // DuckDB is a sidecar driver installed from a file, not part of the app.
+        assert!(deps.engine.manifest("duckdb").is_none());
+    }
+
+    #[test]
+    fn snowflake_completion_uses_the_saved_schema_before_connecting() {
+        let dir = tempfile::tempdir().unwrap();
+        let deps = production_deps_in(
+            Arc::new(|| {}),
+            Some(dir.path().join("config")),
+            Some(dir.path().join("data")),
+        )
+        .unwrap();
+        let cfg = ConnectionConfig {
+            id: "snow".into(),
+            name: "Warehouse".into(),
+            driver: "snowflake".into(),
+            group: None,
+            color: None,
+            values: [("schema".into(), "ANALYTICS".into())].into(),
+            profile: None,
+            save_secrets: true,
+            agent_access: Default::default(),
+        };
+        let mut app = SqlrApp::new(deps, &egui::Context::default());
+        app.apply_listing(Listing {
+            connections: Ok(vec![cfg]),
+            folders: Ok(vec![]),
+        });
+        assert_eq!(app.dialects["snow"].default_schemas(), vec!["ANALYTICS"]);
+    }
 
     /// Another handle on the saved connections in `dir` (secrets in memory).
     fn saved_repo(dir: &tempfile::TempDir) -> ConnectionRepo {

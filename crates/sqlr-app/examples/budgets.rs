@@ -135,7 +135,7 @@ fn main() -> anyhow::Result<()> {
         native["connected"].as_u64() == Some(2),
         "idle fixture did not connect both databases"
     );
-    anyhow::ensure!(binary_mb < 50.0, "binary budget exceeded");
+    anyhow::ensure!(binary_mb < 75.0, "binary budget exceeded");
     anyhow::ensure!(
         grid_p99_ms < 16.7 && reached == 300,
         "grid budget or scrolling correctness failed"

@@ -78,8 +78,22 @@ pub const MENU: &str = ph::LIST;
 pub const MORE: &str = ph::DOTS_THREE;
 pub const KEYBOARD: &str = ph::KEYBOARD;
 // Menu actions.
+/// The mark of the checked choice in a menu.
+pub const CHECK: &str = ph::CHECK;
 pub const COPY: &str = ph::COPY;
 pub const DUPLICATE: &str = ph::COPY_SIMPLE;
+/// Copy in another format (the "Copy as" submenu).
+pub const COPY_AS: &str = ph::CLIPBOARD_TEXT;
+/// Paste clipboard rows as new rows.
+pub const PASTE_ROWS: &str = ph::ROWS_PLUS_BOTTOM;
+/// Copy every row of a result.
+pub const COPY_ALL: &str = ph::FILES;
+/// Copy a link or URL (a connection URL), distinct from copying text.
+pub const LINK: &str = ph::LINK;
+/// Disconnect a live connection.
+pub const DISCONNECT: &str = ph::PLUGS;
+/// Live server sessions and locks.
+pub const SESSIONS: &str = ph::PULSE;
 pub const OPEN: &str = ph::ARROW_SQUARE_OUT;
 pub const INSERT: &str = ph::ARROW_SQUARE_IN;
 pub const EXPORT: &str = ph::EXPORT;
@@ -179,11 +193,12 @@ impl DbIcon {
 /// The bitmap side: 16 px at 2×, like the bundled icon set.
 const DB_ICON_PX: usize = 32;
 
-/// Paints the driver's database icon in the same square as [`paint`].
+/// Paints the driver's database icon in the same square as [`paint`]. Like [`paint`] it only
+/// senses hover, so a click falls through to the row underneath.
 pub fn paint_database(ui: &mut Ui, driver: &str) -> Response {
     let height = ui.spacing().interact_size.y;
     let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(SIZE + Spacing::XS, height), Sense::click());
+        ui.allocate_exact_size(egui::vec2(SIZE + Spacing::XS, height), Sense::hover());
     paint_database_at(ui, rect, driver);
     response
 }
@@ -281,11 +296,6 @@ pub fn paint(ui: &mut Ui, icon: &str, color: Color32) -> Response {
     paint_with_sense(ui, icon, color, Sense::hover())
 }
 
-/// [`paint`] as a click target, for rows that select when their icon is pressed.
-pub fn paint_clickable(ui: &mut Ui, icon: &str, color: Color32) -> Response {
-    paint_with_sense(ui, icon, color, Sense::click())
-}
-
 fn paint_with_sense(ui: &mut Ui, icon: &str, color: Color32, sense: Sense) -> Response {
     let height = ui.spacing().interact_size.y;
     let (rect, response) = ui.allocate_exact_size(egui::vec2(SIZE + Spacing::XS, height), sense);
@@ -299,18 +309,18 @@ fn paint_with_sense(ui: &mut Ui, icon: &str, color: Color32, sense: Sense) -> Re
     response
 }
 
-/// A context-menu entry with `icon` before `label`; `label` is its accessible name.
+/// A context-menu entry with `icon` before `label`; `label` is its accessible name. See
+/// [`super::menu`] for shortcuts, danger entries and choices.
 pub fn menu_item(ui: &mut Ui, icon: &str, label: &str) -> Response {
-    menu_item_enabled(ui, true, icon, label)
+    super::menu::MenuItem::new(label).icon(icon).ui(ui)
 }
 
 /// [`menu_item`], enabled or grayed out.
 pub fn menu_item_enabled(ui: &mut Ui, enabled: bool, icon: &str, label: &str) -> Response {
-    let color = super::palette(ui.ctx()).text_muted;
-    let glyph = text(ui, icon, SIZE).color(color);
-    let response = ui.add_enabled(enabled, Button::new((glyph, label)));
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, label));
-    response
+    super::menu::MenuItem::new(label)
+        .icon(icon)
+        .enabled(enabled)
+        .ui(ui)
 }
 
 /// [`menu_item`] with its keyboard shortcut shown on the right; `label` stays its
@@ -321,15 +331,10 @@ pub fn menu_item_shortcut(
     label: &str,
     shortcut: Option<String>,
 ) -> Response {
-    let color = super::palette(ui.ctx()).text_muted;
-    let glyph = text(ui, icon, SIZE).color(color);
-    let mut button = Button::new((glyph, label));
-    if let Some(shortcut) = shortcut {
-        button = button.shortcut_text(shortcut);
-    }
-    let response = ui.add(button);
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, label));
-    response
+    super::menu::MenuItem::new(label)
+        .icon(icon)
+        .shortcut(shortcut)
+        .ui(ui)
 }
 
 /// A submenu entry with `icon` before `label`; `label` is its accessible name, followed by
@@ -340,14 +345,7 @@ pub fn menu_button<R>(
     label: &str,
     add_contents: impl FnOnce(&mut Ui) -> R,
 ) -> InnerResponse<Option<R>> {
-    let color = super::palette(ui.ctx()).text_muted;
-    let glyph = text(ui, icon, SIZE).color(color);
-    let inner = ui.menu_button((glyph, label), add_contents);
-    let accessible = format!("{label} ⏵");
-    inner
-        .response
-        .widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, accessible.clone()));
-    inner
+    super::menu::submenu(ui, Some(icon), label, add_contents)
 }
 
 /// A toolbar button: `icon` (in `color` while enabled, else the text color) before `label`,

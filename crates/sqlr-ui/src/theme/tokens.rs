@@ -27,12 +27,18 @@ pub struct Palette {
     pub border_input: Color32,
     pub text: Color32,
     pub text_muted: Color32,
+    /// Placeholders (hint text) and other weak text such as shortcut hints: still readable
+    /// on an input (≥ 4.5:1), clearly dimmer than typed text and than `text_muted`.
+    pub placeholder: Color32,
     pub text_disabled: Color32,
     pub accent: Color32,
     /// Text on `accent`.
     pub accent_text: Color32,
     /// A selected row or a toggled toolbar button.
     pub selection: Color32,
+    /// The ring of a focused text field and the text of a selected label: the accent,
+    /// shifted until it reads on `selection` (≥ 4.5:1) and on `bg_input` (≥ 3:1).
+    pub focus: Color32,
     /// The accent over a panel, for selected/toggled surfaces.
     pub accent_soft: Color32,
     /// A barely-there wash behind the statement holding the caret.
@@ -71,7 +77,21 @@ impl Palette {
         };
         let wash = if self.is_dark() { 0.22 } else { 0.12 };
         self.accent_soft = self.bg_panel.lerp_to_gamma(accent, wash);
+        self.focus = self.readable_accent(accent);
         self
+    }
+
+    /// `accent` moved toward the text color in small steps until it reads on the selection
+    /// and stands out of an input.
+    fn readable_accent(&self, accent: Color32) -> Color32 {
+        let readable = |c: Color32| {
+            super::contrast_ratio(c, self.selection) >= 4.5
+                && super::contrast_ratio(c, self.bg_input) >= 3.0
+        };
+        (0..=20)
+            .map(|step| accent.lerp_to_gamma(self.text, step as f32 / 20.0))
+            .find(|&c| readable(c))
+            .unwrap_or(self.text)
     }
 
     /// A dark palette with the editor near black and the panels one
@@ -85,14 +105,16 @@ impl Palette {
             bg_toolbar: hex(0x222327),
             bg_input: hex(0x17181A),
             bg_subtle: hex(0x1D1E21),
-            border: hex(0x303237),
+            border: hex(0x34363C),
             border_input: hex(0x4A4C54),
             text: hex(0xDFE1E5),
             text_muted: hex(0x90949A),
-            text_disabled: hex(0x5A5D63),
+            placeholder: hex(0x7E828A),
+            text_disabled: hex(0x686C73),
             accent: hex(0x2E6FF0),
             accent_text: hex(0xFFFFFF),
             selection: hex(0x293C63),
+            focus: hex(0x8FB2FF),
             accent_soft: hex(0x223555),
             statement_tint: hex(0x20232A),
             hover: hex(0x303237),
@@ -108,7 +130,10 @@ impl Palette {
         }
     }
 
-    /// Light palette; `accent` is nudged as in [`Palette::dark`].
+    /// Light palette; `accent` is nudged as in [`Palette::dark`]. Borders, secondary and
+    /// disabled text are dark enough to separate cards and controls from white, and the
+    /// status colors (`warning`, `error`, `success`) are darkened to read as text (≥ 4.5:1)
+    /// on the editor, panel and subtle backgrounds.
     pub fn light() -> Self {
         Self {
             bg_editor: hex(0xFFFFFF),
@@ -117,26 +142,28 @@ impl Palette {
             bg_toolbar: hex(0xFFFFFF),
             bg_input: hex(0xFFFFFF),
             bg_subtle: hex(0xF0F1F4),
-            border: hex(0xEBECF0),
-            border_input: hex(0xC9CDD7),
+            border: hex(0xD8DBE2),
+            border_input: hex(0xBEC3CD),
             text: hex(0x1E1F22),
-            text_muted: hex(0x6C707E),
-            text_disabled: hex(0xA8ADBD),
+            text_muted: hex(0x5F6370),
+            placeholder: hex(0x6E7380),
+            text_disabled: hex(0x8F95A3),
             accent: hex(0x2E6FF0),
             accent_text: hex(0xFFFFFF),
             selection: hex(0xD5E1FF),
-            accent_soft: hex(0xE6EEFE),
+            focus: hex(0x1F56C9),
+            accent_soft: hex(0xDCE6FC),
             statement_tint: hex(0xEBF1FA),
             hover: hex(0xDFE1E5),
-            error: hex(0xE55765),
-            warning: hex(0xC27D04),
-            success: hex(0x208A3C),
+            error: hex(0xC93545),
+            warning: hex(0x8F5B00),
+            success: hex(0x1D7F37),
             null_text: hex(0x8C8C8C),
             icon_table: hex(0x3574F0),
             icon_view: hex(0x834DF0),
-            icon_key: hex(0xC27D04),
+            icon_key: hex(0x8F5B00),
             icon_schema: hex(0x6C707E),
-            icon_function: hex(0x208A3C),
+            icon_function: hex(0x1D7F37),
         }
     }
 

@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use egui::{RichText, Sense, WidgetInfo, WidgetType, vec2};
 use sqlr_core::{DocChunk, DocValue};
 
-use crate::theme::{self, Spacing, icons};
+use crate::theme::{self, Spacing, icons, menu};
 
 const INDENT: f32 = 16.0;
 const ARROW_WIDTH: f32 = 16.0;
@@ -302,16 +302,20 @@ pub fn doc_tree(
                             state.field = None;
                             action = Some(DocAction::Select(doc));
                         }
-                        label.context_menu(|ui| {
-                            if editable && ui.button("Edit document").clicked() {
+                        theme::context_menu(&label, |ui| {
+                            if editable
+                                && menu::item(ui, icons::EDIT, "Edit document", None).clicked()
+                            {
                                 action = Some(DocAction::Edit(doc));
                                 ui.close();
                             }
-                            if ui.button("Copy JSON").clicked() {
+                            if menu::item(ui, icons::JSON, "Copy JSON", None).clicked() {
                                 action = Some(DocAction::CopyJson(doc));
                                 ui.close();
                             }
-                            if editable && ui.button("Duplicate").clicked() {
+                            if editable
+                                && menu::item(ui, icons::DUPLICATE, "Duplicate", None).clicked()
+                            {
                                 if let Some(DocValue::Document(fields)) = doc_at(chunks, doc) {
                                     let copy =
                                         fields.into_iter().filter(|(k, _)| k != "_id").collect();
@@ -319,7 +323,13 @@ pub fn doc_tree(
                                 }
                                 ui.close();
                             }
-                            if editable && ui.button("Delete document…").clicked() {
+                            if editable {
+                                menu::separator(ui);
+                            }
+                            if editable
+                                && menu::danger_item(ui, icons::DELETE, "Delete document…")
+                                    .clicked()
+                            {
                                 action = Some(DocAction::Delete(vec![doc]));
                                 ui.close();
                             }

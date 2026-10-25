@@ -39,6 +39,91 @@ fn palettes_meet_contrast() {
     assert!((contrast_ratio(Color32::GRAY, Color32::GRAY) - 1.0).abs() < 0.001);
 }
 
+/// Status text (warnings such as "Driver missing", ER key names, danger menu items) stays
+/// readable on every surface it is drawn on, in both themes.
+#[test]
+fn status_colors_are_readable_on_every_surface() {
+    for (name, p) in [("dark", Palette::dark()), ("light", Palette::light())] {
+        for (surface, bg) in [
+            ("bg_editor", p.bg_editor),
+            ("bg_panel", p.bg_panel),
+            ("bg_subtle", p.bg_subtle),
+        ] {
+            for (token, fg) in [
+                ("warning", p.warning),
+                ("error", p.error),
+                ("text_muted", p.text_muted),
+                ("icon_key", p.icon_key),
+            ] {
+                let ratio = contrast_ratio(fg, bg);
+                assert!(ratio >= 4.5, "{name}: {token} on {surface} is {ratio:.2}");
+            }
+        }
+    }
+}
+
+/// Borders and disabled text are visible against their background, and disabled text still
+/// reads dimmer than secondary text.
+#[test]
+fn borders_and_disabled_text_are_visible() {
+    for (name, p) in [("dark", Palette::dark()), ("light", Palette::light())] {
+        let card = contrast_ratio(p.border, p.bg_editor);
+        assert!(card >= 1.3, "{name}: border on bg_editor is {card:.2}");
+        let panel = contrast_ratio(p.border, p.bg_panel);
+        assert!(panel >= 1.2, "{name}: border on bg_panel is {panel:.2}");
+        let input = contrast_ratio(p.border_input, p.bg_input);
+        assert!(
+            input >= 1.75,
+            "{name}: border_input on bg_input is {input:.2}"
+        );
+        let disabled = contrast_ratio(p.text_disabled, p.bg_panel);
+        assert!(
+            disabled >= 2.5,
+            "{name}: text_disabled on bg_panel is {disabled:.2}"
+        );
+        assert!(
+            disabled < contrast_ratio(p.text_muted, p.bg_panel),
+            "{name}: disabled text must stay dimmer than muted text"
+        );
+        // The selected navigation entry stands out from the rail it sits on.
+        let selected = contrast_ratio(p.accent_soft, p.bg_panel);
+        assert!(
+            selected >= 1.15,
+            "{name}: accent_soft on bg_panel is {selected:.2}"
+        );
+    }
+}
+
+/// A focused text field gets a ring in the accent family (not the text color), and the same
+/// color stays readable as the text of a selected label.
+#[test]
+fn focus_ring_is_an_accent_that_reads_on_the_selection() {
+    for base in [Palette::dark(), Palette::light()] {
+        for p in [base, base.with_accent([0xE5, 0x39, 0x35])] {
+            assert_ne!(p.focus, p.text, "the focus ring is not the text color");
+            let on_selection = contrast_ratio(p.focus, p.selection);
+            assert!(on_selection >= 4.5, "focus on selection {on_selection:.2}");
+            let ring = contrast_ratio(p.focus, p.bg_input);
+            assert!(ring >= 3.0, "focus ring on bg_input {ring:.2}");
+            // Placeholders read, but clearly dimmer than typed and secondary text.
+            let hint = contrast_ratio(p.placeholder, p.bg_input);
+            assert!(hint >= 4.5, "placeholder on bg_input {hint:.2}");
+            assert!(hint < contrast_ratio(p.text_muted, p.bg_input));
+            assert!(hint * 2.0 < contrast_ratio(p.text, p.bg_input));
+        }
+    }
+    let ctx = egui::Context::default();
+    in_frame(&ctx, |ctx| theme::apply(ctx, &Palette::light(), 13.0));
+    let style = ctx.global_style();
+    assert_eq!(style.visuals.selection.stroke.color, Palette::light().focus);
+    assert_eq!(
+        style.visuals.weak_text_color(),
+        Palette::light().placeholder
+    );
+    // Scroll bars stay visible (dimmed) whenever an area scrolls, not only on hover.
+    assert!(style.spacing.scroll.dormant_handle_opacity > 0.0);
+}
+
 /// The dark theme uses a near-black editor and panels
 /// one step above it. Contrast against black is `1 + luminance / 0.05`, so it measures depth.
 #[test]

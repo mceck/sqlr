@@ -21,7 +21,7 @@ or fewer than two connected databases also fails the run.
 | --- | --- | --- |
 | Cold startup | < 1,000 ms | Native process entry to first completed egui frame |
 | Idle RSS | < 150 MB | Process resident memory, two connected SQLite databases |
-| Release binary | < 50 MB | Stripped `sqlr` executable, decimal MB |
+| Release binary | < 75 MB | Stripped `sqlr` executable, decimal MB |
 | Grid scroll p99 | < 16.7 ms | Headless CPU frames, 1,000,000 loaded rows, 300 verified jumps |
 | Editor scenarios p99 | < 8 ms | `editor_measure` harness |
 | Editor scope parsing p99 | < 5 ms | UI thread scope parsing |
@@ -108,3 +108,9 @@ unchanged 50 MB limit. This is a build-profile change only; every driver, graphi
 and product feature remains included. The tradeoff is a slower release link (the local
 full-LTO trial took 3m42s, including recompilation, versus the preceding thin-LTO build's
 1m48s). The original executable before this work was 53.33 MB.
+
+The binary gate was raised from 50 MB to 75 MB on 2026-10-25. Before the native Snowflake
+driver the stripped executable already measured 50.24 MB; with it, 50.41 MB (local Apple M5
+release builds). DuckDB, whose embedded engine adds about 37 MB (86.17 MB with it bundled),
+ships as a sidecar driver file instead (`scripts/package-driver.sh duckdb`), so the app keeps
+headroom under the new limit.

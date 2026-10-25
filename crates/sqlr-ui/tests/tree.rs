@@ -1365,3 +1365,133 @@ fn explorer_many_long_connections() {
         assert!(button.rect().right() <= width + 0.5, "{:?}", button.rect());
     }
 }
+
+/// The rectangles painted in `fill`, in paint order.
+fn rects_filled(h: &Harness<'static, App>, fill: Color32) -> Vec<egui::Rect> {
+    h.output()
+        .shapes
+        .iter()
+        .filter_map(|shape| match &shape.shape {
+            egui::Shape::Rect(rect) if rect.fill == fill => Some(rect.rect),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The color the text `text` was painted in, if it was painted.
+fn text_color(h: &Harness<'static, App>, text: &str) -> Option<Color32> {
+    h.output()
+        .shapes
+        .iter()
+        .find_map(|shape| match &shape.shape {
+            egui::Shape::Text(t) if t.galley.text() == text => Some(
+                t.galley
+                    .job
+                    .sections
+                    .first()
+                    .map_or(t.fallback_color, |s| s.format.color),
+            )
+            .map(|c| {
+                if c == Color32::PLACEHOLDER {
+                    t.fallback_color
+                } else {
+                    c
+                }
+            }),
+            _ => None,
+        })
+}
+
+#[test]
+fn hover_and_selection_cover_the_whole_row() {
+    let mut h = harness(StubSource::new());
+    let palette = Palette::dark();
+    let name = h.get_by_label("local").rect();
+    // Hovering the empty space at the right of the row highlights the full row.
+    let blank = egui::pos2(380.0, name.center().y);
+    h.event(egui::Event::PointerMoved(blank));
+    h.run_steps(2);
+    let hover = rects_filled(&h, palette.hover);
+    assert!(
+        hover
+            .iter()
+            .any(|r| r.left() < name.left() - 20.0 && r.right() > 390.0 && r.contains(blank)),
+        "no full-width hover fill: {hover:?}"
+    );
+    // A click there selects the row, and the selection spans the row as well.
+    click_at(&mut h, blank);
+    assert_eq!(
+        h.state().state.selected,
+        Some(("local".to_string(), NodePath::root()))
+    );
+    let selected = rects_filled(&h, palette.selection);
+    assert!(
+        selected
+            .iter()
+            .any(|r| r.left() < name.left() - 20.0 && r.right() > 390.0),
+        "no full-width selection fill: {selected:?}"
+    );
+}
+
+#[test]
+fn connection_menu_ends_with_a_separated_danger_delete() {
+    let mut h = harness(StubSource::new());
+    let row = h.get_by_label("local").rect();
+    h.get_by_label("local").click_secondary();
+    h.run_steps(3);
+    let palette = Palette::dark();
+    // The menu opens below the row, so the row it acts on stays visible, and the row keeps
+    // its highlight while the menu is open.
+    let edit = h.get_by_label("Edit").rect();
+    assert!(
+        edit.top() >= row.bottom(),
+        "menu {edit:?} covers row {row:?}"
+    );
+    assert!(
+        rects_filled(&h, palette.hover)
+            .iter()
+            .any(|r| r.contains(row.center())),
+        "the row is not highlighted while its menu is open"
+    );
+    // Delete is last, after a separator, in the error color.
+    let delete = h.get_by_label("Delete").rect();
+    let previous = h.get_by_label("Agent access ⏵").rect();
+    assert!(delete.top() > previous.bottom());
+    let separator = h.output().shapes.iter().any(|shape| match &shape.shape {
+        egui::Shape::LineSegment { points, .. } => {
+            points[0].y == points[1].y
+                && points[0].y > previous.bottom()
+                && points[0].y < delete.top()
+        }
+        _ => false,
+    });
+    assert!(separator, "no separator between Agent access and Delete");
+    assert_eq!(text_color(&h, "Delete"), Some(palette.error));
+    // Entries keep their own icons: Duplicate and Copy connection URL differ.
+    assert_ne!(theme::icons::DUPLICATE, theme::icons::LINK);
+}
+
+#[test]
+fn menu_labels_align_with_and_without_icons() {
+    let mut h = harness(StubSource::new());
+    h.get_by_label("local").click_secondary();
+    h.run_steps(3);
+    // "Agent access" has an icon now and "Edit" always had one; their labels share a column.
+    let label_x = |h: &Harness<'static, App>, text: &str| {
+        h.output()
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(t) if t.galley.text() == text => Some(t.pos.x),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("{text} was not painted"))
+    };
+    let edit = label_x(&h, "Edit");
+    for other in ["Agent access", "Delete", "New editor tab"] {
+        assert!(
+            (label_x(&h, other) - edit).abs() < 0.5,
+            "{other} is not aligned with Edit"
+        );
+    }
+}

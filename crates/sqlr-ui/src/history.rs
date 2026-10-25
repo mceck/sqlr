@@ -11,7 +11,7 @@ use jiff::tz::TimeZone;
 use sqlr_core::{HistoryEntry, HistoryOutcome, HistoryQuery};
 
 use crate::first_line;
-use crate::theme::{self, icons};
+use crate::theme::{self, Spacing, icons};
 
 /// Entries asked for per search.
 const SEARCH_LIMIT: usize = 200;
@@ -132,61 +132,76 @@ fn entry_row(
 ) {
     let palette = theme::palette(ui.ctx());
     let muted = palette.text_muted;
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(format_when(entry.started_at_ms)).color(muted));
-        let conn = conns
-            .iter()
-            .find(|(id, _)| *id == entry.conn_id)
-            .map_or(entry.conn_id.as_str(), |(_, name)| name.as_str());
-        ui.label(conn);
-        ui.label(RichText::new(format_duration(entry.duration_ms)).color(muted));
-        let (icon, icon_color, badge, color) = match &entry.outcome {
-            HistoryOutcome::Rows(n) => {
-                (icons::SUCCESS, palette.success, format!("{n} rows"), muted)
+    let selected = state.selected == Some(entry.id);
+    let plain = |text: RichText| egui::Label::new(text).selectable(false);
+    let response = theme::list_row(
+        ui,
+        egui::Id::new(("history_row", entry.id)),
+        selected,
+        Spacing::ROW_TREE,
+        egui::Sense::click(),
+        |ui| {
+            ui.add_space(Spacing::XS);
+            ui.add(plain(
+                RichText::new(format_when(entry.started_at_ms)).color(muted),
+            ));
+            let conn = conns
+                .iter()
+                .find(|(id, _)| *id == entry.conn_id)
+                .map_or(entry.conn_id.as_str(), |(_, name)| name.as_str());
+            ui.add(plain(RichText::new(conn)));
+            ui.add(plain(
+                RichText::new(format_duration(entry.duration_ms)).color(muted),
+            ));
+            let (icon, icon_color, badge, color) = match &entry.outcome {
+                HistoryOutcome::Rows(n) => {
+                    (icons::SUCCESS, palette.success, format!("{n} rows"), muted)
+                }
+                HistoryOutcome::Affected(n) => (
+                    icons::AFFECTED,
+                    palette.success,
+                    format!("{n} affected"),
+                    muted,
+                ),
+                HistoryOutcome::Failed(_) => (
+                    icons::FAILED,
+                    palette.error,
+                    "failed".to_string(),
+                    palette.error,
+                ),
+                HistoryOutcome::Cancelled => {
+                    (icons::CANCELLED, muted, "cancelled".to_string(), muted)
+                }
+            };
+            icons::paint(ui, icon, icon_color);
+            let badge = ui.add(plain(RichText::new(badge).small().color(color)));
+            if let HistoryOutcome::Failed(message) = &entry.outcome {
+                badge.on_hover_text(message);
             }
-            HistoryOutcome::Affected(n) => (
-                icons::AFFECTED,
-                palette.success,
-                format!("{n} affected"),
-                muted,
-            ),
-            HistoryOutcome::Failed(_) => (
-                icons::FAILED,
-                palette.error,
-                "failed".to_string(),
-                palette.error,
-            ),
-            HistoryOutcome::Cancelled => (icons::CANCELLED, muted, "cancelled".to_string(), muted),
-        };
-        icons::paint(ui, icon, icon_color);
-        let badge = ui.label(RichText::new(badge).small().color(color));
-        if let HistoryOutcome::Failed(message) = &entry.outcome {
-            badge.on_hover_text(message);
-        }
-        let selected = state.selected == Some(entry.id);
-        let response = ui
-            .selectable_label(selected, first_line(&entry.sql, LINE_CHARS))
-            .on_hover_text(&entry.sql);
-        if response.clicked() {
-            state.selected = Some(entry.id);
-        }
-        if response.double_clicked() {
+            ui.add(plain(RichText::new(first_line(&entry.sql, LINE_CHARS))).truncate())
+                .on_hover_text(&entry.sql);
+        },
+    )
+    .response;
+    if response.clicked() {
+        state.selected = Some(entry.id);
+    }
+    if response.double_clicked() {
+        actions.push(HistoryAction::Open(entry.clone()));
+    }
+    theme::row_context_menu(&response, |ui| {
+        if icons::menu_item(ui, icons::OPEN, "Open in new tab").clicked() {
             actions.push(HistoryAction::Open(entry.clone()));
+            ui.close();
         }
-        theme::context_menu(&response, |ui| {
-            if icons::menu_item(ui, icons::OPEN, "Open in new tab").clicked() {
-                actions.push(HistoryAction::Open(entry.clone()));
-                ui.close();
-            }
-            if icons::menu_item(ui, icons::INSERT, "Insert into editor").clicked() {
-                actions.push(HistoryAction::Insert(entry.clone()));
-                ui.close();
-            }
-            if icons::menu_item(ui, icons::COPY, "Copy SQL").clicked() {
-                actions.push(HistoryAction::Copy(entry.clone()));
-                ui.close();
-            }
-        });
+        if icons::menu_item(ui, icons::INSERT, "Insert into editor").clicked() {
+            actions.push(HistoryAction::Insert(entry.clone()));
+            ui.close();
+        }
+        if icons::menu_item(ui, icons::COPY, "Copy SQL").clicked() {
+            actions.push(HistoryAction::Copy(entry.clone()));
+            ui.close();
+        }
     });
 }
 

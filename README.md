@@ -32,10 +32,12 @@ Link to [documentation](https://mceck.github.io/sqlr/usage/README.html).
 | SQL Server 2016+ | `tiberius` (rustls) | native TDS, SQL and Windows-less authentication, SSH tunnel |
 | Oracle 12c+ | `oracle-rs` (pure Rust) | no Oracle Instant Client or OCI, TLS, SSH tunnel |
 | SQLite 3 | `rusqlite` (bundled) | files, read-only open |
+| DuckDB | sidecar with the bundled `duckdb` engine (install from a file) | files and in-memory databases, read-only open, no Java or system library, [docs/drivers/duckdb.md](docs/drivers/duckdb.md) |
+| Snowflake | SQL API via `reqwest` (rustls) | HTTPS, OAuth/PAT/JWT tokens, [connection notes](docs/drivers/snowflake.md) |
 | MongoDB | `mongodb` (rustls) | [Mongo shell subset](docs/tech/mongo-shell-subset.md), TLS, SSH tunnel |
 | Elasticsearch 7.17 / 8.x | `reqwest` (rustls) | Kibana-console requests, ES\|QL and SQL, SSH tunnel |
 | Redis (standalone) | `redis` (rustls) | key browser, console, TLS, SSH tunnel |
-| Db2, ClickHouse, Snowflake, DuckDB, H2, any JDBC | JDBC bridge sidecar (install from a file, Java 17+) | [docs/drivers/jdbc.md](docs/drivers/jdbc.md) |
+| Db2, ClickHouse, H2, any JDBC | JDBC bridge sidecar (install from a file, Java 17+) | [docs/drivers/jdbc.md](docs/drivers/jdbc.md) |
 
 A connection can be pasted as a URL (`postgresql://user@host:5432/db`, `sqlite:/path`, …); a password inside a URL is refused.
 

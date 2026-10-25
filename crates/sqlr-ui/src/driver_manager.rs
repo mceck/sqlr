@@ -139,7 +139,21 @@ pub fn driver_manager(
                         );
                         for row in group_rows {
                             let selected = state.selected.as_deref() == Some(&row.id);
-                            if ui.selectable_label(selected, &row.name).clicked() {
+                            let response = theme::list_row(
+                                ui,
+                                egui::Id::new(("driver_row", &row.id)),
+                                selected,
+                                Spacing::ROW_TREE,
+                                egui::Sense::click(),
+                                |ui| {
+                                    ui.add_space(Spacing::S);
+                                    ui.add(
+                                        egui::Label::new(&row.name).selectable(false).truncate(),
+                                    );
+                                },
+                            )
+                            .response;
+                            if response.clicked() {
                                 state.selected = Some(row.id.clone());
                             }
                         }

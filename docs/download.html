@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Download sqlr — macOS, Windows and Linux</title>
+<meta name="description" content="Download the latest sqlr release for macOS, Windows or Linux. Native Rust database client, MIT licensed, no webview and no runtime to install.">
+<link rel="icon" href="media/icon.png" type="image/png">
+<style>
+  :root {
+    --bg: #0b0e14;
+    --bg-soft: #10151f;
+    --panel: #141b27;
+    --line: #243049;
+    --text: #e8edf5;
+    --muted: #9aa7bd;
+    --dim: #6b7a93;
+    --accent: #4fd1a5;
+    --accent-soft: rgba(79, 209, 165, 0.14);
+    --blue: #6ea8fe;
+    --amber: #f2b352;
+    --red: #f0767a;
+    --mono: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+
+  /* Top bar */
+  .topbar {
+    position: sticky; top: 0; z-index: 10;
+    background: rgba(11, 14, 20, 0.85);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+  .topbar .wrap { display: flex; align-items: center; gap: 20px; height: 60px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; letter-spacing: -0.01em; color: var(--text); }
+  .brand:hover { text-decoration: none; }
+  .brand img { width: 28px; height: 28px; border-radius: 6px; }
+  nav { display: flex; gap: 18px; font-size: 14px; }
+  nav a { color: var(--muted); }
+  nav a:hover { color: var(--text); text-decoration: none; }
+  nav a.on { color: var(--accent); font-weight: 600; }
+
+  /* Hero */
+  .hero { padding: 62px 0 30px; text-align: center; position: relative; }
+  .hero::before {
+    content: ""; position: absolute; inset: 0;
+    background: radial-gradient(560px 260px at 50% 0%, var(--accent-soft), transparent 70%);
+    pointer-events: none;
+  }
+  .hero .icon {
+    width: 76px; height: 76px; border-radius: 17px; margin-bottom: 16px;
+    box-shadow: 0 10px 36px rgba(79, 209, 165, 0.18);
+  }
+  .eyebrow {
+    font-family: var(--mono); font-size: 12px; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--accent); margin: 0 0 10px;
+  }
+  .hero h1 { margin: 0 0 10px; font-size: 44px; letter-spacing: -0.03em; font-weight: 800; }
+  .hero h1 .dot { color: var(--accent); }
+  .hero p.lede { max-width: 650px; margin: 0 auto; color: var(--muted); font-size: 18px; }
+  .release-meta {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    flex-wrap: wrap; margin-top: 20px; min-height: 25px;
+    color: var(--muted); font-size: 13.5px;
+  }
+  .release-meta .tag {
+    font-family: var(--mono); font-size: 12px; color: var(--accent);
+    background: var(--accent-soft); border: 1px solid rgba(79, 209, 165, 0.24);
+    padding: 1px 8px; border-radius: 999px;
+  }
+  .release-meta .sep { color: var(--dim); }
+
+  /* Detection banner */
+  .detect-section { padding: 6px 0 30px; }
+  .detect {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 18px; flex-wrap: wrap;
+    padding: 15px 18px; border: 1px solid var(--line); border-radius: 14px;
+    background: linear-gradient(180deg, var(--panel), var(--bg-soft));
+  }
+  .detect-copy { display: flex; align-items: center; gap: 12px; }
+  .detect-dot {
+    width: 9px; height: 9px; border-radius: 50%; flex: 0 0 auto;
+    background: var(--dim); box-shadow: 0 0 0 4px rgba(154, 167, 189, 0.08);
+  }
+  .detect-dot.on { background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+  .detect-title { margin: 0; font-weight: 600; font-size: 15px; }
+  .detect-hint { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+  .segmented {
+    display: inline-flex; gap: 2px; padding: 3px;
+    border: 1px solid var(--line); background: var(--bg); border-radius: 10px;
+  }
+  .segmented button {
+    appearance: none; border: 0; background: transparent; cursor: pointer;
+    color: var(--muted); font: 600 13.5px var(--sans);
+    padding: 7px 13px; border-radius: 7px;
+  }
+  .segmented button:hover { color: var(--text); }
+  .segmented button.on { background: var(--accent); color: #07120e; }
+  .segmented button:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+
+  /* Downloads */
+  .downloads { padding: 12px 0 10px; }
+  .platform-group + .platform-group { margin-top: 36px; padding-top: 30px; border-top: 1px solid var(--line); }
+  .platform-head h2 { margin: 0 0 4px; font-size: 25px; letter-spacing: -0.015em; }
+  .platform-head p { margin: 0 0 16px; color: var(--muted); font-size: 14.5px; }
+  .download-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+  .download-card {
+    display: flex; flex-direction: column; gap: 12px;
+    padding: 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  }
+  .download-card.recommended {
+    border-color: rgba(79, 209, 165, 0.5);
+    box-shadow: inset 0 0 0 1px rgba(79, 209, 165, 0.1);
+  }
+  .card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  .kicker {
+    font-family: var(--mono); font-size: 11.5px; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--dim);
+  }
+  .download-card h3 {
+    margin: 5px 0 0; font-family: var(--mono); font-size: 14.5px;
+    font-weight: 600; line-height: 1.4; overflow-wrap: anywhere;
+  }
+  .download-card p { margin: 0; color: var(--muted); font-size: 14px; flex: 1; }
+  .pill {
+    flex: 0 0 auto; font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
+    text-transform: uppercase; color: var(--accent); background: var(--accent-soft);
+    border: 1px solid rgba(79, 209, 165, 0.24); padding: 3px 8px; border-radius: 999px;
+  }
+  .card-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 2px; }
+  .size { color: var(--dim); font-family: var(--mono); font-size: 13px; }
+  .hint { margin: 14px 0 0; color: var(--dim); font-size: 13.5px; }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 9px 14px; border: 1px solid var(--line); border-radius: 9px;
+    background: var(--panel); color: var(--text);
+    font: 600 14px var(--sans); line-height: 1.2;
+    transition: border-color 0.15s, background 0.15s, transform 0.15s;
+  }
+  .btn:hover { border-color: var(--accent); text-decoration: none; transform: translateY(-1px); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #07120e; }
+  .btn.primary:hover { background: #65e3b8; border-color: #65e3b8; }
+  .btn svg { width: 15px; height: 15px; }
+  .btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+
+  /* All files */
+  .files-section { padding: 46px 0 38px; border-top: 1px solid var(--line); }
+  .files-section h2 { font-size: 25px; letter-spacing: -0.015em; margin: 0 0 6px; }
+  .files-section .sub { color: var(--muted); margin: 0 0 18px; font-size: 14.5px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  th { color: var(--muted); font-weight: 600; font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.05em; }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr:hover td { background: rgba(255, 255, 255, 0.015); }
+  .file-name { font-family: var(--mono); font-size: 13px; overflow-wrap: anywhere; }
+  .file-platform { white-space: nowrap; color: var(--muted); }
+  .file-size { white-space: nowrap; color: var(--dim); font-family: var(--mono); font-size: 12.5px; }
+  .file-link { white-space: nowrap; text-align: right; }
+  .verify { color: var(--muted); font-size: 13.5px; margin: 16px 0 0; }
+  .verify code, .card code {
+    font-family: var(--mono); font-size: 12.5px; color: var(--blue);
+    background: var(--bg-soft); border: 1px solid var(--line);
+    border-radius: 5px; padding: 1px 5px;
+  }
+
+  /* Notices and loading */
+  .notice {
+    padding: 18px; border: 1px solid var(--line); border-radius: 14px;
+    background: var(--panel); color: var(--muted);
+  }
+  .notice strong { color: var(--text); }
+  .notice p { margin: 6px 0 14px; }
+  .notice.error { border-color: rgba(240, 118, 122, 0.35); }
+  .skeleton {
+    height: 196px; border: 1px solid var(--line); border-radius: 14px;
+    background: linear-gradient(100deg, var(--panel) 20%, var(--bg-soft) 40%, var(--panel) 60%);
+    background-size: 200% 100%; animation: shimmer 1.4s linear infinite;
+  }
+  @keyframes shimmer { to { background-position: -200% 0; } }
+  .spinner {
+    display: inline-block; width: 13px; height: 13px; border-radius: 50%;
+    border: 2px solid var(--line); border-top-color: var(--accent);
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Install notes */
+  .install-notes { padding: 46px 0 58px; border-top: 1px solid var(--line); }
+  .install-notes h2 { font-size: 25px; letter-spacing: -0.015em; margin: 0 0 6px; }
+  .install-notes .sub { color: var(--muted); margin: 0 0 18px; font-size: 14.5px; }
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
+  .card h3 { margin: 0 0 8px; font-size: 16.5px; font-weight: 700; }
+  .card p { margin: 0; color: var(--muted); font-size: 14px; }
+  .card p + p { margin-top: 8px; }
+  .card ol { margin: 8px 0 0; padding-left: 19px; color: var(--muted); font-size: 14px; }
+  .card li { margin: 5px 0; }
+  .card li::marker { color: var(--accent); }
+
+  footer { border-top: 1px solid var(--line); padding: 28px 0 34px; color: var(--dim); font-size: 13.5px; text-align: center; }
+
+  @media (max-width: 760px) {
+    .cards { grid-template-columns: 1fr; }
+    .hero { padding-top: 48px; }
+    .hero h1 { font-size: 34px; }
+    .topbar nav { display: none; }
+    .detect { align-items: flex-start; }
+    .segmented { width: 100%; justify-content: space-between; }
+    .segmented button { flex: 1; }
+    #all-files table { min-width: 0; }
+    #all-files thead { display: none; }
+    #all-files tbody tr {
+      display: grid; grid-template-columns: 1fr auto; gap: 3px 12px;
+      padding: 11px 0; border-bottom: 1px solid var(--line);
+    }
+    #all-files tbody tr:last-child { border-bottom: 0; }
+    #all-files td { display: block; border: 0; padding: 0; }
+    #all-files td.file-name { grid-column: 1 / -1; }
+    #all-files td.file-platform { grid-column: 1; }
+    #all-files td.file-size { grid-column: 2; text-align: right; }
+    #all-files td.file-link { grid-column: 1 / -1; text-align: left; padding-top: 4px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .spinner, .skeleton { animation: none; }
+    .btn { transition: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="wrap">
+    <a class="brand" href="index.html">
+      <img src="media/icon.png" alt="sqlr icon">
+      sqlr
+    </a>
+    <nav>
+      <a class="on" href="download.html" aria-current="page">Download</a>
+      <a href="index.html#features">Features</a>
+      <a href="index.html#databases">Databases</a>
+      <a href="index.html#performance">Performance</a>
+      <a href="index.html#architecture">Architecture</a>
+      <a href="index.html#drivers">Drivers</a>
+      <a href="index.html#build">Build</a>
+      <a href="index.html#docs">Docs</a>
+      <a href="https://github.com/mceck/sqlr">GitHub</a>
+    </nav>
+  </div>
+</div>
+
+<header class="wrap">
+  <div class="hero">
+    <img class="icon" src="media/icon.png" alt="sqlr icon">
+    <p class="eyebrow">Downloads</p>
+    <h1>Get sqlr<span class="dot">.</span></h1>
+    <p class="lede">
+      Native builds for macOS, Windows and Linux, published from the latest GitHub release.
+      No webview, no Electron, no runtime to install.
+    </p>
+    <div class="release-meta" id="release-meta" aria-live="polite">
+      <a href="https://github.com/mceck/sqlr/releases/latest">Get the latest release on GitHub</a>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+
+<section class="detect-section" aria-labelledby="detect-title">
+  <div class="detect">
+    <div class="detect-copy">
+      <span class="detect-dot" id="detect-dot" aria-hidden="true"></span>
+      <div>
+        <p class="detect-title" id="detect-title">Detecting your platform…</p>
+        <p class="detect-hint" id="detect-hint">You can always pick another platform manually.</p>
+      </div>
+    </div>
+    <div class="segmented" role="group" aria-label="Choose a platform">
+      <button type="button" data-os="macos">macOS</button>
+      <button type="button" data-os="windows">Windows</button>
+      <button type="button" data-os="linux">Linux</button>
+    </div>
+  </div>
+</section>
+
+<section id="downloads" class="downloads" aria-live="polite" aria-busy="true">
+  <div id="platform-panel">
+    <div class="notice">
+      <strong>Downloads are loaded from the latest GitHub release.</strong>
+      <p>If nothing appears here, the API is unavailable right now — every file is always on the release page.</p>
+      <a class="btn" href="https://github.com/mceck/sqlr/releases/latest">Open GitHub releases</a>
+    </div>
+  </div>
+</section>
+
+<section class="files-section" aria-labelledby="files-title">
+  <h2 id="files-title">All files in <span id="release-tag">the latest release</span></h2>
+  <p class="sub">Every asset attached to the release, including checksums. Nothing is hidden from the list.</p>
+  <div id="all-files">
+    <p class="notice">The file list is loaded live from the GitHub API. <a href="https://github.com/mceck/sqlr/releases/latest">See the release on GitHub</a>.</p>
+  </div>
+  <p class="verify" id="verify"></p>
+</section>
+
+<section class="install-notes" aria-labelledby="install-title">
+  <h2 id="install-title">Install notes</h2>
+  <p class="sub">sqlr is a portable app: no service, no background daemon, no runtime to install.</p>
+  <div class="cards">
+    <div class="card">
+      <h3>macOS</h3>
+      <p>Open the <code>.dmg</code> and drag <b>sqlr</b> onto <b>Applications</b>.</p>
+      <p>Releases are ad-hoc signed, not notarized. On first launch, right-click sqlr and choose <b>Open</b>, or run:</p>
+      <p><code>xattr -dr com.apple.quarantine /Applications/sqlr.app</code></p>
+    </div>
+    <div class="card">
+      <h3>Windows</h3>
+      <p>Unzip the download and run <code>sqlr.exe</code>. There is no installer and no runtime dependency.</p>
+      <p>The executable is unsigned, so SmartScreen may ask for confirmation the first time: choose <b>More info</b>, then <b>Run anyway</b>.</p>
+    </div>
+    <div class="card">
+      <h3>Linux</h3>
+      <p><b>AppImage:</b></p>
+      <p><code>chmod +x sqlr_*.AppImage &amp;&amp; ./sqlr_*.AppImage</code></p>
+      <p><b>Tarball:</b></p>
+      <p><code>tar -xzf sqlr_*_linux-x86_64.tar.gz</code><br>
+         <code>sudo cp -r sqlr_*/bin sqlr_*/share /usr/local/</code></p>
+      <p>Built on Ubuntu 22.04 for an older glibc.</p>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <a href="index.html">sqlr</a> — MIT licensed. Native Rust + egui. No webview, no telemetry.
+    <span class="sep">·</span>
+    <a href="https://github.com/mceck/sqlr">github.com/mceck/sqlr</a>
+  </div>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+
+  var REPO = "mceck/sqlr";
+  var API_URL = "https://api.github.com/repos/" + REPO + "/releases/latest";
+  var RELEASES_URL = "https://github.com/" + REPO + "/releases/latest";
+  var CACHE_KEY = "sqlr.latest-release.v1";
+  var CACHE_TTL = 10 * 60 * 1000;
+
+  // Asset names come from .github/workflows/release.yml:
+  //   sqlr_<version>_macos-{arm64,x86_64}.dmg
+  //   sqlr_<version>_linux-x86_64.{tar.gz,AppImage}
+  //   sqlr_<version>_windows-x86_64.zip
+  var PLATFORMS = {
+    macos: { label: "macOS", order: ["arm64", "x86_64"] },
+    windows: { label: "Windows", order: ["x86_64", "arm64"] },
+    linux: { label: "Linux", order: ["x86_64", "arm64"] }
+  };
+  var FORMATS = {
+    dmg: "DMG", zip: "ZIP", appimage: "AppImage", tarball: "tar.gz", exe: "EXE", msi: "MSI", file: "file"
+  };
+
+  var numberFormat = new Intl.NumberFormat("en", { maximumFractionDigits: 1 });
+  var dateFormat = new Intl.DateTimeFormat("en", { year: "numeric", month: "long", day: "numeric" });
+
+  var state = {
+    release: null,
+    assets: [],
+    detectedOs: null,
+    detectedArch: null,
+    os: null,
+    busy: true,
+    error: null
+  };
+
+  function esc(value) {
+    return String(value).replace(/[&<>"']/g, function (ch) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch];
+    });
+  }
+
+  function formatBytes(bytes) {
+    if (typeof bytes !== "number" || !isFinite(bytes) || bytes <= 0) return "";
+    var units = ["B", "KB", "MB", "GB"];
+    var value = bytes;
+    var unit = 0;
+    while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit += 1; }
+    return numberFormat.format(value) + " " + units[unit];
+  }
+
+  function releaseUrl(url) {
+    try {
+      var parsed = new URL(url);
+      if (parsed.protocol === "https:" && parsed.hostname === "github.com" &&
+          parsed.pathname.indexOf("/" + REPO + "/releases") === 0) {
+        return parsed.href;
+      }
+    } catch (_) {}
+    return RELEASES_URL;
+  }
+
+  function downloadUrl(asset) {
+    try {
+      var parsed = new URL(asset.browser_download_url);
+      if (parsed.protocol === "https:" && parsed.hostname === "github.com" &&
+          parsed.pathname.indexOf("/" + REPO + "/releases/download/") === 0) {
+        return parsed.href;
+      }
+    } catch (_) {}
+    return RELEASES_URL;
+  }
+
+  function classify(asset) {
+    var name = String(asset.name || "");
+    var lower = name.toLowerCase();
+    var size = asset.size;
+    var url = downloadUrl(asset);
+
+    if (/sha256|checksum|\.sha256$/.test(lower)) {
+      return { name: name, kind: "checksum", size: size, url: url };
+    }
+
+    var platform = null;
+    if (/macos|mac os|darwin|osx|\.dmg$/.test(lower)) platform = "macos";
+    else if (/windows|win32|win64|\.exe$|\.msi$/.test(lower)) platform = "windows";
+    else if (/linux|appimage|\.tar\.gz$|\.tgz$/.test(lower)) platform = "linux";
+    if (!platform) return { name: name, kind: "other", size: size, url: url };
+
+    var arch = /(arm64|aarch64)/.test(lower) ? "arm64" :
+      /(x86_64|amd64|x64|intel)/.test(lower) ? "x86_64" : null;
+
+    var format = lower.endsWith(".dmg") ? "dmg" :
+      lower.endsWith(".appimage") ? "appimage" :
+      lower.endsWith(".zip") ? "zip" :
+      lower.endsWith(".tar.gz") || lower.endsWith(".tgz") ? "tarball" :
+      lower.endsWith(".exe") ? "exe" :
+      lower.endsWith(".msi") ? "msi" : "file";
+
+    return {
+      name: name, kind: "binary", platform: platform, arch: arch,
+      format: format, size: size, url: url
+    };
+  }
+
+  function formatRank(os, asset) {
+    if (os === "linux") return asset.format === "appimage" ? 0 : asset.format === "tarball" ? 1 : 2;
+    if (os === "macos") return asset.format === "dmg" ? 0 : asset.format === "zip" ? 1 : 2;
+    if (os === "windows") return asset.format === "zip" ? 0 : asset.format === "msi" ? 1 : asset.format === "exe" ? 2 : 3;
+    return 0;
+  }
+
+  function platformAssets(os) {
+    var list = state.assets.filter(function (asset) {
+      return asset.kind === "binary" && asset.platform === os;
+    });
+
+    if (os === "macos") {
+      list = list.filter(function (a) { return a.arch !== null; });
+    }
+
+    var order = PLATFORMS[os].order;
+    return list.sort(function (a, b) {
+      var ai = order.indexOf(a.arch);
+      var bi = order.indexOf(b.arch);
+      if (ai !== bi) return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
+      var byFormat = formatRank(os, a) - formatRank(os, b);
+      return byFormat !== 0 ? byFormat : a.name.localeCompare(b.name);
+    });
+  }
+
+  function currentArch() {
+    return state.os === state.detectedOs ? state.detectedArch : null;
+  }
+
+  function recommendedAsset(list, os) {
+    if (!list.length) return null;
+    if (os === "macos") {
+      var arch = currentArch();
+      if (arch) {
+        var match = list.find(function (a) { return a.arch === arch; });
+        if (match) return match;
+      }
+      return list.find(function (a) { return a.arch === "arm64"; }) || list[0];
+    }
+    if (os === "linux") {
+      return list.find(function (a) { return a.format === "appimage"; }) || list[0];
+    }
+    if (os === "windows") {
+      var wanted = currentArch();
+      if (wanted) {
+        var exact = list.find(function (a) { return a.arch === wanted; });
+        if (exact) return exact;
+      }
+      return list.find(function (a) { return a.arch === "x86_64"; }) || list[0];
+    }
+    return list[0];
+  }
+
+  function archLabel(asset, os) {
+    if (asset.arch === "arm64") return os === "macos" ? "Apple Silicon" : "arm64";
+    if (asset.arch === "x86_64") return os === "macos" ? "Intel" : "x86_64";
+    return "Build";
+  }
+
+  function describe(asset, os) {
+    if (os === "macos") {
+      if (asset.format === "dmg") return "Disk image with the sqlr.app bundle. Open it and drag sqlr onto Applications.";
+      return "Zip archive with the sqlr.app bundle. Unzip it and drag sqlr onto Applications.";
+    }
+    if (os === "windows") {
+      if (asset.format === "zip") return "Zip archive with sqlr.exe. Unzip it and run the app; no installer or runtime needed.";
+      return "Native Windows build. Run it directly; no installer or runtime needed.";
+    }
+    if (os === "linux") {
+      if (asset.format === "appimage") return "One self-contained file. Make it executable and run it — no installation needed.";
+      if (asset.format === "tarball") return "Archive with bin/sqlr and a desktop entry for a system-wide install.";
+    }
+    return "Download the build for your platform.";
+  }
+
+  function introFor(os) {
+    if (os === "macos") return "Native app bundle, ad-hoc signed. Pick the build that matches your Mac.";
+    if (os === "windows") return "Native executable, no installer and no runtime.";
+    return "AppImage for a single file, or a tarball for a system-wide install.";
+  }
+
+  function hintFor(os, list) {
+    if (os === "macos") {
+      return "Not sure which Mac you have? Choose Apple menu → About This Mac; an M-series chip needs the Apple Silicon build, an Intel chip needs the Intel build.";
+    }
+    if (os === "linux") {
+      return "The Linux builds target x86_64 and are built on Ubuntu 22.04 for an older glibc.";
+    }
+    if (os === "windows") {
+      return "Windows 10 or later. The executable is unsigned, so SmartScreen may ask for confirmation on first launch.";
+    }
+    return "";
+  }
+
+  function cardHtml(asset, os, recommended) {
+    var label = FORMATS[asset.format] || "file";
+    return '<article class="download-card' + (recommended ? " recommended" : "") + '">' +
+      '<div class="card-top"><div>' +
+        '<div class="kicker">' + esc(PLATFORMS[os].label) + " · " + esc(archLabel(asset, os)) + " · " + esc(label) + "</div>" +
+        "<h3>" + esc(asset.name) + "</h3>" +
+      "</div>" +
+      (recommended ? '<span class="pill">Recommended</span>' : "") +
+      "</div>" +
+      "<p>" + esc(describe(asset, os)) + "</p>" +
+      '<div class="card-foot"><span class="size">' + esc(formatBytes(asset.size)) + "</span>" +
+      '<a class="btn primary" href="' + esc(asset.url) + '" rel="noopener">Download ' + esc(label) +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>' +
+      "</a></div></article>";
+  }
+
+  function panelHtml(os) {
+    var list = platformAssets(os);
+    if (!list.length) {
+      return '<div class="notice"><strong>No ' + esc(PLATFORMS[os].label) + ' build in this release.</strong>' +
+        "<p>The release may still be publishing its assets. Check the release page for the full list.</p>" +
+        '<a class="btn" href="' + RELEASES_URL + '">Open GitHub releases</a></div>';
+    }
+    var recommended = recommendedAsset(list, os);
+    var hint = hintFor(os, list);
+    return '<div class="platform-head"><div><h2>' + esc(PLATFORMS[os].label) + "</h2><p>" + esc(introFor(os)) + "</p></div></div>" +
+      '<div class="download-grid">' +
+      list.map(function (asset) { return cardHtml(asset, os, asset === recommended); }).join("") +
+      "</div>" +
+      (hint ? '<p class="hint">' + esc(hint) + "</p>" : "");
+  }
+
+  function renderReleaseMeta() {
+    var el = document.getElementById("release-meta");
+    if (state.release) {
+      var date = "";
+      if (state.release.published_at) {
+        var parsed = new Date(state.release.published_at);
+        if (!isNaN(parsed.getTime())) date = dateFormat.format(parsed);
+      }
+      el.innerHTML = "Latest release " +
+        '<span class="tag">' + esc(state.release.tag) + "</span>" +
+        (date ? '<span class="sep">·</span><span>' + esc(date) + "</span>" : "") +
+        '<span class="sep">·</span><a href="' + esc(state.release.url) + '" rel="noopener">Release notes</a>';
+      return;
+    }
+    if (state.error) {
+      el.innerHTML = "Could not load the latest release. " +
+        '<a href="' + RELEASES_URL + '" rel="noopener">Open GitHub releases</a>';
+      return;
+    }
+    el.innerHTML = '<span class="spinner" aria-hidden="true"></span><span>Looking up the latest release…</span>';
+  }
+
+  function renderDetection() {
+    var title = document.getElementById("detect-title");
+    var hint = document.getElementById("detect-hint");
+    var dot = document.getElementById("detect-dot");
+
+    Array.prototype.forEach.call(document.querySelectorAll("[data-os]"), function (button) {
+      var active = button.getAttribute("data-os") === state.os;
+      button.classList.toggle("on", active);
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+
+    if (!state.os) {
+      title.textContent = "Choose your platform";
+      hint.textContent = "We could not detect it automatically — pick macOS, Windows or Linux.";
+      dot.className = "detect-dot";
+      return;
+    }
+
+    var label = PLATFORMS[state.os].label;
+    var arch = currentArch();
+    var archText = arch ? " (" + (arch === "arm64" ? (state.os === "macos" ? "Apple Silicon" : "arm64") : arch === "x86_64" ? (state.os === "macos" ? "Intel" : "x86_64") : arch) + ")" : "";
+    if (state.os === state.detectedOs) {
+      title.textContent = "Detected " + label + archText;
+      hint.textContent = "Showing the downloads for your platform. You can switch manually.";
+      dot.className = "detect-dot on";
+    } else {
+      title.textContent = "Showing " + label + " downloads";
+      hint.textContent = "Picked manually. We can detect your platform automatically on the next visit.";
+      dot.className = "detect-dot on";
+    }
+  }
+
+  function renderAllFiles() {
+    var container = document.getElementById("all-files");
+    var tag = document.getElementById("release-tag");
+    var verify = document.getElementById("verify");
+    tag.textContent = state.release ? state.release.tag : "the latest release";
+
+    if (!state.release) {
+      if (state.error) {
+        container.innerHTML = '<div class="notice error"><strong>Could not load the file list from GitHub.</strong>' +
+          "<p>The GitHub API may be rate-limited right now. Every file is still available on the release page.</p>" +
+          '<a class="btn" href="' + RELEASES_URL + '">Open GitHub releases</a></div>';
+        verify.innerHTML = "";
+      }
+      return;
+    }
+
+    if (!state.assets.length) {
+      container.innerHTML = '<div class="notice"><strong>This release has no assets yet.</strong><p>Builds may still be uploading. Check the release page in a moment.</p></div>';
+      verify.innerHTML = "";
+      return;
+    }
+
+    var checksum = state.assets.find(function (asset) { return asset.kind === "checksum"; });
+    var rows = state.assets.filter(function (asset) {
+      if (asset.kind === "binary" && asset.platform === "macos" && asset.arch === null) return false;
+      return true;
+    }).map(function (asset) {
+      var platform = "";
+      if (asset.kind === "binary") {
+        platform = PLATFORMS[asset.platform].label + (asset.arch ? " · " + archLabel(asset, asset.platform) : "");
+      } else if (asset.kind === "checksum") {
+        platform = "Checksums";
+      } else {
+        platform = "Other";
+      }
+      return "<tr>" +
+        '<td class="file-name">' + esc(asset.name) + "</td>" +
+        '<td class="file-platform">' + esc(platform) + "</td>" +
+        '<td class="file-size">' + esc(formatBytes(asset.size)) + "</td>" +
+        '<td class="file-link"><a href="' + esc(asset.url) + '" rel="noopener">Download</a></td>' +
+        "</tr>";
+    }).join("");
+
+    container.innerHTML = '<table><thead><tr><th>File</th><th>Platform</th><th>Size</th><th></th></tr></thead><tbody>' +
+      rows + "</tbody></table>";
+
+    if (checksum) {
+      verify.innerHTML = "Verify your download with " +
+        '<a href="' + esc(checksum.url) + '" rel="noopener">SHA256SUMS.txt</a>. ' +
+        "On macOS or Linux run <code>shasum -a 256 --ignore-missing -c SHA256SUMS.txt</code>; " +
+        "on Windows use <code>Get-FileHash &lt;file&gt; -Algorithm SHA256</code>.";
+    } else {
+      verify.innerHTML = "This release does not include a checksum file.";
+    }
+  }
+
+  function render() {
+    renderReleaseMeta();
+    renderDetection();
+
+    var section = document.getElementById("downloads");
+    var panel = document.getElementById("platform-panel");
+    section.setAttribute("aria-busy", state.busy ? "true" : "false");
+
+    if (!state.release && state.busy) {
+      panel.innerHTML = '<div class="download-grid" aria-hidden="true"><div class="skeleton"></div><div class="skeleton"></div></div>';
+    } else if (!state.release) {
+      panel.innerHTML = '<div class="notice error"><strong>Could not load the latest release from GitHub.</strong>' +
+        "<p>The GitHub API may be rate-limited right now. You can still get every build from the release page.</p>" +
+        '<a class="btn" href="' + RELEASES_URL + '">Open GitHub releases</a></div>';
+    } else if (state.os) {
+      panel.innerHTML = panelHtml(state.os);
+    } else {
+      panel.innerHTML = ["macos", "windows", "linux"].map(function (os) {
+        return '<div class="platform-group">' + panelHtml(os) + "</div>";
+      }).join("");
+    }
+
+    renderAllFiles();
+  }
+
+  function applyRelease(release) {
+    state.release = {
+      tag: release.tag_name || release.name || "latest",
+      url: releaseUrl(release.html_url),
+      published_at: release.published_at || null
+    };
+    state.assets = Array.isArray(release.assets) ? release.assets.map(classify) : [];
+    state.error = null;
+  }
+
+  function cacheRelease(release) {
+    try {
+      sessionStorage.setItem(CACHE_KEY, JSON.stringify({ at: Date.now(), release: release }));
+    } catch (_) {}
+  }
+
+  function applyCachedRelease() {
+    try {
+      var raw = sessionStorage.getItem(CACHE_KEY);
+      if (!raw) return;
+      var cached = JSON.parse(raw);
+      if (!cached || !cached.release || Date.now() - cached.at > CACHE_TTL) return;
+      applyRelease(cached.release);
+    } catch (_) {}
+  }
+
+  function detectOs() {
+    var ua = navigator.userAgent || "";
+    var platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "";
+    if (/Android|iPhone|iPad|iPod|CrOS/i.test(ua)) return null;
+    if (/Mac/i.test(platform) && navigator.maxTouchPoints > 1) return null;
+    if (/Mac/i.test(platform) || /Mac OS X/i.test(ua)) return "macos";
+    if (/Win/i.test(platform) || /Windows/i.test(ua)) return "windows";
+    if (/Linux|X11/i.test(platform) || /Linux|X11/i.test(ua)) return "linux";
+    return null;
+  }
+
+  function detectArch(os) {
+    if (!os) return Promise.resolve(null);
+
+    function fromHints() {
+      if (!navigator.userAgentData || !navigator.userAgentData.getHighEntropyValues) return null;
+      return navigator.userAgentData.getHighEntropyValues(["architecture", "bitness"]).then(function (values) {
+        var architecture = String(values.architecture || "").toLowerCase();
+        if (architecture === "arm") return "arm64";
+        if (architecture === "x86" || architecture === "x86_64") return "x86_64";
+        return null;
+      }).catch(function () { return null; });
+    }
+
+    function fromWebGl() {
+      if (os !== "macos") return null;
+      try {
+        var canvas = document.createElement("canvas");
+        var gl = canvas.getContext("webgl") || canvas.getContext("experimental-webgl");
+        var ext = gl && gl.getExtension("WEBGL_debug_renderer_info");
+        var renderer = ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : "";
+        if (/Apple\s+(M\d|GPU)/i.test(renderer)) return "arm64";
+        if (/Intel|AMD|Radeon/i.test(renderer)) return "x86_64";
+      } catch (_) {}
+      return null;
+    }
+
+    return Promise.resolve(fromHints()).then(function (arch) {
+      return arch || fromWebGl();
+    });
+  }
+
+  function bindPlatformButtons() {
+    Array.prototype.forEach.call(document.querySelectorAll("[data-os]"), function (button) {
+      button.addEventListener("click", function () {
+        state.os = button.getAttribute("data-os");
+        render();
+      });
+    });
+  }
+
+  function loadRelease() {
+    applyCachedRelease();
+    render();
+
+    fetch(API_URL, { headers: { Accept: "application/vnd.github+json" } })
+      .then(function (response) {
+        if (!response.ok) throw new Error("GitHub API responded " + response.status);
+        return response.json();
+      })
+      .then(function (release) {
+        applyRelease(release);
+        cacheRelease(release);
+      })
+      .catch(function (error) {
+        if (!state.release) state.error = error;
+      })
+      .then(function () {
+        state.busy = false;
+        render();
+      });
+  }
+
+  function init() {
+    bindPlatformButtons();
+
+    var os = detectOs();
+    state.detectedOs = os;
+    state.os = os;
+    render();
+
+    detectArch(os).then(function (arch) {
+      if (!arch) return;
+      state.detectedArch = arch;
+      render();
+    });
+
+    loadRelease();
+  }
+
+  init();
+}());
+</script>
+
+</body>
+</html>

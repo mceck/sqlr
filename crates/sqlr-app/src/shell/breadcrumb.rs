@@ -58,59 +58,58 @@ pub(crate) fn tab_breadcrumb(
         let Some(conn) = conn.filter(|_| has_database && i == 1) else {
             return;
         };
-        egui::Popup::menu(response).show(|ui| {
-            engine.browse(conn, NodePath::root());
-            let blocked = tab.is_running(engine)
-                || engine
-                    .transaction(&engine.session(conn, Some(tab.key)))
-                    .is_some_and(|tx| tx.phase != TxPhase::Idle);
-            if blocked {
-                ui.label("Finish the query or transaction before changing database.");
-            }
-            match engine.children(conn, &NodePath::root()) {
-                Some(LoadState::Ready(nodes)) => {
-                    let mut databases: Vec<_> = nodes
-                        .iter()
-                        .filter(|n| matches!(n.kind, NodeKind::Database | NodeKind::Schema))
-                        .filter_map(|n| engine.database_for_path(conn, &n.path))
-                        .collect();
-                    if let Some(current) = &database {
-                        databases.push(current.clone());
-                    }
-                    databases.sort();
-                    databases.dedup();
-                    egui::ScrollArea::vertical()
-                        .max_height(300.0)
-                        .show(ui, |ui| {
-                            for db in databases {
-                                if ui
-                                    .add_enabled(
-                                        !blocked,
-                                        egui::Button::selectable(
-                                            database.as_deref() == Some(db.as_str()),
-                                            &db,
-                                        ),
-                                    )
-                                    .clicked()
-                                {
-                                    action = Some(TabCommand::ChangeDatabase {
-                                        tab: tab.key,
-                                        database: db,
-                                    });
-                                    ui.close();
+        egui::Popup::menu(response)
+            .style(sqlr_ui::theme::menu_style(&response.ctx))
+            .show(|ui| {
+                engine.browse(conn, NodePath::root());
+                let blocked = tab.is_running(engine)
+                    || engine
+                        .transaction(&engine.session(conn, Some(tab.key)))
+                        .is_some_and(|tx| tx.phase != TxPhase::Idle);
+                if blocked {
+                    ui.label("Finish the query or transaction before changing database.");
+                }
+                match engine.children(conn, &NodePath::root()) {
+                    Some(LoadState::Ready(nodes)) => {
+                        let mut databases: Vec<_> = nodes
+                            .iter()
+                            .filter(|n| matches!(n.kind, NodeKind::Database | NodeKind::Schema))
+                            .filter_map(|n| engine.database_for_path(conn, &n.path))
+                            .collect();
+                        if let Some(current) = &database {
+                            databases.push(current.clone());
+                        }
+                        databases.sort();
+                        databases.dedup();
+                        egui::ScrollArea::vertical()
+                            .max_height(300.0)
+                            .show(ui, |ui| {
+                                for db in databases {
+                                    let current = database.as_deref() == Some(db.as_str());
+                                    if sqlr_ui::theme::menu::MenuItem::new(&db)
+                                        .checked(current)
+                                        .enabled(!blocked)
+                                        .ui(ui)
+                                        .clicked()
+                                    {
+                                        action = Some(TabCommand::ChangeDatabase {
+                                            tab: tab.key,
+                                            database: db,
+                                        });
+                                        ui.close();
+                                    }
                                 }
-                            }
-                        });
+                            });
+                    }
+                    Some(LoadState::Failed(error)) => {
+                        ui.label(&error.message);
+                    }
+                    _ => {
+                        ui.spinner();
+                        ui.label("Loading databases…");
+                    }
                 }
-                Some(LoadState::Failed(error)) => {
-                    ui.label(&error.message);
-                }
-                _ => {
-                    ui.spinner();
-                    ui.label("Loading databases…");
-                }
-            }
-        });
+            });
     });
     if clicked == Some(0) && conn.is_some() {
         action = Some(TabCommand::RevealConnection(tab.key));

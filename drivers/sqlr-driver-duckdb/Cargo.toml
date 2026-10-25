@@ -1,0 +1,20 @@
+[package]
+name = "sqlr-driver-duckdb"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "DuckDB driver for sqlr, a sidecar embedding the bundled DuckDB engine."
+
+[dependencies]
+sqlr-driver-sdk = { path = "../../crates/sqlr-driver-sdk" }
+async-trait.workspace = true
+duckdb = { version = "=1.20000.0", default-features = false, features = ["bundled"] }
+tokio = { workspace = true, features = ["sync"] }
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+sqlr-sidecar = { path = "../../crates/sqlr-sidecar" }
+sqlr-driver-tests = { path = "../../crates/sqlr-driver-tests" }
+tempfile.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

@@ -568,7 +568,7 @@ impl Engine {
         let Some(entry) = inner.conns.get(&key.conn) else {
             return;
         };
-        let mode = entry.profile.commit_mode;
+        let mode = entry.commit_mode(entry.profile.commit_mode);
         let profile_read_only = entry.profile.read_only;
         inner
             .prefs
@@ -917,6 +917,10 @@ impl Engine {
     pub fn set_commit_mode(&self, key: &SessionKey, mode: CommitMode) {
         {
             let mut inner = self.shared.inner.lock();
+            let mode = inner
+                .conns
+                .get(&key.conn)
+                .map_or(CommitMode::Auto, |entry| entry.commit_mode(mode));
             let Some(mut tx) = inner
                 .sessions
                 .get(key)
@@ -1543,6 +1547,16 @@ pub(crate) struct ConnEntry {
     resolved: Option<Secrets>,
 }
 
+impl ConnEntry {
+    fn commit_mode(&self, requested: CommitMode) -> CommitMode {
+        if self.driver.manifest().capabilities.transactions {
+            requested
+        } else {
+            CommitMode::Auto
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct Inner {
     pub(crate) sessions: HashMap<SessionKey, Session>,
@@ -1559,6 +1573,12 @@ pub(crate) struct Inner {
 }
 
 impl Inner {
+    pub(crate) fn supports_transactions(&self, conn: &str) -> bool {
+        self.conns
+            .get(conn)
+            .is_some_and(|entry| entry.driver.manifest().capabilities.transactions)
+    }
+
     /// The session for `key`, if it is still the one `io` belongs to.
     pub(crate) fn session(
         &mut self,
@@ -1591,13 +1611,14 @@ impl Inner {
     /// The transaction state a session opens with: the user's settings for it, else the
     /// connection profile's. `None` when the connection is not connected.
     fn initial_tx(&self, key: &SessionKey) -> Option<TxState> {
-        let profile = &self.conns.get(&key.conn)?.profile;
+        let entry = self.conns.get(&key.conn)?;
+        let profile = &entry.profile;
         let (mode, read_only) = self
             .prefs
             .get(key)
             .copied()
             .unwrap_or((profile.commit_mode, profile.read_only));
-        Some(TxState::new(mode, read_only, now_ms()))
+        Some(TxState::new(entry.commit_mode(mode), read_only, now_ms()))
     }
 }
 
@@ -2585,6 +2606,18 @@ impl Shared {
         }
         if let Some(class) = dialect.statement_class(sql) {
             stmt.class = class;
+        }
+        if matches!(stmt.class, sqlr_core::StatementClass::Transaction(_))
+            && !self.inner.lock().supports_transactions(&key.conn)
+        {
+            self.finish(
+                q,
+                QueryStatus::Failed(DriverError::new(
+                    ErrorKind::Unsupported,
+                    "This driver does not support transaction controls",
+                )),
+            );
+            return;
         }
         let script_class = syntax.classify_script(sql);
         let rules = TxRules {

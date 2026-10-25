@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>sqlr — a universal database client in native Rust</title>
 <meta name="description" content="sqlr is a lightweight, universal database client written in native Rust with egui. One app for relational, document and key-value databases, extended by drivers you write in Rust. MIT licensed.">
+<link rel="icon" href="media/icon.png" type="image/png">
 <style>
   :root {
     --bg: #0b0e14;
@@ -51,6 +52,7 @@
   nav { display: flex; gap: 18px; font-size: 14px; }
   nav a { color: var(--muted); }
   nav a:hover { color: var(--text); text-decoration: none; }
+  nav a.download { color: var(--accent); font-weight: 600; }
 
   /* Hero */
   .hero { padding: 88px 0 48px; text-align: center; position: relative; }
@@ -71,6 +73,20 @@
     font-family: var(--mono);
   }
   .badge b { color: var(--accent); font-weight: 600; }
+
+  /* Call to action */
+  .actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 26px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 10px 18px; border: 1px solid var(--line); border-radius: 9px;
+    background: var(--panel); color: var(--text);
+    font: 600 15px var(--sans); line-height: 1.2;
+    transition: border-color 0.15s, background 0.15s, transform 0.15s;
+  }
+  .btn:hover { border-color: var(--accent); text-decoration: none; transform: translateY(-1px); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #07120e; }
+  .btn.primary:hover { background: #65e3b8; border-color: #65e3b8; }
+  .btn:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 
   /* Sections */
   section { padding: 56px 0; border-top: 1px solid var(--line); }
@@ -145,6 +161,7 @@
       sqlr
     </div>
     <nav>
+      <a class="download" href="download.html">Download</a>
       <a href="#features">Features</a>
       <a href="#databases">Databases</a>
       <a href="#performance">Performance</a>
@@ -171,6 +188,10 @@
       <span class="badge"><b>No</b> webview</span>
       <span class="badge"><b>MIT</b> licensed</span>
       <span class="badge"><b>60 fps</b> on 1M+ rows</span>
+    </div>
+    <div class="actions">
+      <a class="btn primary" href="download.html">Download sqlr</a>
+      <a class="btn" href="https://github.com/mceck/sqlr/releases/latest">Latest release</a>
     </div>
   </div>
 </header>
@@ -218,6 +239,8 @@
     <tr><td>SQL Server</td><td>Relational</td><td><span class="mono">bundled</span></td><td>Native TDS driver over rustls; SQL authentication and SSH tunnels.</td></tr>
     <tr><td>Oracle</td><td>Relational</td><td><span class="mono">bundled</span></td><td>Pure-Rust <span class="mono">oracle-rs</span>; no OCI or Instant Client.</td></tr>
     <tr><td>SQLite</td><td>Relational</td><td><span class="mono">bundled</span></td><td>File-per-database, no server required; backups and traces.</td></tr>
+    <tr><td>DuckDB</td><td>Relational</td><td><span class="mono">driver file</span></td><td>Sidecar embedding the DuckDB engine; local files and in-memory databases, no Java.</td></tr>
+    <tr><td>Snowflake</td><td>Relational</td><td><span class="mono">bundled</span></td><td>HTTPS SQL API with OAuth, PAT or JWT tokens; independent auto-commit requests.</td></tr>
     <tr><td>MongoDB</td><td>Document</td><td><span class="mono">bundled</span></td><td>Collections, document viewer, shell-subset commands.</td></tr>
     <tr><td>Elasticsearch</td><td>Search / document</td><td><span class="mono">bundled</span></td><td>Indices, documents, query DSL.</td></tr>
     <tr><td>Redis</td><td>Key-value</td><td><span class="mono">bundled</span></td><td>KV browser with type-aware values.</td></tr>
@@ -235,7 +258,7 @@
     <tr><td>Idle memory</td><td><b>&lt; 150 MB</b></td><td>No retained heaps; columns live only as needed.</td></tr>
     <tr><td>Grid with 1M+ rows</td><td><b>60 fps</b></td><td>Editing and scrolling stay fluid on big result sets.</td></tr>
     <tr><td>Autocomplete / open table</td><td><b>&lt; 50 ms</b></td><td>Catalog lookups must not lag behind typing.</td></tr>
-    <tr><td>Distributed binary</td><td><b>&lt; 50 MB</b></td><td>A lightweight client you can carry anywhere.</td></tr>
+    <tr><td>Distributed binary</td><td><b>&lt; 75 MB</b></td><td>A lightweight client you can carry anywhere.</td></tr>
   </table>
 </section>
 

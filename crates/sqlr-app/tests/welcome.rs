@@ -39,6 +39,7 @@ fn harness_with_drivers(dir: &Path, theme: ThemePref, all: bool) -> Harness<'sta
     drivers.register(sqlr_driver_mysql::MysqlDriver::new());
     drivers.register(PostgresDriver::new());
     if all {
+        drivers.register(sqlr_driver_snowflake::SnowflakeDriver::new());
         drivers.register(sqlr_driver_mongo::MongoDriver::new());
         drivers.register(sqlr_driver_elastic::ElasticDriver::new());
         drivers.register(sqlr_driver_redis::RedisDriver::new());
@@ -282,6 +283,12 @@ fn compatible_preset_fills_form() {
     h.get_by_label("SQL Server").click();
     h.run_steps(3);
     assert!(h.state().conn_dialog_form().is_none());
+    // The Compatible group sits below the list's visible height.
+    h.get_all_by_label("CockroachDB")
+        .find(|node| node.rect().height() < 40.0)
+        .expect("the catalog's CockroachDB row")
+        .scroll_to_me();
+    h.run_steps(5);
     h.get_all_by_label("CockroachDB")
         .find(|node| node.rect().height() < 40.0)
         .expect("the catalog's CockroachDB row")
@@ -340,6 +347,8 @@ fn the_connection_dialog_opens_the_catalog() {
     h.run_steps(5);
     h.get_by_label("More databases…").click();
     h.run_steps(30);
+    h.get_by_label("YugabyteDB").scroll_to_me();
+    h.run_steps(5);
     h.get_by_label("YugabyteDB").click();
     h.run_steps(3);
     let (driver, values, name) = h.state().conn_dialog_form().expect("the connection dialog");

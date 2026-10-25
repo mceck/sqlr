@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, HashSet};
 use egui::{Align2, ComboBox, Id, RichText, Sense, TextEdit, WidgetInfo, WidgetType, vec2};
 use sqlr_core::Snippet;
 
-use crate::theme::{self, Spacing, icons};
+use crate::theme::{self, Spacing, icons, menu};
 
 const INDENT: f32 = Spacing::XL;
 const ARROW_WIDTH: f32 = 16.0;
@@ -243,33 +243,42 @@ pub fn snippets_panel(
 fn folder_row(ui: &mut egui::Ui, name: &str, depth: usize, open: bool) -> bool {
     let mut toggle = false;
     let palette = theme::palette(ui.ctx());
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = Spacing::S;
-        ui.add_space(depth as f32 * INDENT);
-        let (rect, arrow) =
-            ui.allocate_exact_size(vec2(ARROW_WIDTH, Spacing::ROW_TREE), Sense::click());
-        ui.painter().text(
-            rect.center(),
-            Align2::CENTER_CENTER,
-            if open {
-                icons::CARET_DOWN
-            } else {
-                icons::CARET_RIGHT
-            },
-            icons::font(ui, 12.0),
-            palette.text_muted,
-        );
-        let verb = if open { "Collapse" } else { "Expand" };
-        arrow.widget_info(|| {
-            WidgetInfo::labeled(WidgetType::Button, true, format!("{verb} {name}"))
-        });
-        toggle |= arrow.clicked();
-        icons::paint(ui, icons::FOLDER, palette.icon_schema);
-        toggle |= ui
-            .selectable_label(false, RichText::new(name).color(palette.text_muted))
-            .clicked();
-    });
-    toggle
+    let row = theme::list_row(
+        ui,
+        egui::Id::new(("snippet_folder", name, depth)),
+        false,
+        Spacing::ROW_TREE,
+        Sense::click(),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = Spacing::S;
+            ui.add_space(depth as f32 * INDENT);
+            let (rect, arrow) =
+                ui.allocate_exact_size(vec2(ARROW_WIDTH, Spacing::ROW_TREE), Sense::click());
+            ui.painter().text(
+                rect.center(),
+                Align2::CENTER_CENTER,
+                if open {
+                    icons::CARET_DOWN
+                } else {
+                    icons::CARET_RIGHT
+                },
+                icons::font(ui, 12.0),
+                palette.text_muted,
+            );
+            let verb = if open { "Collapse" } else { "Expand" };
+            arrow.widget_info(|| {
+                WidgetInfo::labeled(WidgetType::Button, true, format!("{verb} {name}"))
+            });
+            toggle |= arrow.clicked();
+            icons::paint(ui, icons::FOLDER, palette.icon_schema);
+            ui.add(
+                egui::Label::new(RichText::new(name).color(palette.text_muted))
+                    .selectable(false)
+                    .truncate(),
+            );
+        },
+    );
+    toggle || row.response.clicked()
 }
 
 fn snippet_row(
@@ -279,34 +288,42 @@ fn snippet_row(
     actions: &mut Vec<SnippetAction>,
 ) {
     let palette = theme::palette(ui.ctx());
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = Spacing::S;
-        ui.add_space(depth as f32 * INDENT + ARROW_WIDTH + Spacing::S);
-        icons::paint(ui, icons::SNIPPET, palette.icon_function);
-        let response = ui
-            .selectable_label(false, &snippet.name)
-            .on_hover_text(&snippet.sql);
-        if response.double_clicked() {
+    let response = theme::list_row(
+        ui,
+        egui::Id::new(("snippet_row", &snippet.id)),
+        false,
+        Spacing::ROW_TREE,
+        Sense::click(),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = Spacing::S;
+            ui.add_space(depth as f32 * INDENT + ARROW_WIDTH + Spacing::S);
+            icons::paint(ui, icons::SNIPPET, palette.icon_function);
+            ui.add(egui::Label::new(&snippet.name).selectable(false).truncate())
+                .on_hover_text(&snippet.sql);
+        },
+    )
+    .response;
+    if response.double_clicked() {
+        actions.push(SnippetAction::Insert(snippet.sql.clone()));
+    }
+    theme::row_context_menu(&response, |ui| {
+        if menu::item(ui, icons::INSERT, "Insert", None).clicked() {
             actions.push(SnippetAction::Insert(snippet.sql.clone()));
+            ui.close();
         }
-        theme::context_menu(&response, |ui| {
-            if icons::menu_item(ui, icons::INSERT, "Insert").clicked() {
-                actions.push(SnippetAction::Insert(snippet.sql.clone()));
-                ui.close();
-            }
-            if icons::menu_item(ui, icons::OPEN, "Open in new tab").clicked() {
-                actions.push(SnippetAction::OpenInNewTab(snippet.clone()));
-                ui.close();
-            }
-            if icons::menu_item(ui, icons::EDIT, "Edit…").clicked() {
-                actions.push(SnippetAction::Edit(SnippetDraft::from_snippet(snippet)));
-                ui.close();
-            }
-            if icons::menu_item(ui, icons::DELETE, "Delete").clicked() {
-                actions.push(SnippetAction::Delete(snippet.id.clone()));
-                ui.close();
-            }
-        });
+        if menu::item(ui, icons::OPEN, "Open in new tab", None).clicked() {
+            actions.push(SnippetAction::OpenInNewTab(snippet.clone()));
+            ui.close();
+        }
+        if menu::item(ui, icons::EDIT, "Edit…", None).clicked() {
+            actions.push(SnippetAction::Edit(SnippetDraft::from_snippet(snippet)));
+            ui.close();
+        }
+        menu::separator(ui);
+        if menu::danger_item(ui, icons::DELETE, "Delete").clicked() {
+            actions.push(SnippetAction::Delete(snippet.id.clone()));
+            ui.close();
+        }
     });
 }
 

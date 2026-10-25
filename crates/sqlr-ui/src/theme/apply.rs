@@ -102,8 +102,13 @@ fn style_from(style: &mut egui::Style, p: &Palette, mono_size: f32, semibold: bo
     s.window_margin = Margin::same(Spacing::L as i8);
     s.menu_margin = Margin::same(6);
     s.indent = Spacing::XL;
+    // Floating bars that never take layout space, but stay visible as a thin, dimmed handle
+    // whenever an area overflows, so clipped lists always show that they scroll.
     s.scroll = ScrollStyle {
         bar_width: Spacing::M,
+        floating_width: 3.0,
+        dormant_handle_opacity: 0.35,
+        active_handle_opacity: 0.6,
         ..ScrollStyle::floating()
     };
 
@@ -113,7 +118,8 @@ fn style_from(style: &mut egui::Style, p: &Palette, mono_size: f32, semibold: bo
     let v = &mut style.visuals;
     v.dark_mode = dark;
     v.override_text_color = None;
-    v.weak_text_color = Some(p.text_muted);
+    // Hint text in fields and shortcut hints in menus.
+    v.weak_text_color = Some(p.placeholder);
     v.hyperlink_color = p.accent;
     v.faint_bg_color = p.zebra();
     v.extreme_bg_color = p.bg_input;
@@ -126,22 +132,25 @@ fn style_from(style: &mut egui::Style, p: &Palette, mono_size: f32, semibold: bo
     v.window_stroke = input_border;
     v.window_corner_radius = radius(Spacing::RADIUS_M);
     v.menu_corner_radius = radius(Spacing::RADIUS_M);
-    let shadow_alpha = if dark { 89 } else { 31 }; // ≈ 0.35 / 0.12
+    // Light dialogs need a deeper shadow to lift off a white page.
+    let shadow_alpha = if dark { 89 } else { 46 }; // ≈ 0.35 / 0.18
     let shadow = Shadow {
         offset: [0, 4],
-        blur: 16,
+        blur: 20,
         spread: 0,
         color: Color32::from_black_alpha(shadow_alpha),
     };
     v.window_shadow = shadow;
     v.popup_shadow = shadow;
     // egui draws a selected label's text and a focused text field's border with this one
-    // stroke; the text color keeps selected rows readable (the accent is 2.3:1 on the dark
-    // selection), and the caret and pressed widgets carry the accent instead.
+    // stroke: the focus color is the accent tuned to read on the selection, so a focused
+    // field gets an accent ring rather than a heavy text-colored border.
     v.selection = Selection {
         bg_fill: p.selection,
-        stroke: Stroke::new(1.0, p.text),
+        stroke: Stroke::new(1.0, p.focus),
     };
+    // Disabled controls fade less, so their outline and label stay legible on white.
+    v.disabled_alpha = 0.6;
     v.text_cursor.stroke = Stroke::new(2.0, p.accent);
     v.widgets = Widgets {
         // Labels, separators and frames.
