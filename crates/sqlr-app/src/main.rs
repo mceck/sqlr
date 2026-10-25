@@ -252,6 +252,7 @@ mod tests {
         let ctx = egui::Context::default();
         let app = SqlrApp::new(
             AppDeps {
+                check_updates: false,
                 engine,
                 repo: ConnectionRepo::open(dir.path(), Box::new(secrets)).unwrap(),
                 settings: Settings {

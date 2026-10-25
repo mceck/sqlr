@@ -56,6 +56,7 @@ fn harness(dir: &Path) -> Harness<'static, SqlrApp> {
     repo.save(&sqlite_config("b", "db-b", &b), &Secrets::default())
         .unwrap();
     let deps = AppDeps {
+        check_updates: false,
         engine,
         repo,
         settings: Settings::default(),

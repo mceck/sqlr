@@ -13,6 +13,7 @@ mod prefs;
 mod redis;
 mod terminal;
 mod transfer_wizard;
+mod updates;
 #[path = "support/visual.rs"]
 mod visual;
 mod welcome;

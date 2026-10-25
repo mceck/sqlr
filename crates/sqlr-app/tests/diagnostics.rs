@@ -37,6 +37,7 @@ fn deps(dir: &std::path::Path, diagnostics: Arc<Diagnostics>) -> AppDeps {
     )
     .unwrap();
     AppDeps {
+        check_updates: false,
         engine,
         repo,
         settings: Settings::default(),

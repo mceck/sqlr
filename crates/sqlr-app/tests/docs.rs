@@ -81,6 +81,7 @@ fn app(dir: &std::path::Path) -> (Harness<'static, SqlrApp>, Arc<FakeDocDriver>)
     )
     .unwrap();
     let deps = AppDeps {
+        check_updates: false,
         engine,
         repo,
         settings: Settings::default(),

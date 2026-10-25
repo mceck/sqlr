@@ -49,7 +49,13 @@ image.workspace = true
 jiff.workspace = true
 percent-encoding.workspace = true
 rfd.workspace = true
+# The update check (spec §12): one HTTPS request a day and the release archive itself.
+reqwest = { workspace = true, features = ["blocking"] }
+rustls.workspace = true
+rustls-native-certs.workspace = true
+semver = "1"
 serde.workspace = true
+sha2 = "0.11"
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 tracing-appender.workspace = true

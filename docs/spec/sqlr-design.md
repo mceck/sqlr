@@ -21,7 +21,7 @@ The product excludes:
 - Process sandboxing for third-party drivers.
 - Telemetry of any kind.
 - Scheduled (cron-like) execution of saved tasks; saved tasks run on demand.
-- Installers, signing, notarization and automatic updates are outside the current scope.
+- Installers, code signing and notarization are outside the current scope.
 
 ### 1.3 Performance targets
 
@@ -500,7 +500,14 @@ All widgets take data in and return action values. None of them calls the engine
 - **macOS:** signed and notarized `.dmg` (requires an Apple Developer account) and a Homebrew cask.
 - **Windows:** `.msi` and winget.
 - **Linux:** AppImage, `.deb` and Flatpak.
-- **Updates:** the app checks GitHub Releases, verifies the signature and asks before applying an update. The check can be disabled.
+- **Updates:** once a day the app asks GitHub Releases whether a stable release newer than
+  the running one exists; **Settings → General** turns the check off. It verifies the
+  archive against the release's `SHA256SUMS.txt` and asks before replacing anything. On
+  macOS it replaces the `.app` bundle (asking for the administrator password when needed),
+  on Linux the binary when its folder is writable; Windows opens the release page. Nothing
+  is downloaded until the person chooses Install, and a check that cannot reach GitHub is
+  silent and retried on the next launch. **Settings → General** and **Help** can run the
+  same check on demand; an explicit check reports its outcome.
 - **CI:** GitHub Actions with a matrix over macOS arm64/x64, Windows x64 and Linux x64.
 
 ## 13. Open risks

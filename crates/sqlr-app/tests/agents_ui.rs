@@ -29,6 +29,7 @@ fn app(dir: &std::path::Path) -> SqlrApp {
     repo.save(&cfg, &Secrets::default()).unwrap();
     SqlrApp::new(
         AppDeps {
+            check_updates: false,
             engine,
             repo,
             settings: Settings::default(),
@@ -116,6 +117,7 @@ fn enabling_mcp_starts_the_listener_and_disabling_removes_the_discovery_file() {
     let token_store = Arc::new(sqlr_store::MemoryMcpTokenStore::with_token("ui-test-token"));
     let app = SqlrApp::new(
         AppDeps {
+            check_updates: false,
             engine,
             repo,
             settings,
@@ -164,6 +166,7 @@ fn the_toolbar_toggle_switches_agent_access() {
     let repo = ConnectionRepo::open(dir.path(), Box::new(secrets)).unwrap();
     let app = SqlrApp::new(
         AppDeps {
+            check_updates: false,
             engine,
             repo,
             settings: Settings {

@@ -6,7 +6,7 @@ Open Settings with ⌘, (or the sqlr menu). A search field at the top finds a se
 
 | Section | What you can change |
 |---|---|
-| General | Whether a script stops at its first error, how long finished operations stay in the Operations list |
+| General | Whether a script stops at its first error, whether to check for updates at startup, how long finished operations stay in the Operations list |
 | Appearance | Theme (System, Light or Dark), UI scale, accent color |
 | Editor | Font size, line numbers, soft wrap, autocomplete behavior, the SQL formatter |
 | Result grid | Rows per fetch, the row cap for Fetch all, the text shown for NULL |
@@ -24,6 +24,14 @@ Open Settings with ⌘, (or the sqlr menu). A search field at the top finds a se
 Many settings can be set at three levels. The global level applies everywhere, a profile can override it for all connections that use it, and a single connection can override that. The most specific level wins.
 
 Safety settings are the exception. Read-only, Confirm writes and Confirm destructive statements can be switched on at a lower level, but never off. A connection can be stricter than your global settings, and never looser.
+
+### Updates
+
+Once a day, at launch, sqlr asks GitHub whether a stable release newer than the running one exists. Nothing is downloaded until you choose **Install**; **Skip this version** remembers that release, and closing the prompt asks again after the next daily check. The archive is checked against the release's `SHA256SUMS.txt` before it replaces anything.
+
+On macOS **Install** replaces the `.app` bundle, asking for the administrator password when the bundle is in `/Applications`; on Linux it replaces the binary when its folder is writable. On Windows, and when sqlr cannot write its own folder, the same button opens the release page. Turn **Check for updates at startup** off in **Settings → General**; a check that cannot reach GitHub is never reported and runs again on the next launch.
+
+**Check for updates now** in **Settings → General**, **Help → Check for Updates…** and the command palette ask immediately, even when the automatic check is off, and report both a failure and "you are up to date".
 
 ### Data formats
 
@@ -105,6 +113,7 @@ In Settings, open Keymap. The Keymap section lists every command with its keys a
 | Profile and connection overrides | `overrides.toml` in the config directory |
 | Profiles | `profiles.toml` in the config directory |
 | Keymap | `keymap.toml` in the config directory |
+| Skipped update and last check | `updates.json` in the config directory |
 | Installed drivers | `drivers/<id>/<version>/` in the data directory |
 | Passwords, SSH secrets and MCP token | encrypted `secrets.vault` in the config directory; the OS keychain holds its encryption key under service `sqlr` |
 | History and snippets | `sqlr.db` in the data directory |

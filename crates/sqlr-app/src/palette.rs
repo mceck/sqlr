@@ -97,6 +97,8 @@ pub enum AppCommand {
     Shortcuts,
     /// Opens the Diagnostics window.
     Diagnostics,
+    /// Asks GitHub for a newer release, from Help.
+    CheckUpdates,
     /// Opens Report a Problem.
     ReportProblem,
     /// "New index…" on the collection (or Indices folder) selected in the explorer.
@@ -370,6 +372,7 @@ impl SqlrApp {
                     command("Import connections…", "", AppCommand::ImportConnections),
                     command("Export connections…", "", AppCommand::ExportConnections),
                     command("Settings…", "", AppCommand::Settings),
+                    command("Check for updates…", "", AppCommand::CheckUpdates),
                     command("Driver Manager…", "", AppCommand::DriverManager),
                     command("Run statement", "⌘↵", AppCommand::Run),
                     command("Run script", "⇧⌘↵", AppCommand::RunScript),
@@ -633,6 +636,7 @@ impl SqlrApp {
                 self.diagnostics_ui.open = true;
                 self.diagnostics_ui.loaded = false;
             }
+            AppCommand::CheckUpdates => self.check_updates_now(ctx),
             AppCommand::ReportProblem => {
                 self.diagnostics_ui.report = Some(crate::diagnostics::ReportProblemDialog::new(
                     self.settings.include_sql_in_diagnostics,

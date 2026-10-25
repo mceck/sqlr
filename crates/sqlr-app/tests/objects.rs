@@ -154,6 +154,7 @@ fn harness_with(
             .unwrap();
     }
     let deps = AppDeps {
+        check_updates: false,
         engine,
         repo,
         settings: Settings {

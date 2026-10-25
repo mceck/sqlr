@@ -777,6 +777,7 @@ mod tests {
         let engine = sqlr_engine::Engine::new(DriverRegistry::default(), Arc::new(|| {}));
         let app = SqlrApp::new(
             crate::AppDeps {
+                check_updates: false,
                 engine,
                 repo,
                 settings: sqlr_store::Settings::default(),

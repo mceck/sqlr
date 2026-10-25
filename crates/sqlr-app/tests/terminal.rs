@@ -45,6 +45,7 @@ fn app_with_terminal_settings(dir: &std::path::Path, shell: &str, cwd: &str) -> 
         ..Settings::default()
     };
     let deps = AppDeps {
+        check_updates: false,
         engine,
         repo,
         settings,

@@ -44,6 +44,8 @@ pub struct PrefsWindow {
     pub copy_mcp_config: bool,
     pub rotate_token: bool,
     pub open_terminal: bool,
+    /// "Check for updates now" was clicked; the app starts the check.
+    pub check_updates: bool,
 }
 
 fn section_icon(section: &str) -> &'static str {
@@ -91,6 +93,7 @@ impl PrefsWindow {
             copy_mcp_config: false,
             rotate_token: false,
             open_terminal: false,
+            check_updates: false,
         }
     }
 
@@ -420,6 +423,22 @@ impl PrefsWindow {
     /// Buttons that open something else, at the end of the section they belong to.
     fn section_actions(&mut self, ui: &mut egui::Ui) {
         match self.section {
+            "General" => {
+                ui.add_space(Spacing::M);
+                ui.horizontal(|ui| {
+                    if ui
+                        .button("Check for updates now")
+                        .on_hover_text("Asks GitHub for the latest stable release")
+                        .clicked()
+                    {
+                        self.check_updates = true;
+                    }
+                    theme::hint(
+                        ui,
+                        &format!("You are running sqlr {}", env!("CARGO_PKG_VERSION")),
+                    );
+                });
+            }
             "Appearance" => {
                 ui.add_space(Spacing::M);
                 if ui

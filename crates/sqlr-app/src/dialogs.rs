@@ -995,6 +995,7 @@ impl SqlrApp {
             let copy_mcp = std::mem::take(&mut window.copy_mcp_config);
             let rotate = std::mem::take(&mut window.rotate_token);
             let open_terminal = std::mem::take(&mut window.open_terminal);
+            let check_updates = std::mem::take(&mut window.check_updates);
             if open_drivers {
                 self.drivers_ui.open_requested = true;
             }
@@ -1016,6 +1017,9 @@ impl SqlrApp {
             }
             if open_terminal {
                 self.terminal.open();
+            }
+            if check_updates {
+                self.check_updates_now(ctx);
             }
             // Edits (and a Cancel) show at once: everything follows the live settings.
             self.settings = sqlr_store::Settings::resolve(&self.layered, None);

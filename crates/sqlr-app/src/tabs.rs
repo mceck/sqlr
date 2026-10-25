@@ -1996,6 +1996,7 @@ mod tests {
         }
         SqlrApp::new(
             AppDeps {
+                check_updates: false,
                 engine,
                 repo,
                 settings: Settings {

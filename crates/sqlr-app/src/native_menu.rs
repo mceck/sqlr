@@ -162,6 +162,7 @@ impl NativeMenu {
 
         // Help.
         let shortcuts = MenuItem::new("Keyboard Shortcuts", true, None);
+        let check_updates = MenuItem::new("Check for Updates…", true, None);
         let diagnostics = MenuItem::new("Diagnostics…", true, None);
         let report = MenuItem::new("Report a Problem…", true, None);
         let help_about = MenuItem::new("About sqlr", true, None);
@@ -171,6 +172,7 @@ impl NativeMenu {
             &[
                 &shortcuts,
                 &PredefinedMenuItem::separator(),
+                &check_updates,
                 &diagnostics,
                 &report,
                 &PredefinedMenuItem::separator(),
@@ -211,6 +213,7 @@ impl NativeMenu {
             (stop.id().clone(), AppCommand::Stop),
             (save_snippet.id().clone(), AppCommand::SaveSnippet),
             (shortcuts.id().clone(), AppCommand::Shortcuts),
+            (check_updates.id().clone(), AppCommand::CheckUpdates),
             (diagnostics.id().clone(), AppCommand::Diagnostics),
             (report.id().clone(), AppCommand::ReportProblem),
             (help_about.id().clone(), AppCommand::About),

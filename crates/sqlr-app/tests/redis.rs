@@ -90,6 +90,7 @@ fn app(
     )
     .unwrap();
     let deps = AppDeps {
+        check_updates: false,
         engine,
         repo,
         settings: Settings::default(),

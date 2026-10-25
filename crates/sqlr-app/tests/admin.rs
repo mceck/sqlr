@@ -222,6 +222,7 @@ fn harness_with(
     };
     repo.save(&cfg, &Secrets::default()).unwrap();
     let deps = AppDeps {
+        check_updates: false,
         engine,
         repo,
         settings: Settings::default(),

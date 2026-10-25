@@ -85,6 +85,9 @@ pub struct AppDeps {
     pub diagnostics: Option<Arc<crate::diagnostics::Diagnostics>>,
     /// Why diagnostics are limited to stderr, when they are.
     pub diagnostics_warning: Option<String>,
+    /// Whether the app may check GitHub for a newer release at startup (spec §12). Tests
+    /// pass `false`, so no test ever reaches the network.
+    pub check_updates: bool,
 }
 
 /// The real dependencies: keychain secrets, the user's config directory, `sqlr.db` (or an
@@ -160,6 +163,8 @@ pub fn production_deps_with(
         ))),
         diagnostics,
         diagnostics_warning,
+        // The shipped binary checks for updates; nothing else does.
+        check_updates: true,
     })
 }
 
@@ -310,6 +315,20 @@ pub struct SqlrApp {
     pub(crate) terminal_workspace: crate::terminal_workspace::TerminalWorkspace,
     /// The context of the current frame, for work queued outside `ui` (settings saves).
     pub(crate) ui_ctx: Option<egui::Context>,
+    /// The update prompt's state (spec §12); `Idle` when there is nothing to offer.
+    pub(crate) update: crate::updates::UpdateFlow,
+    /// The update workers' messages, polled each frame.
+    pub(crate) update_rx: Option<std::sync::mpsc::Receiver<crate::updates::Msg>>,
+    /// Set while a download runs; storing `true` stops it.
+    pub(crate) update_cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// What the check remembers: the skipped version and when it last ran.
+    pub(crate) update_state: crate::updates::State,
+    /// A running update-state save; one at a time.
+    pub(crate) update_state_save: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+    /// A state save asked for while one ran; saved when it ends.
+    pub(crate) update_state_dirty: bool,
+    /// What a running install replaces, kept for **Restart now**.
+    pub(crate) update_target: Option<crate::updates::Target>,
 }
 
 impl SqlrApp {
@@ -328,10 +347,12 @@ impl SqlrApp {
             mcp_token_store,
             diagnostics,
             diagnostics_warning,
+            check_updates,
         } = deps;
         let engine = Arc::new(engine);
-        // The only UI-thread I/O outside the store thread: `connections.toml`, once, before
-        // the first frame (like `settings.toml`). Profiles are read by the engine.
+        // The only UI-thread I/O outside the store thread: `connections.toml`, the layered
+        // settings, the keymap and the small update state, once, before the first frame.
+        // Profiles are read by the engine.
         let listing = crate::store_worker::Listing::read(&repo);
         // The overrides come from the files; the global level is what `deps` carries.
         let (mut layered, layered_notice) = LayeredSettings::load(&config_dir);
@@ -348,6 +369,8 @@ impl SqlrApp {
             (Some(first), Some(second)) => Some(format!("{first}; {second}")),
             (first, second) => first.or(second),
         };
+        // Read before `config_dir` moves into the app, once per launch.
+        let update_state = crate::updates::State::load(&config_dir);
         let mut app = Self {
             engine,
             store,
@@ -432,6 +455,13 @@ impl SqlrApp {
             terminal: Default::default(),
             terminal_workspace: Default::default(),
             ui_ctx: None,
+            update: crate::updates::UpdateFlow::Idle,
+            update_rx: None,
+            update_cancel: None,
+            update_state,
+            update_state_save: None,
+            update_state_dirty: false,
+            update_target: None,
         };
         if let Some(notice) = startup_notice {
             app.notify(notice);
@@ -449,6 +479,11 @@ impl SqlrApp {
             drivers = app.engine.manifests().len(),
             "session started"
         );
+        // The daily check starts once everything it may touch exists; its answer comes
+        // back through `poll_updates`.
+        if check_updates {
+            app.start_update_check(ctx);
+        }
         app.reload_profiles();
         app.apply_listing(listing);
         app
@@ -460,6 +495,8 @@ impl SqlrApp {
         self.poll_store();
         self.agents_tick(ctx);
         self.poll_settings_save(ctx);
+        self.poll_updates(ctx);
+        self.poll_update_state_save(ctx);
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
@@ -590,6 +627,7 @@ impl SqlrApp {
         self.index_admin_ui(ui.ctx());
         self.shortcuts.show(ui.ctx());
         self.diagnostics_ui(ui.ctx());
+        self.update_ui(ui.ctx());
         self.toasts.show(ui.ctx());
         self.esc_stop(ui.ctx(), esc_stop);
     }
@@ -1880,6 +1918,7 @@ mod tests {
         };
         repo.save(&cfg, &Secrets::default()).unwrap();
         let deps = AppDeps {
+            check_updates: false,
             engine: Engine::new(drivers, Arc::new(|| {})),
             repo,
             settings: Settings::default(),
@@ -1926,6 +1965,7 @@ mod tests {
         };
         repo.save(&cfg, &Secrets::default()).unwrap();
         let deps = AppDeps {
+            check_updates: false,
             engine: Engine::new(drivers, Arc::new(|| {})),
             repo,
             settings: Settings::default(),
@@ -1997,6 +2037,7 @@ mod tests {
         let pw = Secrets([("password".to_string(), "hunter2".to_string())].into());
         repo.save(&cfg, &pw).unwrap();
         let deps = AppDeps {
+            check_updates: false,
             engine: Engine::new(drivers, Arc::new(|| {})),
             repo,
             settings: Settings::default(),
@@ -2090,6 +2131,7 @@ mod tests {
         engine.set_secret_store(secrets);
         let mut app = SqlrApp::new(
             AppDeps {
+                check_updates: false,
                 engine,
                 repo,
                 settings: Settings::default(),
@@ -2195,6 +2237,7 @@ mod tests {
         let engine = Engine::new(drivers, Arc::new(|| {}));
         engine.set_secret_store(keychain.clone());
         let deps = AppDeps {
+            check_updates: false,
             engine,
             repo,
             settings: Settings::default(),
@@ -2246,6 +2289,7 @@ mod tests {
         };
         repo.save(&cfg, &Secrets::default()).unwrap();
         let deps = AppDeps {
+            check_updates: false,
             engine: Engine::new(drivers, Arc::new(|| {})),
             repo,
             settings: Settings::default(),

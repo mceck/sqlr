@@ -1275,6 +1275,7 @@ mod tests {
         .unwrap();
         SqlrApp::new(
             AppDeps {
+                check_updates: false,
                 engine: Engine::new(drivers, Arc::new(|| {})),
                 repo,
                 settings: Settings::default(),
@@ -1451,6 +1452,7 @@ mod tests {
         .unwrap();
         let mut app = SqlrApp::new(
             AppDeps {
+                check_updates: false,
                 engine: Engine::new(drivers, Arc::new(|| {})),
                 repo,
                 settings: Settings::default(),
@@ -1493,6 +1495,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = SqlrApp::new(
             AppDeps {
+                check_updates: false,
                 engine: Engine::new(DriverRegistry::default(), Arc::new(|| {})),
                 repo: ConnectionRepo::open(dir.path(), Box::new(MemorySecretStore::default()))
                     .unwrap(),

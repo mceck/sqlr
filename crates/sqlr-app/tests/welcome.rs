@@ -65,6 +65,7 @@ fn harness_with_drivers(dir: &Path, theme: ThemePref, all: bool) -> Harness<'sta
     };
     repo.save(&cfg, &Secrets::default()).unwrap();
     let deps = AppDeps {
+        check_updates: false,
         engine,
         repo,
         settings: Settings {

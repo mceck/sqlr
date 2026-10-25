@@ -44,6 +44,7 @@ mod transaction;
 mod transfer_dialogs;
 mod transfer_wizard;
 mod tree_snapshot;
+mod updates;
 mod welcome;
 
 pub use app::{AppDeps, SqlrApp, production_deps, production_deps_in, production_deps_with};

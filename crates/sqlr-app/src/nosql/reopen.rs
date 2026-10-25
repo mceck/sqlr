@@ -79,6 +79,7 @@ mod tests {
             repo.save(&cfg, &Secrets::default()).unwrap();
         }
         let deps = AppDeps {
+            check_updates: false,
             engine: Engine::new(drivers, Arc::new(|| {})),
             repo,
             settings: Settings::default(),

@@ -60,6 +60,7 @@ fn fixture(dir: &Path, theme: ThemePref) -> SqlrApp {
     }
     SqlrApp::new(
         AppDeps {
+            check_updates: false,
             engine,
             repo,
             settings: Settings {

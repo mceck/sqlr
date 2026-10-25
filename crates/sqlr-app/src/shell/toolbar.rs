@@ -146,6 +146,13 @@ impl SqlrApp {
         ui.menu_button("Help", |ui| {
             command_item(ui, self, "Keyboard Shortcuts", None, AppCommand::Shortcuts);
             ui.separator();
+            command_item(
+                ui,
+                self,
+                "Check for Updates…",
+                None,
+                AppCommand::CheckUpdates,
+            );
             command_item(ui, self, "Diagnostics…", None, AppCommand::Diagnostics);
             command_item(
                 ui,

@@ -37,6 +37,7 @@ fn app(dir: &Path) -> Harness<'static, SqlrApp> {
     };
     repo.save(&cfg, &Secrets::default()).unwrap();
     let deps = AppDeps {
+        check_updates: false,
         engine,
         repo,
         settings: Settings::load(dir).unwrap(),

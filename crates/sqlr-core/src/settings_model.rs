@@ -433,6 +433,12 @@ fn build_defs() -> Vec<SettingDef> {
             GlobalOnly,
         ),
         privacy_flag(
+            "updates.check_on_start",
+            "Check for updates at startup",
+            "Once a day, sqlr asks GitHub whether a newer release exists. Nothing is downloaded until you choose Install, and a check that cannot reach GitHub is never reported.",
+            &["update", "upgrade", "version", "release", "github"],
+        ),
+        privacy_flag(
             "diagnostics.include_sql",
             "Include SQL in logs and reports",
             "Failed statements are recorded as typed in logs, incidents and diagnostics bundles. Turn this off to keep SQL out of everything diagnostics write; there is no automatic literal redaction.",
@@ -1054,7 +1060,7 @@ mod tests {
     fn agent_visibility_of_settings() {
         let shell = setting_def("terminal.shell").unwrap();
         assert!(!shell.agent_readable && !shell.agent_writable);
-        for id in ["agents.enabled", "agents.port"] {
+        for id in ["agents.enabled", "agents.port", "updates.check_on_start"] {
             let def = setting_def(id).unwrap();
             assert!(def.agent_readable && !def.agent_writable, "{id}");
         }
