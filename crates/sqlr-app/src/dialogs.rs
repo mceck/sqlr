@@ -559,7 +559,7 @@ impl ConnDialog {
         };
         let response = theme::Dialog::new("connection_dialog", icons::DATA_SOURCE, title)
             .subtitle("Saved connections and driver settings")
-            .width(900.0)
+            .width(960.0)
             .body_height(540.0)
             .min_body_height(240.0)
             .body_margin(Margin::ZERO)
@@ -1025,7 +1025,7 @@ impl SqlrApp {
             };
             let ask = DeleteAsk {
                 title: "Clear query history",
-                action: "Clear history",
+                action: "Delete",
                 prompt: &prompt,
                 detail,
             };

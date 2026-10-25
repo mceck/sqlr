@@ -175,6 +175,8 @@ impl SqlrApp {
                         egui::ScrollArea::vertical()
                             .id_salt("profiles_scroll")
                             .auto_shrink(false)
+                            // Leaves room for "New profile" under the list.
+                            .max_height((ui.available_height() - 40.0).max(60.0))
                             .show(ui, |ui| {
                                 for profile in profiles {
                                     let selected = !dialog.new && profile.id == dialog.draft.id;

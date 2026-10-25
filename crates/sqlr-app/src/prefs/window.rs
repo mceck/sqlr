@@ -230,11 +230,6 @@ impl PrefsWindow {
                     });
                 });
                 d.footer(|f| {
-                    if let Some(error) = &self.error {
-                        f.left().colored_label(p.error, error);
-                    } else if saving {
-                        f.left().label("Saving preferences…");
-                    }
                     let blocked = saving.then_some("");
                     let save = f.primary("Save", blocked);
                     let apply = f.button("Apply", !saving);
@@ -242,6 +237,12 @@ impl PrefsWindow {
                         self.persist_all(live, config_dir, keymap, save, ctx);
                     }
                     f.cancel();
+                    // After the buttons, so a save started this frame says so at once.
+                    if let Some(error) = &self.error {
+                        f.left().colored_label(p.error, error);
+                    } else if self.saving.is_some() {
+                        f.left().label("Saving preferences…");
+                    }
                 });
             });
         if response.closed && self.saving.is_none() {

@@ -328,17 +328,17 @@ impl SqlrApp {
             Asked::Session { .. } => "Close",
         };
         let heading = match &ask.what {
-            Asked::Drop { .. } => "Drop role",
+            Asked::Drop { role, .. } => format!("Drop role {}", role.name),
             Asked::Session {
                 action: SessionsAction::Cancel(_),
                 ..
-            } => "Cancel query",
-            Asked::Session { .. } => "Terminate session",
+            } => "Cancel query".to_string(),
+            Asked::Session { .. } => "Terminate session".to_string(),
         };
         let spec = crate::confirm::ConfirmSpec::new(
             Id::new(("admin_confirm", ask.again)),
             theme::icons::WARNING,
-            heading,
+            &heading,
             confirm,
         )
         .dismiss(dismiss)

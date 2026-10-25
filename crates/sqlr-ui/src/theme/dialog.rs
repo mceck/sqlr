@@ -192,6 +192,15 @@ impl<'a> Dialog<'a> {
                 ctx.data_mut(|data| data.insert_temp(chrome_id, measured));
                 ctx.request_repaint();
             }
+            // The dialog is centered from its last size: when the size changes, lay the
+            // frame out again so it never shows (or takes clicks) off-center for a frame.
+            let size = d.ui.min_rect().size();
+            let size_id = id.with("size");
+            let last: Option<egui::Vec2> = ctx.data(|data| data.get_temp(size_id));
+            if last.is_none_or(|last| (last - size).length() > 0.5) {
+                ctx.data_mut(|data| data.insert_temp(size_id, size));
+                ctx.request_discard("dialog size changed");
+            }
             (inner, d.closed)
         };
 
@@ -285,10 +294,16 @@ fn header_ui(ui: &mut Ui, dialog: &Dialog<'_>, danger: bool) -> bool {
                 let text_w = (ui.available_width() - close_w - Spacing::M).max(40.0);
                 ui.allocate_ui_with_layout(
                     vec2(text_w, 32.0),
-                    Layout::top_down(Align::Min).with_main_align(Align::Center),
+                    Layout::top_down(Align::Min),
                     |ui| {
                         ui.set_min_height(32.0);
                         ui.spacing_mut().item_spacing.y = 1.0;
+                        if dialog.subtitle.is_none() {
+                            // A lone title sits on the badge's center line.
+                            let font = semibold(ui.ctx(), 15.0);
+                            let height = ui.fonts_mut(|f| f.row_height(&font));
+                            ui.add_space(((32.0 - height) / 2.0).max(0.0));
+                        }
                         ui.add(
                             egui::Label::new(
                                 RichText::new(dialog.title).font(semibold(ui.ctx(), 15.0)),
@@ -628,9 +643,12 @@ pub fn scroll_body<R>(
     let p = palette(ui.ctx());
     let output = ui
         .scope(|ui| {
+            // A solid, always-visible bar beside the content (not over it) while it overflows.
             let scroll = &mut ui.spacing_mut().scroll;
-            scroll.dormant_handle_opacity = 0.55;
-            scroll.dormant_background_opacity = 0.0;
+            scroll.floating = false;
+            scroll.bar_width = 6.0;
+            scroll.bar_inner_margin = Spacing::S;
+            scroll.bar_outer_margin = 0.0;
             egui::ScrollArea::vertical()
                 .id_salt(id)
                 .min_scrolled_height(min_height)
@@ -642,7 +660,7 @@ pub fn scroll_body<R>(
     let view = output.inner_rect;
     let offset = output.state.offset.y;
     let hidden_below = output.content_size.y - offset - view.height();
-    let fade_rect = view.with_max_x(view.right() - Spacing::M);
+    let fade_rect = view;
     if hidden_below > 1.0 {
         let rect = fade_rect.with_min_y(view.bottom() - FADE);
         fade(ui, rect, p.bg_raised, false);

@@ -135,6 +135,62 @@ fn visual_audit() {
         ] {
             let dir = tempfile::tempdir().unwrap();
             let mut app = fixture(dir.path(), theme);
+            open_case(&mut app, case, dir.path());
+            let mut h = Harness::builder()
+                .with_size((1400.0, 900.0))
+                .with_step_dt(0.01)
+                .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+            capture_case(&mut h, &out, case, suffix, dir.path());
+        }
+    }
+}
+
+/// The dialogs at 1024×680, dark: `small-<case>-dark.png`.
+#[test]
+#[ignore = "renders the visual audit; requires a GPU adapter"]
+fn visual_audit_small() {
+    let out = std::env::var_os("SQLR_AUDIT_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/media/screenshots/audit")
+        });
+    std::fs::create_dir_all(&out).unwrap();
+    for case in [
+        "connection",
+        "preferences",
+        "profiles",
+        "export",
+        "import",
+        "dump-postgres",
+        "transfer",
+        "drivers",
+        "catalog",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = fixture(dir.path(), ThemePref::Dark);
+        open_case(&mut app, case, dir.path());
+        let mut h = Harness::builder()
+            .with_size((1024.0, 680.0))
+            .with_step_dt(0.01)
+            .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+        sqlr_ui::theme::install_fonts(&h.ctx, &[]);
+        for _ in 0..20 {
+            h.step();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        h.event(egui::Event::PointerMoved(egui::pos2(1014.0, 670.0)));
+        h.run_steps(8);
+        h.render()
+            .expect("GPU render")
+            .save(out.join(format!("small-{case}-dark.png")))
+            .unwrap();
+    }
+}
+
+/// Opens the screen or dialog `case` of the audit on `app`.
+fn open_case(app: &mut SqlrApp, case: &str, dir: &Path) {
+    {
+        {
             let table = TableRef {
                 database: None,
                 schema: Some("main".into()),
@@ -172,7 +228,7 @@ fn visual_audit() {
                         conn: "northwind".into(),
                         database: "northwind".into(),
                         options: Default::default(),
-                        out: dir.path().join("backup.sql"),
+                        out: dir.join("backup.sql"),
                     },
                     None,
                 ),
@@ -219,10 +275,21 @@ fn visual_audit() {
                 }
                 _ => {}
             }
-            let mut h = Harness::builder()
-                .with_size((1400.0, 900.0))
-                .with_step_dt(0.01)
-                .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+        }
+    }
+}
+
+/// Captures `case` and the follow-up states it has (transfer steps, import preview,
+/// preference sections).
+fn capture_case(
+    h: &mut Harness<'static, SqlrApp>,
+    out: &Path,
+    case: &str,
+    suffix: &str,
+    dir: &Path,
+) {
+    {
+        {
             sqlr_ui::theme::install_fonts(&h.ctx, &[]);
             // Allow asynchronous metadata jobs to finish, without depending on server timing.
             for _ in 0..20 {
@@ -236,7 +303,7 @@ fn visual_audit() {
                     std::thread::sleep(Duration::from_millis(5));
                 }
             }
-            capture(&mut h, &out, case, suffix);
+            capture(h, out, case, suffix);
             if case == "transfer" {
                 h.get_by_label("Load preview").click();
                 let deadline = Instant::now() + Duration::from_secs(5);
@@ -248,18 +315,18 @@ fn visual_audit() {
                     h.step();
                     std::thread::sleep(Duration::from_millis(5));
                 }
-                capture(&mut h, &out, "transfer-source-preview", suffix);
+                capture(h, out, "transfer-source-preview", suffix);
                 for step in ["target", "mapping", "options", "review", "run"] {
                     h.get_by_label("Next").click();
                     for _ in 0..15 {
                         h.step();
                         std::thread::sleep(Duration::from_millis(5));
                     }
-                    capture(&mut h, &out, &format!("transfer-{step}"), suffix);
+                    capture(h, out, &format!("transfer-{step}"), suffix);
                 }
             }
             if case == "import" {
-                let file = dir.path().join("orders.csv");
+                let file = dir.join("orders.csv");
                 std::fs::write(
                     &file,
                     "id,customer_id,total,status\n201,1,54.90,paid\n202,2,123.45,pending\n",
@@ -273,7 +340,7 @@ fn visual_audit() {
                     h.step();
                     std::thread::sleep(Duration::from_millis(5));
                 }
-                capture(&mut h, &out, "import-preview", suffix);
+                capture(h, out, "import-preview", suffix);
             }
             if case == "preferences" {
                 for section in [
@@ -292,8 +359,8 @@ fn visual_audit() {
                         .expect("preference section")
                         .click();
                     capture(
-                        &mut h,
-                        &out,
+                        h,
+                        out,
                         &format!("preferences-{}", section.to_lowercase().replace(' ', "-")),
                         suffix,
                     );
@@ -305,18 +372,14 @@ fn visual_audit() {
 
 #[test]
 fn configuration_dialogs_fit_a_small_display() {
-    for title in [
-        "Preferences",
-        "Data Sources and Drivers",
-        "Connection profiles",
-    ] {
+    for title in ["Preferences", "New connection", "Connection profiles"] {
         let dir = tempfile::tempdir().unwrap();
         let mut app = fixture(dir.path(), ThemePref::Dark);
         match title {
             "Preferences" => {
                 app.prefs = Some(crate::prefs::PrefsWindow::new(&app.layered, Level::Global))
             }
-            "Data Sources and Drivers" => {
+            "New connection" => {
                 let manifest = app.manifest("sqlite").unwrap();
                 app.conn_dialog = Some(crate::dialogs::ConnDialog::create(&manifest));
             }

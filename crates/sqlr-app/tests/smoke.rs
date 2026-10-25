@@ -384,8 +384,16 @@ fn new_connection_dialog_validates() {
         .expect("File menu has a New connection item")
         .click();
     h.run_steps(2);
-    h.get_by_label("Name is required");
-    assert!(h.get_by_label("Save").accesskit_node().is_disabled());
+    let save = h.get_by_label("Save");
+    assert!(save.accesskit_node().is_disabled());
+    // The footer says why Save is disabled, beside the button (as well as under the form).
+    let save = save.rect();
+    assert!(
+        h.get_all_by_label("Name is required").any(|n| {
+            n.rect().right() <= save.left() && (n.rect().center().y - save.center().y).abs() < 4.0
+        }),
+        "Save does not say why it is disabled"
+    );
 }
 
 #[test]
@@ -875,7 +883,7 @@ fn profile_color_tints_tab() {
 
 /// Types `password` into the secrets prompt and connects.
 fn enter_password(h: &mut Harness<'static, SqlrApp>, password: &str) {
-    wait_for_label(h, "Secrets for fake-conn");
+    wait_for_label(h, "Connect to fake-conn");
     h.run_steps(3);
     // The field is labelled by its caption.
     h.get_by_label("Password").click();
@@ -916,7 +924,7 @@ fn unsaved_password_is_asked_on_connect() {
     context_menu(&mut h, "fake-conn", "Disconnect");
     context_menu(&mut h, "fake-conn", "Connect");
     wait_for_label(&mut h, "connected");
-    assert!(h.query_by_label("Secrets for fake-conn").is_none());
+    assert!(h.query_by_label("Connect to fake-conn").is_none());
 }
 
 /// A fake whose `SELECT`s return `s.orders` (`id` primary key, `total`) with origins.
@@ -1250,7 +1258,7 @@ fn explorer_import_runs_with_a_mapping() {
     h.get_by_label("Choose file…").click();
     // The preview shows the file's rows; columns are mapped by name.
     wait_for_label(&mut h, "80");
-    h.get_by_label("Run import").click();
+    h.get_by_label("Run import").click_accesskit();
     wait_for_label(&mut h, "Read 2 rows, wrote 2, rejected 0");
     let inserts: Vec<_> = driver
         .executed_with()
@@ -1291,7 +1299,7 @@ fn import_asks_first_when_the_profile_confirms_writes() {
     context_menu_sub(&mut h, "orders", "Import/Export", "Import data…");
     h.get_by_label("Choose file…").click();
     wait_for_label(&mut h, "80");
-    h.get_by_label("Run import").click();
+    h.get_by_label("Run import").click_accesskit();
     wait_for_label(
         &mut h,
         "Insert the file's rows into orders? The profile confirms writes.",
@@ -1301,7 +1309,7 @@ fn import_asks_first_when_the_profile_confirms_writes() {
         !driver.executed().iter().any(|s| s.starts_with("INSERT")),
         "nothing is written before the answer"
     );
-    h.get_by_label("Import").click();
+    h.get_by_label("Import").click_accesskit();
     wait_for_label(&mut h, "Read 2 rows, wrote 2, rejected 0");
 }
 
@@ -1316,9 +1324,10 @@ fn import_saves_its_rejected_rows() {
     context_menu_sub(&mut h, "orders", "Import/Export", "Import data…");
     h.get_by_label("Choose file…").click();
     wait_for_label(&mut h, "abc");
-    h.get_by_label("Skip bad rows and report them").click();
+    h.get_by_label("Skip bad rows and report them")
+        .click_accesskit();
     h.run_steps(2);
-    h.get_by_label("Run import").click();
+    h.get_by_label("Run import").click_accesskit();
     wait_for_label(&mut h, "Read 2 rows, wrote 1, rejected 1");
     h.run_steps(2);
     let saved = dir.path().join("rejected.csv");
