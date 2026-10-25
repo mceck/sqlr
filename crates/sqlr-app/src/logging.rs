@@ -101,6 +101,7 @@ pub fn init(
     };
     let capture = CaptureLayer {
         diagnostics: diagnostics.clone(),
+        ring: None,
     };
     let _ = tracing_subscriber::registry()
         .with(filter)
@@ -253,6 +254,9 @@ fn prune_logs(dir: &Path) {
 /// The `error!`-means-incident ingestion layer, and the ring writer.
 struct CaptureLayer {
     diagnostics: Option<Arc<Diagnostics>>,
+    /// `None` is the process-wide ring; tests inject their own so assertions are not
+    /// affected by lines other tests log concurrently.
+    ring: Option<Arc<ring::LogRing>>,
 }
 
 #[derive(Default)]
@@ -304,7 +308,8 @@ where
             }
         }
         let captured = Captured::new(event, include_sql, inherited);
-        ring::global().push(captured.line());
+        let ring = self.ring.as_deref().unwrap_or_else(|| ring::global());
+        ring.push(captured.line());
         if *event.metadata().level() != Level::ERROR {
             return;
         }
@@ -475,10 +480,18 @@ mod tests {
     use tracing_subscriber::filter::LevelFilter;
 
     fn subscriber(diagnostics: Arc<Diagnostics>) -> impl Subscriber {
+        subscriber_with_ring(diagnostics, Arc::new(ring::LogRing::new()))
+    }
+
+    fn subscriber_with_ring(
+        diagnostics: Arc<Diagnostics>,
+        ring: Arc<ring::LogRing>,
+    ) -> impl Subscriber {
         tracing_subscriber::registry()
             .with(LevelFilter::INFO)
             .with(CaptureLayer {
                 diagnostics: Some(diagnostics),
+                ring: Some(ring),
             })
     }
 
@@ -517,7 +530,8 @@ mod tests {
     fn sql_follows_the_setting_in_incidents_and_the_ring() {
         let dir = tempfile::tempdir().unwrap();
         let diagnostics = Arc::new(Diagnostics::open(Some(dir.path())));
-        let subscriber = subscriber(diagnostics.clone());
+        let logs = Arc::new(ring::LogRing::new());
+        let subscriber = subscriber_with_ring(diagnostics.clone(), logs.clone());
         diagnostics.set_include_sql(false);
         tracing::subscriber::with_default(subscriber, || {
             tracing::error!(sql = "select sentinel from t", "query failed");
@@ -528,7 +542,7 @@ mod tests {
             .unwrap();
         assert!(!incident.fields.contains_key("sql"));
         assert!(
-            !ring::global()
+            !logs
                 .snapshot()
                 .lines
                 .iter()
