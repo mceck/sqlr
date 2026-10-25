@@ -813,7 +813,7 @@ mod tests {
             session_id: "dead-session".into(),
             pid: 999,
             started_ms: 1,
-            version: "0.1.0".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
         };
         store::write_private_atomic(
             &dir.path().join("diagnostics").join("session.json"),
@@ -837,7 +837,7 @@ mod tests {
             session_id: "crashed-session".into(),
             pid: 777,
             started_ms: 1,
-            version: "0.1.0".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
         };
         store::write_private_atomic(
             &diagnostics_dir.join("session.json"),

@@ -1,14 +1,13 @@
-//! The breadcrumb above a query editor: `connection › database › tab`, with the commit
-//! mode and the run shortcut on the right.
+//! The breadcrumb above a query editor: `connection › database › tab`, with the run
+//! shortcut on the right.
 
-use sqlr_core::{CommitMode, NodeKind, NodePath};
+use sqlr_core::{NodeKind, NodePath};
 use sqlr_engine::{Engine, LoadState, TxPhase};
 use sqlr_ui::theme::icons;
 use sqlr_ui::{Crumb, breadcrumb_with_response};
 
 use crate::app::{LeftPane, SqlrApp};
 use crate::tabs::{QueryTab, TabCommand};
-use crate::transaction::{mode_name, session_commit_mode};
 
 /// The breadcrumb's segments for `tab`: its connection (`name`), the database it runs on
 /// when known, and its title.
@@ -36,21 +35,16 @@ pub(crate) fn tab_breadcrumb(
     engine: &Engine,
     tab: &QueryTab,
     name: Option<&str>,
-    profile_mode: Option<CommitMode>,
 ) -> Option<TabCommand> {
     let conn = tab.conn.as_deref();
     let database = tab
         .database
         .clone()
         .or_else(|| conn.and_then(|c| engine.session_database(c)));
-    let mode = match conn {
-        Some(c) => session_commit_mode(engine, &engine.session(c, Some(tab.key)), profile_mode),
-        None => CommitMode::default(),
-    };
-    let right = match sqlr_ui::keymap::shortcut(ui.ctx(), sqlr_core::ActionId::RunStatement) {
-        Some(run) => format!("{} · {run} to run", mode_name(mode)),
-        None => mode_name(mode).to_string(),
-    };
+    // The commit mode has its own control in the toolbar; the strip keeps the run key.
+    let right = sqlr_ui::keymap::shortcut(ui.ctx(), sqlr_core::ActionId::RunStatement)
+        .map(|run| format!("{run} to run"))
+        .unwrap_or_default();
     let has_database = database.is_some();
     let crumbs = crumbs(tab, name, database.clone());
     let mut action = None;

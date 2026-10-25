@@ -198,6 +198,23 @@ impl NativeMenu {
             ],
         )?;
 
+        // Tools: the data tools that otherwise hide in the explorer's context menus.
+        let transfer = MenuItem::new("Transfer data…", true, None);
+        let compare = MenuItem::new("Compare schemas…", true, None);
+        let export_result = MenuItem::new("Export result…", true, None);
+        let drivers = MenuItem::new("Drivers…", true, None);
+        let tools = Submenu::with_items(
+            "Tools",
+            true,
+            &[
+                &transfer,
+                &compare,
+                &export_result,
+                &PredefinedMenuItem::separator(),
+                &drivers,
+            ],
+        )?;
+
         // Help.
         let shortcuts = MenuItem::new("Keyboard Shortcuts", true, None);
         let check_updates = MenuItem::new("Check for Updates…", true, None);
@@ -218,7 +235,7 @@ impl NativeMenu {
             ],
         )?;
 
-        let menu = Menu::with_items(&[&app, &file, &edit, &view, &query, &help])?;
+        let menu = Menu::with_items(&[&app, &file, &edit, &view, &query, &tools, &help])?;
 
         // The AppKit callback only knows the item id, so the ids are mapped to commands
         // once, here.
@@ -237,6 +254,10 @@ impl NativeMenu {
             (commands.id().clone(), AppCommand::Commands),
             (open_object.id().clone(), AppCommand::OpenObject),
             (tasks.id().clone(), AppCommand::ShowTasks),
+            (transfer.id().clone(), AppCommand::TransferData),
+            (compare.id().clone(), AppCommand::CompareSchemas),
+            (export_result.id().clone(), AppCommand::ExportResult),
+            (drivers.id().clone(), AppCommand::DriverManager),
             (explain.id().clone(), AppCommand::Explain),
             (explain_analyze.id().clone(), AppCommand::ExplainAnalyze),
             (commit.id().clone(), AppCommand::Commit),

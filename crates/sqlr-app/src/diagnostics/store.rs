@@ -519,7 +519,7 @@ mod tests {
             session_id: "one".into(),
             pid: 1,
             started_ms: 2,
-            version: "0.1.0".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
         };
 
         // A clean exit leaves no marker.

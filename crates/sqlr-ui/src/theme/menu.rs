@@ -178,6 +178,17 @@ pub fn separator(ui: &mut Ui) {
     ui.separator();
 }
 
+/// A muted note under a menu's entries, aligned with their labels and wrapped to the menu's
+/// width: where the related actions live, when they are not in this menu.
+pub fn hint(ui: &mut Ui, text: &str) {
+    let muted = super::palette(ui.ctx()).text_muted;
+    ui.horizontal(|ui| {
+        ui.add_space(GUTTER + ui.spacing().button_padding.x);
+        ui.set_max_width(MIN_WIDTH + 80.0);
+        ui.add(egui::Label::new(RichText::new(text).small().color(muted)).wrap());
+    });
+}
+
 /// A title of the in-window menu bar (File, Edit…): flat text at rest, a subtle fill on hover
 /// and while its menu is open. The menu uses the app's [`super::menu_style`]. Inside a menu
 /// (the compact menu of a narrow window) it is a [`submenu`] instead.

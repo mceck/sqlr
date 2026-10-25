@@ -309,7 +309,7 @@ mod tests {
             "thread": "main",
             "file": "src/planner.rs",
             "line": 77,
-            "environment": {"version": "0.1.0", "os": "macos", "arch": "aarch64"},
+            "environment": {"version": "0.1.1", "os": "macos", "arch": "aarch64"},
             "fields": {"conn": "c1", "stmt": "select 1"},
             "logs": ["line one", "line two"]
         });
@@ -324,18 +324,18 @@ mod tests {
                 "started_ms": 1,
                 "uptime_s": 60,
                 "pid": 42,
-                "version": "0.1.0",
+                "version": "0.1.1",
                 "other_instance": false
             },
             "application": {
-                "version": "0.1.0",
+                "version": "0.1.1",
                 "profile": "release",
                 "target": "aarch64-apple-darwin",
                 "commit": "abc1234",
                 "graphics_backend": "metal"
             },
             "environment": {
-                "version": "0.1.0",
+                "version": "0.1.1",
                 "os": "macos",
                 "os_version": "15.3",
                 "arch": "aarch64"

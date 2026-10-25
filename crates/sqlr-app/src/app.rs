@@ -552,6 +552,17 @@ impl SqlrApp {
             .exact_size(Spacing::STATUS)
             .frame(bar(ui.style()))
             .show(ui, |ui| self.status(ui));
+        // The sidebar runs the full height; the bottom panels dock under the editors only.
+        let side = |style: &egui::Style| {
+            egui::Frame::side_top_panel(style).inner_margin(Margin::same(Spacing::M as i8))
+        };
+        let sidebar = (ui.available_width() * 0.2).clamp(200.0, 270.0);
+        egui::Panel::left("connections")
+            .resizable(true)
+            .default_size(sidebar)
+            .min_size(160.0)
+            .frame(side(ui.style()))
+            .show(ui, |ui| self.left_panel(ui));
         self.operations_ui(ui);
         if self.terminal.is_open() {
             egui::Panel::bottom("terminal")
@@ -575,15 +586,6 @@ impl SqlrApp {
                 )
                 .show(ui, |ui| self.history_ui(ui));
         }
-        let side = |style: &egui::Style| {
-            egui::Frame::side_top_panel(style).inner_margin(Margin::same(Spacing::M as i8))
-        };
-        egui::Panel::left("connections")
-            .resizable(true)
-            .default_size(260.0)
-            .min_size(160.0)
-            .frame(side(ui.style()))
-            .show(ui, |ui| self.left_panel(ui));
         // Document results own their inspector; Redis has its own value editor.
         if self.show_value_panel && !self.active_is_nosql_tab() {
             egui::Panel::right("value")
@@ -903,7 +905,6 @@ impl SqlrApp {
                 })
             });
         let transaction = self.tx_line();
-        let commit_mode = self.commit_mode_line();
         let caret = self
             .active_tab()
             .filter(|t| {
@@ -917,12 +918,12 @@ impl SqlrApp {
         let view = StatusView {
             conn,
             transaction,
-            commit_mode,
             caret,
             page_size,
             info: info.as_ref(),
             storage_warning: self.storage_warning.as_deref(),
             job: job.as_ref().map(|(text, _)| text.as_str()),
+            terminal_open: self.terminal.is_open(),
             mcp: self
                 .settings
                 .agents_enabled
@@ -965,6 +966,7 @@ impl SqlrApp {
             Some(StatusAction::OpenCommands) => {
                 self.open_palette(sqlr_ui::PaletteMode::Commands);
             }
+            Some(StatusAction::ToggleTerminal) => self.terminal.toggle(),
             None => {}
         }
     }
@@ -1052,7 +1054,6 @@ impl SqlrApp {
             editable: &editable,
             explain: &explain,
             tints: &tints,
-            profiles: &self.profiles,
             formats: &self.formats,
             show_value_panel: self.show_value_panel,
             include_sql: self.settings.include_sql_in_diagnostics,

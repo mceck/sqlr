@@ -85,7 +85,11 @@ fn rig() -> Option<PathBuf> {
 }
 
 fn spec(preset: &str, jar: Option<&Path>) -> SidecarSpec {
-    let mut spec = SidecarSpec::new(preset, "0.1.0", env!("CARGO_BIN_EXE_sqlr-driver-jdbc"));
+    let mut spec = SidecarSpec::new(
+        preset,
+        env!("CARGO_PKG_VERSION"),
+        env!("CARGO_BIN_EXE_sqlr-driver-jdbc"),
+    );
     spec.args = vec!["--preset".into(), preset.into()];
     if let Some(jar) = jar {
         spec.env
@@ -608,7 +612,7 @@ async fn a_packaged_jdbc_driver_installs_from_a_file_and_runs() {
     let inspection = registry.install_manual(&archive).await.unwrap();
     assert_eq!(
         (inspection.id.as_str(), inspection.version.as_str()),
-        ("jdbc-h2", "0.1.0")
+        ("jdbc-h2", env!("CARGO_PKG_VERSION"))
     );
     let installed = registry.confirm_manual(&inspection).await.unwrap();
     assert!(installed.manual);
@@ -623,7 +627,11 @@ async fn a_packaged_jdbc_driver_installs_from_a_file_and_runs() {
     assert!(installed.path.join("sqlr-jdbc-bridge.jar").is_file());
 
     // And it runs from there, with its own jars/ on the class path (no env help).
-    let mut spec = SidecarSpec::new("jdbc-h2", "0.1.0", installed.executable().unwrap());
+    let mut spec = SidecarSpec::new(
+        "jdbc-h2",
+        env!("CARGO_PKG_VERSION"),
+        installed.executable().unwrap(),
+    );
     spec.args = installed.args();
     spec.handshake_timeout = Duration::from_secs(60);
     let driver = SidecarDriver::with_manifest(spec, installed.manifest.clone());

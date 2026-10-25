@@ -90,7 +90,7 @@ fn previous_session(dir: &std::path::Path, panic: bool) -> String {
     std::fs::create_dir_all(&diagnostics).unwrap();
     std::fs::write(
         diagnostics.join("session.json"),
-        r#"{"session_id":"previous-session","pid":999,"started_ms":1,"version":"0.1.0"}"#,
+        r#"{"session_id":"previous-session","pid":999,"started_ms":1,"version":"0.1.1"}"#,
     )
     .unwrap();
     let at = now_ms();
@@ -106,7 +106,7 @@ fn previous_session(dir: &std::path::Path, panic: bool) -> String {
             "thread": "main",
             "file": "src/app.rs",
             "line": 42,
-            "environment": {"version": "0.1.0", "os": "macos", "arch": "aarch64"},
+            "environment": {"version": "0.1.1", "os": "macos", "arch": "aarch64"},
             "logs": ["the line before the crash"]
         });
         std::fs::write(

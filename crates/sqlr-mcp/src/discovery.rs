@@ -77,7 +77,7 @@ mod tests {
             url: "http://127.0.0.1:47821/mcp".into(),
             pid: 42,
             protocol_version: "2025-11-25".into(),
-            app_version: "0.1.0".into(),
+            app_version: env!("CARGO_PKG_VERSION").into(),
             started_at: "2026-01-01T00:00:00Z".into(),
         }
     }

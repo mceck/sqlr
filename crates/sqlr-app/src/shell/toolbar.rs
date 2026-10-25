@@ -186,6 +186,19 @@ impl SqlrApp {
             command_item(ui, self, "Format SQL", C::Key(ActionId::FormatSql));
             command_item(ui, self, "Save as snippet…", C::SaveSnippet);
         });
+        menu::bar_menu(ui, "Tools", |ui| {
+            command_item(ui, self, "Transfer data…", C::TransferData);
+            command_item(ui, self, "Compare schemas…", C::CompareSchemas);
+            command_item(ui, self, "Export result…", C::ExportResult);
+            ui.separator();
+            command_item(ui, self, "Drivers…", C::DriverManager);
+            ui.separator();
+            menu::hint(
+                ui,
+                "Import, generate data, ER diagrams, dump and restore: right-click a table or \
+                 database in the explorer.",
+            );
+        });
         menu::bar_menu(ui, "Help", |ui| {
             command_item(ui, self, "Keyboard Shortcuts", C::Shortcuts);
             ui.separator();
@@ -252,6 +265,55 @@ impl SqlrApp {
         }
     }
 
+    /// Run, run script and stop, then the transaction controls (inline, or folded into an
+    /// overflow button when the bar is narrow).
+    fn session_controls(&mut self, ui: &mut egui::Ui, running: bool, tx_inline: bool, tx_id: Id) {
+        let palette = theme::palette(ui.ctx());
+        icons::toolbar_divider(ui);
+        let run = icons::toolbar_button(ui, true, icons::RUN, Some(palette.success), false, "Run");
+        let run = theme::tooltip_for(
+            run,
+            "Run statement",
+            ActionId::RunStatement,
+            Some("The statement at the caret, or the selection"),
+        );
+        if run.clicked() {
+            self.run_active();
+        }
+        let script = icons::toolbar_button(ui, true, icons::RUN_SCRIPT, None, false, "Run script");
+        let script = theme::tooltip_for(
+            script,
+            "Run script",
+            ActionId::RunScript,
+            Some("Every statement in the editor, one after another"),
+        );
+        if script.clicked() {
+            self.run_script_active();
+        }
+        let stop =
+            icons::toolbar_button(ui, running, icons::STOP, Some(palette.error), false, "Stop");
+        let stop = theme::tooltip_for(stop, "Stop the running query", ActionId::Stop, None);
+        if stop.clicked() {
+            self.stop_active();
+        }
+
+        icons::toolbar_divider(ui);
+        if tx_inline {
+            group(ui, tx_id, |ui| self.transaction_controls(ui, false));
+        } else {
+            let more = icons::toolbar_button(ui, true, icons::MORE, None, false, "More tools");
+            let more = theme::tooltip(more, "Transaction controls", None, None);
+            egui::Popup::menu(&more)
+                .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
+                .show(|ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = Spacing::S;
+                        self.transaction_controls(ui, true);
+                    });
+                });
+        }
+    }
+
     pub(crate) fn toolbar(&mut self, ui: &mut egui::Ui) {
         let operation_count = self
             .engine
@@ -281,19 +343,22 @@ impl SqlrApp {
         let divider = 1.0 + gap;
         let menus_id = Id::new("toolbar_menus_width");
         let tx_id = Id::new("toolbar_tx_width");
+        // The run and transaction controls act on the active tab's session: without a tab
+        // on a connection there is nothing for them to do, so the bar leaves them out.
+        let current = self.active_tab().and_then(|t| t.conn.clone());
+        let session = current.is_some();
         let fixed = 24.0 + gap // app mark
             + divider
-            + 3.0 * (button + gap) + divider // run, run script, stop
-            + button + gap // refresh
+            + if session { 3.0 * (button + gap) + divider } else { 0.0 } // run, script, stop
             + if native { 0.0 } else { button + gap } // the compact menu, at least
             + divider
             + Spacing::M;
         let mut spare = ui.available_width() - right_width - fixed - CHIP_MIN;
         let tx_width = measured(ui, tx_id, TX_ESTIMATE);
-        let tx_inline = spare >= tx_width + divider;
+        let tx_inline = session && spare >= tx_width + divider;
         if tx_inline {
             spare -= tx_width + divider;
-        } else {
+        } else if session {
             spare -= button + gap; // the overflow button
         }
         let menus_extra = measured(ui, menus_id, MENUS_ESTIMATE) - button;
@@ -334,7 +399,6 @@ impl SqlrApp {
             icons::toolbar_divider(ui);
 
             // The tab's connection, tinted with its own color (profile color as fallback).
-            let current = self.active_tab().and_then(|t| t.conn.clone());
             let chip = current
                 .as_ref()
                 .and_then(|id| self.connection(id))
@@ -362,74 +426,8 @@ impl SqlrApp {
                 self.chip_action(action, active, current);
             }
 
-            icons::toolbar_divider(ui);
-            // Execution.
-            let can_run = active.is_some();
-            let run =
-                icons::toolbar_button(ui, can_run, icons::RUN, Some(palette.success), false, "Run");
-            let run = theme::tooltip_for(
-                run,
-                "Run statement",
-                ActionId::RunStatement,
-                Some("The statement at the caret, or the selection"),
-            );
-            if run.clicked() {
-                self.run_active();
-            }
-            let script =
-                icons::toolbar_button(ui, can_run, icons::RUN_SCRIPT, None, false, "Run script");
-            let script = theme::tooltip_for(
-                script,
-                "Run script",
-                ActionId::RunScript,
-                Some("Every statement in the editor, one after another"),
-            );
-            if script.clicked() {
-                self.run_script_active();
-            }
-            let stop =
-                icons::toolbar_button(ui, running, icons::STOP, Some(palette.error), false, "Stop");
-            let stop = theme::tooltip_for(stop, "Stop the running query", ActionId::Stop, None);
-            if stop.clicked() {
-                self.stop_active();
-            }
-
-            icons::toolbar_divider(ui);
-            if tx_inline {
-                group(ui, tx_id, |ui| self.transaction_controls(ui, false));
-            } else {
-                let more = icons::toolbar_button(ui, true, icons::MORE, None, false, "More tools");
-                let more = theme::tooltip(more, "Transaction controls", None, None);
-                egui::Popup::menu(&more)
-                    .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
-                    .show(|ui| {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = Spacing::S;
-                            self.transaction_controls(ui, true);
-                        });
-                    });
-            }
-
-            // The explorer's refresh, tied to the selected node.
-            let selection = self.tree.selected.clone();
-            let refresh = icons::toolbar_button(
-                ui,
-                selection.is_some(),
-                icons::REFRESH,
-                None,
-                false,
-                "Refresh",
-            );
-            let refresh = theme::tooltip(
-                refresh,
-                "Refresh",
-                None,
-                Some("Reload the object or connection selected in the explorer"),
-            );
-            if refresh.clicked()
-                && let Some((conn, path)) = selection
-            {
-                self.engine.refresh(&conn, path);
+            if session {
+                self.session_controls(ui, running, tx_inline, tx_id);
             }
 
             // The workspace toggles sit on the far right.
@@ -607,6 +605,8 @@ mod tests {
         h.get_by_label("⇧⌘P  Commands");
         h.get_by_label("Go to a table");
         h.get_by_label("⌘P");
+        with_tab_on_a_connection(h.state_mut());
+        h.run_steps(3);
         hover(&mut h, "Settings");
         h.get_by_label("⌘,");
         hover(&mut h, "Toggle terminal");
@@ -628,9 +628,75 @@ mod tests {
         for label in ["Explain analyze", "Format SQL"] {
             h.get_by_label(label);
         }
-        // The toolbar has a Commit and a Rollback button of its own.
+        // With no tab on a connection the toolbar has no Commit or Rollback of its own.
         for label in ["Commit", "Rollback"] {
-            assert_eq!(h.get_all_by_label(label).count(), 2, "{label}");
+            assert_eq!(h.get_all_by_label(label).count(), 1, "{label}");
         }
+    }
+
+    /// `app` with a saved connection "c1" and a query tab on it.
+    fn with_tab_on_a_connection(app: &mut SqlrApp) {
+        app.connections.push(sqlr_core::ConnectionConfig {
+            id: "c1".into(),
+            name: "db".into(),
+            driver: "fake".into(),
+            group: None,
+            color: None,
+            values: Default::default(),
+            profile: None,
+            save_secrets: false,
+            agent_access: Default::default(),
+        });
+        app.new_tab(None, Some("c1".into()), "select 1");
+    }
+
+    #[test]
+    fn session_controls_appear_only_for_a_tab_on_a_connection() {
+        let (app, _dir) = bare_app();
+        let mut h = harness(app);
+        for label in ["Run", "Run script", "Stop", "Read-only"] {
+            assert!(
+                h.query_by_label(label).is_none(),
+                "{label} without a session"
+            );
+        }
+        with_tab_on_a_connection(h.state_mut());
+        h.run_steps(3);
+        for label in ["Run", "Run script", "Stop", "Read-only"] {
+            assert!(h.query_by_label(label).is_some(), "{label} on a connection");
+        }
+        // The explorer has its own refresh; the toolbar no longer repeats it.
+        assert!(h.query_by_label("Refresh").is_none());
+    }
+
+    #[test]
+    fn the_tools_menu_lists_the_data_tools() {
+        let (app, _dir) = bare_app();
+        let mut h = harness(app);
+        h.get_by_label("Tools").click();
+        h.run_steps(3);
+        for label in [
+            "Transfer data…",
+            "Compare schemas…",
+            "Export result…",
+            "Drivers…",
+        ] {
+            h.get_by_label(label);
+        }
+    }
+
+    #[test]
+    fn the_status_bar_toggles_the_terminal_and_hides_editor_segments_without_an_editor() {
+        let (app, _dir) = bare_app();
+        let mut h = harness(app);
+        assert!(h.query_by_label("UTF-8").is_none());
+        h.get_by_label("Terminal").click();
+        h.run_steps(2);
+        assert!(h.state().terminal.is_open());
+        h.state_mut().terminal.toggle();
+        with_tab_on_a_connection(h.state_mut());
+        h.run_steps(3);
+        h.get_by_label("UTF-8");
+        h.get_by_label("Ln 1, Col 1");
     }
 }

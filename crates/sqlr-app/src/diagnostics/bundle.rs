@@ -559,7 +559,7 @@ mod tests {
             started_ms: 1,
             uptime_s: 1,
             pid: 2,
-            version: "0.1.0".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
             data_dir: None,
             other_instance: false,
         }
@@ -568,7 +568,7 @@ mod tests {
     fn basic_inputs() -> BundleInputs {
         BundleInputs {
             application: ApplicationInfo {
-                version: "0.1.0".into(),
+                version: env!("CARGO_PKG_VERSION").into(),
                 profile: "release".into(),
                 target: "aarch64-apple-darwin".into(),
                 ..Default::default()
@@ -576,7 +576,7 @@ mod tests {
             drivers: vec![DriverInfo {
                 id: "postgres".into(),
                 name: "PostgreSQL".into(),
-                version: "0.1.0".into(),
+                version: env!("CARGO_PKG_VERSION").into(),
                 source: "bundled".into(),
                 sidecar_running: None,
                 sidecar_restarts: None,

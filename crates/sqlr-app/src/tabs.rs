@@ -600,8 +600,6 @@ pub struct Viewer<'a> {
     pub explain: &'a HashSet<String>,
     /// Profile colors of the saved connections that have one, by connection id.
     pub tints: &'a HashMap<String, [u8; 3]>,
-    /// Built-in and user connection profiles.
-    pub profiles: &'a [sqlr_core::ConnectionProfile],
     /// The grids' display formats, per connection.
     pub formats: &'a crate::prefs::Formats,
     pub show_value_panel: bool,
@@ -778,16 +776,7 @@ impl egui_dock::TabViewer for Viewer<'_> {
             .show(ui, |ui| {
                 let cfg = conn.and_then(|c| self.connections.iter().find(|x| x.id == c));
                 let name = cfg.map(|c| c.name.as_str());
-                let mode = cfg.map(|c| {
-                    crate::transaction::supported_commit_mode(
-                        self.engine,
-                        &c.driver,
-                        crate::app::profile_of(self.profiles, c).commit_mode,
-                    )
-                });
-                if let Some(command) =
-                    crate::shell::tab_breadcrumb(ui, self.engine, tab, name, mode)
-                {
+                if let Some(command) = crate::shell::tab_breadcrumb(ui, self.engine, tab, name) {
                     self.commands.push(command);
                 }
             });

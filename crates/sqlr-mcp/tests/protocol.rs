@@ -384,7 +384,7 @@ async fn setup(
         engine,
         host: host.clone(),
         token_store,
-        app_version: "0.1.0".into(),
+        app_version: env!("CARGO_PKG_VERSION").into(),
     })
     .await
     .unwrap();
@@ -772,7 +772,7 @@ async fn a_busy_port_reports_the_error_without_a_discovery_file() {
         engine,
         host,
         token_store: store,
-        app_version: "0.1.0".into(),
+        app_version: env!("CARGO_PKG_VERSION").into(),
     })
     .await
     .err()

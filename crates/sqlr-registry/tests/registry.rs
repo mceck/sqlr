@@ -715,7 +715,7 @@ async fn driver_toml_args_reach_the_installed_driver() {
     add(
         &mut tar,
         "driver.toml",
-        b"id = \"echo\"\nversion = \"0.1.0\"\nexecutable = \"bin/echo\"\nargs = [\"--preset\", \"h2\"]\n",
+        b"id = \"echo\"\nversion = \"0.1.1\"\nexecutable = \"bin/echo\"\nargs = [\"--preset\", \"h2\"]\n",
         0o644,
     );
     add(

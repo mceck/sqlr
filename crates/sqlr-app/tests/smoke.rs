@@ -363,7 +363,7 @@ fn fetch_all_completes() {
     let dir = tempfile::tempdir().unwrap();
     let mut h = harness(&dir);
     open_orders(&mut h);
-    h.get_by_label("Fetch all").click();
+    h.get_by_label("Load all rows").click();
     step_until(&mut h, "all rows", |h| {
         h.query_by_label_contains("1200 rows").is_some()
             && h.query_by_label_contains("more available").is_none()
@@ -404,7 +404,9 @@ fn refresh_reloads_expanded_descendants() {
     h.run_steps(100);
     h.get_by_label("s").click();
     h.run_steps(2);
-    h.get_by_label("Refresh").click();
+    h.get_by_label("Refresh selected").click();
+    // The click lands while the tree draws; the next frame shows the dropped subtree.
+    h.step();
     h.step();
     assert!(
         h.query_by_label("orders").is_none(),
@@ -792,7 +794,7 @@ fn script_result_error_uses_its_statement_origin() {
     h.get_by_label("Result 2").click();
     h.run_steps(2);
     // The second statement's next page fails; its position is inside statement 2.
-    h.get_by_label("Fetch all").click();
+    h.get_by_label("Load all rows").click();
     wait_for_label(&mut h, "fetch failed");
     // The position comes from the run's state and may reach the panel one frame after the
     // message, depending on when the worker reports the failure.
@@ -843,8 +845,9 @@ fn production_confirms_writes_and_runs_on_confirm() {
 fn commit_rollback_buttons_follow_state() {
     let dir = tempfile::tempdir().unwrap();
     let (mut h, driver) = harness_with_profile(&dir, "production");
-    assert!(is_disabled(&h, "Commit"));
-    assert!(is_disabled(&h, "Rollback"));
+    // No tab on the connection yet: the toolbar has no transaction controls.
+    assert!(h.query_by_label("Commit").is_none());
+    assert!(h.query_by_label("Rollback").is_none());
     open_orders(&mut h);
     // Manual commit: the explorer's query opened a transaction.
     step_until(&mut h, "Commit to enable", |h| !is_disabled(h, "Commit"));
@@ -1517,6 +1520,7 @@ fn shell_screenshots() {
 fn toolbar_button_shows_a_single_tooltip() {
     let dir = tempfile::tempdir().unwrap();
     let mut h = harness(&dir);
+    open_orders(&mut h);
     h.run_steps(100);
     h.get_by_label("Run").hover();
     h.run_steps(100);
@@ -1821,7 +1825,6 @@ fn status_shows_connection_and_caret() {
     h.get_by_label("Connected");
     h.get_by_label("Ln 2, Col 5");
     h.get_by_label("UTF-8");
-    h.get_by_label("Auto-commit");
 }
 
 #[test]
@@ -1983,12 +1986,9 @@ fn chrome_fits_small_window() {
     h.run_steps(5);
     assert_eq!(h.ctx.zoom_factor(), 1.5);
     let window = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(800.0, 600.0));
+    // Without a tab on a connection the run and transaction controls are left out.
     let labels = [
         "No connection",
-        "Run",
-        "Run script",
-        "Stop",
-        "Refresh",
         "Command palette",
         "Toggle history panel",
         "Toggle value panel",
@@ -2030,6 +2030,24 @@ fn chrome_fits_small_window() {
     open_orders(&mut h);
     replace_text(&mut h, "select 1;\nsele");
     h.get_by_label_contains("Transaction: 1 statement");
+    // On a connection the toolbar gains the run controls, still inside the window.
+    let mut toolbar = Vec::new();
+    for label in ["Run", "Run script", "Stop", "Command palette", "Settings"] {
+        let rect = h.get_by_label(label).rect();
+        assert!(
+            window.contains_rect(rect),
+            "{label} at {rect:?} leaves the window"
+        );
+        toolbar.push((label, rect));
+    }
+    for (i, (a, ra)) in toolbar.iter().enumerate() {
+        for (b, rb) in &toolbar[i + 1..] {
+            assert!(
+                ra.intersect(*rb).area() < 1.0,
+                "{a} {ra:?} overlaps {b} {rb:?}"
+            );
+        }
+    }
     let mut rects = Vec::new();
     for label in ["Connected", "Ln 2, Col 5", "UTF-8"] {
         let rect = h.get_by_label(label).rect();
@@ -2040,7 +2058,7 @@ fn chrome_fits_small_window() {
         rects.push((label.to_string(), rect));
     }
     // Whatever else the bar shows stays inside it and clear of those.
-    for label in ["Fetch all", "Auto-commit"] {
+    for label in ["Load all rows", "Terminal"] {
         if let Some(node) = h.query_by_label(label) {
             rects.push((label.to_string(), node.rect()));
         }
@@ -2090,14 +2108,15 @@ fn folded_transaction_controls_still_switch_the_commit_mode() {
     );
     h.get_by_label("More tools").click();
     h.run_steps(3);
-    h.get_by_label("Manual").click();
+    h.get_by_label("Manual commit").click();
     h.run_steps(3);
-    if h.query_by_label("Manual").is_none() {
+    if h.query_by_label("Manual commit").is_none() {
         h.get_by_label("More tools").click();
         h.run_steps(3);
     }
     step_until(&mut h, "the manual commit mode", |h| {
-        h.get_by_label("Manual").accesskit_node().toggled() == Some(egui::accesskit::Toggled::True)
+        h.get_by_label("Manual commit").accesskit_node().toggled()
+            == Some(egui::accesskit::Toggled::True)
     });
 }
 

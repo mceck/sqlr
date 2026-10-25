@@ -91,8 +91,6 @@ pub struct StatusView<'a> {
     pub conn: Option<ConnInfo>,
     /// The active tab's open transaction.
     pub transaction: Option<TxLine>,
-    /// The session's commit mode while no transaction is open ("Auto-commit").
-    pub commit_mode: Option<String>,
     /// The active editor's caret, 1-based line and column.
     pub caret: Option<(usize, usize)>,
     /// The active tab's page size; `None` without a tab.
@@ -104,6 +102,8 @@ pub struct StatusView<'a> {
     pub job: Option<&'a str>,
     /// The MCP server's state while it is enabled.
     pub mcp: Option<McpView>,
+    /// Whether the terminal panel is open.
+    pub terminal_open: bool,
 }
 
 /// What the status bar shows of the MCP server.
@@ -123,6 +123,7 @@ pub enum StatusAction {
     OpenAgents,
     /// Open the command palette.
     OpenCommands,
+    ToggleTerminal,
 }
 
 #[derive(Default)]
@@ -186,15 +187,6 @@ fn left_group(
             tx_reserve,
         );
     }
-    if let Some(mode) = view
-        .commit_mode
-        .as_deref()
-        .filter(|_| view.transaction.is_none())
-        && fits(ui, 60.0 + reserve)
-    {
-        ui.separator();
-        squeezed(ui, mode, None);
-    }
     if let Some(tx) = &view.transaction
         && fits(ui, 60.0 + reserve)
     {
@@ -218,12 +210,16 @@ fn left_group(
             segment(ui, &time, Some(palette.text));
         }
     }
-    if let Some(page_size) = view.page_size
+    // Paging only means something for a result that returned rows.
+    let rows_result = view
+        .info
+        .is_some_and(|i| i.affected.is_none() && !matches!(i.status, QueryStatus::Failed(_)));
+    if let Some(page_size) = view.page_size.filter(|_| rows_result)
         && fits(ui, 180.0)
     {
         ui.separator();
         ComboBox::from_id_salt("fetch_page_size")
-            .selected_text(format!("Fetch: {page_size}"))
+            .selected_text(format!("Fetch {page_size} rows"))
             .show_ui(ui, |ui| {
                 for n in PRESETS {
                     if ui.selectable_label(page_size == n, n.to_string()).clicked() {
@@ -234,10 +230,19 @@ fn left_group(
                 if ui.selectable_label(custom, "Custom…").clicked() {
                     state.custom = Some(page_size);
                 }
-            });
-        let more = view.info.is_some_and(ResultInfo::more_available);
-        if ui.add_enabled(more, Button::new("Fetch all")).clicked() {
-            *action = Some(StatusAction::FetchAll);
+            })
+            .response
+            .on_hover_text(
+                "Rows loaded at a time; scrolling to the end loads the next page. \
+                 Sorting and filtering re-run the query on the server.",
+            );
+        if view.info.is_some_and(ResultInfo::more_available) {
+            let all = ui
+                .button("Load all rows")
+                .on_hover_text(format!("Only the first {page_size} rows are loaded so far"));
+            if all.clicked() {
+                *action = Some(StatusAction::FetchAll);
+            }
         }
     }
     if let Some(job) = view.job
@@ -303,8 +308,32 @@ pub fn status_bar(
             }
             ui.separator();
         }
-        status_segment(ui, "UTF-8", None);
+        // Right to left: the label, then its icon before it.
+        let color = if view.terminal_open {
+            palette.text
+        } else {
+            palette.text_muted
+        };
+        let terminal = ui
+            .add(
+                Button::new(RichText::new("Terminal").small().color(color))
+                    .frame(false)
+                    .selected(view.terminal_open),
+            )
+            .on_hover_text(
+                match sqlr_ui::keymap::shortcut(ui.ctx(), sqlr_core::ActionId::ToggleTerminal) {
+                    Some(keys) => format!("Show or hide the terminal ({keys})"),
+                    None => "Show or hide the terminal".to_string(),
+                },
+            );
+        icons::paint(ui, icons::TERMINAL, color);
+        if terminal.clicked() {
+            action = Some(StatusAction::ToggleTerminal);
+        }
+        // The editor's segments, only while an editor is in front.
         if let Some((line, col)) = view.caret {
+            ui.separator();
+            status_segment(ui, "UTF-8", None);
             ui.separator();
             status_segment(ui, &format!("Ln {line}, Col {col}"), None);
         }

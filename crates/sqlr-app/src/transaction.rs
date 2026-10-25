@@ -6,11 +6,11 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use egui::{ComboBox, RichText, WidgetInfo, WidgetType};
+use egui::{ComboBox, RichText};
 use sqlr_core::CommitMode;
 use sqlr_engine::{SessionKey, Slot, TxPhase, TxState};
 use sqlr_ui::format_when;
-use sqlr_ui::theme::{self, icons};
+use sqlr_ui::theme::{self, Spacing, icons};
 
 use crate::app::{SqlrApp, tab_mut};
 
@@ -90,7 +90,7 @@ fn hh_mm(ms: i64) -> String {
     when.get(11..16).unwrap_or(&when).to_string()
 }
 
-/// The status bar's words for a commit mode.
+/// The words for a commit mode, in the toolbar's commit-mode menu.
 pub(crate) fn commit_mode_status(mode: CommitMode) -> &'static str {
     match mode {
         CommitMode::Auto => "Auto-commit",
@@ -99,41 +99,14 @@ pub(crate) fn commit_mode_status(mode: CommitMode) -> &'static str {
     }
 }
 
-/// The commit mode `session` runs in: its own once it is open, else `profile`'s (the
-/// connection's profile), else the default.
-pub(crate) fn session_commit_mode(
-    engine: &sqlr_engine::Engine,
-    session: &SessionKey,
-    profile: Option<CommitMode>,
-) -> CommitMode {
-    engine
-        .transaction(session)
-        .map(|t| t.mode)
-        .or(profile)
-        .unwrap_or_default()
-}
-
-/// Nontransactional drivers always run in auto-commit, including before connecting.
-pub(crate) fn supported_commit_mode(
-    engine: &sqlr_engine::Engine,
-    driver: &str,
-    mode: CommitMode,
-) -> CommitMode {
-    if engine
-        .manifest(driver)
-        .is_some_and(|m| m.capabilities.transactions)
-    {
-        mode
-    } else {
-        CommitMode::Auto
-    }
-}
-
-pub(crate) fn mode_name(mode: CommitMode) -> &'static str {
+/// One line on what a commit mode does, for its menu and tooltip.
+pub(crate) fn mode_help(mode: CommitMode) -> &'static str {
     match mode {
-        CommitMode::Auto => "Auto",
-        CommitMode::Manual => "Manual",
-        CommitMode::Smart => "Smart",
+        CommitMode::Auto => "Every statement is committed as soon as it runs",
+        CommitMode::Manual => "Changes wait in a transaction until you commit or roll back",
+        CommitMode::Smart => {
+            "Reads run in auto-commit; the first change opens a transaction to commit"
+        }
     }
 }
 
@@ -199,27 +172,38 @@ impl SqlrApp {
         let palette = theme::palette(ui.ctx());
         if transactions {
             ui.add_enabled_ui(connected, |ui| {
-                ui.label(RichText::new("Tx").small().color(palette.text_muted));
                 if folded {
                     for m in [CommitMode::Auto, CommitMode::Manual, CommitMode::Smart] {
-                        if theme::segment(ui, m == mode, mode_name(m)).clicked() {
+                        if theme::segment(ui, m == mode, commit_mode_status(m))
+                            .on_hover_text(mode_help(m))
+                            .clicked()
+                        {
                             picked = Some(m);
                         }
                     }
                     return;
                 }
                 ComboBox::from_id_salt("commit_mode")
-                    .selected_text(mode_name(mode))
-                    .width(76.0)
+                    .selected_text(commit_mode_status(mode))
+                    .width(116.0)
                     .show_ui(ui, |ui| {
+                        ui.set_min_width(280.0);
                         for m in [CommitMode::Auto, CommitMode::Manual, CommitMode::Smart] {
-                            if ui.selectable_label(m == mode, mode_name(m)).clicked() {
+                            let response = ui.selectable_label(m == mode, commit_mode_status(m));
+                            ui.label(
+                                RichText::new(mode_help(m))
+                                    .small()
+                                    .color(palette.text_muted),
+                            );
+                            ui.add_space(Spacing::S);
+                            if response.clicked() {
                                 picked = Some(m);
                             }
                         }
                     })
                     .response
-                    .on_hover_text("Transaction commit mode");
+                    .on_hover_text(format!("Commit mode: {}", mode_help(mode)))
+                    .on_disabled_hover_text("Connect to change the commit mode");
             });
         }
         let toggled = icons::toolbar_button(
@@ -289,23 +273,31 @@ impl SqlrApp {
         .clicked();
         let mut rollback_to = None;
         let can_rollback_to = open && !savepoints.is_empty();
-        let menu = ui
-            .add_enabled_ui(can_rollback_to, |ui| {
-                ui.menu_button(icons::text(ui, icons::ROLLBACK_TO, icons::SIZE), |ui| {
-                    for name in &savepoints {
-                        if ui.button(name).clicked() {
-                            rollback_to = Some(name.clone());
-                            ui.close();
-                        }
+        // A flat toolbar button like its neighbours; its popup lists the savepoints.
+        let menu = icons::toolbar_button(
+            ui,
+            can_rollback_to,
+            icons::ROLLBACK_TO,
+            None,
+            false,
+            "Rollback to savepoint",
+        );
+        egui::Popup::menu(&menu)
+            .style(theme::menu_style(ui.ctx()))
+            .show(|ui| {
+                for name in &savepoints {
+                    if theme::menu::item(ui, icons::ROLLBACK_TO, name, None).clicked() {
+                        rollback_to = Some(name.clone());
+                        ui.close();
                     }
-                })
-                .response
-            })
-            .inner;
-        menu.widget_info(|| {
-            WidgetInfo::labeled(WidgetType::Button, can_rollback_to, "Rollback to savepoint")
-        });
-        theme::tooltip(menu, "Roll back to a savepoint", None, None);
+                }
+            });
+        theme::tooltip(
+            menu,
+            "Roll back to a savepoint",
+            None,
+            Some("Undo the changes made after a savepoint, keeping the transaction open"),
+        );
         let Some(key) = key else {
             return;
         };
@@ -335,17 +327,6 @@ impl SqlrApp {
         if let Some(name) = rollback_to {
             self.engine.rollback_to(&key, name);
         }
-    }
-
-    /// The active tab's commit mode for the status bar ("Auto-commit"), from its session or,
-    /// before it opens, from the connection's profile.
-    pub(crate) fn commit_mode_line(&mut self) -> Option<String> {
-        let (key, _) = self.active_session()?;
-        let cfg = self.connection(&key.conn)?;
-        let profile =
-            supported_commit_mode(&self.engine, &cfg.driver, self.profile_for(cfg).commit_mode);
-        let mode = session_commit_mode(&self.engine, &key, Some(profile));
-        Some(commit_mode_status(mode).to_string())
     }
 
     /// Commits (or rolls back) the active tab's transaction.
@@ -792,19 +773,6 @@ mod tests {
                 "unexpected {label} control"
             );
         }
-    }
-
-    #[test]
-    fn nontransactional_status_is_auto_before_connecting_with_manual_profile() {
-        let (mut app, _dir) =
-            app_with_fake(FakeDriver::without_transactions(FakeScript::default()));
-        app.connections
-            .iter_mut()
-            .find(|c| c.id == "c1")
-            .unwrap()
-            .profile = Some(sqlr_core::ConnectionProfile::PRODUCTION.into());
-        app.new_tab(None, Some("c1".into()), "select 1");
-        assert_eq!(app.commit_mode_line().as_deref(), Some("Auto-commit"));
     }
 
     #[test]
