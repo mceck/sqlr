@@ -102,7 +102,8 @@ impl Platform {
     /// The platform as the release workflow spells it in an asset name.
     fn tag(&self) -> &'static str {
         match self {
-            Platform::Macos => "macos-universal.zip",
+            Platform::Macos if cfg!(target_arch = "aarch64") => "macos-arm64.dmg",
+            Platform::Macos => "macos-x86_64.dmg",
             Platform::Linux => "linux-x86_64.tar.gz",
             Platform::Windows => "windows-x86_64.zip",
         }
@@ -626,10 +627,32 @@ fn unpack(archive: &Path, into: &Path) -> Result<PathBuf, String> {
     std::fs::create_dir_all(into).map_err(|e| e.to_string())?;
     match platform() {
         Platform::Macos => {
-            run("ditto", &["-x", "-k", path(archive)?, path(into)?])?;
-            find(into, UNPACK_DEPTH, &|name, is_file| {
+            let mount = into.join("mount");
+            let app = into.join("app");
+            std::fs::create_dir_all(&mount).map_err(|e| e.to_string())?;
+            std::fs::create_dir_all(&app).map_err(|e| e.to_string())?;
+            run(
+                "hdiutil",
+                &[
+                    "attach",
+                    "-nobrowse",
+                    "-readonly",
+                    "-noverify",
+                    "-mountpoint",
+                    path(&mount)?,
+                    path(archive)?,
+                ],
+            )?;
+            // The image is detached whether or not the copy worked.
+            let copied = find(&mount, UNPACK_DEPTH, &|name, is_file| {
                 !is_file && name.ends_with(".app")
             })
+            .and_then(|found| {
+                let dest = app.join(found.file_name().unwrap_or_default());
+                run("ditto", &[path(&found)?, path(&dest)?]).map(|()| dest)
+            });
+            let _ = run("hdiutil", &["detach", "-force", path(&mount)?]);
+            copied
         }
         Platform::Linux => {
             run("tar", &["-xzf", path(archive)?, "-C", path(into)?])?;
@@ -1352,14 +1375,20 @@ mod tests {
     #[test]
     fn each_platform_finds_its_archive() {
         let latest = release(&[
-            "sqlr_0.2.0_macos-universal.zip",
+            "sqlr_0.2.0_macos-arm64.dmg",
+            "sqlr_0.2.0_macos-x86_64.dmg",
             "sqlr_0.2.0_linux-x86_64.tar.gz",
             "sqlr_0.2.0_windows-x86_64.zip",
             "SHA256SUMS.txt",
         ]);
+        let mac = if cfg!(target_arch = "aarch64") {
+            "sqlr_0.2.0_macos-arm64.dmg"
+        } else {
+            "sqlr_0.2.0_macos-x86_64.dmg"
+        };
         assert_eq!(
             pick_asset(&latest, Platform::Macos).map(|a| a.name.as_str()),
-            Some("sqlr_0.2.0_macos-universal.zip")
+            Some(mac)
         );
         assert_eq!(
             pick_asset(&latest, Platform::Linux).map(|a| a.name.as_str()),
@@ -1395,14 +1424,13 @@ mod tests {
 
     #[test]
     fn checksums_are_found_by_name() {
-        let sums =
-            "0f3c…a1  sqlr_0.2.0_linux-x86_64.tar.gz\n1b2d…c9 *sqlr_0.2.0_macos-universal.zip\n";
+        let sums = "0f3c…a1  sqlr_0.2.0_linux-x86_64.tar.gz\n1b2d…c9 *sqlr_0.2.0_macos-arm64.dmg\n";
         assert_eq!(
             checksum_for(sums, "sqlr_0.2.0_linux-x86_64.tar.gz"),
             Some("0f3c…a1".into())
         );
         assert_eq!(
-            checksum_for(sums, "sqlr_0.2.0_macos-universal.zip"),
+            checksum_for(sums, "sqlr_0.2.0_macos-arm64.dmg"),
             Some("1b2d…c9".into())
         );
         assert_eq!(checksum_for(sums, "something-else.tar.gz"), None);

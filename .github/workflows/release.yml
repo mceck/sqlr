@@ -41,39 +41,36 @@ jobs:
           toolchain: 1.98.1
           targets: aarch64-apple-darwin,x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
-      - name: Build a universal binary
+      - name: Build, package and wrap each architecture in a dmg
         run: |
-          cargo build --release -p sqlr-app --bin sqlr --target aarch64-apple-darwin
-          cargo build --release -p sqlr-app --bin sqlr --target x86_64-apple-darwin
-          lipo -create -output target/release/sqlr-universal \
-            target/aarch64-apple-darwin/release/sqlr \
-            target/x86_64-apple-darwin/release/sqlr
-          target/release/sqlr-universal --version
-      - name: Package the app bundle
-        run: scripts/package-macos.sh --bin target/release/sqlr-universal
-      - name: Stage the distribution
-        run: |
-          stage="sqlr_${VERSION}_macos-universal"
-          mkdir "$stage"
-          cp -R dist/sqlr.app "$stage/"
-          cat > "$stage/README.txt" <<'EOF'
+          for pair in aarch64-apple-darwin:arm64 x86_64-apple-darwin:x86_64; do
+            target=${pair%%:*}
+            arch=${pair##*:}
+            cargo build --release -p sqlr-app --bin sqlr --target "$target"
+            "target/$target/release/sqlr" --version
+            scripts/package-macos.sh --bin "target/$target/release/sqlr" --out "dist/$arch/sqlr.app"
+            stage="dist/stage-$arch"
+            mkdir -p "$stage"
+            cp -R "dist/$arch/sqlr.app" "$stage/"
+            ln -s /Applications "$stage/Applications"
+            cat > "$stage/README.txt" <<'EOF'
           sqlr for macOS
           ==============
 
-          Install: drag sqlr.app into /Applications.
+          Install: drag sqlr.app onto the Applications shortcut.
 
           The app is ad-hoc signed, not notarized, so Gatekeeper asks on the
           first launch. Either right-click sqlr.app and choose Open, or run:
 
             xattr -dr com.apple.quarantine /Applications/sqlr.app
-
-          Builds for Apple Silicon (arm64) and Intel (x86_64) in one binary.
           EOF
-          COPYFILE_DISABLE=1 ditto -c -k --keepParent "$stage" "${stage}.zip"
+            hdiutil create -volname "sqlr" -srcfolder "$stage" -ov -format UDZO \
+              "sqlr_${VERSION}_macos-${arch}.dmg"
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: macos
-          path: sqlr_${{ env.VERSION }}_macos-universal.zip
+          path: sqlr_${{ env.VERSION }}_macos-*.dmg
           if-no-files-found: error
 
   linux:
