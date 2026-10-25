@@ -19,6 +19,7 @@ Or get it from the [download page](https://mceck.github.io/sqlr/download.html)
 Link to [documentation](https://mceck.github.io/sqlr/usage/README.html).
 
 - **Edit data in the grid**: double-click a cell, add/duplicate/delete rows, changes tinted until **Preview** (the generated SQL), **Apply** or **Discard**; concurrent changes are detected and named.
+- **AI integration**: can be used and configured with your favourite AI agent through MCP.
 - **SQL editor built for big scripts**: only visible lines are laid out; a 10 MB file scrolls and takes typing in well under a frame. Statement coloring, autocomplete, find/replace, multi-caret editing, SQL formatting (⌥⌘L), a command palette (⌘⇧P) over commands, snippets and history.
 - **Profiles and commit modes** per connection: Development / Test / Production, each with its color, commit mode (**Auto**, **Manual**, **Smart**), read-only flag and confirmation rules for writes and destructive statements.
 - **Object editors**: tables, views, indexes, sequences, functions, triggers, schemas and databases open in tabs with sub-tabs; edits stay pending until **Apply**, with a **Preview DDL** first. Create, rename (F2), drop, truncate, generate SQL, copy DDL.
