@@ -325,6 +325,8 @@ fn database_icons_follow_the_driver() {
         assert_eq!(DbIcon::for_driver(id), DbIcon::MsSql, "{id}");
     }
     assert_eq!(DbIcon::for_driver("jdbc-clickhouse"), DbIcon::ClickHouse);
+    assert_eq!(DbIcon::for_driver("snowflake"), DbIcon::Snowflake);
+    assert_eq!(DbIcon::for_driver("duckdb"), DbIcon::DuckDb);
     // The explorer's fake driver and unknown ids use the generic mark.
     assert_eq!(DbIcon::for_driver("fake"), DbIcon::Database);
     assert_eq!(DbIcon::for_driver("mariadb"), DbIcon::Database);

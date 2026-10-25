@@ -145,6 +145,8 @@ pub enum DbIcon {
     Oracle,
     MsSql,
     ClickHouse,
+    Snowflake,
+    DuckDb,
     Database,
 }
 
@@ -164,6 +166,8 @@ impl DbIcon {
             "oracle" | "jdbc-oracle" => Self::Oracle,
             "mssql" | "sqlserver" | "jdbc-sqlserver" => Self::MsSql,
             "clickhouse" | "jdbc-clickhouse" => Self::ClickHouse,
+            "snowflake" => Self::Snowflake,
+            "duckdb" => Self::DuckDb,
             _ => Self::Database,
         }
     }
@@ -180,6 +184,8 @@ impl DbIcon {
             Self::Oracle => "oracle",
             Self::MsSql => "mssql",
             Self::ClickHouse => "clickhouse",
+            Self::Snowflake => "snowflake",
+            Self::DuckDb => "duckdb",
             Self::Database => "database",
         }
     }
@@ -201,6 +207,8 @@ impl DbIcon {
             (Self::Oracle, _) => include_bytes!("../../assets/icons/oracle.rgba"),
             (Self::MsSql, _) => include_bytes!("../../assets/icons/mssql.rgba"),
             (Self::ClickHouse, _) => include_bytes!("../../assets/icons/clickhouse.rgba"),
+            (Self::Snowflake, _) => include_bytes!("../../assets/icons/snowflake.rgba"),
+            (Self::DuckDb, _) => include_bytes!("../../assets/icons/duckdb.rgba"),
             (Self::Database, _) => include_bytes!("../../assets/icons/database.rgba"),
         }
     }
