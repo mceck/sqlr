@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use parking_lot::Mutex;
 use russh::client::{self, Handle};
-use russh::keys::agent::client::AgentClient;
+use russh::keys::agent::client::{AgentClient, AgentStream};
 use russh::keys::{HashAlg, PrivateKeyWithHashAlg, PublicKey, PublicKeyOrCertificate};
 use sqlr_core::{
     ConnectionConfig, DriverError, DriverManifest, ErrorKind, FieldSpec, FieldType, Secrets,
@@ -596,6 +596,32 @@ fn ssh_error(hop: &Hop, e: impl std::fmt::Display) -> DriverError {
     )
 }
 
+/// A boxed agent stream, so the Unix socket and the Windows transports share one type.
+type AgentConnection = AgentClient<Box<dyn AgentStream + Send + Unpin>>;
+
+/// Connects to the SSH agent the platform provides.
+async fn connect_agent() -> Result<AgentConnection, String> {
+    #[cfg(unix)]
+    {
+        AgentClient::connect_env()
+            .await
+            .map(|agent| agent.dynamic())
+            .map_err(|e| e.to_string())
+    }
+    #[cfg(windows)]
+    {
+        // Windows OpenSSH serves the agent through this named pipe; PuTTY users run
+        // Pageant instead, so fall back to it.
+        match AgentClient::connect_named_pipe(r"\\.\pipe\openssh-ssh-agent").await {
+            Ok(agent) => Ok(agent.dynamic()),
+            Err(pipe) => AgentClient::connect_pageant()
+                .await
+                .map(|agent| agent.dynamic())
+                .map_err(|pageant| format!("OpenSSH agent pipe: {pipe}; Pageant: {pageant}")),
+        }
+    }
+}
+
 async fn authenticate(
     handle: &mut Handle<Client>,
     hop: &Hop,
@@ -629,7 +655,7 @@ async fn authenticate(
                 .success()
         }
         Auth::Agent => {
-            let mut agent = AgentClient::connect_env().await.map_err(|e| {
+            let mut agent = connect_agent().await.map_err(|e| {
                 DriverError::new(ErrorKind::Auth, format!("SSH agent unavailable: {e}"))
             })?;
             let identities = agent
