@@ -84,6 +84,8 @@ pub struct Latest {
 pub enum Platform {
     Macos,
     Linux,
+    /// Linux running from an AppImage, which replaces itself with the new AppImage.
+    LinuxAppImage,
     Windows,
 }
 
@@ -93,9 +95,18 @@ pub fn platform() -> Platform {
         Platform::Macos
     } else if cfg!(target_os = "windows") {
         Platform::Windows
+    } else if appimage().is_some() {
+        Platform::LinuxAppImage
     } else {
         Platform::Linux
     }
+}
+
+/// The `.AppImage` file this process runs from: the AppImage runtime exports its path
+/// as `APPIMAGE`, while `current_exe` points into its read-only mount.
+fn appimage() -> Option<PathBuf> {
+    let path = PathBuf::from(std::env::var_os("APPIMAGE").filter(|v| !v.is_empty())?);
+    path.is_file().then_some(path)
 }
 
 impl Platform {
@@ -105,7 +116,8 @@ impl Platform {
             Platform::Macos if cfg!(target_arch = "aarch64") => "macos-arm64.dmg",
             Platform::Macos => "macos-x86_64.dmg",
             Platform::Linux => "linux-x86_64.tar.gz",
-            Platform::Windows => "windows-x86_64.zip",
+            Platform::LinuxAppImage => "linux-x86_64.AppImage",
+            Platform::Windows => "windows-x86_64.exe",
         }
     }
 }
@@ -318,6 +330,16 @@ pub fn target() -> Result<Target, &'static str> {
                 })
                 .ok_or("sqlr is not running from an app bundle")?;
             Ok(Target::Bundle(bundle.to_path_buf()))
+        }
+        Platform::LinuxAppImage => {
+            let file = appimage().ok_or("this AppImage's own path is unknown")?;
+            let dir = file
+                .parent()
+                .ok_or("this AppImage's own folder is unknown")?;
+            if !writable(dir) {
+                return Err("this AppImage sits in a folder only an administrator can write");
+            }
+            Ok(Target::Binary(file))
         }
         Platform::Linux => {
             let exe = std::env::current_exe().map_err(|_| "this build's own path is unknown")?;
@@ -626,6 +648,8 @@ fn install(
 fn unpack(archive: &Path, into: &Path) -> Result<PathBuf, String> {
     std::fs::create_dir_all(into).map_err(|e| e.to_string())?;
     match platform() {
+        // The download is the new AppImage itself.
+        Platform::LinuxAppImage => Ok(archive.to_path_buf()),
         Platform::Macos => {
             let mount = into.join("mount");
             let app = into.join("app");
@@ -1378,7 +1402,8 @@ mod tests {
             "sqlr_0.2.0_macos-arm64.dmg",
             "sqlr_0.2.0_macos-x86_64.dmg",
             "sqlr_0.2.0_linux-x86_64.tar.gz",
-            "sqlr_0.2.0_windows-x86_64.zip",
+            "sqlr_0.2.0_linux-x86_64.AppImage",
+            "sqlr_0.2.0_windows-x86_64.exe",
             "SHA256SUMS.txt",
         ]);
         let mac = if cfg!(target_arch = "aarch64") {
@@ -1395,8 +1420,12 @@ mod tests {
             Some("sqlr_0.2.0_linux-x86_64.tar.gz")
         );
         assert_eq!(
+            pick_asset(&latest, Platform::LinuxAppImage).map(|a| a.name.as_str()),
+            Some("sqlr_0.2.0_linux-x86_64.AppImage")
+        );
+        assert_eq!(
             pick_asset(&latest, Platform::Windows).map(|a| a.name.as_str()),
-            Some("sqlr_0.2.0_windows-x86_64.zip")
+            Some("sqlr_0.2.0_windows-x86_64.exe")
         );
         assert!(pick_asset(&release(&["SHA256SUMS.txt"]), Platform::Linux).is_none());
     }

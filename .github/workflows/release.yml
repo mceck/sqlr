@@ -75,7 +75,7 @@ jobs:
 
   linux:
     needs: version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
@@ -115,10 +115,35 @@ jobs:
           Or install it system-wide:   sudo cp -r bin share /usr/local/
           EOF
           tar -czf "${stage}.tar.gz" "$stage"
+      - name: Build the AppImage
+        run: |
+          appdir=AppDir
+          mkdir -p "$appdir/usr/bin"
+          cp target/release/sqlr "$appdir/usr/bin/sqlr"
+          cp docs/media/icon.png "$appdir/sqlr.png"
+          cat > "$appdir/sqlr.desktop" <<'EOF'
+          [Desktop Entry]
+          Type=Application
+          Name=sqlr
+          GenericName=Database client
+          Comment=Universal database client
+          Exec=sqlr
+          Icon=sqlr
+          Terminal=false
+          Categories=Development;Database;
+          Keywords=sql;database;db;client;
+          EOF
+          printf '#!/bin/sh\nexec "$(dirname "$(readlink -f "$0")")/usr/bin/sqlr" "$@"\n' > "$appdir/AppRun"
+          chmod +x "$appdir/AppRun"
+          curl -fsSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+          ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool "$appdir" "sqlr_${VERSION}_linux-x86_64.AppImage"
       - uses: actions/upload-artifact@v4
         with:
           name: linux
-          path: sqlr_${{ env.VERSION }}_linux-x86_64.tar.gz
+          path: |
+            sqlr_${{ env.VERSION }}_linux-x86_64.tar.gz
+            sqlr_${{ env.VERSION }}_linux-x86_64.AppImage
           if-no-files-found: error
 
   windows:
@@ -137,11 +162,11 @@ jobs:
       - name: Smoke test
         run: ./target/release/sqlr.exe --version
       - name: Stage the distribution
-        run: Compress-Archive -Path ./target/release/sqlr.exe -DestinationPath "sqlr_${env:VERSION}_windows-x86_64.zip"
+        run: Copy-Item ./target/release/sqlr.exe "sqlr_${env:VERSION}_windows-x86_64.exe"
       - uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: sqlr_${{ env.VERSION }}_windows-x86_64.zip
+          path: sqlr_${{ env.VERSION }}_windows-x86_64.exe
           if-no-files-found: error
 
   release:
