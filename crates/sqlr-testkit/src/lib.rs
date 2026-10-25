@@ -614,6 +614,7 @@ impl FakeDriver {
             name: "Fake".into(),
             family: Family::Relational,
             capabilities: Capabilities {
+                transactions: true,
                 editable_results: script.editable,
                 dump: script.dump,
                 ..Capabilities::default()
@@ -682,6 +683,13 @@ impl FakeDriver {
     pub fn with_ssh(script: FakeScript) -> Arc<Self> {
         let mut fake = Arc::into_inner(Self::new(script)).expect("a new fake is unshared");
         fake.manifest.capabilities.ssh = true;
+        Arc::new(fake)
+    }
+
+    /// A relational fake whose driver does not support transactions.
+    pub fn without_transactions(script: FakeScript) -> Arc<Self> {
+        let mut fake = Arc::into_inner(Self::new(script)).expect("a new fake is unshared");
+        fake.manifest.capabilities.transactions = false;
         Arc::new(fake)
     }
 

@@ -43,6 +43,63 @@ fn sqlite_engine(path: &Path) -> Engine {
     engine
 }
 
+#[test]
+fn nontransactional_targets_reject_imports_and_new_tables_without_writes() {
+    use sqlr_core::{Endpoint, ErrorKind, TransferSpec};
+    let fake = FakeDriver::without_transactions(FakeScript::default());
+    let mut drivers = DriverRegistry::default();
+    drivers.register(fake.clone());
+    let engine = Engine::new(drivers, no_repaint());
+    engine.connect(config("c", "fake"), Secrets::default(), dev());
+    assert!(wait_until(TIMEOUT, || matches!(
+        engine.session_status("c"),
+        Some(SessionStatus::Connected(_))
+    )));
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("source.csv");
+    std::fs::write(&path, "id\n1\n").unwrap();
+    let target = TableRef {
+        database: None,
+        schema: None,
+        name: "target".into(),
+    };
+    let options = ImportOptions {
+        truncate_first: true,
+        ..Default::default()
+    };
+    let job = engine.import(
+        &SessionKey::meta("c"),
+        path.clone(),
+        TextFormat::Csv(CsvOptions::default()),
+        target.clone(),
+        Vec::new(),
+        options.clone(),
+    );
+    assert!(
+        matches!(finished(&engine, job), JobOutcome::Failed(e) if e.kind == ErrorKind::Unsupported && e.message.contains("transaction"))
+    );
+    let job = engine.transfer(TransferSpec {
+        source: Endpoint::File {
+            path,
+            format: TextFormat::Csv(CsvOptions::default()),
+        },
+        target: Endpoint::NewTable {
+            conn: "c".into(),
+            table: target,
+            ddl: Some("CREATE TABLE target(id INTEGER)".into()),
+        },
+        mapping: Vec::new(),
+        options,
+    });
+    assert!(
+        matches!(finished(&engine, job), JobOutcome::Failed(e) if e.kind == ErrorKind::Unsupported && e.message.contains("transaction"))
+    );
+    assert!(
+        fake.executed().is_empty(),
+        "no CREATE, DELETE, INSERT or transaction statements may run"
+    );
+}
+
 fn finished(engine: &Engine, job: JobId) -> JobOutcome {
     assert!(
         wait_until(TIMEOUT * 4, || engine

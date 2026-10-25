@@ -778,7 +778,13 @@ impl egui_dock::TabViewer for Viewer<'_> {
             .show(ui, |ui| {
                 let cfg = conn.and_then(|c| self.connections.iter().find(|x| x.id == c));
                 let name = cfg.map(|c| c.name.as_str());
-                let mode = cfg.map(|c| crate::app::profile_of(self.profiles, c).commit_mode);
+                let mode = cfg.map(|c| {
+                    crate::transaction::supported_commit_mode(
+                        self.engine,
+                        &c.driver,
+                        crate::app::profile_of(self.profiles, c).commit_mode,
+                    )
+                });
                 if let Some(command) =
                     crate::shell::tab_breadcrumb(ui, self.engine, tab, name, mode)
                 {

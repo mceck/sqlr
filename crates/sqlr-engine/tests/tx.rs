@@ -19,6 +19,75 @@ fn profile(mode: CommitMode) -> ConnectionProfile {
     }
 }
 
+fn nontransactional(profile: ConnectionProfile) -> (Engine, Arc<FakeDriver>, SessionKey) {
+    let fake = FakeDriver::without_transactions(writes());
+    let mut drivers = DriverRegistry::default();
+    drivers.register(fake.clone());
+    let engine = Engine::new(drivers, no_repaint());
+    engine.connect(config("c", "fake"), Secrets::default(), profile);
+    assert!(wait_until(TIMEOUT, || matches!(
+        engine.session_status("c"),
+        Some(SessionStatus::Connected(_))
+    )));
+    let key = engine.session("c", Some(1));
+    (engine, fake, key)
+}
+
+#[test]
+fn nontransactional_manual_profile_reads_without_begin() {
+    let (engine, fake, key) = nontransactional(profile(CommitMode::Manual));
+    ok(&engine, &key, "select 1");
+    assert_eq!(fake.executed(), ["select 1"]);
+    assert_eq!(engine.transaction(&key).unwrap().mode, CommitMode::Auto);
+    assert_eq!(phase(&engine, &key), TxPhase::Idle);
+}
+
+#[test]
+fn nontransactional_smart_profile_writes_without_begin_or_mode_changes() {
+    let (engine, fake, key) = nontransactional(profile(CommitMode::Smart));
+    engine.set_commit_mode(&key, CommitMode::Manual);
+    ok(&engine, &key, "insert into t values (1)");
+    assert_eq!(fake.executed(), ["insert into t values (1)"]);
+    assert_eq!(engine.transaction(&key).unwrap().mode, CommitMode::Auto);
+    assert!(engine.open_transactions().is_empty());
+}
+
+#[test]
+fn nontransactional_explicit_transaction_commands_fail_before_driver_execution() {
+    let (engine, fake, key) = nontransactional(profile(CommitMode::Auto));
+    for sql in ["BEGIN", "COMMIT", "ROLLBACK", "SAVEPOINT point"] {
+        assert!(
+            matches!(run(&engine, &key, sql), QueryStatus::Failed(e) if e.kind == ErrorKind::Unsupported)
+        );
+    }
+    assert!(fake.executed().is_empty());
+    assert!(engine.open_transactions().is_empty());
+}
+
+#[test]
+fn nontransactional_profiles_and_agent_sessions_keep_read_only_policy() {
+    let (engine, fake, key) = nontransactional(ConnectionProfile {
+        read_only: true,
+        ..profile(CommitMode::Manual)
+    });
+    let state = engine.transaction(&key).unwrap();
+    assert_eq!(state.mode, CommitMode::Auto);
+    assert!(state.read_only);
+    assert!(
+        matches!(run(&engine, &key, "insert into t values (1)"), QueryStatus::Failed(e) if e.kind == ErrorKind::Permission)
+    );
+    let agent = engine.agent_session("c", "read");
+    engine.prepare_agent_session(&agent, false);
+    engine.set_commit_mode(&agent, CommitMode::Smart);
+    ok(&engine, &agent, "select 1");
+    assert_eq!(engine.transaction(&agent).unwrap().mode, CommitMode::Auto);
+    assert!(engine.transaction(&agent).unwrap().read_only);
+    assert!(
+        matches!(run(&engine, &agent, "insert into t values (2)"), QueryStatus::Failed(e) if e.kind == ErrorKind::Permission)
+    );
+    assert_eq!(fake.executed(), ["select 1"]);
+}
+
 /// An engine with the connection "c" connected under `profile`, and tab 1's session key.
 fn setup(script: FakeScript, profile: ConnectionProfile) -> (Engine, Arc<FakeDriver>, SessionKey) {
     let fake = FakeDriver::new(script);

@@ -113,6 +113,22 @@ pub(crate) fn session_commit_mode(
         .unwrap_or_default()
 }
 
+/// Nontransactional drivers always run in auto-commit, including before connecting.
+pub(crate) fn supported_commit_mode(
+    engine: &sqlr_engine::Engine,
+    driver: &str,
+    mode: CommitMode,
+) -> CommitMode {
+    if engine
+        .manifest(driver)
+        .is_some_and(|m| m.capabilities.transactions)
+    {
+        mode
+    } else {
+        CommitMode::Auto
+    }
+}
+
 pub(crate) fn mode_name(mode: CommitMode) -> &'static str {
     match mode {
         CommitMode::Auto => "Auto",
@@ -138,13 +154,6 @@ impl SqlrApp {
         Some((session, tx))
     }
 
-    /// Whether the active tab is a Redis tab, which has no transactions.
-    fn active_is_key_value(&mut self) -> bool {
-        self.active_key()
-            .and_then(|key| tab_mut(&mut self.dock, key))
-            .is_some_and(|t| t.redis.is_some())
-    }
-
     /// Profile colors of the saved connections that have one, by connection id.
     pub(crate) fn profile_tints(&self) -> HashMap<String, [u8; 3]> {
         self.connections
@@ -154,11 +163,10 @@ impl SqlrApp {
     }
 
     /// Commit mode, read-only, Commit, Rollback, Savepoint and "Rollback to ▾"; only
-    /// read-only on a Redis tab, which has no transactions. `folded` when drawn inside the
+    /// read-only for drivers without transactions. `folded` when drawn inside the
     /// toolbar's overflow popup: the commit mode is then a row of segments, since a combo's
     /// own popup would close the overflow one.
     pub(crate) fn transaction_controls(&mut self, ui: &mut egui::Ui, folded: bool) {
-        let key_value = self.active_is_key_value();
         let session = self.active_session();
         let (key, tx) = match &session {
             Some((key, tx)) => (Some(key.clone()), tx.clone()),
@@ -169,6 +177,12 @@ impl SqlrApp {
             .as_ref()
             .and_then(|k| self.connection(&k.conn))
             .map(|c| self.profile_for(c));
+        // Without a session (or a known driver) the controls stay, disabled.
+        let transactions = key
+            .as_ref()
+            .and_then(|key| self.connection(&key.conn))
+            .and_then(|cfg| self.engine.manifest(&cfg.driver))
+            .is_none_or(|manifest| manifest.capabilities.transactions);
         let mode = tx
             .as_ref()
             .map(|t| t.mode)
@@ -183,7 +197,7 @@ impl SqlrApp {
         let connected = tx.is_some();
         let mut picked = None;
         let palette = theme::palette(ui.ctx());
-        if !key_value {
+        if transactions {
             ui.add_enabled_ui(connected, |ui| {
                 ui.label(RichText::new("Tx").small().color(palette.text_muted));
                 if folded {
@@ -218,7 +232,7 @@ impl SqlrApp {
         )
         .on_hover_text("Read-only session: refuse statements that modify data")
         .clicked();
-        if key_value {
+        if !transactions {
             if let (Some(key), true) = (&key, toggled) {
                 self.engine.set_read_only(key, !read_only);
             }
@@ -307,7 +321,9 @@ impl SqlrApp {
     /// before it opens, from the connection's profile.
     pub(crate) fn commit_mode_line(&mut self) -> Option<String> {
         let (key, _) = self.active_session()?;
-        let profile = self.profile_for(self.connection(&key.conn)?).commit_mode;
+        let cfg = self.connection(&key.conn)?;
+        let profile =
+            supported_commit_mode(&self.engine, &cfg.driver, self.profile_for(cfg).commit_mode);
         let mode = session_commit_mode(&self.engine, &key, Some(profile));
         Some(commit_mode_status(mode).to_string())
     }
@@ -730,6 +746,44 @@ mod tests {
             diagnostics_warning: None,
         };
         (SqlrApp::new(deps, &egui::Context::default()), dir)
+    }
+
+    #[test]
+    fn nontransactional_toolbar_keeps_read_only_without_transaction_controls() {
+        use egui_kittest::kittest::Queryable;
+        let (mut app, _dir) =
+            app_with_fake(FakeDriver::without_transactions(FakeScript::default()));
+        app.connect("c1");
+        wait("connect", || app.is_live("c1"));
+        app.new_tab(None, Some("c1".into()), "select 1");
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size((900.0, 100.0))
+            .build_ui_state(
+                |ui, app: &mut SqlrApp| app.transaction_controls(ui, true),
+                app,
+            );
+        sqlr_ui::theme::install_fonts(&harness.ctx, &[]);
+        harness.run_steps(2);
+        assert!(harness.query_by_label("Read-only").is_some());
+        for label in ["Tx", "Manual", "Commit", "Rollback", "Savepoint"] {
+            assert!(
+                harness.query_by_label(label).is_none(),
+                "unexpected {label} control"
+            );
+        }
+    }
+
+    #[test]
+    fn nontransactional_status_is_auto_before_connecting_with_manual_profile() {
+        let (mut app, _dir) =
+            app_with_fake(FakeDriver::without_transactions(FakeScript::default()));
+        app.connections
+            .iter_mut()
+            .find(|c| c.id == "c1")
+            .unwrap()
+            .profile = Some(sqlr_core::ConnectionProfile::PRODUCTION.into());
+        app.new_tab(None, Some("c1".into()), "select 1");
+        assert_eq!(app.commit_mode_line().as_deref(), Some("Auto-commit"));
     }
 
     #[test]
