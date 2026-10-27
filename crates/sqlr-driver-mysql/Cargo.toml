@@ -12,6 +12,7 @@ name = "integration"
 path = "tests/integration.rs"
 
 [dependencies]
+parking_lot.workspace = true
 sqlr-core = { path = "../sqlr-core" }
 async-trait.workspace = true
 mysql_async.workspace = true
@@ -24,3 +25,6 @@ sqlr-driver-tests = { path = "../sqlr-driver-tests" }
 sqlr-engine = { path = "../sqlr-engine" }
 sqlr-testkit = { path = "../sqlr-testkit" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+
+[lints]
+workspace = true

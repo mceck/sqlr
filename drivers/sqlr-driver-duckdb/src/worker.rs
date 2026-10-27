@@ -4,10 +4,11 @@ use crate::{
     map_error,
 };
 use duckdb::{AccessMode, Config, InterruptHandle};
+use parking_lot::Mutex;
 use sqlr_driver_sdk::{DriverError, ErrorKind, ResultChunk, Value};
 use std::{
     collections::HashSet,
-    sync::{Arc, Mutex, mpsc},
+    sync::{Arc, mpsc},
 };
 use tokio::sync::oneshot;
 
@@ -74,7 +75,7 @@ impl Worker {
                         return;
                     }
                     if ready_tx.send(Ok(conn.interrupt_handle())).is_ok() {
-                        run(conn, rx, &flag);
+                        run(&conn, &rx, &flag);
                     }
                 }
                 Err(error) => {
@@ -111,10 +112,7 @@ impl Worker {
         rx.await.map_err(|_| closed())
     }
     pub(crate) fn interrupt(&self) {
-        let running = self
-            .running
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let running = self.running.lock();
         if *running {
             self.interrupt.interrupt();
         }
@@ -125,21 +123,16 @@ impl Worker {
 pub(crate) struct Running<'a>(&'a Mutex<bool>);
 impl<'a> Running<'a> {
     pub(crate) fn start(flag: &'a Mutex<bool>) -> Self {
-        *flag
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = true;
+        *flag.lock() = true;
         Self(flag)
     }
 }
 impl Drop for Running<'_> {
     fn drop(&mut self) {
-        *self
-            .0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = false;
+        *self.0.lock() = false;
     }
 }
-fn run(conn: duckdb::Connection, rx: mpsc::Receiver<Command>, running: &Mutex<bool>) {
+fn run(conn: &duckdb::Connection, rx: &mpsc::Receiver<Command>, running: &Mutex<bool>) {
     let mut next_stream = 1;
     let mut pending = None;
     let mut cut = HashSet::new();
@@ -155,7 +148,7 @@ fn run(conn: duckdb::Connection, rx: mpsc::Receiver<Command>, running: &Mutex<bo
             Command::Execute { sql, params, reply } => {
                 let stream = next_stream;
                 next_stream += 1;
-                let ended = execute::run(&conn, &rx, running, stream, &sql, &params, reply);
+                let ended = execute::run(conn, rx, running, stream, &sql, &params, reply);
                 if ended.cut {
                     cut.insert(stream);
                 }
@@ -174,7 +167,7 @@ fn run(conn: duckdb::Connection, rx: mpsc::Receiver<Command>, running: &Mutex<bo
             Command::Close { stream } => {
                 cut.remove(&stream);
             }
-            Command::Run(job) => job(&conn),
+            Command::Run(job) => job(conn),
         }
     }
 }

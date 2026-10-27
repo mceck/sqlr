@@ -188,22 +188,23 @@ struct PropertyDraft {
 
 fn properties_editor(ui: &mut Ui, key: &str, text: &mut String) -> bool {
     let id = ui.make_persistent_id(("property_editor", key));
-    let mut draft = ui.ctx().data_mut(|d| d.get_temp::<PropertyDraft>(id));
-    if draft
-        .as_ref()
-        .is_none_or(|d| d.source != *text && d.pending.as_deref() != Some(text.as_str()))
-    {
-        let rows = serde_json::from_str::<std::collections::BTreeMap<String, String>>(text)
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
-        draft = Some(PropertyDraft {
-            source: text.clone(),
-            pending: None,
-            rows,
-        });
-    }
-    let mut draft = draft.unwrap();
+    let stored = ui.ctx().data_mut(|d| d.get_temp::<PropertyDraft>(id));
+    let mut draft = match stored {
+        Some(draft) if draft.source == *text || draft.pending.as_deref() == Some(text.as_str()) => {
+            draft
+        }
+        _ => {
+            let rows = serde_json::from_str::<std::collections::BTreeMap<String, String>>(text)
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+            PropertyDraft {
+                source: text.clone(),
+                pending: None,
+                rows,
+            }
+        }
+    };
     if draft.pending.as_deref() == Some(text.as_str()) {
         draft.source = text.clone();
         draft.pending = None;

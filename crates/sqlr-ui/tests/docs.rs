@@ -177,7 +177,7 @@ fn json_view_validates_before_save() {
         ("_id", DocValue::ObjectId([7; 12])),
         ("n", DocValue::Int64(5)),
     ]);
-    let mut h = json_harness(original.clone());
+    let mut h = json_harness(original);
     h.get_by_label("Edit document").click();
     h.run_steps(2);
     assert!(h.state().state.editing());

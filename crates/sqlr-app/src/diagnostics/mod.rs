@@ -12,11 +12,12 @@ pub(crate) mod ring;
 pub(crate) mod store;
 pub mod ui;
 
+use parking_lot::Mutex;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 use std::thread::JoinHandle;
 use std::time::Instant;
 
@@ -96,7 +97,7 @@ impl LogLevelControl {
     }
 
     pub fn current(&self) -> LogLevel {
-        *self.current.lock().unwrap_or_else(|e| e.into_inner())
+        *self.current.lock()
     }
 
     pub fn set(&self, level: LogLevel) -> Result<(), String> {
@@ -215,7 +216,7 @@ impl Diagnostics {
         }
         diagnostics.dir = Some(dir.clone());
         diagnostics.session.data_dir = Some(data_dir.display().to_string());
-        let _ = store::prune(&dir);
+        store::prune(&dir);
 
         let lock = store::SessionLock::acquire(&dir);
         let other = lock.other_instance();
@@ -231,10 +232,10 @@ impl Diagnostics {
             let _ = lock.write_marker(&marker);
             if let Some(previous) = previous {
                 let notice = previous_notice(&dir, &previous, diagnostics.session.id.clone());
-                *diagnostics.notice.lock().unwrap_or_else(|e| e.into_inner()) = Some(notice);
+                *diagnostics.notice.lock() = Some(notice);
             }
         }
-        *diagnostics.lock.lock().unwrap_or_else(|e| e.into_inner()) = Some(lock);
+        *diagnostics.lock.lock() = Some(lock);
         diagnostics
     }
 
@@ -242,10 +243,10 @@ impl Diagnostics {
         let (tx, rx) = std::sync::mpsc::channel();
         let thread = std::thread::Builder::new()
             .name("sqlr-diagnostics".into())
-            .spawn(move || writer_loop(rx))
+            .spawn(move || writer_loop(&rx))
             .ok();
         if let Some(thread) = thread {
-            *self.writer.lock().unwrap_or_else(|e| e.into_inner()) = Some(Writer { tx, thread });
+            *self.writer.lock() = Some(Writer { tx, thread });
         }
     }
 
@@ -298,19 +299,12 @@ impl Diagnostics {
             .get()
             .cloned()
             .unwrap_or_else(Environment::basic);
-        environment.graphics_backend = self
-            .graphics_backend
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
+        environment.graphics_backend = self.graphics_backend.lock().clone();
         environment
     }
 
     pub fn set_graphics_backend(&self, backend: impl Into<String>) {
-        *self
-            .graphics_backend
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = Some(backend.into());
+        *self.graphics_backend.lock() = Some(backend.into());
     }
 
     pub fn include_sql(&self) -> bool {
@@ -322,31 +316,22 @@ impl Diagnostics {
     }
 
     pub fn install_log_level_control(&self, control: LogLevelControl) {
-        *self.log_level.lock().unwrap_or_else(|e| e.into_inner()) = Some(control);
+        *self.log_level.lock() = Some(control);
     }
 
     pub fn log_level(&self) -> Option<LogLevel> {
-        self.log_level
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .as_ref()
-            .map(LogLevelControl::current)
+        self.log_level.lock().as_ref().map(LogLevelControl::current)
     }
 
     pub fn log_level_env_controlled(&self) -> bool {
         self.log_level
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
             .as_ref()
             .is_some_and(|c| c.env_controlled)
     }
 
     pub fn set_log_level(&self, level: LogLevel) -> Result<(), String> {
-        let control = self
-            .log_level
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
+        let control = self.log_level.lock().clone();
         match control {
             Some(control) => control.set(level),
             None => Err("logging is not initialized".into()),
@@ -355,7 +340,7 @@ impl Diagnostics {
 
     /// The notice for the previous session, once. The Startup banner takes it.
     pub fn take_startup_notice(&self) -> Option<StartupNotice> {
-        self.notice.lock().unwrap_or_else(|e| e.into_inner()).take()
+        self.notice.lock().take()
     }
 
     /// Applies the SQL setting to an incident before it is written: the same switch governs
@@ -381,11 +366,7 @@ impl Diagnostics {
             short_suffix()
         );
         let mut environment = self.environment();
-        environment.graphics_backend = self
-            .graphics_backend
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
+        environment.graphics_backend = self.graphics_backend.lock().clone();
         let logs = ring::global()
             .snapshot()
             .excerpt()
@@ -443,7 +424,7 @@ impl Diagnostics {
         let Some(dir) = self.dir.clone() else {
             return;
         };
-        let writer = self.writer.lock().unwrap_or_else(|e| e.into_inner());
+        let writer = self.writer.lock();
         if !writer.as_ref().is_some_and(|writer| {
             writer
                 .tx
@@ -456,7 +437,7 @@ impl Diagnostics {
 
     /// Runs file and bundle work on the diagnostics writer, in order with incident writes.
     pub fn background(&self, work: impl FnOnce() + Send + 'static) -> bool {
-        let writer = self.writer.lock().unwrap_or_else(|e| e.into_inner());
+        let writer = self.writer.lock();
         writer
             .as_ref()
             .is_some_and(|writer| writer.tx.send(WriterMsg::Work(Box::new(work))).is_ok())
@@ -464,7 +445,7 @@ impl Diagnostics {
 
     /// Waits until every queued incident reached the disk.
     pub fn flush(&self) {
-        let writer = self.writer.lock().unwrap_or_else(|e| e.into_inner());
+        let writer = self.writer.lock();
         let Some(writer) = writer.as_ref() else {
             return;
         };
@@ -533,17 +514,18 @@ impl Diagnostics {
     pub fn acknowledge(&self, id: &str) {
         if let Some(dir) = &self.dir {
             let _ = store::acknowledge(dir, id);
-            if let Ok(mut notice) = self.notice.lock()
-                && notice.as_ref().is_some_and(|n| n.incident().id == id)
             {
-                *notice = None;
+                let mut notice = self.notice.lock();
+                if notice.as_ref().is_some_and(|n| n.incident().id == id) {
+                    *notice = None;
+                }
             }
         }
     }
 
     pub fn prune(&self) {
         if let Some(dir) = &self.dir {
-            let _ = store::prune(dir);
+            store::prune(dir);
         }
     }
 
@@ -595,7 +577,7 @@ impl Diagnostics {
         if self.panicked.load(Ordering::Acquire) {
             return;
         }
-        let lock = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let lock = self.lock.lock();
         if let Some(lock) = lock.as_ref() {
             let _ = lock.clear_marker();
         }
@@ -610,7 +592,7 @@ impl Diagnostics {
 impl Drop for Diagnostics {
     fn drop(&mut self) {
         self.clean_exit();
-        let writer = self.writer.get_mut().unwrap_or_else(|e| e.into_inner());
+        let writer = self.writer.get_mut();
         if let Some(writer) = writer.take() {
             let _ = writer.tx.send(WriterMsg::Stop);
             if writer.thread.thread().id() != std::thread::current().id() {
@@ -620,7 +602,7 @@ impl Drop for Diagnostics {
     }
 }
 
-fn writer_loop(rx: Receiver<WriterMsg>) {
+fn writer_loop(rx: &Receiver<WriterMsg>) {
     while let Ok(message) = rx.recv() {
         match message {
             WriterMsg::Write(incident, dir) => {

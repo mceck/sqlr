@@ -30,7 +30,7 @@ fn engine() -> Engine {
 }
 
 /// Connects `cfg`, retrying while the server finishes starting (up to `limit`).
-fn connect(engine: &Engine, cfg: ConnectionConfig, secrets: Secrets, limit: Duration) {
+fn connect(engine: &Engine, cfg: &ConnectionConfig, secrets: &Secrets, limit: Duration) {
     let id = cfg.id.clone();
     let deadline = std::time::Instant::now() + limit;
     loop {
@@ -147,8 +147,8 @@ fn mongo_to_pg_flattened() {
     let engine = engine();
     connect(
         &engine,
-        m.cfg.clone(),
-        Secrets::default(),
+        &m.cfg,
+        &Secrets::default(),
         Duration::from_secs(120),
     );
     let pg = ConnectionConfig {
@@ -161,7 +161,7 @@ fn mongo_to_pg_flattened() {
         ..config("p", "postgres")
     };
     let secrets = Secrets([("password".to_string(), "postgres".to_string())].into());
-    connect(&engine, pg, secrets, Duration::from_secs(60));
+    connect(&engine, &pg, &secrets, Duration::from_secs(60));
     sql_rows(&engine, "p", "DROP TABLE IF EXISTS public.people");
     sql_rows(
         &engine,
@@ -239,8 +239,8 @@ fn csv_to_mongo_documents() {
     let engine = engine();
     connect(
         &engine,
-        m.cfg.clone(),
-        Secrets::default(),
+        &m.cfg,
+        &Secrets::default(),
         Duration::from_secs(120),
     );
     let dir = tempfile::tempdir().unwrap();
@@ -316,7 +316,7 @@ fn es_to_jsonl() {
         values: values(&[("host", host), ("port", port.to_string())]),
         ..config("e", "elasticsearch")
     };
-    connect(&engine, cfg, Secrets::default(), Duration::from_secs(240));
+    connect(&engine, &cfg, &Secrets::default(), Duration::from_secs(240));
     let deadline = std::time::Instant::now() + Duration::from_secs(120);
     loop {
         let q = engine.run_doc(
@@ -405,7 +405,7 @@ fn redis_keys_to_csv() {
         ]),
         ..config("r", "redis")
     };
-    connect(&engine, cfg, Secrets::default(), Duration::from_secs(60));
+    connect(&engine, &cfg, &Secrets::default(), Duration::from_secs(60));
     for line in [
         "SET user:1 \"hello world\"",
         "HSET user:2 name ann age 30",
@@ -484,11 +484,11 @@ fn query_to_collection_as_flat_documents() {
         .into(),
         ..config("s", "sqlite")
     };
-    connect(&engine, db, Secrets::default(), Duration::from_secs(5));
+    connect(&engine, &db, &Secrets::default(), Duration::from_secs(5));
     connect(
         &engine,
-        config("d", "fakedoc"),
-        Secrets::default(),
+        &config("d", "fakedoc"),
+        &Secrets::default(),
         Duration::from_secs(5),
     );
     sql_rows(&engine, "s", "CREATE TABLE t (id INTEGER, name TEXT)");
@@ -548,8 +548,8 @@ fn fake_doc_engine(docs: Vec<DocValue>) -> (Engine, std::sync::Arc<sqlr_testkit:
     let engine = Engine::new(drivers, no_repaint());
     connect(
         &engine,
-        config("d", "fakedoc"),
-        Secrets::default(),
+        &config("d", "fakedoc"),
+        &Secrets::default(),
         Duration::from_secs(5),
     );
     (engine, fake)
@@ -643,8 +643,8 @@ fn a_binary_key_name_exports_exactly_that_key() {
     let engine = Engine::new(drivers, no_repaint());
     connect(
         &engine,
-        config("k", "fakekv"),
-        Secrets::default(),
+        &config("k", "fakekv"),
+        &Secrets::default(),
         Duration::from_secs(5),
     );
     let dir = tempfile::tempdir().unwrap();

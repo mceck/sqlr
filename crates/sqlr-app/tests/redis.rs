@@ -44,7 +44,7 @@ fn script() -> FakeKvScript {
             ),
         ],
         tree: vec![
-            node(db0.clone(), "db0", NodeKind::Database, true, Some("2 keys")),
+            node(db0, "db0", NodeKind::Database, true, Some("2 keys")),
             node(
                 KvNodePath::database(3),
                 "db3",

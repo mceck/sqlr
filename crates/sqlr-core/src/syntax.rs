@@ -11,57 +11,84 @@ use std::sync::{Arc, LazyLock};
 /// What the lexer is inside of at the end of a text (and so at the start of the next).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum LexState {
+    /// Not inside anything.
     #[default]
     Normal,
+    /// Inside a block comment.
     BlockComment {
+        /// How many comments are open (nested comments only).
         depth: u16,
     },
+    /// Inside a single-quoted string.
     Str {
+        /// Whether backslash escapes the next character.
         escapes: bool,
     },
     /// A `"…"` string (MySQL).
     DoubleStr {
+        /// Whether backslash escapes the next character.
         escapes: bool,
     },
     /// A quoted identifier that ends at `close` (`"`, `]` or `` ` ``).
     QuotedIdent {
+        /// The byte that closes it.
         close: u8,
     },
+    /// Inside a dollar-quoted string (PostgreSQL).
     DollarQuote {
+        /// Hash of the opening tag, so only the same tag closes it.
         tag: u64,
     },
 }
 
+/// The kind of a lexed token, which decides its highlighting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TokenKind {
+    /// A keyword of the dialect.
     Keyword,
+    /// A function name of the dialect.
     Function,
+    /// An unquoted identifier.
     Ident,
+    /// An identifier in the dialect's quotes.
     QuotedIdent,
+    /// A string literal.
     String,
+    /// A number literal.
     Number,
+    /// A line or block comment.
     Comment,
+    /// An operator.
     Operator,
+    /// Other punctuation.
     Punct,
+    /// A top-level `;`.
     Semicolon,
+    /// A bound parameter placeholder.
     Param,
 }
 
 /// A lexed token; `start..end` are byte offsets into the lexed text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Token {
+    /// Byte offset of the first byte.
     pub start: usize,
+    /// Byte offset after the last byte.
     pub end: usize,
+    /// What the token is.
     pub kind: TokenKind,
 }
 
+/// Where lexing a text ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LexEnd {
+    /// What the lexer is inside of at the end.
     pub state: LexState,
     /// A top-level `;` was seen.
     pub semicolon: bool,
 }
 
+/// The lexical rules of one SQL dialect: keywords, functions, quotes and comment styles.
 #[derive(Clone, Debug)]
 pub struct SqlSyntax {
     /// UPPERCASE, sorted, deduped.
@@ -76,6 +103,7 @@ pub struct SqlSyntax {
     pub nested_comments: bool,
     /// `E'...'` with backslash escapes (PostgreSQL).
     pub escape_strings: bool,
+    /// The text that starts a line comment.
     pub line_comment: &'static str,
     /// The line comment needs whitespace after it (MySQL `-- `).
     pub line_comment_needs_space: bool,
@@ -431,14 +459,17 @@ impl SqlSyntax {
         ddl
     }
 
+    /// Whether `word` is a keyword, ignoring case.
     pub fn is_keyword(&self, word: &str) -> bool {
         contains_word(&self.keywords, word, true)
     }
 
+    /// Whether `word` is reserved, so an identifier of that name must be quoted; ignores case.
     pub fn is_reserved(&self, word: &str) -> bool {
         contains_word(&self.reserved, word, true)
     }
 
+    /// Whether `word` is a function name, ignoring case.
     pub fn is_function(&self, word: &str) -> bool {
         contains_word(&self.functions, word, false)
     }

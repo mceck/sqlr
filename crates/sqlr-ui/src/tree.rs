@@ -766,7 +766,10 @@ fn push_conn<'a>(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the source, tree state, filter, path, depth and the two lookup maps plus the output rows are independent borrows of one recursive walk; a parameter struct would be rebuilt at every recursion level"
+)]
 fn push_folder<'a>(
     source: &'a dyn SchemaSource,
     state: &TreeState,
@@ -1162,7 +1165,10 @@ fn arrow(ui: &mut egui::Ui, name: &str, expandable: bool, open: bool, color: Col
 
 /// A folder row: arrow, folder mark, name. Drop target for connections and folders; drag
 /// source for reordering and nesting folders.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the UI, folder path and name, depth, open flag, state, palette and action sink are independent per-row inputs borrowed from the tree walk; a parameter struct would be built per row only to be unpacked here"
+)]
 fn folder_row(
     ui: &mut egui::Ui,
     path: &str,
@@ -1529,7 +1535,10 @@ fn state_badge(ui: &mut egui::Ui, mark: egui::Rect, badge: &ConnBadge, palette: 
     response.on_hover_text(tip);
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the UI, connection, depth, open flag, state, schema source, palette and action sink are independent per-row inputs borrowed from the tree walk; a parameter struct would be built per row only to be unpacked here"
+)]
 fn conn_row(
     ui: &mut egui::Ui,
     conn: &TreeConn<'_>,
@@ -1822,7 +1831,10 @@ fn connection_menu(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the UI, connection id, driver, node, depth, open flag, state, schema source, palette and action sink are independent per-row inputs borrowed from the tree walk; a parameter struct would be built per row only to be unpacked here"
+)]
 fn node_row(
     ui: &mut egui::Ui,
     conn: &str,

@@ -1,5 +1,7 @@
 //! One worker per used grid, with one running job and one replaceable pending job.
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::Arc;
+
+use parking_lot::{Condvar, Mutex};
 
 use sqlr_core::RowBuffer;
 
@@ -26,18 +28,20 @@ impl SortWorker {
                 let (lock, wake) = &*thread;
                 loop {
                     let job = {
-                        let mut state = lock.lock().unwrap();
-                        while state.pending.is_none() && !state.stopped {
-                            state = wake.wait(state).unwrap();
+                        let mut state = lock.lock();
+                        loop {
+                            if state.stopped {
+                                return;
+                            }
+                            if let Some(job) = state.pending.take() {
+                                break job;
+                            }
+                            wake.wait(&mut state);
                         }
-                        if state.stopped {
-                            return;
-                        }
-                        state.pending.take().unwrap()
                     };
                     let (key, rows) = job;
                     let order = sort::compute(&rows, &key.sort, true, &key.inserted);
-                    let mut state = lock.lock().unwrap();
+                    let mut state = lock.lock();
                     if state.stopped {
                         return;
                     }
@@ -55,18 +59,18 @@ impl SortWorker {
     }
 
     pub fn request(&self, key: ViewKey, rows: RowBuffer) {
-        let mut state = self.0.0.lock().unwrap();
+        let mut state = self.0.0.lock();
         state.result = None;
         state.pending = Some((key, rows));
         self.0.1.notify_one();
     }
 
     pub fn take(&self) -> Option<(ViewKey, Vec<usize>)> {
-        self.0.0.lock().unwrap().result.take()
+        self.0.0.lock().result.take()
     }
 
     pub fn clear(&self) {
-        let mut state = self.0.0.lock().unwrap();
+        let mut state = self.0.0.lock();
         state.pending = None;
         state.result = None;
     }
@@ -74,7 +78,7 @@ impl SortWorker {
 
 impl Drop for SortWorker {
     fn drop(&mut self) {
-        let mut state = self.0.0.lock().unwrap();
+        let mut state = self.0.0.lock();
         state.stopped = true;
         state.pending = None;
         state.result = None;

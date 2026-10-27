@@ -255,10 +255,10 @@ impl Stream {
     pub(super) fn new(
         api: Arc<Api>,
         handle: String,
-        response: Json,
+        response: &Json,
         guard: QueryGuard,
     ) -> Result<Self, DriverError> {
-        let columns = columns(&response)?;
+        let columns = columns(response)?;
         let metadata = &response["resultSetMetaData"];
         let num_rows = metadata
             .get("numRows")
@@ -283,7 +283,7 @@ impl Stream {
         let rows = if refetch {
             VecDeque::new()
         } else {
-            data(&response, &columns, partitions[0])?
+            data(response, &columns, partitions[0])?
         };
         Ok(Self {
             api,

@@ -1,5 +1,7 @@
 //! The sqlr application shell: layout A, wiring the engine, store and widgets together.
 
+#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+
 mod actions;
 mod agents;
 pub use actions::dispatch_actions;

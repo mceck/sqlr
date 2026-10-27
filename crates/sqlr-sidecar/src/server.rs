@@ -94,7 +94,7 @@ where
             Err(e) => {
                 state.reply(
                     id,
-                    Response::Error(DriverError::new(
+                    &Response::Error(DriverError::new(
                         ErrorKind::Protocol,
                         format!("malformed request: {e}"),
                     )),
@@ -103,7 +103,7 @@ where
             }
         };
         if matches!(request, Request::Shutdown) {
-            state.reply(id, Response::Ok);
+            state.reply(id, &Response::Ok);
             break Ok(());
         }
         connecting.retain(|_, task| !task.is_finished());
@@ -122,7 +122,7 @@ where
         let state = state.clone();
         let task = tokio::spawn(async move {
             let response = state.handle(id, request).await;
-            state.reply(id, response);
+            state.reply(id, &response);
         });
         if let Some(conn) = opening {
             connecting.insert(conn, task.abort_handle());
@@ -144,9 +144,9 @@ where
 }
 
 impl State {
-    fn reply(&self, id: u64, response: Response) {
+    fn reply(&self, id: u64, response: &Response) {
         let mut buf = Vec::new();
-        if encode_frame(CONTROL, id, &encode(&response), &mut buf).is_ok() {
+        if encode_frame(CONTROL, id, &encode(response), &mut buf).is_ok() {
             let _ = self.out.send(buf);
         }
     }

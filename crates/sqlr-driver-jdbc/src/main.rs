@@ -1,5 +1,7 @@
 //! `sqlr-driver-jdbc --preset <id>`: starts the Java bridge for a database.
 
+#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+
 use std::path::PathBuf;
 use std::process::ExitCode;
 

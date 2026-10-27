@@ -1,8 +1,9 @@
 //! The bounded in-memory log ring: the lines immediately before a crash, available to the
 //! panic hook even when the asynchronous file writer has not flushed yet.
 
+use parking_lot::Mutex;
 use std::collections::VecDeque;
-use std::sync::{Mutex, OnceLock};
+use std::sync::OnceLock;
 
 /// The ring keeps at most this many lines.
 pub const RING_LINES: usize = 500;
@@ -72,7 +73,7 @@ impl LogRing {
             line.truncate(cut);
             line.push_str("… (line truncated)");
         }
-        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut inner = self.inner.lock();
         inner.bytes += line.len();
         inner.lines.push_back(line);
         while inner.lines.len() > RING_LINES || inner.bytes > RING_BYTES {
@@ -87,7 +88,7 @@ impl LogRing {
     }
 
     pub fn snapshot(&self) -> RingSnapshot {
-        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let inner = self.inner.lock();
         RingSnapshot {
             lines: inner.lines.iter().cloned().collect(),
             dropped_lines: inner.dropped_lines,
@@ -100,11 +101,7 @@ impl LogRing {
     }
 
     pub fn len(&self) -> usize {
-        self.inner
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .lines
-            .len()
+        self.inner.lock().lines.len()
     }
 }
 

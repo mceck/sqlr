@@ -87,7 +87,10 @@ impl Geometry<'_> {
 
 /// Paints the header of columns `cols` with the sort arrows of `sort`, and gives each its
 /// accessibility node (the column name).
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the painter inputs (ui, id, geometry, columns, visible range, sort, selection, palette, fonts) are independent borrows owned by the grid; a parameter struct would be built per frame only to be unpacked here"
+)]
 pub(crate) fn paint(
     ui: &egui::Ui,
     id: egui::Id,

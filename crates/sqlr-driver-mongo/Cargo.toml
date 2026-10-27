@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+parking_lot.workspace = true
 sqlr-core = { path = "../sqlr-core" }
 async-trait.workspace = true
 bson.workspace = true
@@ -17,3 +18,6 @@ tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 [dev-dependencies]
 sqlr-testkit = { path = "../sqlr-testkit" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+
+[lints]
+workspace = true

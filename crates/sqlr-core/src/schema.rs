@@ -9,18 +9,30 @@
 use crate::admin::RoleDef;
 use crate::table::TableRef;
 
+/// The kind of a database object an object editor can load and edit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ObjectKind {
+    /// A database (or catalog).
     Database,
+    /// A schema (namespace).
     Schema,
+    /// A table.
     Table,
+    /// A view.
     View,
+    /// A materialized view.
     MaterializedView,
+    /// An index.
     Index,
+    /// A sequence.
     Sequence,
+    /// A stored function.
     Function,
+    /// A stored procedure.
     Procedure,
+    /// A trigger.
     Trigger,
+    /// A role or user.
     Role,
 }
 
@@ -47,11 +59,17 @@ impl ObjectKind {
 /// identity arguments of a function or procedure (`a integer, b text`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ObjectRef {
+    /// What kind of object it is.
     pub kind: ObjectKind,
+    /// Database that holds the object, when the driver qualifies by database.
     pub database: Option<String>,
+    /// Schema that holds the object, when the driver has schemas.
     pub schema: Option<String>,
+    /// The object's own name.
     pub name: String,
+    /// Table name, for an index or trigger.
     pub parent: Option<String>,
+    /// Identity arguments, for a function or procedure.
     pub signature: Option<String>,
 }
 
@@ -110,10 +128,14 @@ pub enum Identity {
     AutoIncrement,
 }
 
+/// A table column as an object editor loads and edits it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ColumnDef {
+    /// Column name.
     pub name: String,
+    /// Declared type as the server prints it.
     pub type_name: String,
+    /// Whether the column accepts `NULL`.
     pub nullable: bool,
     /// Default expression.
     pub default: Option<String>,
@@ -121,7 +143,9 @@ pub struct ColumnDef {
     pub generated: Option<String>,
     /// With `generated`: stored (`true`) or virtual.
     pub generated_stored: bool,
+    /// How the server fills the value, for an identity or auto-increment column.
     pub identity: Option<Identity>,
+    /// Column comment.
     pub comment: Option<String>,
     /// Collation name, when it is not the type's or table's default.
     pub collation: Option<String>,
@@ -133,15 +157,18 @@ pub struct ColumnDef {
 /// when a real column name happens to be wrapped in parentheses.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct IndexColumn {
+    /// The column name, or the SQL expression when `expression` is set.
     pub expr: String,
     /// Whether `expr` is SQL rather than a column name that must be quoted.
     pub expression: bool,
+    /// Descending order.
     pub desc: bool,
     /// Prefix length of a MySQL key part (`name(10)`).
     pub prefix: Option<u32>,
 }
 
 impl IndexColumn {
+    /// A key part on the plain column `name`.
     pub fn column(name: &str) -> Self {
         Self {
             expr: name.to_string(),
@@ -155,10 +182,14 @@ impl IndexColumn {
     }
 }
 
+/// An index as an object editor loads and edits it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct IndexDef {
+    /// Index name.
     pub name: String,
+    /// Key parts, in order.
     pub columns: Vec<IndexColumn>,
+    /// Whether the index enforces uniqueness.
     pub unique: bool,
     /// Access method (`btree`, `gin`, MySQL `FULLTEXT`…).
     pub method: Option<String>,
@@ -173,17 +204,24 @@ pub struct IndexDef {
     pub definition: Option<String>,
 }
 
+/// The referential action of a foreign key on update or delete.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum FkAction {
+    /// `NO ACTION`: the check fails when the referenced row changes.
     #[default]
     NoAction,
+    /// `RESTRICT`: refuses the change right away.
     Restrict,
+    /// `CASCADE`: applies the change to the referencing rows.
     Cascade,
+    /// `SET NULL`: nulls the referencing columns.
     SetNull,
+    /// `SET DEFAULT`: sets the referencing columns to their defaults.
     SetDefault,
 }
 
 impl FkAction {
+    /// The SQL keywords of the action (`SET NULL`).
     pub fn sql(self) -> &'static str {
         match self {
             FkAction::NoAction => "NO ACTION",
@@ -211,28 +249,43 @@ impl FkAction {
     }
 }
 
+/// A table constraint.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ConstraintDef {
+    /// The primary key.
     PrimaryKey {
+        /// Constraint name, when it has one.
         name: Option<String>,
+        /// Key columns.
         columns: Vec<String>,
     },
+    /// A unique constraint.
     Unique {
+        /// Constraint name, when it has one.
         name: Option<String>,
+        /// Constrained columns.
         columns: Vec<String>,
     },
+    /// A check constraint.
     Check {
+        /// Constraint name, when it has one.
         name: Option<String>,
         /// The condition (expression).
         expression: String,
     },
+    /// A foreign key.
     ForeignKey {
+        /// Constraint name, when it has one.
         name: Option<String>,
+        /// Referencing columns of this table.
         columns: Vec<String>,
+        /// The referenced table.
         target: TableRef,
         /// Empty when the target's primary key is meant (SQLite).
         target_columns: Vec<String>,
+        /// Action when a referenced row is updated.
         on_update: FkAction,
+        /// Action when a referenced row is deleted.
         on_delete: FkAction,
         /// `DEFERRABLE`: the check may be deferred to the end of the transaction.
         deferrable: bool,
@@ -244,12 +297,15 @@ pub enum ConstraintDef {
     /// (`EXCLUDE USING gist (…)`, `CHECK (…) NOT VALID`, `FOREIGN KEY … MATCH FULL`). It
     /// is written back unchanged.
     Raw {
+        /// Constraint name, when it has one.
         name: Option<String>,
+        /// The definition, as the server prints it after the name.
         definition: String,
     },
 }
 
 impl ConstraintDef {
+    /// The constraint's name, when it has one.
     pub fn name(&self) -> Option<&str> {
         match self {
             ConstraintDef::PrimaryKey { name, .. }
@@ -260,6 +316,7 @@ impl ConstraintDef {
         }
     }
 
+    /// Whether the constraint is a foreign key (also a raw one that reads `FOREIGN KEY`).
     pub fn is_foreign_key(&self) -> bool {
         match self {
             ConstraintDef::ForeignKey { .. } => true,
@@ -287,21 +344,31 @@ impl ConstraintDef {
 /// (`FOR VALUES FROM (1) TO (10)`, `DEFAULT`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PartitionDef {
+    /// The partition's own table.
     pub table: TableRef,
+    /// The partition bound expression.
     pub bound: String,
 }
 
+/// A table as an object editor loads and edits it: columns, constraints, indexes, triggers and partitions.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TableDef {
+    /// The table's name.
     pub table: TableRef,
+    /// Columns, in order.
     pub columns: Vec<ColumnDef>,
+    /// Primary key, unique, check, foreign key and raw constraints.
     pub constraints: Vec<ConstraintDef>,
+    /// Indexes on the table.
     pub indexes: Vec<IndexDef>,
+    /// Triggers on the table.
     pub triggers: Vec<TriggerDef>,
+    /// Table comment.
     pub comment: Option<String>,
     /// Driver-specific options (engine, charset, tablespace, `WITHOUT ROWID`, `STRICT`,
     /// the partition key…), as the driver's introspection names them.
     pub options: Vec<(String, String)>,
+    /// Partitions, when the table is partitioned.
     pub partitions: Vec<PartitionDef>,
     /// Objects outside the table that name it, which a table rebuild drops and creates
     /// again (SQLite views and other tables' triggers). Not part of the table's own
@@ -314,7 +381,9 @@ pub struct TableDef {
 pub struct DependentDef {
     /// [`ObjectKind::View`] or [`ObjectKind::Trigger`].
     pub kind: ObjectKind,
+    /// The dependent object's name.
     pub name: String,
+    /// Its `CREATE` statement.
     pub sql: String,
 }
 
@@ -334,10 +403,12 @@ impl TableDef {
         }
     }
 
+    /// The column called `name`.
     pub fn column(&self, name: &str) -> Option<&ColumnDef> {
         self.columns.iter().find(|c| c.name == name)
     }
 
+    /// The value of the driver-specific option `key`.
     pub fn option(&self, key: &str) -> Option<&str> {
         self.options
             .iter()
@@ -345,6 +416,7 @@ impl TableDef {
             .map(|(_, v)| v.as_str())
     }
 
+    /// The primary key columns, when the table has one.
     pub fn primary_key(&self) -> Option<&[String]> {
         self.constraints.iter().find_map(|c| match c {
             ConstraintDef::PrimaryKey { columns, .. } => Some(columns.as_slice()),
@@ -380,30 +452,45 @@ impl TableDef {
     }
 }
 
+/// A view or materialized view as an object editor loads and edits it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ViewDef {
+    /// The view's name.
     pub view: TableRef,
     /// The `SELECT` (expression).
     pub query: String,
+    /// Whether the view is materialized.
     pub materialized: bool,
     /// Explicit column names; empty when the query names them.
     pub columns: Vec<String>,
+    /// View comment.
     pub comment: Option<String>,
+    /// Driver-specific options.
     pub options: Vec<(String, String)>,
     /// Indexes of a materialized view.
     pub indexes: Vec<IndexDef>,
 }
 
+/// A sequence as an object editor loads and edits it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SequenceDef {
+    /// The sequence's name.
     pub sequence: TableRef,
+    /// Data type of the values.
     pub data_type: Option<String>,
+    /// First value.
     pub start: Option<i64>,
+    /// Step between values.
     pub increment: Option<i64>,
+    /// Lowest value.
     pub min_value: Option<i64>,
+    /// Highest value.
     pub max_value: Option<i64>,
+    /// Number of values preallocated.
     pub cache: Option<i64>,
+    /// Whether the sequence wraps around at its limits.
     pub cycle: bool,
+    /// Sequence comment.
     pub comment: Option<String>,
 }
 
@@ -411,16 +498,22 @@ pub struct SequenceDef {
 /// b text DEFAULT 'x'`, `SETOF record`); `body` is the routine's source.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RoutineDef {
+    /// Schema of the routine.
     pub schema: Option<String>,
+    /// Routine name.
     pub name: String,
     /// [`ObjectKind::Function`] or [`ObjectKind::Procedure`].
     pub kind: ObjectKind,
+    /// The parameter list, as written in the declaration.
     pub arguments: String,
     /// The argument types that identify the routine among overloads (PostgreSQL
     /// `a integer, b text`: no defaults); the signature of its [`ObjectRef`].
     pub identity_arguments: Option<String>,
+    /// The return type, for a function.
     pub returns: Option<String>,
+    /// Language of the body (`plpgsql`, `sql`).
     pub language: Option<String>,
+    /// The routine's source.
     pub body: String,
     /// Driver-specific attributes (volatility, security, determinism, comment…).
     pub options: Vec<(String, String)>,
@@ -431,42 +524,72 @@ pub struct RoutineDef {
 /// expression) and `body` (the action: a function call or statements) are written as is.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TriggerDef {
+    /// Trigger name.
     pub name: String,
+    /// The table the trigger fires on.
     pub table: TableRef,
+    /// When it fires: `BEFORE`, `AFTER` or `INSTEAD OF`.
     pub timing: String,
+    /// The events that fire it.
     pub events: Vec<String>,
+    /// Whether it fires per row rather than per statement.
     pub for_each_row: bool,
+    /// The `WHEN` expression, when it has one.
     pub condition: Option<String>,
+    /// The action: a function call or statements.
     pub body: String,
 }
 
+/// A schema as an object editor loads and edits it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaDef {
+    /// Schema name.
     pub name: String,
+    /// Schema owner.
     pub owner: Option<String>,
+    /// Schema comment.
     pub comment: Option<String>,
 }
 
+/// A database as an object editor loads and edits it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DatabaseDef {
+    /// Database name.
     pub name: String,
+    /// Driver-specific options (charset, collation, encoding...).
     pub options: Vec<(String, String)>,
 }
 
+/// The definition of one object, by kind.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ObjectDef {
+    /// A database.
     Database(DatabaseDef),
+    /// A schema.
     Schema(SchemaDef),
+    /// A table.
     Table(TableDef),
+    /// A view or materialized view.
     View(ViewDef),
+    /// A sequence.
     Sequence(SequenceDef),
+    /// A function or procedure.
     Routine(RoutineDef),
+    /// A trigger.
     Trigger(TriggerDef),
-    Index { table: TableRef, index: IndexDef },
+    /// An index on `table`.
+    Index {
+        /// The table the index belongs to.
+        table: TableRef,
+        /// The index definition.
+        index: IndexDef,
+    },
+    /// A role or user.
     Role(RoleDef),
 }
 
 impl ObjectDef {
+    /// The kind of the object, telling a materialized view from a view.
     pub fn kind(&self) -> ObjectKind {
         match self {
             ObjectDef::Database(_) => ObjectKind::Database,

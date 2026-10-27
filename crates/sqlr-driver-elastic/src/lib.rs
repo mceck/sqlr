@@ -4,6 +4,8 @@
 //! with JSON bodies, `ESQL …` (8.11+) and `SQL …`. Searches page with a point in time and
 //! `search_after`; ES|QL and SQL results are tabular.
 
+#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+
 mod browse;
 mod client;
 mod errors;
@@ -114,7 +116,7 @@ struct EsCancel(Arc<EsClient>);
 #[async_trait::async_trait]
 impl CancelHandle for EsCancel {
     async fn cancel(&self) -> Result<(), DriverError> {
-        let Some(tag) = self.0.running.lock().unwrap().clone() else {
+        let Some(tag) = self.0.running.lock().clone() else {
             return Ok(());
         };
         let tasks = self

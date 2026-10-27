@@ -49,22 +49,19 @@ pub struct SessionLock {
 impl SessionLock {
     pub fn acquire(dir: &Path) -> Self {
         let path = dir.join(LOCK_FILE);
-        let file = match OpenOptions::new()
+        let Ok(file) = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .truncate(false)
             .open(&path)
-        {
-            Ok(file) => file,
-            Err(_) => {
-                return Self {
-                    file: None,
-                    holder: false,
-                    other: false,
-                    dir: dir.to_path_buf(),
-                };
-            }
+        else {
+            return Self {
+                file: None,
+                holder: false,
+                other: false,
+                dir: dir.to_path_buf(),
+            };
         };
         let _ = restrict_file(&path);
         let (holder, other) = match file.try_lock() {
@@ -186,7 +183,7 @@ pub fn write(dir: &Path, incident: &Incident) -> std::io::Result<PathBuf> {
     let text = serde_json::to_string_pretty(incident)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     write_private_atomic(&path, &text)?;
-    let _ = prune(dir);
+    prune(dir);
     Ok(path)
 }
 
@@ -208,10 +205,10 @@ pub fn acknowledge(dir: &Path, id: &str) -> std::io::Result<()> {
 
 /// Keeps the newest [`INCIDENT_FILES`] incidents and drops those older than
 /// [`INCIDENT_DAYS`]. Never fails a caller: pruning is best effort.
-pub fn prune(dir: &Path) -> std::io::Result<()> {
+pub fn prune(dir: &Path) {
     let mut ours: Vec<(String, PathBuf, i64, SystemTime)> = Vec::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
-        return Ok(());
+        return;
     };
     for entry in entries.flatten() {
         let name = entry.file_name();
@@ -240,7 +237,6 @@ pub fn prune(dir: &Path) -> std::io::Result<()> {
             let _ = std::fs::remove_file(path);
         }
     }
-    Ok(())
 }
 
 /// The summaries of the incidents in `dir`, newest first.
@@ -320,9 +316,10 @@ pub fn now_ms() -> i64 {
 
 /// The UTC `YYYY-MM-DDTHH-MM-SSZ` prefix of an incident id.
 pub fn timestamp_prefix(at_ms: i64) -> String {
-    jiff::Timestamp::from_millisecond(at_ms)
-        .map(|t| t.strftime("%Y-%m-%dT%H-%M-%SZ").to_string())
-        .unwrap_or_else(|_| "0000-00-00T00-00-00Z".into())
+    jiff::Timestamp::from_millisecond(at_ms).map_or_else(
+        |_| "0000-00-00T00-00-00Z".into(),
+        |t| t.strftime("%Y-%m-%dT%H-%M-%SZ").to_string(),
+    )
 }
 
 /// Writes `text` through a temporary file in the same directory, with owner-only
@@ -585,6 +582,6 @@ mod tests {
     #[test]
     fn pruning_never_fails_on_a_missing_directory() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(prune(&dir.path().join("nope")).is_ok());
+        prune(&dir.path().join("nope"));
     }
 }

@@ -16,7 +16,7 @@ pub(crate) const MAX_ARTIFACT_BYTES: u64 = 1024 * 1024 * 1024;
 pub struct Fetcher {
     client: reqwest::Client,
     /// Set by the redirect policy when it refused a hop to another host.
-    refused: Arc<std::sync::Mutex<Option<String>>>,
+    refused: Arc<parking_lot::Mutex<Option<String>>>,
 }
 
 fn tls_config() -> rustls::ClientConfig {
@@ -37,7 +37,7 @@ impl Fetcher {
         // reqwest needs a process-wide provider even for plain HTTP; another crate may have
         // installed it already.
         let _ = rustls::crypto::ring::default_provider().install_default();
-        let refused = Arc::new(std::sync::Mutex::new(None));
+        let refused = Arc::new(parking_lot::Mutex::new(None));
         let seen = refused.clone();
         // A download may follow redirects inside its own host only (and from GitHub to its
         // release file storage): a registry that bounces elsewhere is refused, not trusted.
@@ -48,7 +48,7 @@ impl Fetcher {
             } else if from.is_some_and(|from| redirect_allowed(&from, attempt.url())) {
                 attempt.follow()
             } else {
-                *seen.lock().expect("lock") = attempt.url().host_str().map(str::to_string);
+                *seen.lock() = attempt.url().host_str().map(str::to_string);
                 attempt.error("redirect to another host")
             }
         });
@@ -63,7 +63,7 @@ impl Fetcher {
     }
 
     fn error(&self, url: &str, e: impl std::fmt::Display) -> RegistryError {
-        if let Some(to) = self.refused.lock().expect("lock").take() {
+        if let Some(to) = self.refused.lock().take() {
             return RegistryError::RedirectToOtherHost {
                 url: url.to_string(),
                 to,

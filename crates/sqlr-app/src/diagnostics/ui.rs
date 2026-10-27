@@ -312,11 +312,10 @@ impl SqlrApp {
         self.diagnostics_ui.open = open && !close;
 
         if let Some(level) = level_change {
-            let result = self
-                .diagnostics
-                .as_ref()
-                .map(|diagnostics| diagnostics.set_log_level(level))
-                .unwrap_or_else(|| Err("logging is not initialized".into()));
+            let result = self.diagnostics.as_ref().map_or_else(
+                || Err("logging is not initialized".into()),
+                |diagnostics| diagnostics.set_log_level(level),
+            );
             self.diagnostics_ui.status = Some(match result {
                 Ok(()) => format!("Log level set to {} for this session", level.as_str()),
                 Err(error) => error,
@@ -366,7 +365,10 @@ impl SqlrApp {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the arguments are the per-frame output flags of the dialog buttons (copy, save, issue, logs, new report) and the two setting changes, each set by a different widget and read by the caller after the frame; a parameter struct would only hold the same references"
+    )]
     fn diagnostics_body(
         &mut self,
         ui: &mut egui::Ui,
@@ -917,8 +919,7 @@ impl SqlrApp {
         let environment = self
             .diagnostics
             .as_ref()
-            .map(|diagnostics| diagnostics.environment())
-            .unwrap_or_else(Environment::basic);
+            .map_or_else(Environment::basic, |diagnostics| diagnostics.environment());
         let installed = self.engine.installed_drivers();
         let sidecars = self.engine.sidecar_states();
         let drivers = self
@@ -1100,7 +1101,7 @@ impl SqlrApp {
                 profile: environment.profile.clone().unwrap_or_default(),
                 target: environment.target.clone().unwrap_or_default(),
                 commit: environment.commit.clone(),
-                graphics_backend: environment.graphics_backend.clone(),
+                graphics_backend: environment.graphics_backend,
             },
             drivers,
             settings,

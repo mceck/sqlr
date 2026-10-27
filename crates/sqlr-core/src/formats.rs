@@ -30,10 +30,15 @@ enum Binary {
 /// The formats in force for one connection, built from the resolved settings.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DataFormats {
+    /// Text shown for NULL.
     pub null_text: String,
+    /// Format pattern of dates.
     pub date: String,
+    /// Format pattern of times.
     pub time: String,
+    /// Format pattern of timestamps without a time zone.
     pub timestamp: String,
+    /// Format pattern of timestamps with a time zone.
     pub timestamptz: String,
     /// The grouping separator of whole numbers; empty for none.
     grouping: &'static str,

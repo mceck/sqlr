@@ -27,7 +27,7 @@ impl StoredKeymap {
         }
     }
 
-    fn corrupt(dir: &Path, error: String) -> Self {
+    fn corrupt(dir: &Path, error: &str) -> Self {
         Self {
             corrupt: Some(keep_corrupt(dir, FILE, error)),
             ..Self::default_keymap()
@@ -40,11 +40,11 @@ impl StoredKeymap {
         let text = match std::fs::read_to_string(dir.join(FILE)) {
             Ok(text) => text,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Self::default_keymap(),
-            Err(e) => return Self::corrupt(dir, e.to_string()),
+            Err(e) => return Self::corrupt(dir, &e.to_string()),
         };
         let table = match text.parse::<toml::Table>() {
             Ok(table) => table,
-            Err(e) => return Self::corrupt(dir, e.to_string()),
+            Err(e) => return Self::corrupt(dir, &e.to_string()),
         };
         let preset = table
             .get("preset")

@@ -3,6 +3,10 @@
 use oracle_rs::Error;
 use sqlr_core::{DriverError, ErrorKind};
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "used as a `map_err` function pointer, which receives the error by value"
+)]
 pub(crate) fn map_error(error: Error) -> DriverError {
     let kind = match &error {
         Error::InvalidCredentials | Error::AuthenticationFailed(_) => ErrorKind::Auth,

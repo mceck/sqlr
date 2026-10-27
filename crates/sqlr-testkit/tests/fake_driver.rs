@@ -58,9 +58,8 @@ async fn fake_blocks_until_cancelled() {
         ..Default::default()
     });
     let conn = driver.connect(&cfg(), &Secrets::default()).await.unwrap();
-    let mut stream = match conn.relational().unwrap().execute("q").await.unwrap() {
-        Execution::Rows(s) => s,
-        _ => unreachable!(),
+    let Execution::Rows(mut stream) = conn.relational().unwrap().execute("q").await.unwrap() else {
+        unreachable!()
     };
     let fetch = tokio::spawn(async move { stream.next_chunk(5).await });
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -80,9 +79,8 @@ async fn cancel_before_fetch_is_not_lost() {
         ..Default::default()
     });
     let conn = driver.connect(&cfg(), &Secrets::default()).await.unwrap();
-    let mut stream = match conn.relational().unwrap().execute("q").await.unwrap() {
-        Execution::Rows(s) => s,
-        _ => unreachable!(),
+    let Execution::Rows(mut stream) = conn.relational().unwrap().execute("q").await.unwrap() else {
+        unreachable!()
     };
     conn.cancel_handle().cancel().await.unwrap();
     let res = tokio::time::timeout(Duration::from_secs(1), stream.next_chunk(5))
@@ -99,9 +97,8 @@ async fn cancel_before_execute_does_not_affect_next_stream() {
     });
     let conn = driver.connect(&cfg(), &Secrets::default()).await.unwrap();
     conn.cancel_handle().cancel().await.unwrap();
-    let mut stream = match conn.relational().unwrap().execute("q").await.unwrap() {
-        Execution::Rows(s) => s,
-        _ => unreachable!(),
+    let Execution::Rows(mut stream) = conn.relational().unwrap().execute("q").await.unwrap() else {
+        unreachable!()
     };
     assert_eq!(stream.next_chunk(5).await.unwrap().unwrap().len(), 5);
 }

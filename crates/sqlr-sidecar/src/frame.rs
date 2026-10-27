@@ -22,24 +22,34 @@ pub const LOG: u8 = 0x04;
 /// Bytes of type and request id before the payload.
 const HEADER: usize = 1 + 8;
 
+/// Why reading or writing a frame failed.
 #[derive(Debug, thiserror::Error)]
 pub enum FrameError {
+    /// The pipe failed.
     #[error("pipe error: {0}")]
     Io(#[from] std::io::Error),
+    /// The frame is above `MAX_FRAME`; carries its length.
     #[error("frame of {0} bytes exceeds the {MAX_FRAME}-byte limit")]
     TooLarge(usize),
+    /// The frame is shorter than its header; carries its length.
     #[error("frame of {0} bytes is shorter than its header")]
     TooShort(usize),
+    /// The frame type byte is not one of the known types.
     #[error("unknown frame type {0:#04x}")]
     UnknownType(u8),
+    /// The pipe or the buffer ended inside a frame.
     #[error("the pipe closed inside a frame")]
     Truncated,
 }
 
+/// One message of the sidecar pipes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Frame {
+    /// The frame type: [`CONTROL`], [`CHUNK`], [`DOC_CHUNK`] or [`LOG`].
     pub ty: u8,
+    /// The id of the request the frame belongs to.
     pub id: u64,
+    /// The frame's content, as the type defines.
     pub payload: Vec<u8>,
 }
 
@@ -96,6 +106,7 @@ fn parse_body(body: &[u8]) -> Result<Frame, FrameError> {
     })
 }
 
+/// Writes one frame to `w` and flushes it.
 pub async fn write_frame<W: AsyncWrite + Unpin>(
     w: &mut W,
     ty: u8,

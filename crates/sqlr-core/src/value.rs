@@ -8,15 +8,22 @@ use crate::chunk::{Cell, hex_bytes};
 /// [`DisplayHint`](crate::DisplayHint) says what the text holds.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Value {
+    /// SQL NULL.
     Null,
+    /// A boolean.
     Bool(bool),
+    /// A 64-bit integer.
     Int(i64),
+    /// A double-precision float.
     Float(f64),
+    /// Text.
     Text(String),
+    /// Binary data.
     Bytes(Vec<u8>),
 }
 
 impl Value {
+    /// The owned value of `cell`.
     pub fn from_cell(cell: Cell<'_>) -> Self {
         match cell {
             Cell::Null => Value::Null,
@@ -28,6 +35,7 @@ impl Value {
         }
     }
 
+    /// The value as a borrowed cell.
     pub fn as_cell(&self) -> Cell<'_> {
         match self {
             Value::Null => Cell::Null,
@@ -39,6 +47,7 @@ impl Value {
         }
     }
 
+    /// Whether the value is NULL.
     pub fn is_null(&self) -> bool {
         matches!(self, Value::Null)
     }

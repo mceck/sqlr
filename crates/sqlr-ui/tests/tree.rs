@@ -1199,7 +1199,7 @@ fn table_context_menu_entries() {
         h.state().actions,
         [TreeAction::ExportData {
             conn: "prod".into(),
-            node: orders.clone(),
+            node: orders,
         }]
     );
 

@@ -12,6 +12,7 @@ name = "integration"
 path = "tests/integration.rs"
 
 [dependencies]
+parking_lot.workspace = true
 sqlr-core = { path = "../sqlr-core" }
 async-trait.workspace = true
 rusqlite = { workspace = true, features = ["column_decltype", "column_metadata"] }
@@ -23,3 +24,6 @@ sqlr-driver-tests = { path = "../sqlr-driver-tests" }
 sqlr-engine = { path = "../sqlr-engine" }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+
+[lints]
+workspace = true

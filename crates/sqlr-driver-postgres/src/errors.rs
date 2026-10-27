@@ -5,6 +5,10 @@ use std::error::Error as _;
 use sqlr_core::{DriverError, ErrorKind};
 use tokio_postgres::error::ErrorPosition;
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "used as a `map_err` function pointer, which receives the error by value"
+)]
 pub(crate) fn map_error(e: tokio_postgres::Error) -> DriverError {
     if let Some(db) = e.as_db_error() {
         let mut err = DriverError::new(kind_for_sqlstate(db.code().code()), db.message());

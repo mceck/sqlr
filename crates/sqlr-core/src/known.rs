@@ -8,28 +8,46 @@ use crate::manifest::Family;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KnownStatus {
     /// A driver of its own (`driver` is the driver id).
-    Bundled { driver: &'static str },
+    Bundled {
+        /// The id of the driver that serves it.
+        driver: &'static str,
+    },
     /// It speaks a bundled driver's protocol; `preset` fills the connection form's fields
     /// (keys of that driver's manifest).
     Compatible {
+        /// The id of the bundled driver whose protocol it speaks.
         driver: &'static str,
+        /// Connection field values to preset, as (manifest field key, value).
         preset: &'static [(&'static str, &'static str)],
     },
     /// A driver that does not ship with sqlr: the Driver Manager downloads it from the sqlr
     /// release (the release workflow packs every one of these), or installs it from a local
     /// driver file (`driver` is the driver id).
-    Installable { driver: &'static str },
+    Installable {
+        /// The id of the driver to install.
+        driver: &'static str,
+    },
     /// Not reachable yet; `note` describes its support status.
-    Planned { note: &'static str },
+    Planned {
+        /// What is planned or why it is not supported yet.
+        note: &'static str,
+    },
 }
 
+/// A database in the catalog of known databases.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KnownDatabase {
+    /// Stable identifier.
     pub id: &'static str,
+    /// Display name.
     pub name: &'static str,
+    /// The family of its driver.
     pub family: Family,
+    /// How sqlr reaches it.
     pub status: KnownStatus,
+    /// The port it listens on by default, if it has one.
     pub default_port: Option<u16>,
+    /// A short note shown in the database matrix.
     pub notes: &'static str,
 }
 

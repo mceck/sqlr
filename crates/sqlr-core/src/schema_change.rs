@@ -10,77 +10,118 @@ use crate::schema::{
 };
 use crate::table::TableRef;
 
+/// One change an object editor applies to the database. A driver's schema DDL turns it into statements.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SchemaChange {
+    /// Creates an object.
     Create(ObjectDef),
+    /// Drops an object.
     Drop {
+        /// The object to drop.
         object: ObjectRef,
+        /// Also drop what depends on it, where the dialect has it.
         cascade: bool,
     },
+    /// Renames an object.
     Rename {
+        /// The object to rename.
         object: ObjectRef,
+        /// The new name.
         to: String,
     },
+    /// Adds a column to a table.
     AddColumn {
+        /// The table.
         table: TableRef,
+        /// The new column.
         column: ColumnDef,
     },
+    /// Drops a column.
     DropColumn {
+        /// The table.
         table: TableRef,
+        /// The column's name.
         name: String,
     },
     /// Any change of a column, its name included (`before.name` is the current name).
     AlterColumn {
+        /// The table.
         table: TableRef,
+        /// The column as it is.
         before: ColumnDef,
+        /// The column as it should be.
         after: ColumnDef,
     },
+    /// Adds a constraint to a table.
     AddConstraint {
+        /// The table.
         table: TableRef,
+        /// The new constraint.
         constraint: ConstraintDef,
     },
     /// An empty `name` means the table's unnamed primary key.
     DropConstraint {
+        /// The table.
         table: TableRef,
+        /// The constraint's name.
         name: String,
     },
+    /// Adds an index to a table.
     AddIndex {
+        /// The table.
         table: TableRef,
+        /// The new index.
         index: IndexDef,
         /// PostgreSQL `CONCURRENTLY`: applied outside a transaction.
         concurrently: bool,
     },
+    /// Drops an index.
     DropIndex {
+        /// The table the index belongs to.
         table: TableRef,
+        /// The index's name.
         name: String,
     },
     /// `comment: None` removes the comment.
     SetComment {
+        /// The object that carries the comment.
         object: ObjectRef,
+        /// The column, to comment a column of the object rather than the object.
         column: Option<String>,
+        /// The new comment.
         comment: Option<String>,
     },
+    /// Replaces the query of a view, keeping its name.
     ReplaceView(ViewDef),
+    /// Replaces a function or procedure with a new definition.
     ReplaceRoutine(RoutineDef),
     /// `None` resets an option to its default.
     SetOptions {
+        /// The object to alter.
         object: ObjectRef,
+        /// Option names with their new value.
         options: Vec<(String, Option<String>)>,
     },
     /// PostgreSQL: attaches an existing table as a partition of `table`.
     AttachPartition {
+        /// The partitioned table.
         table: TableRef,
+        /// The partition to attach.
         partition: PartitionDef,
     },
     /// PostgreSQL: detaches a partition; it stays as a standalone table.
     DetachPartition {
+        /// The partitioned table.
         table: TableRef,
+        /// The partition to detach.
         partition: TableRef,
     },
     /// Deletes every row of `table` (`TRUNCATE`, SQLite `DELETE FROM`); `cascade` also
     /// empties the tables that reference it, where the dialect has it.
     Truncate {
+        /// The table to empty.
         table: TableRef,
+        /// Also empty the tables that reference it.
         cascade: bool,
     },
 }

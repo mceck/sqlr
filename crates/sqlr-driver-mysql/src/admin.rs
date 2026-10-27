@@ -820,7 +820,7 @@ mod tests {
         );
         let loaded = RoleDef {
             password: None,
-            ..user.clone()
+            ..user
         };
         let after = RoleDef {
             name: "c".into(),

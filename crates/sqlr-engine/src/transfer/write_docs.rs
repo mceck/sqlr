@@ -83,7 +83,10 @@ impl Batches<'_> {
 }
 
 impl Shared {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the job, session, I/O, records, target, mapping and options are independent borrows of the transfer pipeline; grouping them would need a struct built at the single call site"
+    )]
     pub(crate) async fn records_to_collection(
         self: &Arc<Self>,
         job: &JobControl,

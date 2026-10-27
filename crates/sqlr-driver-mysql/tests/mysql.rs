@@ -147,9 +147,8 @@ async fn read_only_enforced_by_server(server: Server) {
         &[rel.dialect().read_only_sql(true).unwrap().as_str()],
     )
     .await;
-    let err = match rel.execute("INSERT INTO ro VALUES (1)").await {
-        Ok(_) => panic!("write allowed on a read-only session"),
-        Err(e) => e,
+    let Err(err) = rel.execute("INSERT INTO ro VALUES (1)").await else {
+        panic!("write allowed on a read-only session")
     };
     assert!(err.message.contains("READ ONLY"), "{err:?}");
     run(

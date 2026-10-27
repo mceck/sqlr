@@ -14,16 +14,23 @@ use crate::value::Value;
 /// an edit of a key column still finds the row by its original key.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Change {
+    /// Set one column of the row to a new value.
     Update {
+        /// The row's key values as read.
         key: Vec<Value>,
+        /// The edited column.
         column: String,
+        /// Its new value.
         value: Value,
     },
     /// Columns left out take their default.
     Insert {
+        /// The columns to set, with their values.
         values: Vec<(String, Value)>,
     },
+    /// Remove the row.
     Delete {
+        /// The row's key values as read.
         key: Vec<Value>,
     },
 }
@@ -31,15 +38,20 @@ pub enum Change {
 /// The pending edits of one table.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Changeset {
+    /// The table the edits apply to.
     pub table: TableRef,
+    /// The columns that identify a row, in key order.
     pub key_columns: Vec<String>,
+    /// The edits, in the order they were made.
     pub changes: Vec<Change>,
 }
 
 /// One statement of a changeset, with its parameters.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DmlStatement {
+    /// The SQL text, with placeholders for `params`.
     pub sql: String,
+    /// The bound values, in placeholder order.
     pub params: Vec<Value>,
     /// The statement must affect exactly one row, or the changeset is rolled back.
     pub expect_one_row: bool,

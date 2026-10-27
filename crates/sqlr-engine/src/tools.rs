@@ -86,7 +86,7 @@ impl Shared {
         };
         let temp = match tempfile::Builder::new().prefix("sqlr-tool-").tempdir() {
             Ok(temp) => temp,
-            Err(e) => return JobOutcome::Failed(io_error("create a temporary directory", e)),
+            Err(e) => return JobOutcome::Failed(io_error("create a temporary directory", &e)),
         };
         match work {
             ToolWork::Dump(opts) => self.dump(job, &endpoint, path, opts, temp.path()).await,
@@ -130,12 +130,15 @@ impl Shared {
                         Err(e) => {
                             return JobOutcome::Failed(io_error(
                                 "read the dump's target directory",
-                                e,
+                                &e,
                             ));
                         }
                     },
                     Err(e) => {
-                        return JobOutcome::Failed(io_error("read the dump's target directory", e));
+                        return JobOutcome::Failed(io_error(
+                            "read the dump's target directory",
+                            &e,
+                        ));
                     }
                 }
             } else if meta.is_dir() {
@@ -146,7 +149,7 @@ impl Shared {
             && !parent.as_os_str().is_empty()
             && let Err(e) = tokio::fs::create_dir_all(parent).await
         {
-            return JobOutcome::Failed(io_error("create the dump's directory", e));
+            return JobOutcome::Failed(io_error("create the dump's directory", &e));
         }
         let partial = partial_path(target);
         remove_path(&partial).await;
@@ -175,11 +178,11 @@ impl Shared {
                 }
                 if let Err(e) = clear_target(target, opts.format == DumpFormat::Directory).await {
                     remove_path(&partial).await;
-                    return JobOutcome::Failed(io_error("replace the dump's target", e));
+                    return JobOutcome::Failed(io_error("replace the dump's target", &e));
                 }
                 if let Err(e) = tokio::fs::rename(&partial, target).await {
                     remove_path(&partial).await;
-                    return JobOutcome::Failed(io_error("move the dump into place", e));
+                    return JobOutcome::Failed(io_error("move the dump into place", &e));
                 }
                 job.log(format!("Dump written to {}", target.display()));
                 JobOutcome::Dumped {
@@ -253,11 +256,11 @@ impl Shared {
             Ok(()) => {
                 if let Err(e) = clear_target(target, false).await {
                     remove_path(partial).await;
-                    return JobOutcome::Failed(io_error("replace the dump's target", e));
+                    return JobOutcome::Failed(io_error("replace the dump's target", &e));
                 }
                 if let Err(e) = tokio::fs::rename(partial, target).await {
                     remove_path(partial).await;
-                    return JobOutcome::Failed(io_error("move the dump into place", e));
+                    return JobOutcome::Failed(io_error("move the dump into place", &e));
                 }
                 job.log(format!("Dump written to {}", target.display()));
                 JobOutcome::Dumped {
@@ -419,7 +422,7 @@ impl Shared {
             ToolEnd::Failed(if e.kind() == io::ErrorKind::NotFound {
                 missing_tool(&program)
             } else {
-                io_error("start the tool", e)
+                io_error("start the tool", &e)
             })
         })?;
 
@@ -452,7 +455,7 @@ impl Shared {
                     let _ = child.kill().await;
                     return Err(ToolEnd::Failed(io_error(
                         "create the tool's output directory",
-                        e,
+                        &e,
                     )));
                 }
                 match tokio::fs::File::create(target).await {
@@ -476,7 +479,7 @@ impl Shared {
                         let _ = child.kill().await;
                         return Err(ToolEnd::Failed(io_error(
                             "create the tool's output file",
-                            e,
+                            &e,
                         )));
                     }
                 }
@@ -503,7 +506,7 @@ impl Shared {
                 status = child.wait() => {
                     let status = match status {
                         Ok(status) => status,
-                        Err(e) => return Err(ToolEnd::Failed(io_error("wait for the tool", e))),
+                        Err(e) => return Err(ToolEnd::Failed(io_error("wait for the tool", &e))),
                     };
                     while let Some(line) = rx.recv().await {
                         lines += 1;
@@ -514,7 +517,7 @@ impl Shared {
                     {
                         return Err(ToolEnd::Failed(io_error(
                             "write the tool's output",
-                            e,
+                            &e,
                         )));
                     }
                     job.progress(JobProgress { rows: lines, bytes: bytes.load(Ordering::Relaxed) });
@@ -681,11 +684,11 @@ fn write_tool_files(command: &ToolCommand) -> Result<(), ToolEnd> {
         {
             return Err(ToolEnd::Failed(io_error(
                 "create the tool's temporary directory",
-                e,
+                &e,
             )));
         }
         std::fs::write(&file.path, &file.content)
-            .map_err(|e| ToolEnd::Failed(io_error("write the tool's temporary file", e)))?;
+            .map_err(|e| ToolEnd::Failed(io_error("write the tool's temporary file", &e)))?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -795,8 +798,7 @@ fn known_tool_dirs() -> Vec<PathBuf> {
 fn partial_path(target: &Path) -> PathBuf {
     let name = target
         .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "dump".into());
+        .map_or_else(|| "dump".into(), |n| n.to_string_lossy().into_owned());
     target.with_file_name(format!(".{name}.sqlr-partial"))
 }
 
@@ -832,15 +834,15 @@ fn config_error(message: impl Into<String>) -> DriverError {
     DriverError::new(ErrorKind::Other, message)
 }
 
-fn io_error(what: &str, e: io::Error) -> DriverError {
+fn io_error(what: &str, e: &io::Error) -> DriverError {
     DriverError::new(ErrorKind::Other, format!("Could not {what}: {e}"))
 }
 
 fn missing_tool(program: &Path) -> DriverError {
-    let name = program
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| program.display().to_string());
+    let name = program.file_name().map_or_else(
+        || program.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    );
     let hint = match name.as_str() {
         "pg_dump" | "pg_restore" | "psql" => {
             "Install the PostgreSQL client tools (macOS: brew install libpq or Postgres.app; \

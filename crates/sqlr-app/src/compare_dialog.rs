@@ -57,7 +57,7 @@ impl CompareDialog {
             .map_or(first.clone(), |c| c.id.clone());
         Self {
             s_conn: first,
-            s_database: database.clone().unwrap_or_default(),
+            s_database: database.unwrap_or_default(),
             // The target's schema usually has the same name.
             t_schema: schema.clone().unwrap_or_default(),
             s_schema: schema.unwrap_or_default(),

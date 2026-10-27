@@ -25,6 +25,7 @@ name = "sqlr"
 path = "src/main.rs"
 
 [dependencies]
+parking_lot.workspace = true
 sqlr-core = { path = "../sqlr-core" }
 sqlr-driver-elastic = { path = "../sqlr-driver-elastic" }
 sqlr-driver-mongo = { path = "../sqlr-driver-mongo" }
@@ -81,3 +82,6 @@ sqlr-testkit = { path = "../sqlr-testkit" }
 rusqlite.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 rustls.workspace = true
+
+[lints]
+workspace = true

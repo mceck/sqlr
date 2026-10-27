@@ -1,5 +1,6 @@
+use parking_lot::Mutex;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 
 use sqlr_store::{
     McpTokenStore, MemoryMcpTokenStore, MemorySecretStore, SecretStore, StoreError,
@@ -19,12 +20,12 @@ struct Keyring {
 
 impl SecretStore for Keyring {
     fn get(&self, id: &str, field: &str) -> Result<Option<String>, StoreError> {
-        self.reads.lock().unwrap().push((id.into(), field.into()));
+        self.reads.lock().push((id.into(), field.into()));
         if self.locked.load(Ordering::SeqCst) {
             return Err(StoreError::Secret("access denied".into()));
         }
         if id == "old"
-            && let Some(path) = self.block_write.lock().unwrap().take()
+            && let Some(path) = self.block_write.lock().take()
         {
             std::fs::create_dir(path).unwrap();
         }
@@ -35,7 +36,7 @@ impl SecretStore for Keyring {
         if self.refuse_set.load(Ordering::SeqCst) {
             return Err(StoreError::Secret("key save denied".into()));
         }
-        self.writes.lock().unwrap().push((id.into(), field.into()));
+        self.writes.lock().push((id.into(), field.into()));
         self.inner.set(id, field, value)
     }
 
@@ -56,7 +57,7 @@ fn connections_share_one_lazy_keyring_unlock() {
     let dir = tempfile::tempdir().unwrap();
     let keyring = Arc::new(Keyring::default());
     let store = vault(&dir, &keyring);
-    assert!(keyring.reads.lock().unwrap().is_empty());
+    assert!(keyring.reads.lock().is_empty());
     store.set("one", "password", "first-secret").unwrap();
     store.set("two", "password", "second-secret").unwrap();
     store.set("two", "ssh_password", "ssh-secret").unwrap();
@@ -72,11 +73,11 @@ fn connections_share_one_lazy_keyring_unlock() {
         store.get("two", "ssh_password").unwrap().as_deref(),
         Some("ssh-secret")
     );
-    assert_eq!(keyring.reads.lock().unwrap().len(), 1);
-    assert_eq!(keyring.writes.lock().unwrap().len(), 1);
+    assert_eq!(keyring.reads.lock().len(), 1);
+    assert_eq!(keyring.writes.lock().len(), 1);
     drop(store);
 
-    keyring.reads.lock().unwrap().clear();
+    keyring.reads.lock().clear();
     let restarted = vault(&dir, &keyring);
     assert_eq!(
         restarted.get("one", "password").unwrap().as_deref(),
@@ -86,7 +87,7 @@ fn connections_share_one_lazy_keyring_unlock() {
         restarted.get("two", "password").unwrap().as_deref(),
         Some("second-secret")
     );
-    assert_eq!(keyring.reads.lock().unwrap().len(), 1);
+    assert_eq!(keyring.reads.lock().len(), 1);
 }
 
 #[test]
@@ -132,12 +133,12 @@ fn legacy_secrets_migrate_once_and_are_removed_after_persistence() {
         Some("legacy-password")
     );
     assert_eq!(keyring.inner.get("old", "password").unwrap(), None);
-    let count = keyring.reads.lock().unwrap().len();
+    let count = keyring.reads.lock().len();
     assert_eq!(
         store.get("old", "password").unwrap().as_deref(),
         Some("legacy-password")
     );
-    assert_eq!(keyring.reads.lock().unwrap().len(), count);
+    assert_eq!(keyring.reads.lock().len(), count);
     drop(store);
     assert_eq!(
         vault(&dir, &keyring)
@@ -208,16 +209,16 @@ fn absent_fields_are_not_repeatedly_looked_up_in_the_keyring() {
     let keyring = Arc::new(Keyring::default());
     let store = vault(&dir, &keyring);
     assert_eq!(store.get("conn", "ssh_password").unwrap(), None);
-    let count = keyring.reads.lock().unwrap().len();
+    let count = keyring.reads.lock().len();
     assert_eq!(store.get("conn", "ssh_password").unwrap(), None);
-    assert_eq!(keyring.reads.lock().unwrap().len(), count);
+    assert_eq!(keyring.reads.lock().len(), count);
     drop(store);
-    keyring.reads.lock().unwrap().clear();
+    keyring.reads.lock().clear();
     assert_eq!(
         vault(&dir, &keyring).get("conn", "ssh_password").unwrap(),
         None
     );
-    assert_eq!(keyring.reads.lock().unwrap().len(), 1);
+    assert_eq!(keyring.reads.lock().len(), 1);
 }
 
 #[test]
@@ -272,14 +273,14 @@ fn a_missing_or_invalid_master_key_never_replaces_an_existing_archive() {
         .unwrap();
     let path = dir.path().join("secrets.vault");
     let before = std::fs::read(&path).unwrap();
-    let (id, field) = keyring.writes.lock().unwrap()[0].clone();
+    let (id, field) = keyring.writes.lock()[0].clone();
     keyring.inner.delete(&id, &field).unwrap();
     assert!(
         vault(&dir, &keyring)
             .set("conn", "password", "new")
             .is_err()
     );
-    assert_eq!(keyring.writes.lock().unwrap().len(), 1);
+    assert_eq!(keyring.writes.lock().len(), 1);
     keyring
         .inner
         .set(&id, &field, "invalid-key-material")
@@ -298,7 +299,7 @@ fn failed_archive_writes_preserve_legacy_credentials() {
     let keyring = Arc::new(Keyring::default());
     keyring.inner.set("old", "password", "legacy").unwrap();
     // Make the destination unreplaceable after the initial read but before persistence.
-    *keyring.block_write.lock().unwrap() = Some(dir.path().join("secrets.vault"));
+    *keyring.block_write.lock() = Some(dir.path().join("secrets.vault"));
     assert!(vault(&dir, &keyring).get("old", "password").is_err());
     assert_eq!(
         keyring.inner.get("old", "password").unwrap().as_deref(),
@@ -345,7 +346,7 @@ fn a_valid_but_wrong_key_cannot_read_or_replace_credentials() {
         .unwrap();
     let path = dir.path().join("secrets.vault");
     let before = std::fs::read(&path).unwrap();
-    let (id, field) = keyring.writes.lock().unwrap()[0].clone();
+    let (id, field) = keyring.writes.lock()[0].clone();
     let wrong_key = base64::engine::general_purpose::STANDARD.encode([0; 32]);
     keyring.inner.set(&id, &field, &wrong_key).unwrap();
     let store = vault(&dir, &keyring);
@@ -370,7 +371,7 @@ fn canonical_directory_aliases_use_the_same_master_key() {
         alias_store.get("conn", "password").unwrap().as_deref(),
         Some("saved")
     );
-    assert_eq!(keyring.writes.lock().unwrap().len(), 1);
+    assert_eq!(keyring.writes.lock().len(), 1);
 }
 
 #[test]
@@ -394,7 +395,7 @@ fn concurrent_store_instances_do_not_lose_writes_or_race_key_creation() {
             Some(format!("secret-{n}"))
         );
     }
-    assert_eq!(keyring.writes.lock().unwrap().len(), 1);
+    assert_eq!(keyring.writes.lock().len(), 1);
 }
 
 #[test]
@@ -409,7 +410,7 @@ fn different_configuration_directories_have_separate_keys() {
         .set("conn", "password", "second")
         .unwrap();
     {
-        let writes = keyring.writes.lock().unwrap();
+        let writes = keyring.writes.lock();
         assert_ne!(writes[0], writes[1]);
     }
     assert_eq!(
@@ -427,7 +428,7 @@ fn connection_identifiers_cannot_read_or_delete_the_master_key() {
     let keyring = Arc::new(Keyring::default());
     let store = vault(&dir, &keyring);
     store.set("conn", "password", "saved").unwrap();
-    let (key_id, field) = keyring.writes.lock().unwrap()[0].clone();
+    let (key_id, field) = keyring.writes.lock()[0].clone();
     assert!(store.get(&key_id, &field).unwrap().is_none());
     store.set(&key_id, &field, "connection-password").unwrap();
     store.delete(&key_id, &field).unwrap();
@@ -449,12 +450,12 @@ fn mcp_tokens_use_the_same_unlocked_vault_and_migrate_the_old_token() {
     store.set("conn", "password", "password").unwrap();
     let legacy = Arc::new(MemoryMcpTokenStore::default());
     legacy.set("legacy-token").unwrap();
-    let tokens = VaultMcpTokenStore::new(store.clone(), legacy.clone());
+    let tokens = VaultMcpTokenStore::new(store, legacy.clone());
     assert_eq!(tokens.get().unwrap().as_deref(), Some("legacy-token"));
     assert_eq!(legacy.get().unwrap(), None);
     tokens.set("replacement").unwrap();
     assert_eq!(tokens.get().unwrap().as_deref(), Some("replacement"));
     tokens.delete().unwrap();
     assert_eq!(tokens.get().unwrap(), None);
-    assert_eq!(keyring.reads.lock().unwrap().len(), 1);
+    assert_eq!(keyring.reads.lock().len(), 1);
 }

@@ -16,6 +16,7 @@ use crate::table::TableRef;
 pub struct SchemaSnapshot {
     /// The driver id (`postgres`, `mysql`, `sqlite`).
     pub engine: String,
+    /// The schema name.
     pub schema: String,
     /// Tables, views, sequences and routines. Indexes, triggers and constraints are parts
     /// of their table.
@@ -25,21 +26,27 @@ pub struct SchemaSnapshot {
     pub dependencies: Vec<(ObjectRef, ObjectRef)>,
 }
 
+/// How an object differs between the source and the target schema.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DiffKind {
     /// In the source only: the migration creates it.
     Added,
     /// In the target only: the migration drops it.
     Removed,
+    /// In both with different definitions: the migration alters it.
     Changed,
 }
 
 /// One object that differs. `object` is named as it is (or would be) in the target schema.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ObjectDiff {
+    /// The object, named as in the target schema.
     pub object: ObjectRef,
+    /// Whether the object is added, removed or changed.
     pub kind: DiffKind,
+    /// The source object's DDL, when it exists there.
     pub source_ddl: Option<String>,
+    /// The target object's DDL, when it exists there.
     pub target_ddl: Option<String>,
     /// The changes that make the target look like the source.
     pub changes: Vec<SchemaChange>,
@@ -47,6 +54,7 @@ pub struct ObjectDiff {
     pub destructive: bool,
     /// The source object (named in the target schema), for what exists there.
     pub source_def: Option<ObjectDef>,
+    /// The target object, for what exists there.
     pub target_def: Option<ObjectDef>,
     /// The tables and views a view reads, by name (lower case).
     pub deps: Vec<String>,
@@ -323,7 +331,7 @@ fn key_of(def: &ObjectDef) -> ObjectKey {
     (
         r.kind.keyword(),
         r.name.clone(),
-        r.signature.clone().unwrap_or_default(),
+        r.signature.unwrap_or_default(),
     )
 }
 
@@ -563,7 +571,9 @@ fn dependency_order(items: &[&ObjectDiff]) -> Vec<usize> {
                 })
         });
         // A cycle: take the first one left.
-        let next = ready.unwrap_or_else(|| (0..items.len()).find(|&i| !placed[i]).unwrap());
+        let Some(next) = ready.or_else(|| (0..items.len()).find(|&i| !placed[i])) else {
+            break;
+        };
         placed[next] = true;
         order.push(next);
     }

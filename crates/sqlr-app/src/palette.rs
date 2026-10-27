@@ -428,7 +428,7 @@ impl SqlrApp {
                     commands.push(command(
                         &format!("New index on {}…", node.name),
                         "",
-                        AppCommand::NewIndex(conn.clone(), node.path.clone()),
+                        AppCommand::NewIndex(conn.clone(), node.path),
                     ));
                 }
                 // Administration panels of every connected connection.
@@ -558,7 +558,7 @@ impl SqlrApp {
             .get(conn)
             .and_then(|d| d.select_all(&node, None));
         match sql {
-            Some(sql) => self.open_and_run(node.name.clone(), conn, None, &sql),
+            Some(sql) => self.open_and_run(node.name, conn, None, &sql),
             None => self.notify(format!("Cannot open the data of {}", node.name)),
         }
     }

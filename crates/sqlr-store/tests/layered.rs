@@ -124,13 +124,13 @@ fn layered_resolution_order() {
     let conn = Some(("c1", "production"));
     assert_eq!(s.get("grid.page_size", conn), (int(500), Level::Global));
 
-    s.set("grid.page_size", Level::Global, Some(int(100)))
+    s.set("grid.page_size", &Level::Global, Some(int(100)))
         .unwrap();
     assert_eq!(s.get("grid.page_size", conn), (int(100), Level::Global));
 
     s.set(
         "grid.page_size",
-        Level::Profile("production".into()),
+        &Level::Profile("production".into()),
         Some(int(50)),
     )
     .unwrap();
@@ -147,7 +147,7 @@ fn layered_resolution_order() {
 
     s.set(
         "grid.page_size",
-        Level::Connection("c1".into()),
+        &Level::Connection("c1".into()),
         Some(int(10)),
     )
     .unwrap();
@@ -157,7 +157,7 @@ fn layered_resolution_order() {
     );
 
     // Clearing an override uncovers the level below.
-    s.set("grid.page_size", Level::Connection("c1".into()), None)
+    s.set("grid.page_size", &Level::Connection("c1".into()), None)
         .unwrap();
     assert_eq!(
         s.get("grid.page_size", conn),
@@ -166,13 +166,13 @@ fn layered_resolution_order() {
 
     // Invalid values and levels are refused.
     assert!(
-        s.set("grid.page_size", Level::Global, Some(int(0)))
+        s.set("grid.page_size", &Level::Global, Some(int(0)))
             .is_err()
     );
     assert!(
         s.set(
             "grid.page_size",
-            Level::Global,
+            &Level::Global,
             Some(SettingValue::Bool(true))
         )
         .is_err()
@@ -180,12 +180,12 @@ fn layered_resolution_order() {
     assert!(
         s.set(
             "appearance.theme",
-            Level::Profile("p".into()),
+            &Level::Profile("p".into()),
             Some(SettingValue::Choice("dark".into()))
         )
         .is_err()
     );
-    assert!(s.set("no.such", Level::Global, Some(int(1))).is_err());
+    assert!(s.set("no.such", &Level::Global, Some(int(1))).is_err());
 
     // The overrides survive a round trip through the files.
     let dir = tempfile::tempdir().unwrap();
@@ -199,8 +199,12 @@ fn layered_resolution_order() {
 fn flat_settings_save_keeps_overrides() {
     let dir = tempfile::tempdir().unwrap();
     let mut s = LayeredSettings::default();
-    s.set("grid.row_cap", Level::Connection("c1".into()), Some(int(7)))
-        .unwrap();
+    s.set(
+        "grid.row_cap",
+        &Level::Connection("c1".into()),
+        Some(int(7)),
+    )
+    .unwrap();
     s.save(dir.path()).unwrap();
     Settings {
         page_size: 42,
@@ -226,14 +230,14 @@ fn safety_flags_only_tighten() {
     // The profile switches read-only on; a connection cannot switch it back off.
     s.set(
         "safety.read_only",
-        Level::Profile("production".into()),
+        &Level::Profile("production".into()),
         Some(on.clone()),
     )
     .unwrap();
     assert!(
         s.set(
             "safety.read_only",
-            Level::Connection("c1".into()),
+            &Level::Connection("c1".into()),
             Some(off.clone())
         )
         .is_err()
@@ -243,7 +247,7 @@ fn safety_flags_only_tighten() {
         (on.clone(), Level::Profile("production".into()))
     );
     // Not even a global "off" loosens a profile's "on".
-    s.set("safety.read_only", Level::Global, Some(off.clone()))
+    s.set("safety.read_only", &Level::Global, Some(off.clone()))
         .unwrap();
     assert_eq!(s.get("safety.read_only", conn).0, on);
 
@@ -251,13 +255,13 @@ fn safety_flags_only_tighten() {
     assert_eq!(s.get("safety.confirm_writes", conn).0, off);
     s.set(
         "safety.confirm_writes",
-        Level::Connection("c1".into()),
+        &Level::Connection("c1".into()),
         Some(on.clone()),
     )
     .unwrap();
     assert_eq!(
         s.get("safety.confirm_writes", conn),
-        (on.clone(), Level::Connection("c1".into()))
+        (on, Level::Connection("c1".into()))
     );
     // Another connection is untouched.
     assert_eq!(

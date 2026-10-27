@@ -287,13 +287,13 @@ fn save_insert_and_delete_documents_by_id() {
     );
     assert_eq!(fake.docs()[1], changed);
     // A document deleted meanwhile: nothing is replaced, and the save says so.
-    let gone = engine.save_doc(&meta(), users(), Some(DocValue::Int32(99)), changed.clone());
+    let gone = engine.save_doc(&meta(), users(), Some(DocValue::Int32(99)), changed);
     let JobOutcome::Failed(e) = job(&engine, gone) else {
         panic!("saving a missing document must fail")
     };
     assert!(e.message.contains("no longer exists"), "{}", e.message);
     let new = doc(vec![("_id", DocValue::Int32(7))]);
-    let inserted = engine.save_doc(&meta(), users(), None, new.clone());
+    let inserted = engine.save_doc(&meta(), users(), None, new);
     assert!(matches!(
         job(&engine, inserted),
         JobOutcome::DocsWritten {
@@ -735,7 +735,7 @@ fn es_doc_edit_by_id_and_index() {
     };
     let through_alias = engine.save_doc(
         &key,
-        target.clone(),
+        target,
         Some(DocValue::String("1".into())),
         hit_b.clone(),
     );

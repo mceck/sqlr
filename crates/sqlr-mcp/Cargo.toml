@@ -34,3 +34,6 @@ sqlr-driver-sqlite = { path = "../sqlr-driver-sqlite" }
 tempfile.workspace = true
 reqwest = { workspace = true }
 rmcp = { workspace = true, features = ["client", "transport-streamable-http-client-reqwest"] }
+
+[lints]
+workspace = true

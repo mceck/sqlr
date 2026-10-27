@@ -12,15 +12,21 @@ use crate::lang::{EsHead, es_head, lex_json};
 use crate::mongo_shell::ShellError;
 use crate::syntax::{LexState, TokenKind};
 
+/// One request of an Elasticsearch console script, ready for the Elasticsearch Driver.
 #[derive(Clone, Debug, PartialEq)]
 pub enum EsRequest {
     /// `path` always starts with `/`. A body of several NDJSON values is a JSON array.
     Http {
+        /// The HTTP method, upper case.
         method: String,
+        /// The request path, starting with `/`.
         path: String,
+        /// The JSON body, when there is one.
         body: Option<serde_json::Value>,
     },
+    /// An ES|QL query.
     Esql(String),
+    /// An Elasticsearch SQL query.
     Sql(String),
 }
 
@@ -134,6 +140,7 @@ pub fn split_es_console(text: &str) -> Vec<Range<usize>> {
     scan(text).into_iter().map(|b| b.range).collect()
 }
 
+/// Parses an Elasticsearch console script into its requests with the text range of each.
 pub fn parse_es_console(text: &str) -> Result<Vec<(Range<usize>, EsRequest)>, ShellError> {
     scan(text)
         .into_iter()
@@ -229,7 +236,9 @@ fn to_strict_json(src: &str) -> (String, Vec<usize>) {
         } else if src[i..].starts_with("/*") {
             i = src[i + 2..].find("*/").map_or(b.len(), |n| i + 2 + n + 2);
         } else {
-            let ch = src[i..].chars().next().unwrap();
+            let Some(ch) = src[i..].chars().next() else {
+                break;
+            };
             let mut tmp = [0u8; 4];
             push_str(&mut out, &mut map, ch.encode_utf8(&mut tmp), i);
             i += ch.len_utf8();

@@ -101,6 +101,10 @@ impl UiKeymap {
     /// Consumes a press of any chord of `action`; true if there was one. Callers that test
     /// two actions on one key (Find next and Find previous) ask for the more specific first.
     pub fn consume(&self, input: &mut InputState, action: ActionId) -> bool {
+        #[expect(
+            clippy::needless_collect,
+            reason = "the matching events borrow `input.events`, which `consume_key` needs mutably"
+        )]
         let events: Vec<_> = input
             .events
             .iter()

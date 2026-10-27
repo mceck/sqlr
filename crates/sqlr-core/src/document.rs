@@ -21,18 +21,25 @@ pub struct DocTarget {
     /// The database (MongoDB); `None` for the connection's current one, and always for
     /// Elasticsearch.
     pub database: Option<String>,
+    /// The collection, index, alias or data stream name.
     pub collection: String,
 }
 
 /// What running one statement or request produced.
 pub enum DocExecution {
+    /// A stream of documents (a Doc chunk source).
     Docs(Box<dyn DocStream>),
     /// Tabular results: ES|QL, SQL, `distinct`, `show dbs`.
     Rows(Box<dyn RowStream>),
+    /// A write statement's outcome.
     Written {
+        /// Documents the filter matched.
         matched: u64,
+        /// Documents actually changed.
         modified: u64,
+        /// Documents inserted (or upserted).
         inserted: u64,
+        /// Documents deleted.
         deleted: u64,
         /// The `_id`s of inserted (or upserted) documents.
         ids: Vec<DocValue>,
@@ -41,6 +48,7 @@ pub enum DocExecution {
     Value(DocValue),
 }
 
+/// Pages of documents produced by one statement, read on demand.
 #[async_trait::async_trait]
 pub trait DocStream: Send {
     /// The next page of at most `max` documents; `Ok(None)` once the result is exhausted.
@@ -54,6 +62,7 @@ pub trait DocStream: Send {
     }
 }
 
+/// The document-family connection of a driver: runs statements and edits single documents.
 #[async_trait::async_trait]
 pub trait DocumentConn: Send + Sync {
     /// [`QueryLanguage::MongoShell`] or [`QueryLanguage::EsConsole`].

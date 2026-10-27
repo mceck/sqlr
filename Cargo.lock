@@ -7313,6 +7313,7 @@ dependencies = [
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
+ "parking_lot",
  "percent-encoding",
  "reqwest",
  "rfd",
@@ -7365,6 +7366,7 @@ version = "0.1.3"
 dependencies = [
  "async-trait",
  "duckdb",
+ "parking_lot",
  "sqlr-driver-sdk",
  "sqlr-driver-tests",
  "sqlr-sidecar",
@@ -7378,6 +7380,7 @@ name = "sqlr-driver-elastic"
 version = "0.1.3"
 dependencies = [
  "async-trait",
+ "parking_lot",
  "reqwest",
  "rustls",
  "rustls-native-certs",
@@ -7427,6 +7430,7 @@ dependencies = [
  "bson",
  "futures-util",
  "mongodb",
+ "parking_lot",
  "rustls",
  "sqlr-core",
  "sqlr-testkit",
@@ -7456,6 +7460,7 @@ version = "0.1.3"
 dependencies = [
  "async-trait",
  "mysql_async",
+ "parking_lot",
  "rustls",
  "sqlr-core",
  "sqlr-driver-tests",
@@ -7471,6 +7476,7 @@ version = "0.1.3"
 dependencies = [
  "async-trait",
  "oracle-rs",
+ "parking_lot",
  "rustls",
  "serde_json",
  "sqlr-core",
@@ -7486,6 +7492,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "futures-util",
+ "parking_lot",
  "rcgen",
  "rustls",
  "rustls-native-certs",
@@ -7505,6 +7512,7 @@ name = "sqlr-driver-redis"
 version = "0.1.3"
 dependencies = [
  "async-trait",
+ "parking_lot",
  "redis",
  "rustls",
  "sqlr-core",
@@ -7529,6 +7537,7 @@ name = "sqlr-driver-snowflake"
 version = "0.1.3"
 dependencies = [
  "async-trait",
+ "parking_lot",
  "reqwest",
  "rustls",
  "serde_json",
@@ -7542,6 +7551,7 @@ name = "sqlr-driver-sqlite"
 version = "0.1.3"
 dependencies = [
  "async-trait",
+ "parking_lot",
  "rusqlite",
  "sqlr-core",
  "sqlr-driver-tests",
@@ -7638,6 +7648,7 @@ dependencies = [
  "flate2",
  "minisign",
  "minisign-verify",
+ "parking_lot",
  "reqwest",
  "rustls",
  "rustls-native-certs",
@@ -7736,6 +7747,7 @@ dependencies = [
  "jiff",
  "memory-stats",
  "nucleo-matcher",
+ "parking_lot",
  "ropey",
  "serde_json",
  "similar",

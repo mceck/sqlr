@@ -25,7 +25,7 @@ pub fn read_rows<R: BufRead>(
     mut reader: R,
     on_row: impl FnMut(&[String], u64, Vec<Value>) -> bool,
 ) -> Result<Vec<String>, String> {
-    skip_bom(&mut reader).map_err(io_message)?;
+    skip_bom(&mut reader).map_err(|e| io_message(&e))?;
     match format {
         TextFormat::Csv(o) => read_delimited(o, reader, on_row),
         TextFormat::Tsv => read_delimited(&CsvOptions::tsv(), reader, on_row),
@@ -37,7 +37,7 @@ pub fn read_rows<R: BufRead>(
     }
 }
 
-fn io_message(e: std::io::Error) -> String {
+fn io_message(e: &std::io::Error) -> String {
     if e.kind() == std::io::ErrorKind::InvalidData {
         "The file is not UTF-8 text".into()
     } else {
@@ -88,7 +88,7 @@ impl<R: BufRead> Chars<R> {
             }
             Ok(_) => true,
             Err(e) => {
-                self.error = Some(io_message(e));
+                self.error = Some(io_message(&e));
                 self.eof = true;
                 false
             }
@@ -338,7 +338,7 @@ fn read_json_lines<R: BufRead>(
     let mut line = 0u64;
     loop {
         text.clear();
-        if reader.read_line(&mut text).map_err(io_message)? == 0 {
+        if reader.read_line(&mut text).map_err(|e| io_message(&e))? == 0 {
             break;
         }
         line += 1;

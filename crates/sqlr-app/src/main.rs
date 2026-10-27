@@ -1,3 +1,5 @@
+#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -28,12 +30,10 @@ impl eframe::App for Shell {
                 *first = Some(elapsed);
             }
         }
-        if self
+        if let Some((path, _, first)) = self
             .budget
-            .as_ref()
-            .is_some_and(|(_, started, _)| started.elapsed() > std::time::Duration::from_secs(2))
+            .take_if(|(_, started, _)| started.elapsed() > std::time::Duration::from_secs(2))
         {
-            let (path, _, first) = self.budget.take().unwrap();
             let connected = self.app.connected_connection_count();
             let ctx = ui.ctx().clone();
             std::thread::spawn(move || {
@@ -90,7 +90,7 @@ fn main() -> eframe::Result {
         Some(diagnostics.clone()),
     );
     let diagnostics_warning = logging.warning();
-    let app_data_dir = data_dir.clone();
+    let app_data_dir = data_dir;
     let app_diagnostics = diagnostics.clone();
 
     let mut viewport = egui::ViewportBuilder::default()

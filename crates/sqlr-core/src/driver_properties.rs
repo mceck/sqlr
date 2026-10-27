@@ -1,6 +1,7 @@
 //! Typed, non-secret session properties advertised by built-in driver manifests.
 use crate::{DriverError, ErrorKind, FieldSpec, FieldType};
 use std::collections::BTreeMap;
+/// The session property fields a built-in `driver` advertises, as `property.*` manifest fields; empty for drivers without any.
 pub fn driver_property_fields(driver: &str) -> Vec<FieldSpec> {
     let properties: Vec<(&str, FieldType)> = match driver {
         "postgres" => vec![
@@ -44,6 +45,7 @@ pub fn driver_property_fields(driver: &str) -> Vec<FieldSpec> {
         })
         .collect()
 }
+/// Checks the `property.*` entries of `values` against `fields`: names must be well formed, and known or allowed by a free-form field.
 pub fn validate_driver_properties(
     fields: &[FieldSpec],
     values: &BTreeMap<String, String>,

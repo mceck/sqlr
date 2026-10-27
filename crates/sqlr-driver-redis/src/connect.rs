@@ -5,10 +5,11 @@
 //! (`BLPOP`), and the console's connections can be killed to cancel it. A connection the
 //! server dropped is opened again by the next call; idempotent reads then run once more.
 
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::future::Future;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use redis::aio::MultiplexedConnection;
@@ -142,7 +143,7 @@ impl Inner {
                 .query_async::<i64>(&mut con)
                 .await
         {
-            self.console_ids.lock().unwrap().push(id);
+            self.console_ids.lock().push(id);
         }
         Ok(con)
     }
@@ -228,7 +229,7 @@ impl Inner {
 
     async fn cancel(&self) -> Result<(), DriverError> {
         self.cancel_epoch.fetch_add(1, Ordering::SeqCst);
-        let ids = std::mem::take(&mut *self.console_ids.lock().unwrap());
+        let ids = std::mem::take(&mut *self.console_ids.lock());
         if ids.is_empty() {
             return Ok(());
         }

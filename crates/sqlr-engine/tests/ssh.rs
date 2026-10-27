@@ -283,9 +283,7 @@ async fn unknown_host_key_is_refused_by_default() {
     );
     assert_eq!(fake.open_connections(), 0, "the driver was never called");
     assert!(
-        std::fs::read_to_string(&known)
-            .map(|text| !text.contains("ssh-ed25519"))
-            .unwrap_or(true),
+        !std::fs::read_to_string(&known).is_ok_and(|text| text.contains("ssh-ed25519")),
         "the unknown key was not learned"
     );
     tokio::task::block_in_place(|| {

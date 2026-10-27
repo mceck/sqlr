@@ -29,7 +29,10 @@ pub(crate) struct CreateDialog {
 }
 
 impl CreateDialog {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the connection, kind, schema, database, table, tables, refresh paths and dialect are the independent facts of one create-object dialog, read from different parts of the tree selection; a parameter struct would just repeat the field names"
+    )]
     pub fn new(
         conn: &str,
         kind: ObjectKind,

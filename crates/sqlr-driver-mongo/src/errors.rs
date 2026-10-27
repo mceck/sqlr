@@ -17,6 +17,10 @@ pub(crate) fn kind_for_code(code: i32) -> ErrorKind {
     }
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "used as a `map_err` function pointer, which receives the error by value"
+)]
 pub(crate) fn map_error(e: Error) -> DriverError {
     match &*e.kind {
         MongoKind::Authentication { message, .. } => {

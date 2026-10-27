@@ -161,15 +161,14 @@ fn a_job_while_another_driver_stays_installed_does_not_deadlock() {
     // The installs above left a finished job behind; the rollback must be its own.
     engine.clear_driver_job("echo");
     engine.activate_driver("echo", "1.0.0");
-    let e = engine.clone();
     let jobs = within("the rollback", move || {
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         loop {
-            let jobs = e.driver_jobs();
+            let jobs = engine.driver_jobs();
             if jobs.iter().any(|(_, s)| *s == DriverJobState::Done)
-                && e.installed_drivers()[0].active == "1.0.0"
+                && engine.installed_drivers()[0].active == "1.0.0"
             {
-                return e.installed_drivers()[0].active.clone();
+                return engine.installed_drivers()[0].active.clone();
             }
             assert!(std::time::Instant::now() < deadline, "{jobs:?}");
             std::thread::sleep(Duration::from_millis(10));

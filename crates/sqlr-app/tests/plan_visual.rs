@@ -31,11 +31,10 @@ struct App {
 #[test]
 #[ignore = "renders the plan view; requires a GPU adapter"]
 fn plan_visual() {
-    let out = std::env::var_os("SQLR_PLAN_PNG")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/plan-view.png")
-        });
+    let out = std::env::var_os("SQLR_PLAN_PNG").map_or_else(
+        || std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/plan-view.png"),
+        std::path::PathBuf::from,
+    );
     for (palette, suffix) in [(Palette::dark(), "dark"), (Palette::light(), "light")] {
         let plan = parse_pg_json(PLAN).unwrap();
         let state = PlanViewState {

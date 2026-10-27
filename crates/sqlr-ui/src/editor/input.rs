@@ -95,23 +95,23 @@ mod tests {
             .or_else(|| key_action(key, m, mac, 10))
     }
 
-    fn mv(motion: Motion, select: bool) -> Option<Action> {
-        Some(Action::Edit(EditCommand::Move { motion, select }))
+    fn mv(motion: Motion, select: bool) -> Action {
+        Action::Edit(EditCommand::Move { motion, select })
     }
 
     #[test]
     fn word_modifier_depends_on_platform() {
         assert_eq!(
             act(Key::ArrowLeft, Modifiers::ALT, true),
-            mv(Motion::WordLeft, false)
+            Some(mv(Motion::WordLeft, false))
         );
         assert_eq!(
             act(Key::ArrowLeft, Modifiers::ALT, false),
-            mv(Motion::Left, false)
+            Some(mv(Motion::Left, false))
         );
         assert_eq!(
             act(Key::ArrowRight, Modifiers::CTRL, false),
-            mv(Motion::WordRight, false)
+            Some(mv(Motion::WordRight, false))
         );
         assert_eq!(
             act(Key::Backspace, Modifiers::ALT, true),
@@ -119,15 +119,15 @@ mod tests {
         );
         assert_eq!(
             act(Key::ArrowLeft, Modifiers::COMMAND | Modifiers::SHIFT, true),
-            mv(Motion::LineStart, true)
+            Some(mv(Motion::LineStart, true))
         );
         assert_eq!(
             act(Key::Home, Modifiers::COMMAND, false),
-            mv(Motion::DocStart, false)
+            Some(mv(Motion::DocStart, false))
         );
         assert_eq!(
             act(Key::ArrowDown, Modifiers::COMMAND, true),
-            mv(Motion::DocEnd, false)
+            Some(mv(Motion::DocEnd, false))
         );
         assert_eq!(
             act(Key::ArrowUp, Modifiers::COMMAND | Modifiers::ALT, true),
@@ -135,7 +135,7 @@ mod tests {
         );
         assert_eq!(
             act(Key::PageDown, Modifiers::SHIFT, true),
-            mv(Motion::PageDown(10), true)
+            Some(mv(Motion::PageDown(10), true))
         );
     }
 

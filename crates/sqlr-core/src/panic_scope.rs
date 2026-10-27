@@ -18,6 +18,7 @@ pub struct EngineTaskScope {
 }
 
 impl EngineTaskScope {
+    /// Marks the current thread; the mark is undone when the returned scope is dropped.
     pub fn enter() -> Self {
         let previous = ENGINE_TASK.with(|flag| flag.replace(true));
         Self { previous }

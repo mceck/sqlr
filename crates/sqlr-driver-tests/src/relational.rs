@@ -11,6 +11,10 @@ use crate::{SuiteReport, Target};
 
 type Check = Result<(), String>;
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "used as a `map_err` function pointer, which receives the error by value"
+)]
 fn err(e: DriverError) -> String {
     format!("{:?}: {}", e.kind, e.message)
 }

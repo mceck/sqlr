@@ -277,7 +277,7 @@ fn snippet_double_click_inserts() {
 #[test]
 fn snippet_context_menu_and_new() {
     let all = scoped_snippets();
-    let mut h = snippets_harness(all.clone());
+    let mut h = snippets_harness(all);
     h.get_by_label("two").click_secondary();
     h.run_steps(2);
     h.get_by_label("Insert");

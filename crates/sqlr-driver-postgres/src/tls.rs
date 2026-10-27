@@ -88,12 +88,12 @@ pub(crate) fn connector(mode: SslMode, files: &TlsFiles) -> Result<MakeRustlsCon
 
     let verifier: Arc<dyn ServerCertVerifier> = match (mode, &files.root_cert) {
         (SslMode::Disable, _) | (SslMode::Prefer | SslMode::Require, None) => {
-            Arc::new(AcceptAnyCertificate(provider.clone()))
+            Arc::new(AcceptAnyCertificate(provider))
         }
-        (SslMode::Prefer | SslMode::Require | SslMode::VerifyCa, root) => Arc::new(ChainOnly(
-            webpki_verifier(root.as_deref(), provider.clone())?,
-        )),
-        (SslMode::VerifyFull, root) => webpki_verifier(root.as_deref(), provider.clone())?,
+        (SslMode::Prefer | SslMode::Require | SslMode::VerifyCa, root) => {
+            Arc::new(ChainOnly(webpki_verifier(root.as_deref(), provider)?))
+        }
+        (SslMode::VerifyFull, root) => webpki_verifier(root.as_deref(), provider)?,
     };
     let builder = builder
         .dangerous()

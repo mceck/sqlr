@@ -15,12 +15,17 @@ use std::ops::Range;
 
 use crate::syntax::{LexEnd, LexState, SqlSyntax, Token, TokenKind, dollar_tag_hash};
 
+/// The language of a query editor, which decides lexing, statement splitting and highlighting.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum QueryLanguage {
+    /// SQL, in the dialect of the connection.
     #[default]
     Sql,
+    /// The MongoDB shell subset.
     MongoShell,
+    /// The Elasticsearch console: a request line and a JSON body.
     EsConsole,
+    /// Redis commands, one per line.
     Redis,
     /// A JSON value, edited on its own (a cell, a document). No statements.
     Json,

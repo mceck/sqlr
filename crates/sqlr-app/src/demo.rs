@@ -508,7 +508,7 @@ impl SqlrApp {
                     (Err(e), _) | (_, Err(e)) => return self.demo_failed(&setup, &e),
                 };
                 match probe(&tables, &views) {
-                    Probe::Ready => self.demo_ready(setup),
+                    Probe::Ready => Some(self.demo_ready(setup)),
                     Probe::Generate => {
                         let options = ApplyOptions {
                             transactional: true,
@@ -541,7 +541,9 @@ impl SqlrApp {
                 }
                 self.engine.forget_job(job);
                 match state.and_then(|s| s.outcome) {
-                    Some(JobOutcome::DdlApplied(report)) if report.ok() => self.demo_ready(setup),
+                    Some(JobOutcome::DdlApplied(report)) if report.ok() => {
+                        Some(self.demo_ready(setup))
+                    }
                     Some(JobOutcome::DdlApplied(report)) => {
                         self.demo_failed(&setup, &report.summary())
                     }
@@ -565,7 +567,7 @@ impl SqlrApp {
 
     /// The file is ready: the temporary session ends and the "Demo" connection opens it
     /// (saved first, or re-pointed, when needed).
-    fn demo_ready(&mut self, mut setup: DemoSetup) -> Option<DemoSetup> {
+    fn demo_ready(&mut self, mut setup: DemoSetup) -> DemoSetup {
         self.engine.disconnect(&setup.temp);
         let path = setup.path.to_string_lossy().into_owned();
         let existing = self.connection(DEMO_ID).cloned();
@@ -594,7 +596,7 @@ impl SqlrApp {
             });
         }
         setup.stage = Stage::Saving;
-        Some(setup)
+        setup
     }
 
     fn demo_failed(&mut self, setup: &DemoSetup, message: &str) -> Option<DemoSetup> {

@@ -5,16 +5,24 @@
 
 use crate::syntax::{LexState, SqlSyntax, TokenKind};
 
+/// A transaction-control verb of a statement.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TxVerb {
+    /// Start a transaction.
     Begin,
+    /// Commit the transaction.
     Commit,
+    /// Roll the transaction back.
     Rollback,
+    /// Set a savepoint with this name.
     Savepoint(String),
+    /// Roll back to the savepoint with this name.
     RollbackTo(String),
+    /// Release the savepoint with this name.
     Release(String),
 }
 
+/// The kind of a statement, as decided by the classifier.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StatementClass {
     /// SELECT, SHOW, EXPLAIN without ANALYZE, VALUES, TABLE, PRAGMA reads, WITH … SELECT.
@@ -25,6 +33,7 @@ pub enum StatementClass {
     Ddl,
     /// DROP, TRUNCATE, DELETE/UPDATE without WHERE, ALTER … DROP; the reason names which.
     Destructive(String),
+    /// A transaction-control statement.
     Transaction(TxVerb),
     /// SET, USE and anything unknown; treated like a write.
     Other,

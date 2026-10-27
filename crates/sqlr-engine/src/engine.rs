@@ -266,7 +266,11 @@ impl Engine {
                         tokio::spawn(tracing::Instrument::instrument(
                             async move {
                                 if let Err(payload) = task.await {
-                                    supervisor.report_command_panic(run, context, payload);
+                                    supervisor.report_command_panic(
+                                        run,
+                                        &context,
+                                        payload.as_ref(),
+                                    );
                                 }
                             },
                             span,
@@ -1793,10 +1797,10 @@ impl Shared {
     fn report_command_panic(
         self: &Arc<Self>,
         run: u64,
-        context: CommandContext,
-        payload: Box<dyn std::any::Any + Send>,
+        context: &CommandContext,
+        payload: &(dyn std::any::Any + Send),
     ) {
-        let panic = panic_payload(payload.as_ref());
+        let panic = panic_payload(payload);
         let message = format!("internal panic: {panic}");
         if let Some(q) = context.query_id {
             let q = QueryId(q);
@@ -1936,7 +1940,10 @@ impl Shared {
     /// Makes `stream` the rows result `q` of a document run on the session (its tabular
     /// results, such as `distinct` or ES|QL, are ordinary rows results: `Engine::result(q)`,
     /// fetched and closed like any other), then fetches its first page.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the engine, query id, session, I/O, text, page size, stream and slot are independent borrows of different owners; grouping them would need a struct built at the single call site"
+    )]
     pub(crate) async fn adopt_rows(
         self: &Arc<Self>,
         q: QueryId,
@@ -2222,28 +2229,25 @@ impl Shared {
         self.handle_command(cmd).await;
         if let Some((id, target)) = tracked {
             let state = match target {
-                Target::Query(q) => shared
-                    .result(q)
-                    .map(|r| match &r.read().status {
-                        QueryStatus::Cancelled => S::Cancelled,
-                        QueryStatus::Failed(e) => S::Failed(e.to_string()),
-                        _ => S::Done { ok: true },
-                    })
-                    .unwrap_or(S::Cancelled),
-                Target::Script(id) => shared
-                    .scripts
-                    .state(id)
-                    .map(|s| {
-                        let s = s.read();
-                        if s.cancelled {
-                            S::Cancelled
-                        } else if s.output.iter().any(|o| o.error.is_some()) {
-                            S::Done { ok: false }
-                        } else {
-                            S::Done { ok: true }
-                        }
-                    })
-                    .unwrap_or(S::Cancelled),
+                Target::Query(q) => {
+                    shared
+                        .result(q)
+                        .map_or(S::Cancelled, |r| match &r.read().status {
+                            QueryStatus::Cancelled => S::Cancelled,
+                            QueryStatus::Failed(e) => S::Failed(e.to_string()),
+                            _ => S::Done { ok: true },
+                        })
+                }
+                Target::Script(id) => shared.scripts.state(id).map_or(S::Cancelled, |s| {
+                    let s = s.read();
+                    if s.cancelled {
+                        S::Cancelled
+                    } else if s.output.iter().any(|o| o.error.is_some()) {
+                        S::Done { ok: false }
+                    } else {
+                        S::Done { ok: true }
+                    }
+                }),
                 _ => S::Done { ok: true },
             };
             shared.operations.finish(id, state);
@@ -2320,7 +2324,10 @@ impl Shared {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the spawned connect task owns the engine, key, driver, configuration, secrets, I/O, read-only flag and tunnel slot it was started with; a parameter struct would only be built to be unpacked on the first line"
+    )]
     async fn connect(
         self: Arc<Self>,
         key: SessionKey,
@@ -3153,7 +3160,7 @@ impl Shared {
                 if settled {
                     failure = match &r.status {
                         QueryStatus::Failed(e) => Some((
-                            conn.clone().unwrap_or_default(),
+                            conn.unwrap_or_default(),
                             e.kind,
                             e.message.clone(),
                             r.sql.clone(),
@@ -3161,7 +3168,7 @@ impl Shared {
                             r.elapsed.as_millis() as u64,
                         )),
                         QueryStatus::Cancelled => Some((
-                            conn.clone().unwrap_or_default(),
+                            conn.unwrap_or_default(),
                             ErrorKind::Cancelled,
                             "cancelled".to_string(),
                             r.sql.clone(),
@@ -3306,7 +3313,10 @@ fn error_status(e: DriverError) -> QueryStatus {
 }
 
 /// The one failure line a query or fetch writes when it settles.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one structured log call whose arguments are the event fields (level, op, connection, driver, database, query id, elapsed, kind, message, sql); grouping them would just rename the fields"
+)]
 pub(crate) fn log_query_settled(
     level: tracing::Level,
     op: &str,

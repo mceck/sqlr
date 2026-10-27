@@ -71,9 +71,8 @@ pub fn discover(home: &Path) -> Vec<DetectedSource> {
             found.push(DetectedSource { format, path });
         }
     };
-    let appdata = std::env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join("AppData/Roaming"));
+    let appdata =
+        std::env::var_os("APPDATA").map_or_else(|| home.join("AppData/Roaming"), PathBuf::from);
     for root in [
         home.join("Library/DBeaverData"),
         home.join(".local/share/DBeaverData"),

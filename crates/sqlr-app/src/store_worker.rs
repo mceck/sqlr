@@ -292,6 +292,10 @@ impl StoreWorker {
     }
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "used as a `map_err` function pointer, which receives the error by value"
+)]
 fn store_error(error: sqlr_store::StoreError) -> String {
     if !matches!(error, sqlr_store::StoreError::Invalid(_)) {
         tracing::error!(op = "store", error = %error, "local storage operation failed");
@@ -358,7 +362,7 @@ pub(crate) fn run(repo: &ConnectionRepo, op: StoreOp) -> StoreReply {
             }
         }
         StoreOp::MoveFolder { folder, target } => {
-            let (result, to) = match repo.move_folder(&folder, target) {
+            let (result, to) = match repo.move_folder(&folder, &target) {
                 Ok(to) => (Ok(()), to),
                 Err(e) => (Err(store_error(e)), String::new()),
             };

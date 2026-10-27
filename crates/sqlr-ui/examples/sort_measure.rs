@@ -3,7 +3,10 @@
 use sqlr_core::{Cell, ChunkBuilder, ColumnKind, ColumnMeta, DisplayHint, RowBuffer};
 use std::{hint::black_box, sync::Arc, time::Instant};
 // Compile the private sorter directly without widening the widget API for a benchmark.
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "the benchmark only calls part of the sorter it compiles in"
+)]
 #[path = "../src/grid/sort.rs"]
 mod sort;
 fn main() {

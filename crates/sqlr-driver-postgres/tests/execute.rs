@@ -608,15 +608,15 @@ async fn execute_with_binds_every_value_kind() {
     affected(&conn, "COMMIT").await;
 }
 
-fn origin(schema: &str, table: &str, column: &str) -> Option<ColumnOrigin> {
-    Some(ColumnOrigin {
+fn origin(schema: &str, table: &str, column: &str) -> ColumnOrigin {
+    ColumnOrigin {
         table: TableRef {
             database: None,
             schema: Some(schema.into()),
             name: table.into(),
         },
         column: column.into(),
-    })
+    }
 }
 
 #[tokio::test]
@@ -642,9 +642,9 @@ async fn origins_on_table_select() {
     assert_eq!(
         origins,
         [
-            origin("S 1", "Items", "id"),
-            origin("S 1", "Items", "Name"),
-            origin("S 1", "Items", "extra"),
+            Some(origin("S 1", "Items", "id")),
+            Some(origin("S 1", "Items", "Name")),
+            Some(origin("S 1", "Items", "extra")),
         ]
     );
     drop(s);
@@ -660,8 +660,8 @@ async fn origins_on_table_select() {
     assert_eq!(
         origins,
         [
-            origin("S 1", "Items", "id"),
-            origin("public", "owners", "id"),
+            Some(origin("S 1", "Items", "id")),
+            Some(origin("public", "owners", "id")),
             None,
             None,
         ]
@@ -671,7 +671,7 @@ async fn origins_on_table_select() {
     // A renamed table is reported by its new name.
     affected(&conn, r#"ALTER TABLE "S 1"."Items" RENAME TO "Things""#).await;
     let s = rows(&conn, r#"SELECT id FROM "S 1"."Things""#).await;
-    assert_eq!(s.columns()[0].origin, origin("S 1", "Things", "id"));
+    assert_eq!(s.columns()[0].origin, Some(origin("S 1", "Things", "id")));
 }
 
 #[tokio::test]
@@ -719,7 +719,7 @@ async fn quote_ident_round_trips_per_dialect() {
         }
         let mut s = rows(&conn, &format!("SELECT {col} FROM {q}")).await;
         assert_eq!(s.columns()[0].name, name);
-        assert_eq!(s.columns()[0].origin, origin("public", name, name));
+        assert_eq!(s.columns()[0].origin, Some(origin("public", name, name)));
         let chunk = s.next_chunk(500).await.unwrap().unwrap();
         assert_eq!(chunk.cell(0, 0), Cell::Text(name));
         s.close().await.unwrap();

@@ -175,7 +175,7 @@ fn demo_database_opens_and_queries() {
         .find(|(_, name, _)| name == "Demo")
         .expect("a saved Demo connection");
     assert_eq!(demo.2, "sqlite");
-    assert_eq!(h.state().tab_conns(), [Some(demo.0.clone())]);
+    assert_eq!(h.state().tab_conns(), [Some(demo.0)]);
     let text = h.state_mut().active_text().unwrap();
     assert_eq!(text, "SELECT * FROM order_summary LIMIT 100;");
 

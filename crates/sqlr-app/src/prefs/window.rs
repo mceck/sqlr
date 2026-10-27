@@ -149,8 +149,9 @@ impl PrefsWindow {
                     }
                     Err(_) => None,
                 };
-                if let Some(result) = result {
-                    let pending = self.saving.take().unwrap();
+                if let Some(result) = result
+                    && let Some(pending) = self.saving.take()
+                {
                     match result {
                         Ok(()) => {
                             self.original = pending.live;
@@ -569,7 +570,6 @@ impl PrefsWindow {
                             let response = sqlr_ui::text_edit(ui, search);
                             if response.has_focus() || !query.is_empty() {
                                 response
-                                    .clone()
                                     .on_hover_text("Filters by name, driver and folder");
                             }
                         },

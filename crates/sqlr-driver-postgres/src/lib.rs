@@ -1,6 +1,8 @@
 //! PostgreSQL driver for sqlr: cursor-streamed results, bound parameters, column origins,
 //! table descriptions, DDL, server notices and TLS through rustls.
 
+#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+
 mod admin;
 mod browse;
 mod catalog;

@@ -1,7 +1,8 @@
 //! The REST client: TLS on rustls with the ring provider, basic or API-key auth, the
 //! server version, and request tagging for cancellation.
 
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 use std::time::Duration;
 
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};

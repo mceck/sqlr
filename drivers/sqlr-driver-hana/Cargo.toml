@@ -21,3 +21,6 @@ sqlr-sidecar = { path = "../../crates/sqlr-sidecar" }
 bigdecimal = "0.4"
 sqlr-driver-tests = { path = "../../crates/sqlr-driver-tests" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+
+[lints]
+workspace = true

@@ -7,36 +7,51 @@ use crate::compare::SchemaSnapshot;
 use crate::schema::{ConstraintDef, ObjectDef};
 use crate::table::TableRef;
 
+/// A column of a diagram table.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ErColumn {
+    /// Column name.
     pub name: String,
+    /// The type name as the driver reports it.
     pub type_name: String,
+    /// Whether the column is part of the primary key.
     pub pk: bool,
+    /// Whether the column is part of a foreign key.
     pub fk: bool,
+    /// Whether the column accepts NULL.
     pub nullable: bool,
 }
 
+/// A table box of the diagram.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ErTable {
+    /// The table the box stands for.
     pub table: TableRef,
+    /// Its columns, in ordinal order.
     pub columns: Vec<ErColumn>,
 }
 
 /// A foreign key: `from` references `to` (indexes into [`ErModel::tables`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ErEdge {
+    /// Index of the referencing table.
     pub from: usize,
+    /// Index of the referenced table.
     pub to: usize,
     /// `(column of from, column of to)`.
     pub columns: Vec<(String, String)>,
     /// The referencing columns are unique: at most one row per target row.
     pub unique: bool,
+    /// Whether a referencing column accepts NULL, so the reference is optional.
     pub nullable: bool,
 }
 
+/// The tables and foreign keys of a diagram.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ErModel {
+    /// The tables, in name order.
     pub tables: Vec<ErTable>,
+    /// The foreign keys between them.
     pub edges: Vec<ErEdge>,
 }
 
@@ -136,7 +151,9 @@ impl ErModel {
 /// Box positions (top-left) and sizes, in the diagram's own units.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ErLayout {
+    /// Top-left corner of each table box, indexed like [`ErModel::tables`].
     pub positions: Vec<(f32, f32)>,
+    /// Width and height of each table box, indexed like [`ErModel::tables`].
     pub sizes: Vec<(f32, f32)>,
 }
 
@@ -300,12 +317,19 @@ pub fn layout(model: &ErModel, measure: &dyn Fn(&ErTable) -> (f32, f32)) -> ErLa
 /// Colors of the SVG export, as `#rrggbb`.
 #[derive(Clone, Debug)]
 pub struct ErColors {
+    /// Canvas fill.
     pub background: String,
+    /// Table box body fill.
     pub box_fill: String,
+    /// Table header fill.
     pub header_fill: String,
+    /// Box and header outline.
     pub border: String,
+    /// Main text.
     pub text: String,
+    /// Secondary text, such as column types.
     pub muted: String,
+    /// Foreign key lines.
     pub edge: String,
 }
 

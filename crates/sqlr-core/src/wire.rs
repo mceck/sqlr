@@ -21,18 +21,25 @@ const VERSION: u8 = 1;
 /// Rows a chunk with no columns may claim (such a chunk holds no data to bound them).
 const MAX_ROWS_WITHOUT_COLUMNS: usize = 1 << 16;
 
+/// Why decoding a chunk failed.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum WireError {
+    /// The data ended before the chunk did.
     #[error("the data ends before the chunk does")]
     Truncated,
+    /// The chunk has an unknown version.
     #[error("unknown chunk version {0}")]
     Version(u8),
+    /// Extra bytes follow the chunk.
     #[error("{0} unexpected bytes after the chunk")]
     Trailing(usize),
+    /// A value tag is not known.
     #[error("invalid value tag {0}")]
     Tag(u8),
+    /// A text value is not valid UTF-8.
     #[error("text is not valid UTF-8")]
     Utf8,
+    /// The chunk breaks a rule of the format.
     #[error("{0}")]
     Invalid(&'static str),
 }

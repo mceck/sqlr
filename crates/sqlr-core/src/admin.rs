@@ -17,6 +17,7 @@ pub const PASSWORD_MASK: &str = "********";
 pub struct Password(String);
 
 impl Password {
+    /// A password holding `text`.
     pub fn new(text: impl Into<String>) -> Self {
         Self(text.into())
     }
@@ -41,18 +42,29 @@ impl fmt::Debug for Password {
 /// A role or user. `host` is MySQL's `'user'@'host'` part.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RoleDef {
+    /// Role or user name.
     pub name: String,
+    /// Whether the role can log in.
     pub login: bool,
+    /// Whether the role bypasses permission checks.
     pub superuser: bool,
+    /// Whether the role can create databases.
     pub create_db: bool,
+    /// Whether the role can create other roles.
     pub create_role: bool,
+    /// Whether the role inherits the privileges of the roles it is a member of.
     pub inherit: bool,
+    /// Whether the role can start replication.
     pub replication: bool,
+    /// Maximum concurrent connections; `None` for no limit.
     pub connection_limit: Option<i32>,
+    /// Expiry of the password or account, as the server prints it.
     pub valid_until: Option<String>,
     /// The roles this one is a member of, as their [`RoleDef::grantee`] names.
     pub member_of: Vec<String>,
+    /// Host part of a MySQL `'user'@'host'` account.
     pub host: Option<String>,
+    /// Driver-specific attributes (account locking, plugin, resource limits...).
     pub options: Vec<(String, String)>,
     /// A new password: set only to change it, never loaded from the server.
     pub password: Option<Password>,
@@ -100,9 +112,13 @@ pub fn split_grantee(grantee: &str) -> (&str, Option<&str>) {
 /// `grantable` revokes only the right to grant it on.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Grant {
+    /// The role or user that holds the privilege.
     pub grantee: String,
+    /// The object the privilege applies to.
     pub object: ObjectRef,
+    /// The privilege as the catalog spells it (`SELECT`).
     pub privilege: String,
+    /// Whether the grantee may grant the privilege on (`WITH GRANT OPTION`).
     pub grantable: bool,
 }
 
@@ -132,16 +148,26 @@ pub fn grouped_grants(grants: &[Grant]) -> Vec<(&ObjectRef, &str, bool, Vec<&str
     out
 }
 
+/// One session on the server, as the Operations panel lists it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SessionInfo {
+    /// The server's id of the session.
     pub id: String,
+    /// User the session logged in as.
     pub user: String,
+    /// Database the session is connected to.
     pub database: Option<String>,
+    /// Client application or host.
     pub client: Option<String>,
+    /// Session state (`idle`, `active`...).
     pub state: String,
+    /// What the session waits for, when it waits.
     pub wait: Option<String>,
+    /// Statement the session runs or ran last.
     pub query: Option<String>,
+    /// When the session started, in epoch milliseconds.
     pub started_ms: Option<i64>,
+    /// When the current statement started, in epoch milliseconds.
     pub query_started_ms: Option<i64>,
     /// One of this app's own sessions on the connection.
     pub own: bool,
@@ -154,32 +180,50 @@ impl SessionInfo {
     }
 }
 
+/// A lock held or awaited by a session.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LockInfo {
+    /// The session that holds or awaits the lock.
     pub session: String,
     /// The sessions this lock waits for (empty for a granted lock).
     pub blocked_by: Vec<String>,
+    /// Lock mode as the server names it.
     pub mode: String,
+    /// The locked object, when the server reports one.
     pub object: Option<String>,
+    /// Whether the lock is granted rather than waited for.
     pub granted: bool,
 }
 
+/// One server setting or status value.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ServerProperty {
+    /// Property name.
     pub name: String,
+    /// Current value, as text.
     pub value: String,
+    /// Unit of the value (`ms`, `kB`).
     pub unit: Option<String>,
+    /// Group the server files it under.
     pub category: Option<String>,
+    /// What it controls.
     pub description: Option<String>,
+    /// Where the value comes from (default, config file, session).
     pub source: Option<String>,
 }
 
+/// Size and activity figures of one table.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TableStats {
+    /// The table.
     pub table: TableRef,
+    /// Estimated row count.
     pub rows_estimate: Option<i64>,
+    /// Size of the table with its indexes and storage, in bytes.
     pub total_bytes: Option<i64>,
+    /// Size of the table data, in bytes.
     pub table_bytes: Option<i64>,
+    /// Size of the indexes, in bytes.
     pub index_bytes: Option<i64>,
     /// Last vacuum/analyze, scans, fragmentation…
     pub extra: Vec<(String, String)>,
@@ -188,26 +232,42 @@ pub struct TableStats {
 /// The role attributes a driver reads and writes; the role form shows only these.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RoleField {
+    /// Whether the role can log in.
     Login,
+    /// Whether the role is a superuser.
     Superuser,
+    /// Whether the role can create databases.
     CreateDb,
+    /// Whether the role can create roles.
     CreateRole,
+    /// Whether the role inherits privileges.
     Inherit,
+    /// Whether the role can start replication.
     Replication,
+    /// The connection limit.
     ConnectionLimit,
+    /// The expiry date.
     ValidUntil,
+    /// The roles this one is a member of.
     MemberOf,
+    /// The password.
     Password,
 }
 
 /// What a driver's [`Admin`] implements; panels the driver does not support stay hidden.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AdminSupport {
+    /// Role listing and editing.
     pub roles: bool,
+    /// Privilege listing and grant editing.
     pub grants: bool,
+    /// The session list and its cancel and terminate actions.
     pub sessions: bool,
+    /// The lock list.
     pub locks: bool,
+    /// Server properties and database sizes.
     pub properties: bool,
+    /// Table statistics.
     pub statistics: bool,
     /// The privileges that can be granted on each object kind.
     pub privileges: Vec<(ObjectKind, Vec<String>)>,
@@ -231,8 +291,10 @@ fn unsupported(what: &str) -> DriverError {
     DriverError::new(ErrorKind::Unsupported, format!("{what} are not supported"))
 }
 
+/// Server administration of a connection: roles, grants, sessions, locks, properties and statistics. Every method defaults to reporting the feature as unsupported.
 #[async_trait::async_trait]
 pub trait Admin: Send + Sync {
+    /// Which administration panels the driver implements.
     fn supports(&self) -> AdminSupport {
         AdminSupport::default()
     }
@@ -248,9 +310,11 @@ pub trait Admin: Send + Sync {
     fn snapshot_cancel(&self) -> Option<std::sync::Arc<dyn crate::driver::CancelHandle>> {
         None
     }
+    /// The roles and users of the server.
     async fn roles(&self) -> Result<Vec<RoleDef>, DriverError> {
         Err(unsupported("roles"))
     }
+    /// The privileges, optionally of one `grantee` or on one `object`.
     async fn grants(
         &self,
         _grantee: Option<&str>,
@@ -266,12 +330,15 @@ pub trait Admin: Send + Sync {
     fn drop_role_ddl(&self, _role: &RoleDef) -> Vec<String> {
         Vec::new()
     }
+    /// Statements that apply `add` and revoke `revoke`.
     fn grant_ddl(&self, _add: &[Grant], _revoke: &[Grant]) -> Vec<String> {
         Vec::new()
     }
+    /// The sessions connected to the server.
     async fn sessions(&self) -> Result<Vec<SessionInfo>, DriverError> {
         Err(unsupported("sessions"))
     }
+    /// The locks held and awaited.
     async fn locks(&self) -> Result<Vec<LockInfo>, DriverError> {
         Err(unsupported("locks"))
     }
@@ -290,12 +357,15 @@ pub trait Admin: Send + Sync {
     ) -> Result<(), DriverError> {
         Err(unsupported("sessions"))
     }
+    /// The server's settings and status values.
     async fn properties(&self) -> Result<Vec<ServerProperty>, DriverError> {
         Err(unsupported("server properties"))
     }
+    /// The size in bytes of each database.
     async fn database_sizes(&self) -> Result<Vec<(String, i64)>, DriverError> {
         Err(unsupported("database sizes"))
     }
+    /// Size and activity figures of the tables, optionally of one `schema`.
     async fn table_stats(&self, _schema: Option<&str>) -> Result<Vec<TableStats>, DriverError> {
         Err(unsupported("table statistics"))
     }

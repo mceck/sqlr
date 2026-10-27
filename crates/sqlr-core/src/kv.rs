@@ -20,11 +20,17 @@ pub const STRING_PAGE_BYTES: usize = 1 << 20;
 /// The type of a key (`TYPE`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum KeyType {
+    /// A string.
     String,
+    /// A hash.
     Hash,
+    /// A list.
     List,
+    /// A set.
     Set,
+    /// A sorted set.
     ZSet,
+    /// A stream.
     Stream,
     /// RedisJSON (`ReJSON-RL`); shown raw, read-only.
     Json,
@@ -65,7 +71,9 @@ impl KeyType {
 /// A key as the browser and the value view show it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct KeyInfo {
+    /// The key name, as bytes.
     pub name: Vec<u8>,
+    /// The key's type.
     pub ty: KeyType,
     /// Milliseconds to live; `None` when the key does not expire.
     pub ttl_ms: Option<i64>,
@@ -92,6 +100,7 @@ impl KeyInfo {
 /// Where a value page starts.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum KvCursor {
+    /// The first page.
     Start,
     /// An `HSCAN`/`SSCAN` cursor.
     Scan(u64),
@@ -107,33 +116,52 @@ pub type StreamEntry = (String, Vec<(Vec<u8>, Vec<u8>)>);
 /// One page of a value; the engine appends later pages to the first.
 #[derive(Clone, Debug, PartialEq)]
 pub enum KvPage {
+    /// A string value.
     String {
+        /// The bytes loaded so far.
         bytes: Vec<u8>,
+        /// Length of the whole string, in bytes.
         total_len: u64,
     },
+    /// A hash value.
     Hash {
+        /// The field and value pairs of this page.
         fields: Vec<(Vec<u8>, Vec<u8>)>,
         /// The `HSCAN` cursor of the next page; 0 once complete.
         cursor: u64,
     },
+    /// A list value.
     List {
+        /// The items of this page.
         items: Vec<Vec<u8>>,
+        /// Index of the first item of this page.
         start: i64,
+        /// Length of the whole list.
         total: u64,
     },
+    /// A set value.
     Set {
+        /// The members of this page.
         members: Vec<Vec<u8>>,
+        /// The `SSCAN` cursor of the next page; 0 once complete.
         cursor: u64,
     },
+    /// A sorted-set value.
     ZSet {
+        /// The members of this page, with their scores.
         members: Vec<(Vec<u8>, f64)>,
+        /// Rank of the first member of this page.
         start: i64,
+        /// Number of members in the whole sorted set.
         total: u64,
     },
+    /// A stream value.
     Stream {
+        /// The entries of this page.
         entries: Vec<StreamEntry>,
         /// The id the next page starts after; `None` once complete.
         next: Option<String>,
+        /// Number of entries in the whole stream.
         total: u64,
     },
 }
@@ -180,6 +208,7 @@ impl KvPage {
         }
     }
 
+    /// Whether no element or byte is loaded.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -286,30 +315,46 @@ impl KvPage {
 /// A change to one key.
 #[derive(Clone, Debug, PartialEq)]
 pub enum KvEdit {
+    /// Replaces a string value.
     SetString(Vec<u8>),
+    /// Sets a hash field to a value.
     HashSet(Vec<u8>, Vec<u8>),
+    /// Deletes a hash field.
     HashDel(Vec<u8>),
+    /// Replaces the list item at an index.
     ListSet(i64, Vec<u8>),
+    /// Pushes an item onto a list.
     ListPush {
+        /// Push at the head (`true`) or the tail.
         left: bool,
+        /// The item to push.
         value: Vec<u8>,
     },
     /// Removes the item at `index`, when it still equals `value`: the edit is refused if the
     /// list changed since the item was shown.
     ListRem {
+        /// Position of the item to remove.
         index: i64,
+        /// The value the item must still hold.
         value: Vec<u8>,
     },
+    /// Adds a set member.
     SetAdd(Vec<u8>),
+    /// Removes a set member.
     SetRem(Vec<u8>),
+    /// Adds a sorted-set member with its score, or updates the score.
     ZAdd(Vec<u8>, f64),
+    /// Removes a sorted-set member.
     ZRem(Vec<u8>),
+    /// Appends a stream entry with these field and value pairs.
     XAdd(Vec<(Vec<u8>, Vec<u8>)>),
+    /// Deletes the stream entry with this id.
     XDel(String),
     /// Milliseconds to live; `None` removes the expiry (`PERSIST`).
     Expire(Option<i64>),
     /// Renames the key; refused when the new name exists.
     Rename(Vec<u8>),
+    /// Deletes the key.
     Delete,
     /// Creates the key with the first element `0` gives (`SetString`, `HashSet`,
     /// `ListPush`, `SetAdd`, `ZAdd` or `XAdd`); refused when the key already exists.
@@ -319,15 +364,25 @@ pub enum KvEdit {
 /// A RESP2/RESP3 reply.
 #[derive(Clone, Debug, PartialEq)]
 pub enum RespValue {
+    /// The null reply.
     Nil,
+    /// An integer.
     Int(i64),
+    /// A simple string.
     Simple(String),
+    /// A binary-safe bulk string.
     Bulk(Vec<u8>),
+    /// An array of replies.
     Array(Vec<RespValue>),
+    /// A map of reply pairs (RESP3).
     Map(Vec<(RespValue, RespValue)>),
+    /// A double (RESP3).
     Double(f64),
+    /// A boolean (RESP3).
     Bool(bool),
+    /// An error reply.
     Error(String),
+    /// A verbatim string (RESP3).
     Verbatim(String),
 }
 
@@ -354,6 +409,7 @@ pub trait KeyValueConn: Send + Sync {
         from: KvCursor,
         count: usize,
     ) -> Result<KvPage, DriverError>;
+    /// Applies one edit to the key.
     async fn edit(&self, db: u32, key: &[u8], edit: KvEdit) -> Result<(), DriverError>;
     /// Runs one console command. A server error reply is `Ok(RespValue::Error)`.
     async fn command(&self, db: u32, args: Vec<Vec<u8>>) -> Result<RespValue, DriverError>;
@@ -622,14 +678,17 @@ pub fn quote_bytes(arg: &[u8]) -> String {
 pub struct KvNodePath;
 
 impl KvNodePath {
+    /// The path of logical database `db`.
     pub fn database(db: u32) -> NodePath {
         NodePath::root().child(&format!("db{db}"))
     }
 
+    /// The path of the group of keys that share `prefix`, under `parent`.
     pub fn group(parent: &NodePath, prefix: &[u8]) -> NodePath {
         parent.child(&format!("g:{}", hex(prefix)))
     }
 
+    /// The path of the key `name`, under `parent`.
     pub fn key(parent: &NodePath, name: &[u8]) -> NodePath {
         parent.child(&format!("k:{}", hex(name)))
     }

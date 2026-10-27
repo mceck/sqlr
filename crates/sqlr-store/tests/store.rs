@@ -317,20 +317,22 @@ fn moving_a_folder_into_another_moves_its_subtree() {
     repo.save(&cfg("1", "X", Some("B/C")), &secrets(""))
         .unwrap();
 
-    let to = repo.move_folder("B", MoveTarget::Into("A".into())).unwrap();
+    let to = repo
+        .move_folder("B", &MoveTarget::Into("A".into()))
+        .unwrap();
     assert_eq!(to, "A/B");
     assert_eq!(repo.folders().unwrap(), vec!["A", "A/B", "A/B/C"]);
     assert_eq!(repo.list().unwrap()[0].group.as_deref(), Some("A/B/C"));
 
     let to = repo
-        .move_folder("A/B", MoveTarget::Before("A".into()))
+        .move_folder("A/B", &MoveTarget::Before("A".into()))
         .unwrap();
     assert_eq!(to, "B");
     assert_eq!(repo.folders().unwrap(), vec!["B", "B/C", "A"]);
     assert_eq!(repo.list().unwrap()[0].group.as_deref(), Some("B/C"));
 
     assert!(matches!(
-        repo.move_folder("A", MoveTarget::Into("A".into())),
+        repo.move_folder("A", &MoveTarget::Into("A".into())),
         Err(StoreError::Invalid(_))
     ));
 }
@@ -342,10 +344,10 @@ fn move_folder_reorders() {
     for name in ["A", "B", "C"] {
         repo.create_folder(name).unwrap();
     }
-    repo.move_folder("C", MoveTarget::Before("A".into()))
+    repo.move_folder("C", &MoveTarget::Before("A".into()))
         .unwrap();
     assert_eq!(repo.folders().unwrap(), vec!["C", "A", "B"]);
-    repo.move_folder("C", MoveTarget::End).unwrap();
+    repo.move_folder("C", &MoveTarget::End).unwrap();
     assert_eq!(repo.folders().unwrap(), vec!["A", "B", "C"]);
 }
 

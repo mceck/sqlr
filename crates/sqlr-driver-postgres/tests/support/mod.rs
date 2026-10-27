@@ -1,4 +1,7 @@
-#![allow(dead_code)] // each test binary uses a different subset of these helpers
+#![allow(
+    dead_code,
+    reason = "each test binary uses a different subset of these helpers"
+)]
 
 use sqlr_core::{ConnectionConfig, Secrets};
 use sqlr_testkit::{TestLock, service, unique_name};

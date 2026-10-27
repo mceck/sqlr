@@ -24,6 +24,10 @@ pub(crate) fn kind_of(code: i32) -> ErrorKind {
     }
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "used as a `map_err` function pointer, which receives the error by value"
+)]
 pub(crate) fn map(e: HdbError) -> DriverError {
     if let Some(server) = e.server_error() {
         let mut error = DriverError::new(

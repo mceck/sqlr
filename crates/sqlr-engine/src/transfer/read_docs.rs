@@ -42,14 +42,11 @@ impl Shared {
             Some(q) => q.to_string(),
             None => doc.open_target_text(target, 0),
         };
-        let stream = match doc.run(target.database.as_deref(), &text).await? {
-            DocExecution::Docs(stream) => stream,
-            _ => {
-                return Err(DriverError::new(
-                    ErrorKind::Other,
-                    "the statement returned no documents to transfer",
-                ));
-            }
+        let DocExecution::Docs(stream) = doc.run(target.database.as_deref(), &text).await? else {
+            return Err(DriverError::new(
+                ErrorKind::Other,
+                "the statement returned no documents to transfer",
+            ));
         };
         if docs {
             let (tx, rx) = mpsc::channel(2);

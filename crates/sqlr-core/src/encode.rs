@@ -12,9 +12,12 @@ use crate::driver::Dialect;
 use crate::formats::DataFormats;
 use crate::value::Value;
 
+/// Settings of the CSV and TSV text format.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CsvOptions {
+    /// Field separator.
     pub delimiter: char,
+    /// Quoting character.
     pub quote: char,
     /// The first line names the columns.
     pub header: bool,
@@ -58,9 +61,12 @@ impl CsvOptions {
     }
 }
 
+/// A text format that rows can be encoded to or read from.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum TextFormat {
+    /// Delimited text with the given options.
     Csv(CsvOptions),
+    /// Tab-separated values.
     Tsv,
     /// An array of objects.
     Json,
@@ -68,8 +74,10 @@ pub enum TextFormat {
     JsonLines,
     /// One `INSERT` per row into `table` (quoted as one identifier).
     SqlInsert {
+        /// The target table name.
         table: String,
     },
+    /// A GitHub-style Markdown table.
     Markdown,
 }
 
@@ -244,6 +252,7 @@ fn csv_options(format: &TextFormat) -> Option<CsvOptions> {
 }
 
 impl<'d> Encoder<'d> {
+    /// Creates an encoder of rows of `columns` in `format`; `dialect` quotes the identifiers of the SQL format.
     pub fn new(
         format: TextFormat,
         columns: &[ColumnMeta],
@@ -301,6 +310,7 @@ impl<'d> Encoder<'d> {
         self
     }
 
+    /// Writes what comes before the first row: the CSV header, the JSON `[`, the Markdown header.
     pub fn header(&self, out: &mut String) {
         if let Some(o) = csv_options(&self.format) {
             if o.header {
@@ -337,6 +347,7 @@ impl<'d> Encoder<'d> {
         }
     }
 
+    /// Appends one row to `out`.
     pub fn row(&mut self, cells: &[Cell<'_>], out: &mut String) {
         let Some((formats, columns)) = &self.formats else {
             return self.encode_row(cells, out);
@@ -411,6 +422,7 @@ impl<'d> Encoder<'d> {
         self.rows += 1;
     }
 
+    /// Writes what closes the output: the JSON `]`.
     pub fn footer(&self, out: &mut String) {
         if self.format == TextFormat::Json {
             out.push_str("\n]\n");

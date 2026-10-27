@@ -85,6 +85,10 @@ pub(crate) fn from_raw_doc(doc: &RawDocument) -> Result<DocValue, DriverError> {
     Ok(DocValue::Document(fields))
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "used as a `map_err` function pointer, which receives the error by value"
+)]
 fn bson_error(e: bson::error::Error) -> DriverError {
     DriverError::new(
         ErrorKind::Protocol,

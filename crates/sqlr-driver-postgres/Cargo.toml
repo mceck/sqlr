@@ -12,6 +12,7 @@ name = "integration"
 path = "tests/integration.rs"
 
 [dependencies]
+parking_lot.workspace = true
 sqlr-core = { path = "../sqlr-core" }
 async-trait.workspace = true
 futures-util.workspace = true
@@ -30,3 +31,6 @@ sqlr-testkit = { path = "../sqlr-testkit" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 rcgen.workspace = true
 tempfile.workspace = true
+
+[lints]
+workspace = true

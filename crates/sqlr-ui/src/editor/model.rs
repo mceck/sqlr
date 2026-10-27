@@ -310,7 +310,7 @@ impl EditorModel {
         let (a, b) = (snap(chars.start), snap(chars.end));
         let (a, b) = (a.min(b), a.max(b));
         let before = self.carets.clone();
-        let applied = self.replace_many(vec![(a..b, text)]);
+        let applied = self.replace_many(&[(a..b, text)]);
         let end = applied.new_starts[0] + text.chars().count();
         self.carets = vec![Caret::at(self.buffer.pos_of_char(end))];
         self.goals.clear();
@@ -320,7 +320,7 @@ impl EditorModel {
 
     /// Applies several non-overlapping replacements as one undo group. The primary caret
     /// lands after the last replacement in document order.
-    pub fn replace_ranges(&mut self, ranges: Vec<(Range<usize>, String)>, now: f64) -> Vec<Change> {
+    pub fn replace_ranges(&mut self, ranges: &[(Range<usize>, String)], now: f64) -> Vec<Change> {
         if ranges.is_empty() {
             return Vec::new();
         }
@@ -333,7 +333,7 @@ impl EditorModel {
             .iter()
             .map(|(range, text)| (range.clone(), text.as_str()))
             .collect();
-        let applied = self.replace_many(reps);
+        let applied = self.replace_many(&reps);
         let end = applied
             .new_starts
             .iter()
@@ -368,12 +368,11 @@ impl EditorModel {
     ) -> Vec<Change> {
         let before = self.carets.clone();
         let plans: Vec<Plan> = self.carets.iter().map(|c| f(&self.buffer, c)).collect();
-        let applied = self.replace_many(
-            plans
-                .iter()
-                .map(|p| (p.range.clone(), p.text.as_str()))
-                .collect(),
-        );
+        let reps: Vec<(Range<usize>, &str)> = plans
+            .iter()
+            .map(|p| (p.range.clone(), p.text.as_str()))
+            .collect();
+        let applied = self.replace_many(&reps);
         self.carets = plans
             .iter()
             .zip(&applied.new_starts)
@@ -390,10 +389,14 @@ impl EditorModel {
     /// Applies replacements (old chars) and maps every caret through them.
     pub(super) fn replace_mapped(
         &mut self,
-        reps: Vec<(Range<usize>, &str)>,
+        reps: &[(Range<usize>, &str)],
         now: f64,
     ) -> Vec<Change> {
         let before = self.carets.clone();
+        #[expect(
+            clippy::needless_collect,
+            reason = "the caret char indexes must be read before `replace_many` rewrites the buffer"
+        )]
         let old: Vec<(usize, usize)> = before
             .iter()
             .map(|c| {
@@ -444,7 +447,7 @@ impl EditorModel {
 
     /// Replaces each `(range, text)` (old chars; overlaps are clipped) from the end of the
     /// document backwards, so earlier offsets stay valid.
-    pub(super) fn replace_many(&mut self, reps: Vec<(Range<usize>, &str)>) -> Applied {
+    pub(super) fn replace_many(&mut self, reps: &[(Range<usize>, &str)]) -> Applied {
         let len = self.buffer.len_chars();
         let mut order: Vec<usize> = (0..reps.len()).collect();
         order.sort_by_key(|&i| (reps[i].0.start, reps[i].0.end));
@@ -620,7 +623,7 @@ impl EditorModel {
         let indent = self.indent.clone();
         let cols = indent.len().max(1);
         if self.carets.iter().any(|c| c.head.line != c.anchor.line) {
-            let reps = self
+            let reps: Vec<(Range<usize>, &str)> = self
                 .touched_lines()
                 .into_iter()
                 .map(|l| {
@@ -628,7 +631,7 @@ impl EditorModel {
                     (s..s, indent.as_str())
                 })
                 .collect();
-            return self.replace_mapped(reps, now);
+            return self.replace_mapped(&reps, now);
         }
         self.run(GroupKind::Other, now, None, |b, c| {
             let col = c.range().0.col;
@@ -644,7 +647,7 @@ impl EditorModel {
     }
 
     fn back_tab(&mut self, now: f64) -> Vec<Change> {
-        let reps = self
+        let reps: Vec<(Range<usize>, &str)> = self
             .touched_lines()
             .into_iter()
             .filter_map(|l| {
@@ -659,7 +662,7 @@ impl EditorModel {
                 (n > 0).then_some((s..s + n, ""))
             })
             .collect();
-        self.replace_mapped(reps, now)
+        self.replace_mapped(&reps, now)
     }
 
     fn toggle_comment(&mut self, now: f64) -> Vec<Change> {
@@ -686,7 +689,7 @@ impl EditorModel {
             return Vec::new();
         }
         let with_space = format!("{token} ");
-        let reps = if all_commented {
+        let reps: Vec<(Range<usize>, &str)> = if all_commented {
             lines
                 .iter()
                 .map(|&(l, indent)| {
@@ -705,7 +708,7 @@ impl EditorModel {
                 })
                 .collect()
         };
-        self.replace_mapped(reps, now)
+        self.replace_mapped(&reps, now)
     }
 }
 

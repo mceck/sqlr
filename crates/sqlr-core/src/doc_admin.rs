@@ -10,14 +10,20 @@ use crate::lang::QueryLanguage;
 /// A key's direction or kind in a MongoDB index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum IndexDirection {
+    /// Ascending order.
     Asc,
+    /// Descending order.
     Desc,
+    /// Full-text index.
     Text,
+    /// Hashed index.
     Hashed,
+    /// Geospatial `2dsphere` index.
     Sphere2d,
 }
 
 impl IndexDirection {
+    /// Every direction, in menu order.
     pub const ALL: [IndexDirection; 5] = [
         IndexDirection::Asc,
         IndexDirection::Desc,
@@ -26,6 +32,7 @@ impl IndexDirection {
         IndexDirection::Sphere2d,
     ];
 
+    /// The name shown in the index editor.
     pub fn label(self) -> &'static str {
         match self {
             IndexDirection::Asc => "ascending",
@@ -50,9 +57,11 @@ impl IndexDirection {
 /// A MongoDB index to create.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MongoIndexSpec {
+    /// The indexed fields with their directions, in key order.
     pub keys: Vec<(String, IndexDirection)>,
     /// The server names it from its keys when empty.
     pub name: String,
+    /// Whether the index rejects duplicate keys.
     pub unique: bool,
     /// Documents expire this many seconds after the date in the (single) key.
     pub ttl_seconds: Option<i64>,

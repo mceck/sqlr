@@ -897,6 +897,7 @@ pub enum Confirm {
 }
 
 /// What a deletion confirmation says.
+#[derive(Clone, Copy)]
 pub struct DeleteAsk<'a> {
     /// Names the action and its object: "Delete connection".
     pub title: &'a str,
@@ -1295,7 +1296,8 @@ pub(crate) fn copy_name(name: &str, taken: &[&str]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use parking_lot::Mutex;
+    use std::sync::Arc;
 
     use sqlr_core::Driver;
     use sqlr_engine::DriverRegistry;
@@ -1351,17 +1353,11 @@ mod tests {
             Err(StoreError::Secret("keychain locked".into()))
         }
         fn set(&self, conn: &str, field: &str, _value: &str) -> Result<(), StoreError> {
-            self.writes
-                .lock()
-                .unwrap()
-                .push(format!("set {conn}/{field}"));
+            self.writes.lock().push(format!("set {conn}/{field}"));
             Ok(())
         }
         fn delete(&self, conn: &str, field: &str) -> Result<(), StoreError> {
-            self.writes
-                .lock()
-                .unwrap()
-                .push(format!("delete {conn}/{field}"));
+            self.writes.lock().push(format!("delete {conn}/{field}"));
             Ok(())
         }
     }
@@ -1412,9 +1408,9 @@ mod tests {
 
         assert_eq!(repo.list().unwrap()[0].name, "renamed");
         assert!(
-            keychain.writes.lock().unwrap().is_empty(),
+            keychain.writes.lock().is_empty(),
             "the stored password must be left alone: {:?}",
-            keychain.writes.lock().unwrap()
+            keychain.writes.lock()
         );
     }
 

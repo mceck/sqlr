@@ -137,9 +137,9 @@ fn phase(engine: &Engine, key: &SessionKey) -> TxPhase {
 }
 
 /// Waits for the session's queue to drain (a transaction command has no result to watch).
-fn wait_phase(engine: &Engine, key: &SessionKey, want: TxPhase) {
+fn wait_phase(engine: &Engine, key: &SessionKey, want: &TxPhase) {
     assert!(
-        wait_until(TIMEOUT, || phase(engine, key) == want),
+        wait_until(TIMEOUT, || phase(engine, key) == *want),
         "phase stayed {:?}",
         phase(engine, key)
     );
@@ -176,7 +176,7 @@ fn manual_mode_begins_once() {
     assert_eq!(tx.statements, 2);
     assert!(tx.since_ms.is_some());
     assert_eq!(tx.mode, CommitMode::Manual);
-    assert_eq!(engine.open_transactions(), vec![(key.clone(), tx)]);
+    assert_eq!(engine.open_transactions(), vec![(key, tx)]);
 }
 
 #[test]
@@ -229,7 +229,7 @@ fn smart_returns_to_auto_after_commit() {
     let (engine, fake, key) = setup(writes(), profile(CommitMode::Smart));
     ok(&engine, &key, "update t set a = 1 where id = 1");
     engine.commit(&key);
-    wait_phase(&engine, &key, TxPhase::Idle);
+    wait_phase(&engine, &key, &TxPhase::Idle);
     ok(&engine, &key, "select 2");
     assert_eq!(
         fake.executed(),
@@ -245,7 +245,7 @@ fn smart_returns_to_auto_after_commit() {
     ok(&engine, &key, "insert into t values (1)");
     assert_eq!(phase(&engine, &key), TxPhase::Open);
     engine.rollback(&key);
-    wait_phase(&engine, &key, TxPhase::Idle);
+    wait_phase(&engine, &key, &TxPhase::Idle);
     assert_eq!(fake.executed().last().map(String::as_str), Some("ROLLBACK"));
 }
 
@@ -592,7 +592,7 @@ fn postgres_failure_leaves_only_rollback() {
     ));
     assert_eq!(phase(&engine, &key), TxPhase::Failed);
     engine.rollback(&key);
-    wait_phase(&engine, &key, TxPhase::Idle);
+    wait_phase(&engine, &key, &TxPhase::Idle);
 }
 
 #[test]
@@ -609,7 +609,7 @@ fn commit_of_a_failed_transaction_reports_the_rollback() {
         QueryStatus::Failed(_)
     ));
     engine.commit(&key);
-    wait_phase(&engine, &key, TxPhase::Idle);
+    wait_phase(&engine, &key, &TxPhase::Idle);
     let notices = engine.take_notices();
     assert!(
         notices
@@ -683,7 +683,7 @@ fn other_database_refused_while_a_transaction_is_open() {
     assert!(!fake.executed().iter().any(|s| s.contains("into u")));
     // Once it ends, the other database runs (in its own transaction).
     engine.commit(&key);
-    wait_phase(&engine, &key, TxPhase::Idle);
+    wait_phase(&engine, &key, &TxPhase::Idle);
     let q = engine.execute_in(&key, Some("other"), "insert into u values (1)".into(), 100);
     assert!(matches!(settled(&engine, q), QueryStatus::Ready { .. }));
 }
@@ -712,7 +712,7 @@ fn transactions_say_whether_they_wrote() {
     let tx = engine.transaction(&key).unwrap();
     assert!(tx.wrote && tx.blocks_ddl());
     engine.commit(&key);
-    wait_phase(&engine, &key, TxPhase::Idle);
+    wait_phase(&engine, &key, &TxPhase::Idle);
     assert!(!engine.transaction(&key).unwrap().wrote);
     // A savepoint is enough.
     ok(&engine, &key, "select 1");
@@ -732,7 +732,7 @@ fn commit_mode_switch_to_auto_refused_while_open() {
     engine.set_commit_mode(&key, CommitMode::Smart);
     assert_eq!(engine.transaction(&key).unwrap().mode, CommitMode::Smart);
     engine.commit(&key);
-    wait_phase(&engine, &key, TxPhase::Idle);
+    wait_phase(&engine, &key, &TxPhase::Idle);
     engine.set_commit_mode(&key, CommitMode::Auto);
     assert_eq!(engine.transaction(&key).unwrap().mode, CommitMode::Auto);
     // A tab that has not run yet takes the mode it is given.

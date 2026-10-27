@@ -1,5 +1,6 @@
+use parking_lot::Mutex;
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use reqwest::StatusCode;
@@ -66,7 +67,7 @@ impl TestHost {
 #[async_trait]
 impl AgentHost for TestHost {
     async fn connection(&self, id: &str) -> sqlr_mcp::error::ToolResult<AgentConnection> {
-        let state = self.state.lock().unwrap();
+        let state = self.state.lock();
         if state.config.id != id {
             return Err(sqlr_mcp::error::ToolError::not_found("unknown connection"));
         }
@@ -79,7 +80,7 @@ impl AgentHost for TestHost {
     }
 
     async fn connections(&self) -> sqlr_mcp::error::ToolResult<Vec<ConnectionConfig>> {
-        Ok(vec![self.state.lock().unwrap().config.clone()])
+        Ok(vec![self.state.lock().config.clone()])
     }
     async fn folders(&self) -> sqlr_mcp::error::ToolResult<Vec<String>> {
         Ok(Vec::new())
@@ -88,14 +89,14 @@ impl AgentHost for TestHost {
         Ok(ConnectionProfile::builtins())
     }
     async fn save_profile(&self, profile: ConnectionProfile) -> sqlr_mcp::error::ToolResult<()> {
-        self.state.lock().unwrap().saved_profiles.push(profile);
+        self.state.lock().saved_profiles.push(profile);
         Ok(())
     }
     async fn delete_profile(&self, _id: &str) -> sqlr_mcp::error::ToolResult<()> {
         Ok(())
     }
     async fn drivers(&self) -> sqlr_mcp::error::ToolResult<Vec<DriverManifest>> {
-        Ok(vec![self.state.lock().unwrap().manifest.clone()])
+        Ok(vec![self.state.lock().manifest.clone()])
     }
     async fn secret_presence(
         &self,
@@ -104,7 +105,7 @@ impl AgentHost for TestHost {
         Ok(BTreeMap::new())
     }
     async fn settings(&self) -> sqlr_mcp::error::ToolResult<Vec<SettingEntry>> {
-        Ok(self.state.lock().unwrap().setting_entries.clone())
+        Ok(self.state.lock().setting_entries.clone())
     }
     async fn set_setting(
         &self,
@@ -113,7 +114,7 @@ impl AgentHost for TestHost {
         level_id: Option<&str>,
         value: Option<SettingValue>,
     ) -> sqlr_mcp::error::ToolResult<()> {
-        self.state.lock().unwrap().setting_writes.push((
+        self.state.lock().setting_writes.push((
             id.into(),
             level,
             level_id.map(str::to_owned),
@@ -131,7 +132,6 @@ impl AgentHost for TestHost {
     ) -> sqlr_mcp::error::ToolResult<()> {
         self.state
             .lock()
-            .unwrap()
             .keymap_writes
             .push((action.into(), chords));
         Ok(())
@@ -140,7 +140,7 @@ impl AgentHost for TestHost {
         Ok(Vec::new())
     }
     async fn write_connection(&self, write: ConnectionWrite) -> sqlr_mcp::error::ToolResult<()> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock();
         if write.config.agent_access != AgentAccess::None
             && write.config.agent_access != state.config.agent_access
         {
@@ -152,19 +152,15 @@ impl AgentHost for TestHost {
         Ok(())
     }
     async fn folder(&self, op: FolderOp) -> sqlr_mcp::error::ToolResult<()> {
-        self.state.lock().unwrap().folders.push(op);
+        self.state.lock().folders.push(op);
         Ok(())
     }
     async fn delete(&self, target: &str, id: &str) -> sqlr_mcp::error::ToolResult<()> {
-        self.state
-            .lock()
-            .unwrap()
-            .deletions
-            .push((target.into(), id.into()));
+        self.state.lock().deletions.push((target.into(), id.into()));
         Ok(())
     }
     async fn approve(&self, _request: ApprovalRequest) -> sqlr_mcp::error::ToolResult<()> {
-        if self.state.lock().unwrap().allow {
+        if self.state.lock().allow {
             Ok(())
         } else {
             Err(sqlr_mcp::error::ToolError::denied())
@@ -174,7 +170,7 @@ impl AgentHost for TestHost {
         Ok(vec![TabSummary {
             id: 1,
             title: "Query".into(),
-            connection_id: Some(self.state.lock().unwrap().config.id.clone()),
+            connection_id: Some(self.state.lock().config.id.clone()),
             database: None,
             dirty: false,
             revision: 1,
@@ -188,7 +184,7 @@ impl AgentHost for TestHost {
         Ok(TabDetail {
             id: 1,
             title: "Query".into(),
-            connection_id: Some(self.state.lock().unwrap().config.id.clone()),
+            connection_id: Some(self.state.lock().config.id.clone()),
             database: None,
             dirty: false,
             revision: 1,
@@ -206,7 +202,6 @@ impl AgentHost for TestHost {
     ) -> sqlr_mcp::error::ToolResult<TabDetail> {
         self.state
             .lock()
-            .unwrap()
             .tab_edits
             .push((id, expected_revision, edit));
         self.tab(1).await
@@ -217,15 +212,11 @@ impl AgentHost for TestHost {
         target: RunTarget,
         max_rows: usize,
     ) -> sqlr_mcp::error::ToolResult<Value> {
-        self.state
-            .lock()
-            .unwrap()
-            .tab_runs
-            .push((id, target, max_rows));
+        self.state.lock().tab_runs.push((id, target, max_rows));
         Ok(json!({"statements": []}))
     }
     async fn toast(&self, text: &str) {
-        self.state.lock().unwrap().toasts.push(text.to_string());
+        self.state.lock().toasts.push(text.to_string());
     }
 }
 
@@ -529,7 +520,7 @@ async fn describe_object_connects_without_an_agent_query_session() {
     assert_eq!(created["status"], "ready", "{created}");
 
     // Metadata must work for Read exposure and before this client runs any query.
-    host.state.lock().unwrap().config.agent_access = AgentAccess::Read;
+    host.state.lock().config.agent_access = AgentAccess::Read;
     let mut reader = Client::new(port, &token);
     reader.initialize().await;
     reader
@@ -698,7 +689,7 @@ async fn write_exposure_approvals_and_token_rotation() {
     assert_eq!(selected["tabular"]["rows"][1][1], "b");
 
     // A denied destructive statement is reported as denied.
-    host.state.lock().unwrap().allow = false;
+    host.state.lock().allow = false;
     let denied = client
         .tool(
             5,
@@ -707,10 +698,10 @@ async fn write_exposure_approvals_and_token_rotation() {
         )
         .await;
     assert_eq!(denied["error"]["code"], "denied");
-    host.state.lock().unwrap().allow = true;
+    host.state.lock().allow = true;
 
     // Exposure and safety are enforced before approval.
-    host.state.lock().unwrap().profile.read_only = true;
+    host.state.lock().profile.read_only = true;
     let read_only = client
         .tool(
             6,
@@ -719,7 +710,7 @@ async fn write_exposure_approvals_and_token_rotation() {
         )
         .await;
     assert_eq!(read_only["error"]["code"], "read_only");
-    host.state.lock().unwrap().profile.read_only = false;
+    host.state.lock().profile.read_only = false;
 
     // Configuration: exposure is human-only, values are write-only.
     let refused = client
@@ -847,7 +838,6 @@ async fn snippets_and_profiles_follow_the_rules() {
     assert!(
         host.state
             .lock()
-            .unwrap()
             .toasts
             .iter()
             .any(|toast| toast.contains("snippet")),
@@ -896,7 +886,7 @@ async fn connection_writes_validate_metadata_and_preserve_exposure() {
             .await;
         assert_eq!(result["error"]["code"], "invalid", "{payload}: {result}");
     }
-    assert!(host.state.lock().unwrap().writes.is_empty());
+    assert!(host.state.lock().writes.is_empty());
     let result = client
         .tool(
             200,
@@ -910,7 +900,7 @@ async fn connection_writes_validate_metadata_and_preserve_exposure() {
         .await;
     assert_eq!(result, json!({"id":"c1","created":false}));
     {
-        let state = host.state.lock().unwrap();
+        let state = host.state.lock();
         let write = state.writes.last().unwrap();
         assert_eq!(write.config.name, "Renamed");
         assert_eq!(write.config.group.as_deref(), Some("work"));
@@ -932,14 +922,7 @@ async fn connection_writes_validate_metadata_and_preserve_exposure() {
         .await;
     assert_eq!(result["created"], true);
     assert_eq!(
-        host.state
-            .lock()
-            .unwrap()
-            .writes
-            .last()
-            .unwrap()
-            .config
-            .agent_access,
+        host.state.lock().writes.last().unwrap().config.agent_access,
         AgentAccess::None
     );
     server.shutdown().await;
@@ -1017,7 +1000,7 @@ async fn setting_writes_parse_types_levels_and_reject_unsafe_changes() {
         ),
     ];
     {
-        let mut state = host.state.lock().unwrap();
+        let mut state = host.state.lock();
         state.setting_entries = cases
             .iter()
             .map(|(id, kind, ..)| setting_entry(id, kind.clone()))
@@ -1052,7 +1035,7 @@ async fn setting_writes_parse_types_levels_and_reject_unsafe_changes() {
             .await;
         assert!(result.get("error").is_none(), "{result}");
         {
-            let state = host.state.lock().unwrap();
+            let state = host.state.lock();
             let write = state.setting_writes.last().unwrap();
             assert_eq!(write.0, id);
             assert_eq!(write.3, Some(expected));
@@ -1080,7 +1063,7 @@ async fn setting_writes_parse_types_levels_and_reject_unsafe_changes() {
             .await;
         assert_eq!(result["error"]["code"], "invalid", "{result}");
     }
-    let before = host.state.lock().unwrap().setting_writes.len();
+    let before = host.state.lock().setting_writes.len();
     for (index, payload) in [
         json!({"id":"safe","level":{"name":"global"},"value":false}),
         json!({"id":"safe","level":{"name":"global"},"reset":true}),
@@ -1106,7 +1089,7 @@ async fn setting_writes_parse_types_levels_and_reject_unsafe_changes() {
             .await;
         assert_eq!(result["error"]["code"], "invalid", "{payload}: {result}");
     }
-    assert_eq!(host.state.lock().unwrap().setting_writes.len(), before);
+    assert_eq!(host.state.lock().setting_writes.len(), before);
     let result = client
         .tool(
             400,
@@ -1117,10 +1100,7 @@ async fn setting_writes_parse_types_levels_and_reject_unsafe_changes() {
         )
         .await;
     assert_eq!(result["reset"], true);
-    assert_eq!(
-        host.state.lock().unwrap().setting_writes.last().unwrap().3,
-        None
-    );
+    assert_eq!(host.state.lock().setting_writes.last().unwrap().3, None);
     server.shutdown().await;
 }
 
@@ -1151,7 +1131,7 @@ async fn folder_operations_and_keymap_writes_reach_the_host_after_validation() {
         assert_eq!(result["action"], payload["action"]);
     }
     {
-        let state = host.state.lock().unwrap();
+        let state = host.state.lock();
         let actual: Vec<Value> = state
             .folders
             .iter()
@@ -1204,7 +1184,7 @@ async fn folder_operations_and_keymap_writes_reach_the_host_after_validation() {
         .await;
     assert_eq!(result["reset"], true);
     {
-        let state = host.state.lock().unwrap();
+        let state = host.state.lock();
         assert_eq!(
             state.keymap_writes,
             vec![
@@ -1231,7 +1211,7 @@ async fn folder_operations_and_keymap_writes_reach_the_host_after_validation() {
             .await;
         assert_eq!(result["error"]["code"], "invalid", "{payload}: {result}");
     }
-    assert_eq!(host.state.lock().unwrap().keymap_writes.len(), 2);
+    assert_eq!(host.state.lock().keymap_writes.len(), 2);
     server.shutdown().await;
 }
 
@@ -1466,7 +1446,7 @@ async fn profiles_validate_safety_flags_and_commit_modes_before_saving() {
         .await;
     assert!(result["id"].as_str().unwrap().starts_with("profile-"));
     {
-        let state = host.state.lock().unwrap();
+        let state = host.state.lock();
         let saved = state.saved_profiles.last().unwrap();
         assert_eq!(saved.name, "Safe");
         assert_eq!(saved.color, Some([1, 2, 3]));
@@ -1474,7 +1454,7 @@ async fn profiles_validate_safety_flags_and_commit_modes_before_saving() {
         assert!(saved.confirm_writes && saved.confirm_destructive && saved.read_only);
         assert_eq!(saved.idle_tx_timeout_min, Some(2));
     }
-    let before = host.state.lock().unwrap().saved_profiles.len();
+    let before = host.state.lock().saved_profiles.len();
     for (index, payload) in [
         json!({}),
         json!({"name":" "}),
@@ -1500,7 +1480,7 @@ async fn profiles_validate_safety_flags_and_commit_modes_before_saving() {
             .await;
         assert_eq!(result["error"]["code"], "invalid", "{payload}: {result}");
     }
-    assert_eq!(host.state.lock().unwrap().saved_profiles.len(), before);
+    assert_eq!(host.state.lock().saved_profiles.len(), before);
     server.shutdown().await;
 }
 
@@ -1527,7 +1507,7 @@ async fn editor_tools_validate_and_forward_ranges_and_run_targets() {
     let edited = client.tool(103,"edit_query_tab",json!({"tab_id":1,"expected_revision":8,"edit":{"edits":[{"start":7,"end":8,"text":"3"}]}})).await;
     assert_eq!(edited["revision"], 1);
     {
-        let state = host.state.lock().unwrap();
+        let state = host.state.lock();
         assert!(matches!(&state.tab_edits[0],(1,7,TabEdit::Replace(text)) if text == "select 2"));
         let (id, revision, TabEdit::Edits(ranges)) = &state.tab_edits[1] else {
             panic!("range edit")
@@ -1552,7 +1532,7 @@ async fn editor_tools_validate_and_forward_ranges_and_run_targets() {
         assert_eq!(result, json!({"statements":[]}));
     }
     {
-        let state = host.state.lock().unwrap();
+        let state = host.state.lock();
         assert!(matches!(state.tab_runs[0], (1, RunTarget::Script, 12)));
         assert!(matches!(state.tab_runs[1], (1, RunTarget::Selection, 12)));
         assert!(matches!(
@@ -1591,8 +1571,8 @@ async fn editor_tools_validate_and_forward_ranges_and_run_targets() {
             .await;
         assert_eq!(result["error"]["code"], "invalid");
     }
-    assert_eq!(host.state.lock().unwrap().tab_edits.len(), 2);
-    assert_eq!(host.state.lock().unwrap().tab_runs.len(), 3);
+    assert_eq!(host.state.lock().tab_edits.len(), 2);
+    assert_eq!(host.state.lock().tab_runs.len(), 3);
     server.shutdown().await;
 }
 
@@ -1602,7 +1582,7 @@ async fn configuration_deletion_requires_approval_and_protects_used_profiles() {
     let (server, host, _dir, port, token) = setup(AgentAccess::Read, store).await;
     let mut client = Client::new(port, &token);
     client.initialize().await;
-    host.state.lock().unwrap().allow = false;
+    host.state.lock().allow = false;
     let refused = client
         .tool(
             100,
@@ -1611,8 +1591,8 @@ async fn configuration_deletion_requires_approval_and_protects_used_profiles() {
         )
         .await;
     assert_eq!(refused["error"]["code"], "denied");
-    assert!(host.state.lock().unwrap().deletions.is_empty());
-    host.state.lock().unwrap().allow = true;
+    assert!(host.state.lock().deletions.is_empty());
+    host.state.lock().allow = true;
     for (index, (target, id)) in [
         ("connection", "c1"),
         ("folder", "work"),
@@ -1632,7 +1612,7 @@ async fn configuration_deletion_requires_approval_and_protects_used_profiles() {
         assert_eq!(result, json!({"target":target,"id":id,"deleted":true}));
     }
     assert_eq!(
-        host.state.lock().unwrap().deletions,
+        host.state.lock().deletions,
         vec![
             ("connection".into(), "c1".into()),
             ("folder".into(), "work".into()),

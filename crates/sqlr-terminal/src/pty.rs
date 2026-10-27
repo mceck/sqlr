@@ -57,6 +57,10 @@ impl BackendFactory for PortablePty {
                 std::thread::spawn(move || {
                     // A short grace period, then the whole process group.
                     std::thread::sleep(Duration::from_millis(150));
+                    // SAFETY: `libc::kill` takes plain integers and dereferences nothing. A
+                    // negative pid addresses the process group led by the child, which we
+                    // started as a session leader; a stale pid only makes the call fail
+                    // with ESRCH, which is ignored.
                     unsafe {
                         libc::kill(-pid, libc::SIGKILL);
                     }

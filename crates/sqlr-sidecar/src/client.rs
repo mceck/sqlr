@@ -22,7 +22,7 @@ fn protocol_error(message: impl Into<String>) -> DriverError {
     DriverError::new(ErrorKind::Protocol, message)
 }
 
-fn unexpected(response: Response) -> DriverError {
+fn unexpected(response: &Response) -> DriverError {
     protocol_error(format!("unexpected answer from the driver: {response:?}"))
 }
 
@@ -94,6 +94,7 @@ impl SidecarDriver {
         self.process.lock().as_ref().is_some_and(|p| p.alive())
     }
 
+    /// How the sidecar is started.
     pub fn spec(&self) -> &SidecarSpec {
         &self.spec
     }
@@ -171,6 +172,7 @@ impl Drop for InflightGuard {
     }
 }
 
+/// One connection of a Sidecar driver: its calls go over the sidecar protocol to the driver process.
 pub struct SidecarConnection {
     process: Arc<Process>,
     conn: u64,
@@ -194,7 +196,7 @@ impl SidecarConnection {
             ..
         } = answer
         else {
-            return Err(unexpected(answer));
+            return Err(unexpected(&answer));
         };
         process.conn_opened();
         Ok(Arc::new(Self {
@@ -238,7 +240,7 @@ impl Connection for SidecarConnection {
     async fn ping(&self) -> Result<ServerInfo, DriverError> {
         match self.call(Request::Ping { conn: self.conn }).await? {
             Response::Pong(info) => Ok(info),
-            other => Err(unexpected(other)),
+            other => Err(unexpected(&other)),
         }
     }
 
@@ -251,7 +253,7 @@ impl Connection for SidecarConnection {
             .await?
         {
             Response::Nodes(nodes) => Ok(nodes),
-            other => Err(unexpected(other)),
+            other => Err(unexpected(&other)),
         }
     }
 
@@ -361,7 +363,7 @@ impl RelationalConn for SidecarConnection {
             .await?
         {
             Response::Table(info) => Ok(info),
-            other => Err(unexpected(other)),
+            other => Err(unexpected(&other)),
         }
     }
 
@@ -387,7 +389,7 @@ impl RelationalConn for SidecarConnection {
             .await?
         {
             Response::Catalog(catalog) => Ok(catalog),
-            other => Err(unexpected(other)),
+            other => Err(unexpected(&other)),
         }
     }
 }
@@ -412,7 +414,7 @@ impl SidecarConnection {
                 exhausted: false,
                 closed: false,
             }))),
-            other => Err(unexpected(other)),
+            other => Err(unexpected(&other)),
         }
     }
 }
@@ -470,7 +472,7 @@ impl RowStream for SidecarStream {
                         return Ok(self.ready.pop_front());
                     }
                     Response::Error(e) => return Err(e),
-                    other => return Err(unexpected(other)),
+                    other => return Err(unexpected(&other)),
                 },
                 Event::Closed(e) => return Err(e),
             }

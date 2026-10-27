@@ -4,7 +4,7 @@ use sqlr_core::{Cell, ConnectionConfig, Driver, ErrorKind, Execution, NodePath, 
 use std::{
     io::{Read, Write},
     net::TcpListener,
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::Duration,
 };
 
@@ -55,10 +55,7 @@ impl Fixture {
                         }
                     }
                 }
-                captured
-                    .lock()
-                    .unwrap()
-                    .push(String::from_utf8(request).unwrap());
+                captured.lock().push(String::from_utf8(request).unwrap());
                 write!(socket, "HTTP/1.1 {status} fixture\r\n{headers}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
                 socket.write_all(&body).unwrap();
             }
@@ -94,7 +91,7 @@ fn config() -> ConnectionConfig {
         agent_access: Default::default(),
     }
 }
-fn result(types: &[(&str, &str)], data: Json, counts: &[usize]) -> Json {
+fn result(types: &[(&str, &str)], data: &Json, counts: &[usize]) -> Json {
     json!({"statementHandle":"q-123", "statementTypeId":4096, "code":"090001", "sqlState":"00000", "resultSetMetaData":{"numRows":counts.iter().sum::<usize>(),"format":"jsonv2","rowType":types.iter().map(|(name,ty)|json!({"name":name,"type":ty})).collect::<Vec<_>>(),"partitionInfo":counts.iter().map(|n|json!({"rowCount":n})).collect::<Vec<_>>()},"data":data})
 }
 fn err(execution: Result<Execution, sqlr_core::DriverError>) -> sqlr_core::DriverError {
@@ -112,7 +109,7 @@ async fn polls_and_fetches_partitions_lazily_with_exact_chunks_and_bindings() {
             200,
             result(
                 &[("N", "fixed"), ("D", "date"), ("B", "binary")],
-                json!([
+                &json!([
                     [
                         "12345678901234567890123456789012345678",
                         "2026-10-25",
@@ -138,7 +135,7 @@ async fn polls_and_fetches_partitions_lazily_with_exact_chunks_and_bindings() {
     else {
         panic!()
     };
-    assert_eq!(fixture.requests.lock().unwrap().len(), 2);
+    assert_eq!(fixture.requests.lock().len(), 2);
     let chunk = stream.next_chunk(1).await.unwrap().unwrap();
     assert_eq!(
         chunk.cell(0, 0),
@@ -150,10 +147,10 @@ async fn polls_and_fetches_partitions_lazily_with_exact_chunks_and_bindings() {
         stream.next_chunk(1).await.unwrap().unwrap().cell(0, 0),
         Cell::Text("1.2300")
     );
-    assert_eq!(fixture.requests.lock().unwrap().len(), 2);
+    assert_eq!(fixture.requests.lock().len(), 2);
     assert_eq!(stream.next_chunk(1).await.unwrap().unwrap().len(), 1);
     assert!(stream.next_chunk(1).await.unwrap().is_none());
-    let requests = fixture.requests.lock().unwrap();
+    let requests = fixture.requests.lock();
     let body: Json = serde_json::from_str(requests[0].split("\r\n\r\n").nth(1).unwrap()).unwrap();
     assert_eq!(body["bindings"]["1"], json!({"type":"FIXED","value":"7"}));
     assert_eq!(body["bindings"]["2"]["value"], "O'Reilly");
@@ -175,13 +172,16 @@ async fn dml_uses_statement_type_and_sums_merge_counts_while_select_count_stays_
             ("updated", "fixed"),
             ("deleted", "fixed"),
         ],
-        json!([["2", "3", "4"]]),
+        &json!([["2", "3", "4"]]),
         &[1],
     );
     merge["statementTypeId"] = json!(13312);
     let fixture = Fixture::new(vec![
         (200, merge),
-        (200, result(&[("COUNT(*)", "fixed")], json!([["99"]]), &[1])),
+        (
+            200,
+            result(&[("COUNT(*)", "fixed")], &json!([["99"]]), &[1]),
+        ),
     ]);
     let conn = fixture.connection().await;
     assert!(matches!(
@@ -246,8 +246,8 @@ async fn statement_errors_keep_the_server_message_without_the_token() {
 #[tokio::test]
 async fn validates_rows_and_partition_lengths_instead_of_losing_data() {
     for response in [
-        result(&[("A", "text")], json!([["a", "b"]]), &[1]),
-        result(&[("A", "text")], json!([]), &[1]),
+        result(&[("A", "text")], &json!([["a", "b"]]), &[1]),
+        result(&[("A", "text")], &json!([]), &[1]),
         json!({"data":[]}),
     ] {
         let fixture = Fixture::new(vec![(200, response)]);
@@ -285,9 +285,9 @@ async fn session_controls_are_rejected_even_after_comments() {
 #[tokio::test]
 async fn cancels_only_current_handle_and_never_reuses_it() {
     let fixture = Fixture::new(vec![
-        (200, result(&[("A", "text")], json!([["x"]]), &[1])),
+        (200, result(&[("A", "text")], &json!([["x"]]), &[1])),
         (200, json!({"code":"000604","sqlState":"57014"})),
-        (200, result(&[("A", "text")], json!([["y"]]), &[1])),
+        (200, result(&[("A", "text")], &json!([["y"]]), &[1])),
     ]);
     let conn = fixture.connection().await;
     let Execution::Rows(mut stream) = conn
@@ -319,9 +319,7 @@ async fn cancels_only_current_handle_and_never_reuses_it() {
         next.next_chunk(1).await.unwrap().unwrap().cell(0, 0),
         Cell::Text("y")
     );
-    assert!(
-        fixture.requests.lock().unwrap()[1].starts_with("POST /api/v2/statements/q-123/cancel")
-    );
+    assert!(fixture.requests.lock()[1].starts_with("POST /api/v2/statements/q-123/cancel"));
 }
 
 #[tokio::test]
@@ -329,13 +327,13 @@ async fn catalogs_parameterize_unusual_names() {
     let fixture = Fixture::new(vec![
         (
             200,
-            result(&[("SCHEMA_NAME", "text")], json!([["a'b"]]), &[1]),
+            result(&[("SCHEMA_NAME", "text")], &json!([["a'b"]]), &[1]),
         ),
         (
             200,
             result(
                 &[("TABLE_NAME", "text"), ("TABLE_TYPE", "text")],
-                json!([["T", "BASE TABLE"], ["V", "VIEW"]]),
+                &json!([["T", "BASE TABLE"], ["V", "VIEW"]]),
                 &[2],
             ),
         ),
@@ -347,7 +345,7 @@ async fn catalogs_parameterize_unusual_names() {
                     ("COLUMN_NAME", "text"),
                     ("DATA_TYPE", "text"),
                 ],
-                json!([["T", "C", "NUMBER"], ["V", "C", "NUMBER"]]),
+                &json!([["T", "C", "NUMBER"], ["V", "C", "NUMBER"]]),
                 &[2],
             ),
         ),
@@ -357,7 +355,7 @@ async fn catalogs_parameterize_unusual_names() {
     let catalog = conn.relational().unwrap().catalog("a'b").await.unwrap();
     assert_eq!(catalog.relations.len(), 2);
     assert_eq!(catalog.relations[0].columns[0].name, "C");
-    for request in fixture.requests.lock().unwrap().iter().skip(1) {
+    for request in fixture.requests.lock().iter().skip(1) {
         let body: Json = serde_json::from_str(request.split("\r\n\r\n").nth(1).unwrap()).unwrap();
         assert!(!body["statement"].as_str().unwrap().contains("a'b"));
         assert_eq!(body["bindings"]["1"]["value"], "a'b");
@@ -420,7 +418,7 @@ async fn cancelled_success_response_and_network_failure_are_classified() {
 
 #[tokio::test]
 async fn incomplete_initial_response_refetches_partition_zero_lazily() {
-    let mut response = result(&[("A", "text")], json!([]), &[2]);
+    let mut response = result(&[("A", "text")], &json!([]), &[2]);
     response["code"] = json!("391908");
     let fixture = Fixture::new(vec![(200, response), (200, json!({"data":[["a"],["b"]]}))]);
     let conn = fixture.connection().await;
@@ -433,14 +431,12 @@ async fn incomplete_initial_response_refetches_partition_zero_lazily() {
     else {
         panic!()
     };
-    assert_eq!(fixture.requests.lock().unwrap().len(), 1);
+    assert_eq!(fixture.requests.lock().len(), 1);
     assert_eq!(
         stream.next_chunk(1).await.unwrap().unwrap().cell(0, 0),
         Cell::Text("a")
     );
-    assert!(
-        fixture.requests.lock().unwrap()[1].starts_with("GET /api/v2/statements/q-123?partition=0")
-    );
+    assert!(fixture.requests.lock()[1].starts_with("GET /api/v2/statements/q-123?partition=0"));
 }
 
 #[tokio::test]
@@ -455,7 +451,7 @@ async fn describes_columns_and_preserves_null_defaults() {
                 ("DEFAULT", "text"),
                 ("IDENTITY", "text"),
             ],
-            json!([
+            &json!([
                 ["id", "NUMBER", "NO", null, "YES"],
                 ["body", "VARCHAR", "YES", "'hello'", "NO"]
             ]),
@@ -478,8 +474,8 @@ async fn describes_columns_and_preserves_null_defaults() {
 #[tokio::test]
 async fn older_stream_drop_cannot_clear_new_query_cancellation() {
     let fixture = Fixture::new(vec![
-        (200, result(&[("A", "text")], json!([["a"]]), &[1])),
-        (200, result(&[("A", "text")], json!([["b"]]), &[1])),
+        (200, result(&[("A", "text")], &json!([["a"]]), &[1])),
+        (200, result(&[("A", "text")], &json!([["b"]]), &[1])),
         (200, json!({"sqlState":"57014","code":"000604"})),
     ]);
     let conn = fixture.connection().await;
@@ -518,7 +514,7 @@ async fn polling_is_cancellable_without_holding_the_active_lock() {
         tokio::spawn(async move { executing.relational().unwrap().execute("select 1").await });
     tokio::time::timeout(Duration::from_secs(2), async {
         loop {
-            if fixture.requests.lock().unwrap().len() == 1 {
+            if fixture.requests.lock().len() == 1 {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(1)).await;
@@ -528,7 +524,7 @@ async fn polling_is_cancellable_without_holding_the_active_lock() {
     .unwrap();
     conn.cancel_handle().cancel().await.unwrap();
     assert_eq!(err(task.await.unwrap()).kind, ErrorKind::Cancelled);
-    assert_eq!(fixture.requests.lock().unwrap().len(), 2);
+    assert_eq!(fixture.requests.lock().len(), 2);
 }
 
 #[tokio::test]
@@ -538,7 +534,7 @@ async fn update_does_not_double_count_multi_joined_rows() {
             ("number of rows updated", "fixed"),
             ("number of multi-joined rows updated", "fixed"),
         ],
-        json!([["4", "2"]]),
+        &json!([["4", "2"]]),
         &[1],
     );
     update["statementTypeId"] = json!(0x3200);
@@ -564,7 +560,7 @@ async fn compressed_partitions_decode_natively() {
         (
             200,
             String::new(),
-            result(&[("A", "text")], json!([["a"]]), &[1, 1])
+            result(&[("A", "text")], &json!([["a"]]), &[1, 1])
                 .to_string()
                 .into_bytes(),
         ),
@@ -620,7 +616,7 @@ async fn auth_variants_and_server_urls_never_override_the_request_destination() 
                 429,
                 json!({"statementHandle":"q-123","statementStatusUrl":"http://attacker.invalid/steal"}),
             ),
-            (200, result(&[("A", "text")], json!([["a"]]), &[1])),
+            (200, result(&[("A", "text")], &json!([["a"]]), &[1])),
         ]);
         let mut cfg = config();
         cfg.values.insert("auth_type".into(), auth.into());
@@ -629,7 +625,7 @@ async fn auth_variants_and_server_urls_never_override_the_request_destination() 
             .await
             .unwrap();
         assert!(conn.relational().unwrap().execute("select 1").await.is_ok());
-        let requests = fixture.requests.lock().unwrap();
+        let requests = fixture.requests.lock();
         assert!(requests[0].to_ascii_lowercase().contains(&format!(
             "x-snowflake-authorization-token-type: {}",
             auth.to_ascii_lowercase()
@@ -690,7 +686,7 @@ async fn live_smoke_when_credentials_are_supplied() {
 
 #[tokio::test]
 async fn empty_results_are_rows_with_columns_and_close_is_idempotent() {
-    let fixture = Fixture::new(vec![(200, result(&[("N", "fixed")], json!([]), &[0]))]);
+    let fixture = Fixture::new(vec![(200, result(&[("N", "fixed")], &json!([]), &[0]))]);
     let conn = fixture.connection().await;
     let Execution::Rows(mut rows) = conn
         .relational()
@@ -706,7 +702,7 @@ async fn empty_results_are_rows_with_columns_and_close_is_idempotent() {
     rows.close().await.unwrap();
     rows.close().await.unwrap();
     conn.cancel_handle().cancel().await.unwrap();
-    assert_eq!(fixture.requests.lock().unwrap().len(), 1);
+    assert_eq!(fixture.requests.lock().len(), 1);
 }
 
 #[tokio::test]
@@ -719,7 +715,7 @@ async fn invalid_server_handles_are_rejected_before_any_followup() {
     let error = err(conn.relational().unwrap().execute("select 1").await);
     assert_eq!(error.kind, ErrorKind::Protocol);
     assert!(!error.message.contains("secret"));
-    assert_eq!(fixture.requests.lock().unwrap().len(), 1);
+    assert_eq!(fixture.requests.lock().len(), 1);
 }
 
 #[tokio::test]
@@ -755,7 +751,7 @@ async fn throttled_submission_without_handle_is_not_retried_or_called_malformed(
         .kind,
         ErrorKind::Timeout
     );
-    assert_eq!(fixture.requests.lock().unwrap().len(), 1);
+    assert_eq!(fixture.requests.lock().len(), 1);
 }
 
 #[tokio::test]
@@ -775,7 +771,7 @@ async fn unavailable_service_with_html_response_is_a_connection_error() {
 #[tokio::test]
 async fn partition_throttling_retries_only_the_safe_get() {
     let fixture = Fixture::new(vec![
-        (200, result(&[("A", "text")], json!([["a"]]), &[1, 1])),
+        (200, result(&[("A", "text")], &json!([["a"]]), &[1, 1])),
         (429, json!({"statementHandle":"q-123"})),
         (200, json!({"data":[["b"]]})),
     ]);
@@ -790,7 +786,7 @@ async fn partition_throttling_retries_only_the_safe_get() {
         panic!()
     };
     assert_eq!(rows.next_chunk(2).await.unwrap().unwrap().len(), 2);
-    let requests = fixture.requests.lock().unwrap();
+    let requests = fixture.requests.lock();
     assert!(requests[1].starts_with("GET /api/v2/statements/q-123?partition=1"));
     assert!(requests[2].starts_with("GET /api/v2/statements/q-123?partition=1"));
 }

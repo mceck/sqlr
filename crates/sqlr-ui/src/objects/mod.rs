@@ -66,7 +66,7 @@ impl ObjectSubTab {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ObjectEditorAction {
     /// Show the pending DDL in a dialog.
     Preview,

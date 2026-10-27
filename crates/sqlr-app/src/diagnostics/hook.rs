@@ -81,14 +81,14 @@ fn payload(info: &PanicHookInfo<'_>) -> String {
 mod tests {
     use super::*;
     use crate::diagnostics::{Environment, IncidentKind, ring};
-    use std::sync::Mutex;
+    use parking_lot::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static HOOK_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn a_panic_writes_message_location_thread_session_and_logs_then_chains() {
-        let _serial = HOOK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _serial = HOOK_LOCK.lock();
         let dir = tempfile::tempdir().unwrap();
         let diagnostics = Arc::new(Diagnostics::open(Some(dir.path())));
         ring::global().push("the line just before the crash");
@@ -133,14 +133,15 @@ mod tests {
 
     #[test]
     fn the_hook_guard_can_be_dropped_during_unwinding() {
-        let _serial = HOOK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _serial = HOOK_LOCK.lock();
         let dir = tempfile::tempdir().unwrap();
         let diagnostics = Arc::new(Diagnostics::open(Some(dir.path())));
         let original = std::panic::take_hook();
         let result = std::panic::catch_unwind({
-            let diagnostics = diagnostics.clone();
+            let diagnostics = std::panic::AssertUnwindSafe(diagnostics.clone());
             move || {
-                let _guard = PanicHookGuard::install(diagnostics);
+                let diagnostics = diagnostics;
+                let _guard = PanicHookGuard::install(diagnostics.0);
                 panic!("unwinding through the hook guard");
             }
         });
@@ -151,7 +152,7 @@ mod tests {
 
     #[test]
     fn an_engine_task_panic_is_left_to_the_engine_converter() {
-        let _serial = HOOK_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _serial = HOOK_LOCK.lock();
         let dir = tempfile::tempdir().unwrap();
         let diagnostics = Arc::new(Diagnostics::open(Some(dir.path())));
         let guard = PanicHookGuard::install(diagnostics.clone());

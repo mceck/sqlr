@@ -671,10 +671,7 @@ fn draw_node(
     });
     let children = children.inner;
     let spine_x = rect.left() + INDENT / 2.0;
-    let last = children
-        .last()
-        .map(|r| r.center().y)
-        .unwrap_or(rect.bottom());
+    let last = children.last().map_or(rect.bottom(), |r| r.center().y);
     ui.painter().line_segment(
         [pos2(spine_x, rect.bottom() + 15.0), pos2(spine_x, last)],
         Stroke::new(1.0, p.border_input),

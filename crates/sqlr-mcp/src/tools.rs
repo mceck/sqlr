@@ -99,7 +99,7 @@ pub async fn call(
 ) -> Result<CallToolResult, rmcp::ErrorData> {
     let args = Args::new(arguments);
     let outcome = match name {
-        "get_guide" => get_guide(&args),
+        "get_guide" => Ok(get_guide(&args)),
         "config_list" => config_list(state, &args).await,
         "config_write" => config_write(state, ctx, &args).await,
         "config_delete" => config_delete(state, ctx, &args).await,
@@ -114,7 +114,7 @@ pub async fn call(
         "get_query_tab" => get_query_tab(state, &args).await,
         "edit_query_tab" => edit_query_tab(state, &args).await,
         "run_query_tab" => run_query_tab(state, &args).await,
-        "list_snippets" => list_snippets(state),
+        "list_snippets" => Ok(list_snippets(state)),
         "get_snippet" => get_snippet(state, &args),
         "write_snippet" => write_snippet(state, &args).await,
         "delete_snippet" => delete_snippet(state, ctx, &args).await,
@@ -132,13 +132,11 @@ pub async fn call(
     })
 }
 
-fn guide_result(topic: Option<&str>) -> ToolResult<CallToolResult> {
-    Ok(CallToolResult::success(vec![ContentBlock::text(
-        guide::guide(topic),
-    )]))
+fn guide_result(topic: Option<&str>) -> CallToolResult {
+    CallToolResult::success(vec![ContentBlock::text(guide::guide(topic))])
 }
 
-fn get_guide(args: &Args) -> ToolResult<CallToolResult> {
+fn get_guide(args: &Args) -> CallToolResult {
     guide_result(args.opt_str("topic"))
 }
 
@@ -220,8 +218,7 @@ fn redact(text: &str) -> String {
             start += key.len();
             let end = out[start..]
                 .find(|c: char| c.is_whitespace() || c == '&' || c == ';' || c == ',')
-                .map(|i| start + i)
-                .unwrap_or(out.len());
+                .map_or(out.len(), |i| start + i);
             out.replace_range(start..end, "***");
         }
     }
@@ -338,8 +335,7 @@ async fn browse(state: &Arc<ServerState>, args: &Args) -> ToolResult<CallToolRes
                 let from_cache = state
                     .engine
                     .catalog(id)
-                    .map(|catalog| catalog.from_cache)
-                    .unwrap_or(false);
+                    .is_some_and(|catalog| catalog.from_cache);
                 let value = json!({
                     "connection_id": id,
                     "path": path.segments(),
@@ -548,8 +544,7 @@ static NEXT_KV_CONSOLE: AtomicU64 = AtomicU64::new(1);
 fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
+        .map_or(0, |d| d.as_millis() as i64)
 }
 
 fn new_id(prefix: &str) -> String {
@@ -679,7 +674,10 @@ async fn run_query(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the server state, tool context, connection, session key, database, text, row cap and deadline are independent values resolved by the caller before dispatch; a parameter struct would only be built to be unpacked at the top of this function"
+)]
 async fn run_sql_query(
     state: &Arc<ServerState>,
     ctx: &ToolContext,
@@ -734,7 +732,10 @@ async fn run_sql_query(
     Ok(CallToolResult::structured(value))
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the server state, tool context, connection, session key, database, text, row cap and deadline are independent values resolved by the caller before dispatch; a parameter struct would only be built to be unpacked at the top of this function"
+)]
 async fn run_document_query(
     state: &Arc<ServerState>,
     ctx: &ToolContext,
@@ -959,16 +960,14 @@ async fn cancel_query(
     }
     tokio::time::sleep(Duration::from_millis(50)).await;
     let status = match kind {
-        results::ResultKind::Document => state
-            .engine
-            .doc_result(q)
-            .map(|result| status_name(&result.read().status).to_string())
-            .unwrap_or_else(|| "closed".into()),
-        _ => state
-            .engine
-            .result(q)
-            .map(|result| status_name(&result.read().status).to_string())
-            .unwrap_or_else(|| "closed".into()),
+        results::ResultKind::Document => state.engine.doc_result(q).map_or_else(
+            || "closed".into(),
+            |result| status_name(&result.read().status).to_string(),
+        ),
+        _ => state.engine.result(q).map_or_else(
+            || "closed".into(),
+            |result| status_name(&result.read().status).to_string(),
+        ),
     };
     let _ = ctx;
     Ok(CallToolResult::structured(json!({
@@ -1101,10 +1100,8 @@ async fn write_connection(state: &Arc<ServerState>, payload: &Args) -> ToolResul
         .find(|manifest| manifest.id == driver_id)
         .ok_or_else(|| ToolError::invalid(format!("Unknown driver \"{driver_id}\"")))?
         .clone();
-    let mut config = existing
-        .as_ref()
-        .map(|c| c.config.clone())
-        .unwrap_or_else(|| ConnectionConfig {
+    let mut config = existing.as_ref().map_or_else(
+        || ConnectionConfig {
             id: new_id("agent"),
             name: String::new(),
             driver: driver_id.clone(),
@@ -1114,7 +1111,9 @@ async fn write_connection(state: &Arc<ServerState>, payload: &Args) -> ToolResul
             profile: None,
             save_secrets: true,
             agent_access: AgentAccess::None,
-        });
+        },
+        |c| c.config.clone(),
+    );
     if let Some(name) = payload.opt_str("name") {
         if name.trim().is_empty() {
             return Err(ToolError::invalid("A connection needs a name"));
@@ -1906,11 +1905,11 @@ fn snippet_metadata(snippet: &Snippet) -> Value {
     })
 }
 
-fn list_snippets(state: &Arc<ServerState>) -> ToolResult<CallToolResult> {
+fn list_snippets(state: &Arc<ServerState>) -> CallToolResult {
     let snippets = state.engine.snippets();
-    Ok(CallToolResult::structured(json!({
+    CallToolResult::structured(json!({
         "snippets": snippets.iter().map(snippet_metadata).collect::<Vec<_>>(),
-    })))
+    }))
 }
 
 fn get_snippet(state: &Arc<ServerState>, args: &Args) -> ToolResult<CallToolResult> {
@@ -2010,5 +2009,4 @@ async fn delete_snippet(
 
 // Keep imports used by the public contract in one place without leaking implementation
 // details into tool results.
-#[allow(dead_code)]
 fn _type_check(_: &ColumnMeta, _: &Arc<()>, _: Slot) {}

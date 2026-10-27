@@ -240,7 +240,7 @@ impl Engine {
         };
         let started = now_ms();
         let run_id = Arc::new(AtomicI64::new(-1));
-        let task_id = task.id.clone();
+        let task_id = task.id;
         let started_run = run_id.clone();
         self.shared
             .db

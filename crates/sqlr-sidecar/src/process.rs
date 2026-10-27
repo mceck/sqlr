@@ -20,10 +20,15 @@ use crate::messages::{PROTOCOL, Request, Response, decode, encode};
 /// How to start a sidecar and how long to wait for it.
 #[derive(Clone, Debug)]
 pub struct SidecarSpec {
+    /// The driver id.
     pub id: String,
+    /// The installed driver version.
     pub version: String,
+    /// The sidecar executable.
     pub program: PathBuf,
+    /// Command-line arguments for the executable.
     pub args: Vec<String>,
+    /// Extra environment variables for the process.
     pub env: Vec<(String, String)>,
     /// The process stops this long after its last connection closes.
     pub idle_timeout: Duration,
@@ -34,6 +39,7 @@ pub struct SidecarSpec {
 }
 
 impl SidecarSpec {
+    /// A spec with the default timeouts.
     pub fn new(
         id: impl Into<String>,
         version: impl Into<String>,
@@ -308,27 +314,24 @@ impl Process {
             sqlr_version: env!("CARGO_PKG_VERSION").to_string(),
         };
         let welcome = tokio::time::timeout(spec.handshake_timeout, process.call(&hello)).await;
-        let welcome = match welcome {
-            Ok(result) => result,
-            Err(_) => {
-                let e = DriverError::new(
-                    ErrorKind::Timeout,
-                    format!(
-                        "driver {} did not answer the handshake within {:?}",
-                        spec.id, spec.handshake_timeout
-                    ),
-                );
-                tracing::error!(
-                    target: "sqlr_sidecar::process",
-                    incident = "sidecar_crash",
-                    driver = %spec.id,
-                    error_kind = "Timeout",
-                    error = %e.message,
-                    "driver handshake failed"
-                );
-                process.kill(e.clone());
-                return Err(e);
-            }
+        let Ok(welcome) = welcome else {
+            let e = DriverError::new(
+                ErrorKind::Timeout,
+                format!(
+                    "driver {} did not answer the handshake within {:?}",
+                    spec.id, spec.handshake_timeout
+                ),
+            );
+            tracing::error!(
+                target: "sqlr_sidecar::process",
+                incident = "sidecar_crash",
+                driver = %spec.id,
+                error_kind = "Timeout",
+                error = %e.message,
+                "driver handshake failed"
+            );
+            process.kill(e.clone());
+            return Err(e);
         };
         let (protocol, manifest) = match welcome {
             Ok(Response::Welcome { protocol, manifest }) => (protocol, manifest),

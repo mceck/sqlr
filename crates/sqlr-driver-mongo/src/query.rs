@@ -203,10 +203,11 @@ fn syntax_error(text: &str, e: sqlr_core::ShellError) -> DriverError {
 /// The single statement of `text`.
 fn parse_one(text: &str) -> Result<MongoOp, DriverError> {
     let mut ops = parse_mongo_shell(text).map_err(|e| syntax_error(text, e))?;
-    match ops.len() {
-        1 => Ok(ops.pop().unwrap().1),
-        0 => Err(DriverError::new(ErrorKind::Syntax, "nothing to run")),
-        n => Err(DriverError::new(
+    let n = ops.len();
+    match (ops.pop(), n) {
+        (Some((_, op)), 1) => Ok(op),
+        (_, 0) => Err(DriverError::new(ErrorKind::Syntax, "nothing to run")),
+        (_, n) => Err(DriverError::new(
             ErrorKind::Syntax,
             format!("the text holds {n} statements: run them one at a time or as a script"),
         )),

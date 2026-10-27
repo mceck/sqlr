@@ -13,11 +13,14 @@ use crate::node::{Node, NodeKind};
 /// Whether a driver's databases can be dumped and restored with native tools.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DatabaseTools {
+    /// Whether a database can be dumped.
     pub dump: bool,
+    /// Whether a database can be restored.
     pub restore: bool,
 }
 
 impl DatabaseTools {
+    /// A driver whose databases can be both dumped and restored.
     pub fn both() -> Self {
         Self {
             dump: true,
@@ -38,6 +41,7 @@ pub fn is_database_node(driver: &str, node: &Node) -> bool {
     }
 }
 
+/// The format a dump is written in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DumpFormat {
     /// PostgreSQL `pg_dump -Fp`: a plain SQL file.
@@ -55,6 +59,7 @@ pub enum DumpFormat {
 }
 
 impl DumpFormat {
+    /// The file extension of a dump in this format.
     pub fn extension(self) -> &'static str {
         match self {
             DumpFormat::Plain | DumpFormat::MysqlSql => "sql",
@@ -69,22 +74,33 @@ impl DumpFormat {
 /// What a dump writes and which tool options it passes.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct DumpOptions {
+    /// The dump format.
     pub format: DumpFormat,
+    /// Dump the structure only (`--schema-only`).
     pub schema_only: bool,
+    /// Dump the data only (`--data-only`).
     pub data_only: bool,
+    /// Add statements that drop objects before creating them (`--clean`).
     pub clean: bool,
+    /// With `clean`: use `IF EXISTS` on the drops.
     pub if_exists: bool,
+    /// Add the statement that creates the database (`--create`).
     pub create: bool,
     /// Parallel jobs: PostgreSQL directory format only.
     pub jobs: Option<u8>,
     /// PostgreSQL custom/directory compression level (`-Z`), 0–9.
     pub compression: Option<u8>,
+    /// Dump encoding (`--encoding`).
     pub encoding: Option<String>,
+    /// Leave out ownership statements (`--no-owner`).
     pub no_owner: bool,
+    /// Leave out privilege statements (`--no-privileges`).
     pub no_privileges: bool,
     /// MySQL: include stored routines, events and triggers.
     pub mysql_routines: bool,
+    /// MySQL: include events.
     pub mysql_events: bool,
+    /// MySQL: include triggers.
     pub mysql_triggers: bool,
     /// MySQL: `--single-transaction` (InnoDB's consistent snapshot).
     pub mysql_single_transaction: bool,
@@ -121,17 +137,29 @@ impl Default for DumpOptions {
 /// How a restore reads an archive and what it does to the target.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct RestoreOptions {
+    /// Drop objects before recreating them (`--clean`).
     pub clean: bool,
+    /// With `clean`: use `IF EXISTS` on the drops.
     pub if_exists: bool,
+    /// Create the database before restoring (`--create`).
     pub create: bool,
+    /// Parallel jobs.
     pub jobs: Option<u8>,
+    /// Restore in a single transaction.
     pub single_transaction: bool,
+    /// Restore the structure only.
     pub schema_only: bool,
+    /// Restore the data only.
     pub data_only: bool,
+    /// Skip ownership statements.
     pub no_owner: bool,
+    /// Skip privilege statements.
     pub no_privileges: bool,
+    /// Stop at the first error.
     pub exit_on_error: bool,
+    /// Extra command-line arguments, split on whitespace with quotes honoured.
     pub extra_args: String,
+    /// An explicit tool binary; empty searches `PATH` and the usual install locations.
     pub executable: String,
 }
 
@@ -162,14 +190,21 @@ pub struct ToolConnection {
     pub host: String,
     /// The address to dial when it differs from `host` (a tunnel's `127.0.0.1`).
     pub host_addr: Option<String>,
+    /// Server port.
     pub port: u16,
+    /// User name.
     pub user: Option<String>,
+    /// Database to dump or restore.
     pub database: String,
+    /// Password; handed over through the environment or a defaults file, never an argument.
     pub password: Option<String>,
     /// PostgreSQL `PGSSLMODE` values (`disable`, `require`, `verify-full`, …).
     pub ssl_mode: Option<String>,
+    /// CA certificate file for TLS.
     pub ssl_ca: Option<String>,
+    /// Client certificate file for TLS.
     pub ssl_cert: Option<String>,
+    /// Client key file for TLS.
     pub ssl_key: Option<String>,
     /// SQLite's database file.
     pub path: Option<PathBuf>,
@@ -194,7 +229,9 @@ impl fmt::Debug for ToolConnection {
 /// engine with owner-only permissions and removed when the tool ends.
 #[derive(Clone, PartialEq)]
 pub struct ToolFile {
+    /// Where the file is written.
     pub path: PathBuf,
+    /// The file's contents.
     pub content: String,
 }
 
@@ -210,10 +247,15 @@ impl fmt::Debug for ToolFile {
 /// their values out of logs.
 #[derive(Clone, PartialEq)]
 pub struct ToolCommand {
+    /// The executable to run.
     pub program: PathBuf,
+    /// Its arguments.
     pub args: Vec<String>,
+    /// Environment variables of the child, which may hold secrets.
     pub env: Vec<(String, String)>,
+    /// Files to write before it starts.
     pub files: Vec<ToolFile>,
+    /// A file piped to the tool's standard input (a restore).
     pub stdin_file: Option<PathBuf>,
     /// Where the tool's standard output goes (SQLite's `.dump`).
     pub stdout_file: Option<PathBuf>,

@@ -225,7 +225,7 @@ impl SqlrApp {
             TreeAction::NewObject { conn, node, kind } => self.new_object(&conn, node, kind),
             TreeAction::DropObject { conn, node } => self.drop_object(&conn, &node),
             TreeAction::Truncate { conn, node } => self.truncate(&conn, &node),
-            TreeAction::RenameObject { conn, node, to } => self.rename_object(&conn, &node, to),
+            TreeAction::RenameObject { conn, node, to } => self.rename_object(&conn, &node, &to),
             TreeAction::GenerateSql {
                 conn,
                 node,
@@ -408,13 +408,13 @@ impl SqlrApp {
         });
     }
 
-    fn rename_object(&mut self, conn: &str, node: &Node, to: String) {
+    fn rename_object(&mut self, conn: &str, node: &Node, to: &str) {
         let Some(object) = self.node_object(conn, node) else {
             return;
         };
         let change = SchemaChange::Rename {
             object: object.clone(),
-            to: to.clone(),
+            to: to.to_string(),
         };
         match self.engine.preview_ddl(conn, &[change]) {
             Ok(statements) => {

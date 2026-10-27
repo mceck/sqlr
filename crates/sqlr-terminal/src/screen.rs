@@ -1,7 +1,7 @@
 //! The terminal parser and the snapshot the UI paints.
 
+use parking_lot::Mutex;
 use std::num::NonZeroU16;
-use std::sync::Mutex;
 
 /// A terminal colour: the theme default, an ANSI index, or true colour.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -171,16 +171,16 @@ impl Emulator {
     }
 
     pub fn feed(&self, bytes: &[u8]) {
-        if self.bell_scan.lock().unwrap().rings(bytes) {
+        if self.bell_scan.lock().rings(bytes) {
             self.bell.store(true, std::sync::atomic::Ordering::Relaxed);
         }
-        self.parser.lock().unwrap().process(bytes);
-        self.kitty.lock().unwrap().feed(bytes);
+        self.parser.lock().process(bytes);
+        self.kitty.lock().feed(bytes);
     }
 
     /// Replies the application asked for while it fed bytes (the kitty keyboard query).
     pub fn take_responses(&self) -> Vec<u8> {
-        self.kitty.lock().unwrap().take_responses()
+        self.kitty.lock().take_responses()
     }
 
     /// Takes the visual bell raised since the last call.
@@ -190,15 +190,15 @@ impl Emulator {
 
     /// The number of rows kept above the live screen.
     pub fn scrollback_len(&self) -> usize {
-        self.parser.lock().unwrap().screen().scrollback_len()
+        self.parser.lock().screen().scrollback_len()
     }
 
     pub fn resize(&self, rows: u16, cols: u16) {
-        self.parser.lock().unwrap().set_size(nz(rows), nz(cols));
+        self.parser.lock().set_size(nz(rows), nz(cols));
     }
 
     pub fn clear(&self) {
-        let mut parser = self.parser.lock().unwrap();
+        let mut parser = self.parser.lock();
         let (rows, cols) = parser.screen().size();
         *parser = vt100::Parser::new(rows, cols, 0);
     }
@@ -206,13 +206,13 @@ impl Emulator {
     /// A snapshot at `scrollback_offset` (0 is the live screen), without disturbing the
     /// screen's own scroll position.
     pub fn snapshot(&self, scrollback_offset: usize) -> ScreenSnapshot {
-        let mut parser = self.parser.lock().unwrap();
+        let mut parser = self.parser.lock();
         let screen = parser.screen_mut();
         let previous = screen.scrollback();
         screen.set_scrollback(scrollback_offset);
         let mut snapshot = read_screen(screen);
         screen.set_scrollback(previous);
-        snapshot.kitty_flags = self.kitty.lock().unwrap().flags;
+        snapshot.kitty_flags = self.kitty.lock().flags;
         snapshot
     }
 }

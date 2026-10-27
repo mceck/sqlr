@@ -11,6 +11,7 @@ pub enum Scope {
     Global,
     /// While a text editor has the keyboard.
     Editor,
+    /// While the explorer tree has the keyboard.
     Explorer,
 }
 
@@ -18,7 +19,7 @@ macro_rules! actions {
     ($( $variant:ident => ($id:literal, $label:literal, $group:literal, $scope:ident) ),+ $(,)?) => {
         /// A command a shortcut can run.
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-        pub enum ActionId { $($variant),+ }
+        pub enum ActionId { $(#[doc = $label] $variant),+ }
 
         impl ActionId {
             /// Every action, in the order the keymap editor lists them.
@@ -29,6 +30,7 @@ macro_rules! actions {
                 match self { $(ActionId::$variant => $id),+ }
             }
 
+            /// The command's name in menus and the keymap editor.
             pub fn label(self) -> &'static str {
                 match self { $(ActionId::$variant => $label),+ }
             }
@@ -38,10 +40,12 @@ macro_rules! actions {
                 match self { $(ActionId::$variant => $group),+ }
             }
 
+            /// Where the command's chord is active.
             pub fn scope(self) -> Scope {
                 match self { $(ActionId::$variant => Scope::$scope),+ }
             }
 
+            /// The action with the `keymap.toml` id `id`, if any.
             pub fn from_id(id: &str) -> Option<ActionId> {
                 match id { $($id => Some(ActionId::$variant),)+ _ => None }
             }
@@ -119,19 +123,25 @@ pub const GROUPS: &[&str] = &[
 /// `ctrl` is the Control key itself, which on other platforms is the same key as `cmd`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Mods {
+    /// Command (macOS) or Ctrl (elsewhere).
     pub cmd: bool,
+    /// Shift.
     pub shift: bool,
+    /// Alt (Option on macOS).
     pub alt: bool,
+    /// The Control key itself.
     pub ctrl: bool,
 }
 
 impl Mods {
+    /// No modifier.
     pub const NONE: Mods = Mods {
         cmd: false,
         shift: false,
         alt: false,
         ctrl: false,
     };
+    /// Only `cmd`.
     pub const CMD: Mods = Mods {
         cmd: true,
         ..Mods::NONE
@@ -143,10 +153,12 @@ impl Mods {
 pub struct Chord {
     /// The key's name: `A`, `Enter`, `Comma`, `F5`, `ArrowDown`…
     pub key: String,
+    /// The modifiers held with the key.
     pub mods: Mods,
 }
 
 impl Chord {
+    /// A chord of `key` with `mods`.
     pub fn new(mods: Mods, key: &str) -> Self {
         Self {
             key: key.to_string(),
@@ -415,10 +427,12 @@ impl Keymap {
         Some(keymap)
     }
 
+    /// Every binding, in binding order.
     pub fn bindings(&self) -> &[(ActionId, Chord)] {
         &self.bindings
     }
 
+    /// The chords bound to `action`, in binding order.
     pub fn chords_for(&self, action: ActionId) -> Vec<&Chord> {
         self.bindings
             .iter()
@@ -453,6 +467,7 @@ impl Keymap {
             .extend(chords.into_iter().map(|chord| (action, chord)));
     }
 
+    /// Removes every chord of `action`.
     pub fn unbind(&mut self, action: ActionId) {
         self.bindings.retain(|(a, _)| *a != action);
     }

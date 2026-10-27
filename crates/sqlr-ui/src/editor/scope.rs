@@ -2,11 +2,12 @@
 //! and its CTE names. Only the statement around the caret is parsed, freshly, with
 //! tree-sitter; a statement over [`STRUCTURE_SYNC_LIMIT`] bytes goes to a [`ScopeWorker`].
 
+use parking_lot::Mutex;
 use std::cell::RefCell;
 use std::ops::Range;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::sync::{Arc, LazyLock, Mutex, OnceLock};
+use std::sync::{Arc, LazyLock, OnceLock};
 
 use ropey::Rope;
 use sqlr_core::{LexState, SqlSyntax};
@@ -220,7 +221,7 @@ impl ScopeWorker {
             let repaint = self.repaint.clone();
             std::thread::Builder::new()
                 .name("sqlr-scope".into())
-                .spawn(move || run_worker(job_rx, result_tx, repaint))
+                .spawn(move || run_worker(&job_rx, &result_tx, repaint.as_ref()))
                 .expect("spawn the scope worker thread");
             Channels {
                 jobs,
@@ -248,7 +249,7 @@ impl ScopeWorker {
         };
         self.requested_bytes
             .fetch_add(bytes as u64, Ordering::Relaxed);
-        *self.latest.lock().expect("scope worker lock") = Some(job.key);
+        *self.latest.lock() = Some(job.key);
         // A send fails only if the thread is gone; the request is then dropped.
         let _ = self.channels().jobs.send(job);
     }
@@ -280,8 +281,8 @@ impl ScopeWorker {
     /// The scope of the newest request, once parsed.
     pub fn poll(&self) -> Option<(u64, StatementScope)> {
         let channels = self.channels.get()?;
-        let latest = *self.latest.lock().expect("scope worker lock");
-        let results = channels.results.lock().expect("scope worker lock");
+        let latest = *self.latest.lock();
+        let results = channels.results.lock();
         let mut found = None;
         while let Ok((key, scope)) = results.try_recv() {
             if Some(key) == latest {
@@ -303,9 +304,9 @@ fn statement_of(ranges: &[Range<usize>], caret: usize) -> Option<&Range<usize>> 
 }
 
 fn run_worker(
-    jobs: Receiver<Job>,
-    results: Sender<(u64, StatementScope)>,
-    repaint: Option<egui::Context>,
+    jobs: &Receiver<Job>,
+    results: &Sender<(u64, StatementScope)>,
+    repaint: Option<&egui::Context>,
 ) {
     let mut parser = new_parser();
     while let Ok(mut job) = jobs.recv() {
@@ -337,7 +338,7 @@ fn run_worker(
         if results.send((job.key, scope)).is_err() {
             return;
         }
-        if let Some(ctx) = &repaint {
+        if let Some(ctx) = repaint {
             ctx.request_repaint();
         }
     }

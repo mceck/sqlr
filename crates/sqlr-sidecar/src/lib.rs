@@ -3,6 +3,9 @@
 //!
 //! See `docs/driver-protocol.md` for the wire format.
 
+#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+#![warn(missing_docs)]
+
 pub mod dialect;
 pub mod frame;
 pub mod messages;

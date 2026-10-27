@@ -51,7 +51,7 @@ async fn start() -> Servers {
     }
 }
 
-fn connect(engine: &Engine, cfg: ConnectionConfig, secrets: Secrets) {
+fn connect(engine: &Engine, cfg: &ConnectionConfig, secrets: &Secrets) {
     let id = cfg.id.clone();
     // The fixed services are healthchecked before the run, so a refused connection means
     // the server is gone: fail in half a minute instead of sitting on nextest's timeout.
@@ -148,10 +148,10 @@ fn cross_dialect_matrix() {
     engine.set_connect_timeout(60);
     connect(
         &engine,
-        servers.pg.clone(),
-        Secrets([("password".to_string(), "postgres".to_string())].into()),
+        &servers.pg,
+        &Secrets([("password".to_string(), "postgres".to_string())].into()),
     );
-    connect(&engine, servers.my.clone(), Secrets::default());
+    connect(&engine, &servers.my, &Secrets::default());
     for table in ["m", "m_back", "k", "narrow"] {
         run(
             &engine,
@@ -168,7 +168,7 @@ fn cross_dialect_matrix() {
         .into(),
         ..config("lite", "sqlite")
     };
-    connect(&engine, lite, Secrets::default());
+    connect(&engine, &lite, &Secrets::default());
 
     run(
         &engine,

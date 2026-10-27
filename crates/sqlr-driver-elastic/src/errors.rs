@@ -19,6 +19,10 @@ fn chain(e: &dyn std::error::Error) -> String {
 }
 
 /// A transport failure (connect, TLS, timeout).
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "used as a `map_err` function pointer, which receives the error by value"
+)]
 pub(crate) fn http_error(e: reqwest::Error) -> DriverError {
     let kind = if e.is_timeout() {
         ErrorKind::Timeout

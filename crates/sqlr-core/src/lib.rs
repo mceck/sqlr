@@ -1,5 +1,8 @@
 //! Domain types and the columnar result format shared by all sqlr crates.
 
+#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+#![warn(missing_docs)]
+
 pub mod admin;
 pub mod catalog;
 pub mod changeset;

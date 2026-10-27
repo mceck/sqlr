@@ -9,7 +9,8 @@
 //! Only the real binary installs this (`main.rs`): tests and other platforms keep the
 //! in-window menus.
 
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 use egui::Context;
 use muda::accelerator::{Accelerator, Code, Modifiers};
@@ -55,8 +56,8 @@ impl NativeMenu {
         // stock panel has no icon or version for a cargo binary, so it opens our own
         // standard AppKit panel with the app's icon and credits.
         let about = MenuItem::new("About sqlr", true, None);
-        let settings = MenuItem::new("Settings…", true, cmd(Code::Comma));
-        let quit = MenuItem::new("Quit sqlr", true, cmd(Code::KeyQ));
+        let settings = MenuItem::new("Settings…", true, Some(cmd(Code::Comma)));
+        let quit = MenuItem::new("Quit sqlr", true, Some(cmd(Code::KeyQ)));
         let app = Submenu::with_items(
             "sqlr",
             true,
@@ -78,9 +79,9 @@ impl NativeMenu {
         // File.
         // Items whose accelerator comes from the keymap get none here: `sync_keymap` sets it.
         let item = |label: &str| MenuItem::new(label, true, None);
-        let new_tab = MenuItem::new("New query tab", true, cmd(Code::KeyT));
+        let new_tab = MenuItem::new("New query tab", true, Some(cmd(Code::KeyT)));
         let new_tab_on_connection = item("New query tab on the current connection");
-        let close_tab = MenuItem::new("Close tab", true, cmd(Code::KeyW));
+        let close_tab = MenuItem::new("Close tab", true, Some(cmd(Code::KeyW)));
         let new_connection = MenuItem::new("New connection", true, None);
         let profiles = MenuItem::new("Connection profiles…", true, None);
         let import_connections = MenuItem::new("Import…", true, None);
@@ -107,13 +108,13 @@ impl NativeMenu {
         // Edit. These are custom items: AppKit's predefined Cut/Copy/Paste send selectors
         // to the responder chain, which egui does not implement. The commands push egui
         // events instead, so they work in the editor and in dialog text fields alike.
-        let undo = MenuItem::new("Undo", true, cmd(Code::KeyZ));
-        let redo = MenuItem::new("Redo", true, cmd_shift(Code::KeyZ));
-        let cut = MenuItem::new("Cut", true, cmd(Code::KeyX));
-        let copy = MenuItem::new("Copy", true, cmd(Code::KeyC));
-        let paste = MenuItem::new("Paste", true, cmd(Code::KeyV));
+        let undo = MenuItem::new("Undo", true, Some(cmd(Code::KeyZ)));
+        let redo = MenuItem::new("Redo", true, Some(cmd_shift(Code::KeyZ)));
+        let cut = MenuItem::new("Cut", true, Some(cmd(Code::KeyX)));
+        let copy = MenuItem::new("Copy", true, Some(cmd(Code::KeyC)));
+        let paste = MenuItem::new("Paste", true, Some(cmd(Code::KeyV)));
         let delete = MenuItem::new("Delete", true, None);
-        let select_all = MenuItem::new("Select All", true, cmd(Code::KeyA));
+        let select_all = MenuItem::new("Select All", true, Some(cmd(Code::KeyA)));
         let find = item("Find…");
         let replace = item("Find and replace…");
         let comment = item("Toggle line comment");
@@ -167,8 +168,8 @@ impl NativeMenu {
         )?;
 
         // Query.
-        let run = MenuItem::new("Run statement", true, cmd(Code::Enter));
-        let run_script = MenuItem::new("Run script", true, cmd_shift(Code::Enter));
+        let run = MenuItem::new("Run statement", true, Some(cmd(Code::Enter)));
+        let run_script = MenuItem::new("Run script", true, Some(cmd_shift(Code::Enter)));
         let stop = MenuItem::new("Stop", true, None);
         let explain = item("Explain");
         let explain_analyze = item("Explain analyze");
@@ -302,41 +303,38 @@ impl NativeMenu {
         let queue = Arc::clone(&pending);
         let ctx = ctx.clone();
         let key_items = vec![
-            (new_tab_on_connection.clone(), A::NewTabOnConnection),
-            (find.clone(), A::Find),
-            (replace.clone(), A::Replace),
-            (comment.clone(), A::ToggleComment),
-            (duplicate.clone(), A::DuplicateLine),
-            (rename.clone(), A::RenameSelection),
-            (delete_rows.clone(), A::DeleteRows),
-            (commands.clone(), A::Commands),
-            (open_object.clone(), A::OpenObject),
-            (explain.clone(), A::Explain),
-            (explain_analyze.clone(), A::ExplainAnalyze),
-            (commit.clone(), A::Commit),
-            (rollback.clone(), A::Rollback),
-            (format.clone(), A::FormatSql),
+            (new_tab_on_connection, A::NewTabOnConnection),
+            (find, A::Find),
+            (replace, A::Replace),
+            (comment, A::ToggleComment),
+            (duplicate, A::DuplicateLine),
+            (rename, A::RenameSelection),
+            (delete_rows, A::DeleteRows),
+            (commands, A::Commands),
+            (open_object, A::OpenObject),
+            (explain, A::Explain),
+            (explain_analyze, A::ExplainAnalyze),
+            (commit, A::Commit),
+            (rollback, A::Rollback),
+            (format, A::FormatSql),
             // Not Stop: its Esc would be taken from every popup and dialog.
-            (save_snippet.clone(), A::SaveSnippet),
-            (settings.clone(), A::Settings),
-            (new_tab.clone(), A::NewTab),
-            (close_tab.clone(), A::CloseTab),
-            (operations.clone(), A::ShowOperations),
-            (run.clone(), A::RunStatement),
-            (run_script.clone(), A::RunScript),
-            (undo.clone(), A::Undo),
-            (redo.clone(), A::Redo),
-            (select_all.clone(), A::SelectAll),
-            (cut.clone(), A::Cut),
-            (copy.clone(), A::Copy),
-            (paste.clone(), A::Paste),
+            (save_snippet, A::SaveSnippet),
+            (settings, A::Settings),
+            (new_tab, A::NewTab),
+            (close_tab, A::CloseTab),
+            (operations, A::ShowOperations),
+            (run, A::RunStatement),
+            (run_script, A::RunScript),
+            (undo, A::Undo),
+            (redo, A::Redo),
+            (select_all, A::SelectAll),
+            (cut, A::Cut),
+            (copy, A::Copy),
+            (paste, A::Paste),
         ];
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
             if let Some((_, command)) = actions.iter().find(|(id, _)| id == event.id()) {
-                queue
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .push(command.clone());
+                queue.lock().push(command.clone());
                 // The event loop is idle between frames; wake it for the next pass.
                 ctx.request_repaint();
             }
@@ -371,12 +369,7 @@ impl NativeMenu {
 
     /// The commands the menu produced since the last frame.
     pub fn drain(&self) -> Vec<AppCommand> {
-        std::mem::take(
-            &mut *self
-                .pending
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
-        )
+        std::mem::take(&mut *self.pending.lock())
     }
 
     pub fn sync_keymap(&self, map: &sqlr_core::Keymap) {
@@ -431,13 +424,13 @@ impl NativeMenu {
 }
 
 /// ⌘<key> on macOS.
-fn cmd(code: Code) -> Option<Accelerator> {
-    Some(Accelerator::new(Modifiers::META, code))
+fn cmd(code: Code) -> Accelerator {
+    Accelerator::new(Modifiers::META, code)
 }
 
 /// ⇧⌘<key> on macOS.
-fn cmd_shift(code: Code) -> Option<Accelerator> {
-    Some(Accelerator::new(Modifiers::META | Modifiers::SHIFT, code))
+fn cmd_shift(code: Code) -> Accelerator {
+    Accelerator::new(Modifiers::META | Modifiers::SHIFT, code)
 }
 
 /// Shows the standard AppKit About panel with sqlr's icon, version and credits.

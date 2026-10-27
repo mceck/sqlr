@@ -144,7 +144,10 @@ mod tests {
         }
         conn.execute_batch(&ddl).unwrap();
         let mut conn = conn;
-        #[allow(deprecated)] // the statement counter is all the test needs
+        #[expect(
+            deprecated,
+            reason = "the deprecated statement counter is all the test needs"
+        )]
         conn.profile(Some(count));
         STATEMENTS.store(0, Ordering::SeqCst);
         let snapshot = load_schema(&conn, "main").unwrap();

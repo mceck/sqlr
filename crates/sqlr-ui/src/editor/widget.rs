@@ -339,7 +339,7 @@ impl EditorState {
 
     /// Applies non-overlapping range edits as one undo group. Out-of-range or overlapping
     /// edits are clamped by the model.
-    pub fn replace_ranges(&mut self, edits: Vec<(std::ops::Range<usize>, String)>) -> Vec<Change> {
+    pub fn replace_ranges(&mut self, edits: &[(std::ops::Range<usize>, String)]) -> Vec<Change> {
         let changes = self.model.replace_ranges(edits, self.now);
         self.after_external_edit(&changes);
         changes
@@ -1373,7 +1373,6 @@ fn handle_focused(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn handle_key(
     state: &mut EditorState,
     ctx: &egui::Context,
@@ -1490,7 +1489,10 @@ fn popup_move(state: &mut EditorState, delta: isize) -> bool {
 }
 
 /// Lays out the visible lines into `state.geom.lines`.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the editor state, egui context, font, line range, horizontal view offset and width, gutter width and wrap width are independent per-frame inputs borrowed from the caller; a parameter struct would be built per frame only to be unpacked here"
+)]
 fn layout_lines(
     state: &mut EditorState,
     ctx: &egui::Context,

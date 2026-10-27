@@ -235,7 +235,7 @@ pub fn transport_security_ok(key: &str, old: Option<&str>, new: &str) -> ToolRes
             "false" | "0" | "no" | "off" | "none" | "skip" | "disabled"
         )
     };
-    let old_safe = old.map(safe).unwrap_or(false);
+    let old_safe = old.is_some_and(safe);
     let new_safe = safe(new);
     if old_safe && !new_safe {
         Err(ToolError::invalid(format!(

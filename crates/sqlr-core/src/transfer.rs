@@ -59,9 +59,13 @@ impl Default for ImportOptions {
 /// its own name.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TransferSpec {
+    /// Where rows are read from.
     pub source: Endpoint,
+    /// Where rows are written to.
     pub target: Endpoint,
+    /// Source columns paired with target columns.
     pub mapping: Vec<ColumnMapping>,
+    /// Batching and error handling of the load.
     pub options: TransferOptions,
 }
 
@@ -71,8 +75,11 @@ pub type TransferOptions = ImportOptions;
 /// What happens to a value on its way to the target column.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Transform {
+    /// Strips leading and trailing whitespace.
     Trim,
+    /// Converts to upper case.
     Upper,
+    /// Converts to lower case.
     Lower,
     /// An empty (or all-blank) text becomes NULL.
     NullIfEmpty,
@@ -84,13 +91,18 @@ pub enum Transform {
 /// is converted to when it differs from the target column's own, and a transform.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ColumnMapping {
+    /// Index of the source column.
     pub source: usize,
+    /// Target column or field; `None` skips the source column.
     pub target: Option<String>,
+    /// Type the value is converted to, when it differs from the target column's.
     pub target_type: Option<String>,
+    /// Transform applied on the way.
     pub transform: Option<Transform>,
 }
 
 impl ColumnMapping {
+    /// A mapping of source column `source` to `target`, with no conversion or transform.
     pub fn new(source: usize, target: Option<String>) -> Self {
         Self {
             source,
@@ -112,10 +124,17 @@ impl From<(usize, Option<String>)> for ColumnMapping {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Endpoint {
     /// A file: read (CSV, TSV, JSON, JSON Lines) or written (every export format).
-    File { path: PathBuf, format: TextFormat },
+    File {
+        /// The file.
+        path: PathBuf,
+        /// Its text format.
+        format: TextFormat,
+    },
     /// An Excel workbook's sheet (`None`: the first), read or written (`.xlsx`).
     Workbook {
+        /// The `.xlsx` file.
         path: PathBuf,
+        /// The sheet; `None` takes the first.
         sheet: Option<String>,
         /// The first row holds the column names.
         header: bool,
@@ -124,37 +143,57 @@ pub enum Endpoint {
     /// read from the target's connection.
     Generator(crate::datagen::DataGenSpec),
     /// A Parquet file, read or written.
-    Parquet { path: PathBuf },
+    Parquet {
+        /// The `.parquet` file.
+        path: PathBuf,
+    },
     /// A table of a connection: a source (all its rows) or a target (it must exist).
-    Table { conn: String, table: TableRef },
+    Table {
+        /// The connection's id.
+        conn: String,
+        /// The table.
+        table: TableRef,
+    },
     /// A table the transfer creates, from the source's columns with their types mapped to
     /// the target's dialect; `ddl` replaces the generated `CREATE TABLE` when the user
     /// edited it.
     NewTable {
+        /// The target connection's id.
         conn: String,
+        /// The table to create.
         table: TableRef,
+        /// The edited `CREATE TABLE` statement, replacing the generated one.
         ddl: Option<String>,
     },
     /// The rows of a statement that only reads, on the connection's explorer session (on
     /// `database` when given): a source only.
     Query {
+        /// The connection's id.
         conn: String,
+        /// Database to run it on, when the connection has several.
         database: Option<String>,
+        /// The statement, which only reads.
         sql: String,
     },
     /// A collection (MongoDB) or an index (Elasticsearch). As a source, `query` (a statement
     /// in the connection's language) picks the documents; `None` reads them all.
     Collection {
+        /// The connection's id.
         conn: String,
+        /// The collection or index.
         target: DocTarget,
+        /// A statement in the connection's language that picks the documents.
         query: Option<String>,
     },
     /// The keys of a Redis database matching `pattern` (`SCAN … MATCH`), a source only: one
     /// row per key with its name, type, TTL in milliseconds and value as JSON. The pattern
     /// is bytes, as key names are: a binary key's escaped name matches only that key.
     RedisKeys {
+        /// The connection's id.
         conn: String,
+        /// The logical database.
         db: u32,
+        /// The `MATCH` pattern, as bytes.
         pattern: Vec<u8>,
     },
 }

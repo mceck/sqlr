@@ -2063,24 +2063,24 @@ mod tests {
     #[derive(Default)]
     struct Recording {
         inner: MemorySecretStore,
-        reads: std::sync::Mutex<Vec<String>>,
-        writes: std::sync::Mutex<Vec<String>>,
+        reads: parking_lot::Mutex<Vec<String>>,
+        writes: parking_lot::Mutex<Vec<String>>,
     }
 
     impl sqlr_store::SecretStore for Recording {
         fn get(&self, conn: &str, field: &str) -> Result<Option<String>, sqlr_store::StoreError> {
             let thread = std::thread::current().name().unwrap_or("?").to_string();
-            self.reads.lock().unwrap().push(thread);
+            self.reads.lock().push(thread);
             self.inner.get(conn, field)
         }
         fn set(&self, conn: &str, field: &str, value: &str) -> Result<(), sqlr_store::StoreError> {
             let thread = std::thread::current().name().unwrap_or("?").to_string();
-            self.writes.lock().unwrap().push(thread);
+            self.writes.lock().push(thread);
             self.inner.set(conn, field, value)
         }
         fn delete(&self, conn: &str, field: &str) -> Result<(), sqlr_store::StoreError> {
             let thread = std::thread::current().name().unwrap_or("?").to_string();
-            self.writes.lock().unwrap().push(thread);
+            self.writes.lock().push(thread);
             self.inner.delete(conn, field)
         }
     }
@@ -2126,8 +2126,8 @@ mod tests {
         let keychain = Arc::new(Recording::default());
         let mut app = app_with_keychain(&dir, keychain.clone());
         let here = std::thread::current().name().unwrap_or("?").to_string();
-        keychain.reads.lock().unwrap().clear();
-        keychain.writes.lock().unwrap().clear();
+        keychain.reads.lock().clear();
+        keychain.writes.lock().clear();
 
         // Each call only queues work: the keychain is used on the store thread (checked by
         // thread name below), and the listing changes only when the app polls the answers.
@@ -2150,8 +2150,8 @@ mod tests {
         assert!(app.folders.iter().any(|f| f == "Team"));
         assert!(app.connection("c1").is_none());
         assert!(app.connections.iter().any(|c| c.name == "db copy"));
-        let reads = keychain.reads.lock().unwrap().clone();
-        let writes = keychain.writes.lock().unwrap().clone();
+        let reads = keychain.reads.lock().clone();
+        let writes = keychain.writes.lock().clone();
         assert!(!reads.is_empty() && !writes.is_empty());
         assert!(
             reads.iter().chain(&writes).all(|t| *t != here),
@@ -2169,7 +2169,7 @@ mod tests {
         seed.set("c1", "password", "first-password").unwrap();
         seed.set("c2", "password", "second-password").unwrap();
         drop(seed);
-        keyring.reads.lock().unwrap().clear();
+        keyring.reads.lock().clear();
         let secrets = Arc::new(sqlr_store::VaultSecretStore::new(
             dir.path(),
             keyring.clone(),
@@ -2213,10 +2213,7 @@ mod tests {
             },
             &egui::Context::default(),
         );
-        assert!(
-            keyring.reads.lock().unwrap().is_empty(),
-            "startup stays lazy"
-        );
+        assert!(keyring.reads.lock().is_empty(), "startup stays lazy");
         app.open_edit_connection("c1");
         wait("editor secrets", || {
             app.poll_store();
@@ -2225,7 +2222,7 @@ mod tests {
         app.connect("c1");
         app.connect("c2");
         wait("both connections", || fake.connects().len() == 2);
-        let reads = keyring.reads.lock().unwrap();
+        let reads = keyring.reads.lock();
         assert_eq!(
             reads.len(),
             1,
@@ -2329,7 +2326,7 @@ mod tests {
         wait("the connect", || !fake.connects().is_empty());
         assert_eq!(fake.connects()[0].1.0["password"], "hunter2");
         let here = std::thread::current().name().unwrap_or("?").to_string();
-        let reads = keychain.reads.lock().unwrap().clone();
+        let reads = keychain.reads.lock().clone();
         assert!(
             !reads.is_empty() && reads.iter().all(|t| *t != here),
             "{reads:?}"
@@ -2373,7 +2370,7 @@ mod tests {
         app.connect("c1");
         wait("the first connect", || fake.connects().len() == 1);
 
-        let mut edited = cfg.clone();
+        let mut edited = cfg;
         edited.name = "renamed".into();
         saved_repo(&dir).save(&edited, &Secrets::default()).unwrap();
         app.connection_saved("c1");

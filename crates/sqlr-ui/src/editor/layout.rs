@@ -78,7 +78,10 @@ impl LineLayoutCache {
     /// `None` past the lexing frontier: the text is then plain. Plain text is laid out in
     /// [`Color32::PLACEHOLDER`], so the painter's fallback color applies. `wrap` is the
     /// soft-wrap width in points, `None` when the line does not wrap.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the egui context, text, lexer state, window offset, wrap width, tokens, font and colors are all part of the galley cache key and are borrowed from different owners; a parameter struct would be built on every call just to be unpacked here"
+    )]
     pub(crate) fn get(
         &mut self,
         ctx: &egui::Context,

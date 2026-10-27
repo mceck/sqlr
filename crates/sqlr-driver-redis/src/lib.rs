@@ -3,6 +3,8 @@
 //! Browsing uses `SCAN` and never `KEYS`; large values page with `HSCAN`, `SSCAN`,
 //! `LRANGE`, `ZRANGE` and `XRANGE`. A Redis Cluster endpoint is refused.
 
+#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+
 mod browse;
 mod classify;
 mod connect;

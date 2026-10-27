@@ -594,7 +594,6 @@ impl Shared {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn run_docs(
         self: Arc<Self>,
         q: QueryId,

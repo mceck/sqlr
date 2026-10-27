@@ -1,24 +1,38 @@
 //! Conservative token formatter: only keyword case and inter-token whitespace change.
 use crate::{LexState, SqlSyntax, TokenKind};
+/// How the case of keywords changes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Case {
+    /// Upper case.
     #[default]
     Upper,
+    /// Lower case.
     Lower,
+    /// As typed.
     Preserve,
 }
+/// The indentation unit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Indent {
+    /// That many spaces.
     Spaces(usize),
+    /// One tab.
     Tabs,
 }
+/// The options of [`format_sql`].
 #[derive(Clone, Debug)]
 pub struct FormatOptions {
+    /// Case of keywords.
     pub keyword_case: Case,
+    /// Indentation unit for continuation lines.
     pub indent: Indent,
+    /// Column past which a comma starts a new line.
     pub max_line: usize,
+    /// Puts commas at the start of a line instead of the end.
     pub comma_first: bool,
+    /// Starts a new line before `AND` and `OR`.
     pub break_before_and_or: bool,
+    /// Whether statements are separated by an empty line.
     pub blank_line_between_statements: bool,
 }
 impl Default for FormatOptions {
@@ -33,6 +47,7 @@ impl Default for FormatOptions {
         }
     }
 }
+/// Formats `text` for the SQL dialect of `syntax`; only keyword case and whitespace between tokens change.
 pub fn format_sql(syntax: &SqlSyntax, text: &str, opts: &FormatOptions) -> String {
     let mut tokens = Vec::new();
     let end = syntax.lex(text, LexState::Normal, &mut tokens);
@@ -84,7 +99,7 @@ pub fn format_sql(syntax: &SqlSyntax, text: &str, opts: &FormatOptions) -> Strin
         let is_bool = opts.break_before_and_or
             && token.kind == TokenKind::Keyword
             && matches!(upper.as_str(), "AND" | "OR");
-        let prev = previous.map(|(_, s)| s).unwrap_or("");
+        let prev = previous.map_or("", |(_, s)| s);
         let prev_comment =
             previous.is_some_and(|(k, s)| k == TokenKind::Comment && !s.starts_with("/*"));
         let prev_semi = previous.is_some_and(|(k, _)| k == TokenKind::Semicolon);
@@ -173,6 +188,7 @@ pub fn format_sql(syntax: &SqlSyntax, text: &str, opts: &FormatOptions) -> Strin
 }
 
 impl FormatOptions {
+    /// Reads the options from settings, falling back to the defaults for unknown values.
     pub fn from_values(mut get: impl FnMut(&str) -> crate::SettingValue) -> Self {
         Self {
             keyword_case: match get("formatter.keyword_case").as_str() {

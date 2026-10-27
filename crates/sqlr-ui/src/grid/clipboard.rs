@@ -467,8 +467,10 @@ pub(super) fn mapping_ui(ui: &mut egui::Ui, state: &mut GridState, input: &GridI
                                     dialog.data.rows[0]
                                         .get(source)
                                         .and_then(Option::as_ref)
-                                        .map(|v| v.display().into_owned())
-                                        .unwrap_or_else(|| meta.name.clone())
+                                        .map_or_else(
+                                            || meta.name.clone(),
+                                            |v| v.display().into_owned(),
+                                        )
                                 } else {
                                     meta.name.clone()
                                 };
@@ -527,12 +529,10 @@ pub(super) fn mapping_ui(ui: &mut egui::Ui, state: &mut GridState, input: &GridI
                             .take(5)
                         {
                             for value in values {
-                                ui.label(
-                                    value
-                                        .as_ref()
-                                        .map(|v| v.display().into_owned())
-                                        .unwrap_or_else(|| "(not selected)".into()),
-                                );
+                                ui.label(value.as_ref().map_or_else(
+                                    || "(not selected)".into(),
+                                    |v| v.display().into_owned(),
+                                ));
                             }
                             ui.end_row();
                         }

@@ -63,7 +63,7 @@ pub(crate) struct AdminStop {
     stopped: AtomicU64,
     /// The generation of the read running on the connection's thread (0 when none). The
     /// lock also keeps a read from ending between a stop's check and its interrupt.
-    running: std::sync::Mutex<u64>,
+    running: parking_lot::Mutex<u64>,
 }
 
 impl AdminStop {
@@ -90,11 +90,7 @@ impl AdminStop {
 
     /// The read of `generation` starts (`true`) or ends (`false`) on the connection's thread.
     pub(crate) fn set_running(&self, generation: u64, running: bool) {
-        *self
-            .running
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) =
-            if running { generation } else { 0 };
+        *self.running.lock() = if running { generation } else { 0 };
     }
 }
 
@@ -119,7 +115,7 @@ impl Worker {
                 match opened {
                     Ok(conn) => {
                         if ready_tx.send(Ok(conn.get_interrupt_handle())).is_ok() {
-                            run(conn, rx, &flag);
+                            run(&conn, &rx, &flag);
                         }
                     }
                     Err(e) => {
@@ -142,11 +138,7 @@ impl Worker {
     /// whatever runs after it, is left alone.
     pub(crate) fn stop_admin(&self, generation: u64) {
         self.admin.stopped.store(generation, Ordering::SeqCst);
-        let running = self
-            .admin
-            .running
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let running = self.admin.running.lock();
         if *running == generation {
             self.interrupt.interrupt();
         }
@@ -183,7 +175,7 @@ impl Worker {
 }
 
 /// The command loop. Ends when every sender (the connection and its streams) is gone.
-fn run(conn: rusqlite::Connection, rx: mpsc::Receiver<Command>, running: &AtomicBool) {
+fn run(conn: &rusqlite::Connection, rx: &mpsc::Receiver<Command>, running: &AtomicBool) {
     let mut next_stream = 1;
     let mut pending: Option<Command> = None;
     // Results a newer statement ended before they were read to the end.
@@ -200,7 +192,7 @@ fn run(conn: rusqlite::Connection, rx: mpsc::Receiver<Command>, running: &Atomic
             Command::Execute { sql, params, reply } => {
                 let stream = next_stream;
                 next_stream += 1;
-                let ended = execute::run(&conn, &rx, running, stream, &sql, &params, reply);
+                let ended = execute::run(conn, rx, running, stream, &sql, &params, reply);
                 if ended.cut {
                     cut.insert(stream);
                 }
@@ -219,7 +211,7 @@ fn run(conn: rusqlite::Connection, rx: mpsc::Receiver<Command>, running: &Atomic
             Command::Close { stream } => {
                 cut.remove(&stream);
             }
-            Command::Run(job) => job(&conn),
+            Command::Run(job) => job(conn),
         }
     }
 }

@@ -24,11 +24,14 @@ use crate::syntax::{LexState, Token, TokenKind};
 /// A parse error at a byte offset of the parsed text.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ShellError {
+    /// What is wrong, in words for the user.
     pub message: String,
+    /// Byte offset in the parsed text where the error was found.
     pub position: usize,
 }
 
 impl ShellError {
+    /// An error with `message` at byte offset `position`.
     pub fn new(message: impl Into<String>, position: usize) -> Self {
         Self {
             message: message.into(),
@@ -48,96 +51,165 @@ impl std::error::Error for ShellError {}
 const RAW_MODE: &str = "sqlr runs a subset of the mongo shell without a JavaScript engine; \
                         use db.runCommand({...}) for anything else";
 
+/// One Mongo shell statement parsed into the operation a Mongo Driver runs.
 #[derive(Clone, Debug, PartialEq)]
 pub enum MongoOp {
+    /// A `find` with its chained cursor modifiers.
     Find {
+        /// The target collection.
         coll: String,
+        /// The filter document.
         filter: DocValue,
+        /// The projection document, when given.
         projection: Option<DocValue>,
+        /// The sort document, when given.
         sort: Option<DocValue>,
+        /// Maximum number of documents to return.
         limit: Option<i64>,
+        /// Number of documents to skip.
         skip: Option<u64>,
     },
+    /// An `aggregate` pipeline.
     Aggregate {
+        /// The target collection.
         coll: String,
+        /// The aggregation stages, in order.
         pipeline: Vec<DocValue>,
+        /// The options document, when given.
         options: Option<DocValue>,
     },
+    /// A `countDocuments` count.
     CountDocuments {
+        /// The target collection.
         coll: String,
+        /// The filter document.
         filter: DocValue,
+        /// The options document, when given.
         options: Option<DocValue>,
     },
+    /// An `estimatedDocumentCount` count from collection metadata.
     EstimatedDocumentCount {
+        /// The target collection.
         coll: String,
     },
+    /// A `distinct` over one field.
     Distinct {
+        /// The target collection.
         coll: String,
+        /// The field whose distinct values are listed.
         field: String,
+        /// The filter document.
         filter: Option<DocValue>,
     },
+    /// An `insertOne`.
     InsertOne {
+        /// The target collection.
         coll: String,
+        /// The document to insert.
         doc: DocValue,
     },
+    /// An `insertMany`.
     InsertMany {
+        /// The target collection.
         coll: String,
+        /// The documents to insert.
         docs: Vec<DocValue>,
+        /// The options document, when given.
         options: Option<DocValue>,
     },
+    /// An `updateOne`.
     UpdateOne {
+        /// The target collection.
         coll: String,
+        /// The filter document.
         filter: DocValue,
         /// A document of update operators, or a pipeline (an array).
         update: DocValue,
+        /// The options document, when given.
         options: Option<DocValue>,
     },
+    /// An `updateMany`.
     UpdateMany {
+        /// The target collection.
         coll: String,
+        /// The filter document.
         filter: DocValue,
+        /// The update operators document, or an update pipeline.
         update: DocValue,
+        /// The options document, when given.
         options: Option<DocValue>,
     },
+    /// A `replaceOne`.
     ReplaceOne {
+        /// The target collection.
         coll: String,
+        /// The filter document.
         filter: DocValue,
+        /// The document that replaces the match.
         replacement: DocValue,
+        /// The options document, when given.
         options: Option<DocValue>,
     },
+    /// A `deleteOne`.
     DeleteOne {
+        /// The target collection.
         coll: String,
+        /// The filter document.
         filter: DocValue,
     },
+    /// A `deleteMany`.
     DeleteMany {
+        /// The target collection.
         coll: String,
+        /// The filter document.
         filter: DocValue,
     },
+    /// A `findOneAndUpdate`.
     FindOneAndUpdate {
+        /// The target collection.
         coll: String,
+        /// The filter document.
         filter: DocValue,
+        /// The update operators document, or an update pipeline.
         update: DocValue,
+        /// The options document, when given.
         options: Option<DocValue>,
     },
+    /// A `createIndex`.
     CreateIndex {
+        /// The target collection.
         coll: String,
+        /// The index key document.
         keys: DocValue,
+        /// The options document, when given.
         options: Option<DocValue>,
     },
     /// `index` is the index name (a string) or its key document.
     DropIndex {
+        /// The target collection.
         coll: String,
+        /// The index name or its key document.
         index: DocValue,
     },
+    /// A `getIndexes` listing.
     GetIndexes {
+        /// The target collection.
         coll: String,
     },
+    /// A collection `drop`.
     Drop {
+        /// The target collection.
         coll: String,
     },
+    /// A `db.runCommand` with its command document.
     RunCommand(DocValue),
+    /// `db.getCollectionNames()`.
     GetCollectionNames,
+    /// `show dbs`.
     ShowDbs,
+    /// `show collections`.
     ShowCollections,
+    /// `use <db>`: switches the current database to the named one.
     Use(String),
 }
 
@@ -415,10 +487,9 @@ impl<'a> Parser<'a> {
     }
 
     fn expect(&mut self, s: &str) -> Result<Token, ShellError> {
-        if self.at(s) {
-            Ok(self.bump().unwrap())
-        } else {
-            self.err(format!("expected `{s}` but found {}", self.describe()))
+        match self.at(s).then(|| self.bump()).flatten() {
+            Some(t) => Ok(t),
+            None => self.err(format!("expected `{s}` but found {}", self.describe())),
         }
     }
 
@@ -641,14 +712,13 @@ impl<'a> Parser<'a> {
                 let (pipeline, options) = match args.first() {
                     Some((DocValue::Array(_), _)) => {
                         let mut it = args.into_iter();
-                        let (p, _) = it.next().unwrap();
+                        let Some((DocValue::Array(stages), _)) = it.next() else {
+                            return self.err("aggregate() needs a pipeline array");
+                        };
                         let options = it.next();
                         if let Some((_, at)) = it.next() {
                             return Err(ShellError::new("too many arguments to aggregate()", at));
                         }
-                        let DocValue::Array(stages) = p else {
-                            unreachable!()
-                        };
                         (stages, self.opt_doc(options, "an options document")?)
                     }
                     // `aggregate({$match…}, {$group…})`: stages as arguments.
@@ -693,7 +763,7 @@ impl<'a> Parser<'a> {
             }
             "distinct" => {
                 let [field, filter] = self.arity::<1, 2>(mt, method, args)?;
-                let (field, at) = field.unwrap();
+                let (field, at) = self.required(field)?;
                 let DocValue::String(field) = field else {
                     return Err(ShellError::new("distinct() needs a field name string", at));
                 };
@@ -712,7 +782,7 @@ impl<'a> Parser<'a> {
             }
             "insertMany" => {
                 let [docs, options] = self.arity::<1, 2>(mt, method, args)?;
-                let (docs, at) = docs.unwrap();
+                let (docs, at) = self.required(docs)?;
                 let DocValue::Array(docs) = docs else {
                     return Err(ShellError::new(
                         "insertMany() needs an array of documents",
@@ -733,8 +803,8 @@ impl<'a> Parser<'a> {
             }
             "updateOne" | "updateMany" | "findOneAndUpdate" => {
                 let [filter, update, options] = self.arity::<2, 3>(mt, method, args)?;
-                let filter = filter_doc(filter.unwrap())?;
-                let (update, at) = update.unwrap();
+                let filter = filter_doc(self.required(filter)?)?;
+                let (update, at) = self.required(update)?;
                 if !matches!(update, DocValue::Document(_) | DocValue::Array(_)) {
                     return Err(ShellError::new(
                         format!("{method}() needs an update document or pipeline"),
@@ -767,8 +837,9 @@ impl<'a> Parser<'a> {
                 let [filter, replacement, options] = self.arity::<2, 3>(mt, method, args)?;
                 MongoOp::ReplaceOne {
                     coll,
-                    filter: filter_doc(filter.unwrap())?,
-                    replacement: self.doc_arg(replacement.unwrap(), "a replacement document")?,
+                    filter: filter_doc(self.required(filter)?)?,
+                    replacement: self
+                        .doc_arg(self.required(replacement)?, "a replacement document")?,
                     options: self.opt_doc(options, "an options document")?,
                 }
             }
@@ -785,7 +856,7 @@ impl<'a> Parser<'a> {
                 let [keys, options] = self.arity::<1, 2>(mt, method, args)?;
                 MongoOp::CreateIndex {
                     coll,
-                    keys: self.doc_arg(keys.unwrap(), "a key document")?,
+                    keys: self.doc_arg(self.required(keys)?, "a key document")?,
                     options: self.opt_doc(options, "an options document")?,
                 }
             }
@@ -838,6 +909,11 @@ impl<'a> Parser<'a> {
             ));
         }
         Ok(<Self as Arity<MIN, MAX>>::shape(args))
+    }
+
+    /// An argument that [`Self::arity`] guarantees is present; a missing one is a parse error.
+    fn required(&self, arg: Option<(DocValue, usize)>) -> Result<(DocValue, usize), ShellError> {
+        arg.ok_or_else(|| ShellError::new("missing argument", self.pos()))
     }
 
     fn doc_arg(&self, (v, at): (DocValue, usize), what: &str) -> Result<DocValue, ShellError> {
@@ -903,7 +979,9 @@ impl<'a> Parser<'a> {
             }
             TokenKind::String | TokenKind::QuotedIdent if s.starts_with('/') => {
                 self.bump();
-                let close = s.rfind('/').unwrap();
+                let Some(close) = s.rfind('/') else {
+                    return self.err("expected a regular expression");
+                };
                 let mut flags: Vec<char> = s[close + 1..].chars().collect();
                 flags.sort_unstable();
                 Ok(DocValue::Regex {
@@ -954,7 +1032,9 @@ impl<'a> Parser<'a> {
     }
 
     fn object(&mut self, depth: usize) -> Result<DocValue, ShellError> {
-        let open = self.bump().unwrap();
+        let Some(open) = self.bump() else {
+            return self.err("expected `{`");
+        };
         let mut fields = Vec::new();
         while !self.at("}") {
             let Some(k) = self.peek() else {

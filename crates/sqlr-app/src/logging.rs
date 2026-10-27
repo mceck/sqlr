@@ -4,11 +4,12 @@
 //! The session identifier is a field on every stderr and file line. Secrets and server
 //! values are never logged.
 
+use parking_lot::Mutex;
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use tracing::field::{Field, Visit};
 use tracing::{Event, Level, Subscriber};
@@ -68,7 +69,7 @@ pub fn init(
         reload_handle
             .reload(filter)
             .map_err(|e| format!("could not change the log level: {e}"))?;
-        *set_current.lock().unwrap_or_else(|e| e.into_inner()) = level;
+        *set_current.lock() = level;
         Ok(())
     });
     if let Some(diagnostics) = &diagnostics {
@@ -100,7 +101,7 @@ pub fn init(
         None => (None, None, None),
     };
     let capture = CaptureLayer {
-        diagnostics: diagnostics.clone(),
+        diagnostics,
         ring: None,
     };
     let _ = tracing_subscriber::registry()
@@ -169,7 +170,6 @@ impl DailyWriter {
         writer
             .state
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
             .ensure(dir)
             .map_err(|e| format!("{}: {e}", dir.display()))?;
         let (writer, guard) = tracing_appender::non_blocking(writer);
@@ -218,13 +218,13 @@ struct DailyWriter {
 
 impl Write for DailyWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = self.state.lock();
         state.ensure(&self.dir)?;
         state.file.as_mut().expect("opened by ensure").write(buf)
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = self.state.lock();
         if let Some(file) = state.file.as_mut() {
             file.flush()?;
         }

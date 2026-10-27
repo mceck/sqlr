@@ -266,7 +266,7 @@ pub fn portable(mut cfg: ConnectionConfig) -> ConnectionConfig {
 /// Connection identity deliberately ignores names, folders and display preferences.
 pub fn same_connection(a: &ConnectionConfig, b: &ConnectionConfig) -> bool {
     fn value<'a>(c: &'a ConnectionConfig, k: &str) -> &'a str {
-        c.values.get(k).map(String::as_str).unwrap_or("")
+        c.values.get(k).map_or("", String::as_str)
     }
     fn port(c: &ConnectionConfig) -> &str {
         match value(c, "port") {

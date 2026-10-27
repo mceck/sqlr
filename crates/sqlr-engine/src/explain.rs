@@ -59,7 +59,10 @@ impl Engine {
 }
 
 impl Shared {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the spawned job owns the engine, job control, session key, I/O, turn ticket, database, SQL and analyze flag it was started with; a parameter struct would only be built to be unpacked on the first line"
+    )]
     async fn run_explain(
         self: Arc<Self>,
         job: JobControl,

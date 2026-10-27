@@ -106,11 +106,10 @@ fn capture(h: &mut Harness<'static, SqlrApp>, out: &Path, name: &str, theme: &st
 #[test]
 #[ignore = "renders the visual audit; requires a GPU adapter"]
 fn visual_audit() {
-    let out = std::env::var_os("SQLR_AUDIT_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/media/screenshots/audit")
-        });
+    let out = std::env::var_os("SQLR_AUDIT_DIR").map_or_else(
+        || Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/media/screenshots/audit"),
+        PathBuf::from,
+    );
     std::fs::create_dir_all(&out).unwrap();
     for (theme, suffix) in [(ThemePref::Dark, "dark"), (ThemePref::Light, "light")] {
         for case in [
@@ -163,11 +162,10 @@ fn visual_audit() {
 #[test]
 #[ignore = "renders the visual audit; requires a GPU adapter"]
 fn visual_audit_small() {
-    let out = std::env::var_os("SQLR_AUDIT_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/media/screenshots/audit")
-        });
+    let out = std::env::var_os("SQLR_AUDIT_DIR").map_or_else(
+        || Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/media/screenshots/audit"),
+        PathBuf::from,
+    );
     std::fs::create_dir_all(&out).unwrap();
     for case in [
         "connection",
@@ -434,11 +432,10 @@ fn harness(app: SqlrApp, size: (f32, f32)) -> Harness<'static, SqlrApp> {
 #[test]
 #[ignore = "renders the visual audit states; requires a GPU adapter"]
 fn visual_audit_states() {
-    let out = std::env::var_os("SQLR_AUDIT_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/media/screenshots/audit")
-        });
+    let out = std::env::var_os("SQLR_AUDIT_DIR").map_or_else(
+        || Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/media/screenshots/audit"),
+        PathBuf::from,
+    );
     std::fs::create_dir_all(&out).unwrap();
     for (theme, suffix) in [(ThemePref::Dark, "dark"), (ThemePref::Light, "light")] {
         // Empty app: no connections at all.

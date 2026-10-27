@@ -201,26 +201,26 @@ impl DocTreeState {
                 .get(&doc)
                 .filter(|_| self.expanded.contains(&(doc, Vec::new())))
             {
-                self.push_children(doc, value, Vec::new(), &mut rows);
+                self.push_children(doc, value, &[], &mut rows);
             }
         }
         self.rows = rows;
         self.built_for = Some(total);
     }
 
-    fn push_children(&self, doc: usize, value: &DocValue, path: Vec<Seg>, rows: &mut Vec<Row>) {
-        let Some(v) = at(value, &path) else {
+    fn push_children(&self, doc: usize, value: &DocValue, path: &[Seg], rows: &mut Vec<Row>) {
+        let Some(v) = at(value, path) else {
             return;
         };
         for seg in children(v) {
-            let mut p = path.clone();
+            let mut p = path.to_vec();
             p.push(seg);
             rows.push(Row {
                 doc,
                 path: p.clone(),
             });
             if self.expanded.contains(&(doc, p.clone())) {
-                self.push_children(doc, value, p, rows);
+                self.push_children(doc, value, &p, rows);
             }
         }
     }

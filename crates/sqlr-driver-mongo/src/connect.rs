@@ -1,7 +1,8 @@
 //! Connection setup, the `Connection` implementation and server-side cancellation.
 
+use parking_lot::Mutex;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bson::doc;
@@ -118,11 +119,11 @@ pub struct MongoConnection {
 
 impl MongoConnection {
     pub(crate) fn current_database(&self) -> String {
-        self.current.lock().unwrap().clone()
+        self.current.lock().clone()
     }
 
     pub(crate) fn set_current_database(&self, name: &str) {
-        *self.current.lock().unwrap() = name.to_string();
+        *self.current.lock() = name.to_string();
     }
 
     pub(crate) fn is_read_only(&self) -> bool {
@@ -146,7 +147,7 @@ pub(crate) struct Running {
 
 impl Running {
     pub(crate) fn start(tags: &RunningTags, tag: &str) -> Self {
-        tags.lock().unwrap().push(tag.to_string());
+        tags.lock().push(tag.to_string());
         Self {
             tags: tags.clone(),
             tag: tag.to_string(),
@@ -156,7 +157,7 @@ impl Running {
 
 impl Drop for Running {
     fn drop(&mut self) {
-        let mut tags = self.tags.lock().unwrap();
+        let mut tags = self.tags.lock();
         if let Some(i) = tags.iter().position(|t| *t == self.tag) {
             tags.remove(i);
         }
@@ -176,7 +177,6 @@ impl CancelHandle for MongoCancel {
         let tags: Vec<bson::Bson> = self
             .running
             .lock()
-            .unwrap()
             .iter()
             .map(|t| bson::Bson::String(t.clone()))
             .collect();

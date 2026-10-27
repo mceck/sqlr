@@ -73,8 +73,8 @@ pub(crate) fn confirmation_for(
                 "This will {reason} on {conn_name} ({} profile).",
                 profile.name.to_lowercase()
             );
-            let listed = destructive.iter().map(|(i, _)| statements[*i]).collect();
-            return Some((prompt, lines(listed)));
+            let listed: Vec<&str> = destructive.iter().map(|(i, _)| statements[*i]).collect();
+            return Some((prompt, lines(&listed)));
         }
     }
     if profile.confirm_writes {
@@ -91,7 +91,7 @@ pub(crate) fn confirmation_for(
             } else {
                 format!("Run {n} statements that modify data on {conn_name}?")
             };
-            return Some((prompt, lines(writes)));
+            return Some((prompt, lines(&writes)));
         }
     }
     None
@@ -108,6 +108,7 @@ pub(crate) fn prompt_lines(ui: &mut egui::Ui, prompt: &str, lines: &[String]) {
 }
 
 /// How a confirmation looks: its header, buttons and width.
+#[derive(Clone, Copy)]
 pub(crate) struct ConfirmSpec<'a> {
     pub id: Id,
     pub icon: &'a str,
@@ -175,7 +176,7 @@ pub(crate) fn confirm_modal(
 }
 
 /// The first line of each statement, cut; at most `LISTED`, then how many more.
-fn lines(statements: Vec<&str>) -> Vec<String> {
+fn lines(statements: &[&str]) -> Vec<String> {
     let mut out: Vec<String> = statements
         .iter()
         .take(LISTED)

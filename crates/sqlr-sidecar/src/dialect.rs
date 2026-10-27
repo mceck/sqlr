@@ -23,6 +23,7 @@ pub enum LimitStyle {
     None,
 }
 
+/// How the placeholder of a bound parameter is written.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PlaceholderStyle {
     /// `?`
@@ -33,29 +34,49 @@ pub enum PlaceholderStyle {
     Colon,
 }
 
+/// The lexical rules of a dialect on the wire: the same data as [`SqlSyntax`].
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SyntaxSpec {
+    /// The keywords.
     pub keywords: Vec<String>,
+    /// The reserved words, which identifiers must be quoted to use.
     pub reserved: Vec<String>,
+    /// The function names.
     pub functions: Vec<String>,
+    /// `$tag$ … $tag$` strings (PostgreSQL).
     pub dollar_quotes: bool,
+    /// Nested block comments (PostgreSQL).
     pub nested_comments: bool,
+    /// `E'…'` strings with backslash escapes (PostgreSQL).
     pub escape_strings: bool,
+    /// The text that starts a line comment.
     pub line_comment: String,
+    /// The line comment needs whitespace after it (MySQL `-- `).
     pub line_comment_needs_space: bool,
+    /// `#` starts a line comment (MySQL).
     pub hash_comments: bool,
+    /// Identifier quotes as `(open, close)`; the first pair quotes names.
     pub ident_quotes: Vec<(u8, u8)>,
+    /// `"…"` is a string literal, not an identifier (MySQL).
     pub double_quote_strings: bool,
+    /// Every string literal takes backslash escapes (MySQL).
     pub backslash_escapes: bool,
+    /// The tree-sitter grammar id.
     pub grammar: String,
 }
 
+/// Everything a client needs to build a [`Dialect`] for a driver.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DialectSpec {
+    /// The lexical rules.
     pub syntax: SyntaxSpec,
+    /// The schemas searched for an unqualified name, in order.
     pub default_schemas: Vec<String>,
+    /// Databases and schemas are the same level (MySQL).
     pub database_is_schema: bool,
+    /// How placeholders of bound parameters are written.
     pub placeholder: PlaceholderStyle,
+    /// How a row limit is written.
     pub limit: LimitStyle,
     /// Which segments of a node's path name the relation in `SELECT * FROM …`, in order;
     /// empty means every segment.
@@ -63,10 +84,15 @@ pub struct DialectSpec {
     /// The relation is named by the node's own name, not by its path.
     #[serde(default)]
     pub select_uses_name: bool,
+    /// The statement that starts a transaction.
     pub begin_sql: String,
+    /// The statement that turns read-only mode on, if the server has one.
     pub read_only_on: Option<String>,
+    /// The statement that turns read-only mode off, if the server has one.
     pub read_only_off: Option<String>,
+    /// The server commits an open transaction before running DDL.
     pub ddl_commits_transaction: bool,
+    /// A failed statement aborts the open transaction until it is rolled back.
     pub error_aborts_transaction: bool,
 }
 
@@ -75,6 +101,7 @@ fn leak(s: &str) -> &'static str {
 }
 
 impl SyntaxSpec {
+    /// The spec that describes `s`.
     pub fn from_syntax(s: &SqlSyntax) -> Self {
         let owned = |list: &[&'static str]| list.iter().map(|w| w.to_string()).collect();
         Self {
@@ -205,6 +232,7 @@ pub struct SidecarDialect {
 }
 
 impl SidecarDialect {
+    /// Builds the dialect from `spec`.
     pub fn new(spec: DialectSpec) -> Self {
         let syntax = spec.syntax.to_syntax();
         let begin = leak(&spec.begin_sql);

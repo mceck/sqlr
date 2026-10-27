@@ -1724,6 +1724,10 @@ impl SqlrApp {
 
 /// `target` without surrounding whitespace (its origin moved past the leading part); `None`
 /// when nothing is left.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "used as an iterator adapter function pointer (`filter_map`, `and_then`), which passes each `RunRequest` by value"
+)]
 fn trimmed(target: RunRequest) -> Option<RunRequest> {
     let rest = target.sql.trim_start();
     let lead = target.sql[..target.sql.len() - rest.len()].chars().count();

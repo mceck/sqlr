@@ -190,9 +190,8 @@ pub struct State {
 impl State {
     /// The stored state; an unreadable file is treated as no memory at all.
     pub fn load(dir: &Path) -> Self {
-        let bytes = match std::fs::read(dir.join(STATE_FILE)) {
-            Ok(bytes) => bytes,
-            Err(_) => return Self::default(),
+        let Ok(bytes) = std::fs::read(dir.join(STATE_FILE)) else {
+            return Self::default();
         };
         serde_json::from_slice(&bytes).unwrap_or_default()
     }
@@ -702,7 +701,7 @@ fn find(root: &Path, depth: usize, wanted: &dyn Fn(&str, bool) -> bool) -> Resul
         .map_err(|e| e.to_string())?
         .flatten()
     {
-        let is_file = entry.file_type().map(|t| t.is_file()).unwrap_or(false);
+        let is_file = entry.file_type().is_ok_and(|t| t.is_file());
         let name = entry.file_name().to_string_lossy().into_owned();
         if wanted(&name, is_file) {
             return Ok(entry.path());
@@ -727,7 +726,7 @@ fn install_bundle(new: &Path, bundle: &Path) -> Result<(), String> {
     if backup.exists() {
         std::fs::remove_dir_all(&backup).map_err(|e| e.to_string())?;
     }
-    let writable_here = bundle.parent().map(writable).unwrap_or(false);
+    let writable_here = bundle.parent().is_some_and(writable);
     if writable_here {
         std::fs::rename(bundle, &backup).map_err(|e| e.to_string())?;
         if let Err(error) = run("ditto", &[path(new)?, path(bundle)?]) {
@@ -848,8 +847,7 @@ fn run(program: &str, args: &[&str]) -> Result<(), String> {
 fn unix_now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|since| since.as_secs() as i64)
-        .unwrap_or(0)
+        .map_or(0, |since| since.as_secs() as i64)
 }
 
 /// What a press in the update modal does; the modal itself never touches the app.

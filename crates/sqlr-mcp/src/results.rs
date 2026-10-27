@@ -123,38 +123,33 @@ impl Results {
 
     /// Like [`Self::close_owner`] but keeps each result's kind.
     pub fn sweep_owner(&self, owner: &str) -> Vec<(QueryId, ResultKind)> {
-        let mut entries = self.entries.lock();
-        let ids: Vec<String> = entries
-            .iter()
-            .filter(|(_, e)| e.owner == owner)
-            .map(|(id, _)| id.clone())
-            .collect();
-        ids.into_iter()
-            .filter_map(|id| {
-                entries
-                    .remove(&id)
-                    .and_then(|e| e.engine.map(|q| (q, e.kind)))
-            })
-            .collect()
+        let mut removed = Vec::new();
+        self.entries.lock().retain(|_, e| {
+            if e.owner != owner {
+                return true;
+            }
+            if let Some(q) = e.engine {
+                removed.push((q, e.kind));
+            }
+            false
+        });
+        removed
     }
 
     /// Removes results idle for [`RESULT_TTL`] and returns what to close.
     pub fn sweep(&self) -> Vec<(QueryId, ResultKind)> {
         let now = Instant::now();
-        let mut entries = self.entries.lock();
-        let expired: Vec<String> = entries
-            .iter()
-            .filter(|(_, e)| now.duration_since(e.last_access) >= RESULT_TTL)
-            .map(|(id, _)| id.clone())
-            .collect();
-        expired
-            .into_iter()
-            .filter_map(|id| {
-                entries
-                    .remove(&id)
-                    .and_then(|e| e.engine.map(|q| (q, e.kind)))
-            })
-            .collect()
+        let mut removed = Vec::new();
+        self.entries.lock().retain(|_, e| {
+            if now.duration_since(e.last_access) < RESULT_TTL {
+                return true;
+            }
+            if let Some(q) = e.engine {
+                removed.push((q, e.kind));
+            }
+            false
+        });
+        removed
     }
 
     pub fn len(&self) -> usize {
@@ -320,11 +315,9 @@ pub fn tabular_page(
         while rows.len() < limit && index < result.rows.row_count() {
             let row: Vec<Value> = (0..result.rows.columns().len())
                 .map(|col| {
-                    result
-                        .rows
-                        .cell(index, col)
-                        .map(|cell| cell_json(cell, result.rows.columns()[col].hint))
-                        .unwrap_or(Value::Null)
+                    result.rows.cell(index, col).map_or(Value::Null, |cell| {
+                        cell_json(cell, result.rows.columns()[col].hint)
+                    })
                 })
                 .collect();
             let encoded = serde_json::to_string(&row).map_or(0, |s| s.len());
@@ -575,7 +568,10 @@ pub fn resp_json(value: &RespValue) -> Value {
 }
 
 /// The JSON envelope of one query outcome.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the arguments are the independent fields of one JSON envelope (kind, status, query id, elapsed, truncation, error and the tabular, document or reply payload); a parameter struct would just repeat the field names at each of the few call sites"
+)]
 pub fn outcome_json(
     kind: &str,
     status: &str,

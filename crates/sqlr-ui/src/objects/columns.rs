@@ -37,7 +37,6 @@ fn fresh_name(table: &TableDef, base: &str) -> String {
         .unwrap_or_default()
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn columns_tab(
     ui: &mut egui::Ui,
     table: &mut TableDef,

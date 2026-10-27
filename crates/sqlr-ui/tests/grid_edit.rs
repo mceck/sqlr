@@ -77,12 +77,8 @@ fn harness(rows: RowBuffer) -> Harness<'static, App> {
 }
 
 /// An edit buffer for `id` (the key, NOT NULL) and `name` (nullable), both writable.
-fn editable() -> Option<EditBuffer> {
-    Some(EditBuffer::new(
-        vec![0],
-        vec![true, true],
-        vec![true, false],
-    ))
+fn editable() -> EditBuffer {
+    EditBuffer::new(vec![0], vec![true, true], vec![true, false])
 }
 
 fn center(h: &Harness<'static, App>, label: &str) -> Pos2 {
@@ -256,7 +252,7 @@ fn copy_a_non_contiguous_selection_keeps_the_grid_shape() {
 
 #[test]
 fn paste_one_cell_marks_it_pending() {
-    let mut h = harness_with(sequential(5), false, editable());
+    let mut h = harness_with(sequential(5), false, Some(editable()));
     click(&mut h, "name 1");
     h.event(Event::Paste("renamed".into()));
     h.run_steps(2);
@@ -271,7 +267,7 @@ fn paste_one_cell_marks_it_pending() {
 
 #[test]
 fn paste_a_block_into_a_multi_selection() {
-    let mut h = harness_with(sequential(5), false, editable());
+    let mut h = harness_with(sequential(5), false, Some(editable()));
     click(&mut h, "0");
     press(&mut h, Modifiers::SHIFT, Key::ArrowDown);
     press(&mut h, Modifiers::SHIFT, Key::ArrowRight);
@@ -288,7 +284,7 @@ fn paste_a_block_into_a_multi_selection() {
 
 #[test]
 fn a_single_pasted_value_fills_the_selection() {
-    let mut h = harness_with(sequential(5), false, editable());
+    let mut h = harness_with(sequential(5), false, Some(editable()));
     click(&mut h, "name 0");
     press(&mut h, Modifiers::SHIFT, Key::ArrowDown);
     h.event(Event::Paste("same".into()));
@@ -313,7 +309,7 @@ fn paste_into_a_read_only_grid_reports() {
 
 #[test]
 fn an_invalid_paste_reports_and_changes_nothing() {
-    let mut h = harness_with(sequential(5), false, editable());
+    let mut h = harness_with(sequential(5), false, Some(editable()));
     click(&mut h, "0");
     h.event(Event::Paste("abc".into()));
     h.run_steps(2);
@@ -416,7 +412,7 @@ fn where_field_filters_on_the_server() {
 
 #[test]
 fn double_click_edits_cell_and_marks_pending() {
-    let mut h = harness_with(sequential(5), false, editable());
+    let mut h = harness_with(sequential(5), false, Some(editable()));
     double_click(&mut h, "name 1");
     // The inline editor holds the value, selected.
     h.event(Event::Text("renamed".into()));
@@ -441,7 +437,7 @@ fn double_click_edits_cell_and_marks_pending() {
 
 #[test]
 fn invalid_number_keeps_the_editor_open() {
-    let mut h = harness_with(sequential(5), false, editable());
+    let mut h = harness_with(sequential(5), false, Some(editable()));
     double_click(&mut h, "2");
     h.event(Event::Text("abc".into()));
     h.run_steps(2);
@@ -455,7 +451,7 @@ fn invalid_number_keeps_the_editor_open() {
 
 #[test]
 fn set_null_refused_on_not_null() {
-    let mut h = harness_with(sequential(5), false, editable());
+    let mut h = harness_with(sequential(5), false, Some(editable()));
     h.run_steps(100);
     let pos = center(&h, "3");
     press_at(&mut h, pos, PointerButton::Secondary, Modifiers::NONE);
@@ -471,7 +467,7 @@ fn set_null_refused_on_not_null() {
 
 #[test]
 fn delete_row_strikes_through() {
-    let mut h = harness_with(sequential(5), false, editable());
+    let mut h = harness_with(sequential(5), false, Some(editable()));
     menu(&mut h, "name 2", "Delete row");
     assert!(h.state().actions.contains(&GridAction::DeleteRows(vec![2])));
     assert_eq!(h.state().state.edits.as_ref().unwrap().pending(), 1);
@@ -484,7 +480,7 @@ fn delete_row_strikes_through() {
 
 #[test]
 fn command_delete_marks_the_selected_rows_deleted() {
-    let mut h = harness_with(sequential(5), false, editable());
+    let mut h = harness_with(sequential(5), false, Some(editable()));
     click(&mut h, "Row 2");
     press(&mut h, Modifiers::COMMAND, Key::Backspace);
     assert!(h.state().actions.contains(&GridAction::DeleteRows(vec![1])));
@@ -496,7 +492,7 @@ fn command_delete_marks_the_selected_rows_deleted() {
 
 #[test]
 fn command_delete_marks_a_multi_row_selection_deleted() {
-    let mut h = harness_with(sequential(5), false, editable());
+    let mut h = harness_with(sequential(5), false, Some(editable()));
     click(&mut h, "Row 1");
     press(&mut h, Modifiers::SHIFT, Key::ArrowDown);
     press(&mut h, Modifiers::SHIFT, Key::ArrowDown);
@@ -515,7 +511,7 @@ fn command_delete_marks_a_multi_row_selection_deleted() {
 
 #[test]
 fn command_delete_deletes_non_contiguous_selected_rows() {
-    let mut h = harness_with(sequential(5), false, editable());
+    let mut h = harness_with(sequential(5), false, Some(editable()));
     h.get_by_label("Row 1").click_modifiers(Modifiers::COMMAND);
     h.get_by_label("Row 3").click_modifiers(Modifiers::COMMAND);
     h.run_steps(2);
@@ -534,7 +530,7 @@ fn command_delete_deletes_non_contiguous_selected_rows() {
 
 #[test]
 fn add_row_appends_an_inserted_row() {
-    let mut h = harness_with(sequential(2), false, editable());
+    let mut h = harness_with(sequential(2), false, Some(editable()));
     menu(&mut h, "name 0", "Add row");
     assert!(h.state().actions.contains(&GridAction::AddRow));
     assert_eq!(h.state().state.edits.as_ref().unwrap().pending(), 1);
@@ -553,7 +549,7 @@ fn add_row_appends_an_inserted_row() {
 
 #[test]
 fn inserted_rows_keep_their_identity_when_more_rows_load() {
-    let mut h = harness_with(sequential(2), true, editable());
+    let mut h = harness_with(sequential(2), true, Some(editable()));
     menu(&mut h, "name 0", "Add row");
     let inserted = *h.state().state.view_rows().last().unwrap();
     {
@@ -646,7 +642,7 @@ fn value_editor_checks_and_highlights_json_live() {
     use sqlr_ui::{ValueEdit, value_editor};
     let json = ColumnMeta::new("j", "jsonb", ColumnKind::Text, DisplayHint::Json);
     let edit = ValueEdit::new(0, 0, &json, &Value::Text("{\"a\": 1}".into()));
-    let meta = json.clone();
+    let meta = json;
     let mut h = Harness::builder()
         .with_size(vec2(600.0, 400.0))
         .build_ui_state(
@@ -691,7 +687,7 @@ fn value_editor_beautifies_json() {
     let pretty = "{\n  \"a\": 1,\n  \"b\": [\n    1,\n    2\n  ]\n}";
     let json = ColumnMeta::new("j", "jsonb", ColumnKind::Text, DisplayHint::Json);
     let edit = ValueEdit::new(0, 0, &json, &Value::Text("{\"a\":1}".into()));
-    let meta = json.clone();
+    let meta = json;
     let mut h = Harness::builder()
         .with_size(vec2(600.0, 400.0))
         .build_ui_state(
@@ -797,7 +793,7 @@ fn struck(h: &Harness<'static, App>, text: &str) -> Option<bool> {
 
 #[test]
 fn pasted_blocks_tile_and_undo_as_one_operation() {
-    let mut h = harness_with(sequential(6), false, editable());
+    let mut h = harness_with(sequential(6), false, Some(editable()));
     click(&mut h, "name 0");
     for _ in 0..3 {
         press(&mut h, Modifiers::SHIFT, Key::ArrowDown);
@@ -825,7 +821,7 @@ fn pasted_blocks_tile_and_undo_as_one_operation() {
 
 #[test]
 fn pasted_block_repeats_at_each_disjoint_anchor_with_legacy_fallback() {
-    let mut h = harness_with(sequential(6), false, editable());
+    let mut h = harness_with(sequential(6), false, Some(editable()));
     click(&mut h, "name 0");
     h.get_by_label("name 3").click_modifiers(Modifiers::COMMAND);
     h.run_steps(2);
@@ -847,7 +843,7 @@ fn pasted_block_repeats_at_each_disjoint_anchor_with_legacy_fallback() {
 
 #[test]
 fn set_null_and_duplicate_apply_to_all_selected_rows() {
-    let mut h = harness_with(sequential(5), false, editable());
+    let mut h = harness_with(sequential(5), false, Some(editable()));
     click(&mut h, "name 0");
     h.get_by_label("name 2").click_modifiers(Modifiers::COMMAND);
     h.run_steps(2);
@@ -864,7 +860,7 @@ fn set_null_and_duplicate_apply_to_all_selected_rows() {
 
 #[test]
 fn revert_selected_cells_preserves_other_edits_in_the_row() {
-    let mut h = harness_with(sequential(3), false, editable());
+    let mut h = harness_with(sequential(3), false, Some(editable()));
     click(&mut h, "0");
     h.event(Event::Paste("42\tchanged".into()));
     h.run_steps(2);
@@ -889,7 +885,7 @@ fn revert_selected_cells_preserves_other_edits_in_the_row() {
 
 #[test]
 fn typed_copy_does_not_paste_unselected_holes_as_null() {
-    let mut h = harness_with(sequential(5), false, editable());
+    let mut h = harness_with(sequential(5), false, Some(editable()));
     click(&mut h, "0");
     h.get_by_label("name 1").click_modifiers(Modifiers::COMMAND);
     h.run_steps(2);
@@ -914,7 +910,7 @@ fn typed_copy_does_not_paste_unselected_holes_as_null() {
 
 #[test]
 fn paste_as_new_rows_matches_names_and_can_be_undone() {
-    let mut h = harness_with(sequential(4), false, editable());
+    let mut h = harness_with(sequential(4), false, Some(editable()));
     click(&mut h, "name 0");
     press(&mut h, Modifiers::SHIFT, Key::ArrowDown);
     h.event(Event::Copy);
@@ -942,7 +938,7 @@ fn paste_as_new_rows_matches_names_and_can_be_undone() {
 
 #[test]
 fn an_invalid_cell_in_a_later_paste_area_leaves_every_area_unchanged() {
-    let mut h = harness_with(sequential(4), false, editable());
+    let mut h = harness_with(sequential(4), false, Some(editable()));
     click(&mut h, "name 0");
     h.get_by_label("2").click_modifiers(Modifiers::COMMAND);
     h.run_steps(2);
@@ -954,7 +950,7 @@ fn an_invalid_cell_in_a_later_paste_area_leaves_every_area_unchanged() {
 
 #[test]
 fn a_new_edit_clears_redo_and_empty_history_does_not_remove_editability() {
-    let mut h = harness_with(sequential(4), false, editable());
+    let mut h = harness_with(sequential(4), false, Some(editable()));
     h.state_mut().state.undo();
     assert!(h.state().state.edits.is_some());
     click(&mut h, "name 0");
@@ -969,7 +965,7 @@ fn a_new_edit_clears_redo_and_empty_history_does_not_remove_editability() {
 
 #[test]
 fn typed_paste_into_an_empty_grid_adds_rows_without_overwriting_generated_columns() {
-    let mut h = harness_with(sequential(0), false, editable());
+    let mut h = harness_with(sequential(0), false, Some(editable()));
     let text = "name\tid\nAda\t42\n";
     sqlr_ui::set_grid_clipboard(
         &h.ctx,
@@ -1047,7 +1043,7 @@ fn typed_copy_keeps_null_empty_text_and_binary_values_distinct() {
 
 #[test]
 fn a_large_new_row_paste_is_prepared_in_background_and_undoes_once() {
-    let mut h = harness_with(sequential(0), false, editable());
+    let mut h = harness_with(sequential(0), false, Some(editable()));
     let text = "large typed clipboard";
     sqlr_ui::set_grid_clipboard(
         &h.ctx,

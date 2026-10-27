@@ -169,7 +169,7 @@ fn admin_snapshots_answer_each_query() {
     };
     assert_eq!(
         snapshot(&engine, stats),
-        AdminSnapshot::TableStats(expected.stats.clone())
+        AdminSnapshot::TableStats(expected.stats)
     );
     assert_eq!(
         fake.admin_calls(),

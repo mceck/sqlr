@@ -249,8 +249,8 @@ impl crate::EsConnection {
 mod tests {
     use super::*;
 
-    fn counts(resp: Json) -> (u64, u64, u64, u64, Vec<DocValue>) {
-        match written_of(&resp).unwrap() {
+    fn counts(resp: &Json) -> (u64, u64, u64, u64, Vec<DocValue>) {
+        match written_of(resp).unwrap() {
             Some(DocExecution::Written {
                 matched,
                 modified,
@@ -265,20 +265,20 @@ mod tests {
     #[test]
     fn write_responses() {
         assert_eq!(
-            counts(json!({"_index": "i", "_id": "1", "result": "created"})),
+            counts(&json!({"_index": "i", "_id": "1", "result": "created"})),
             (0, 0, 1, 0, vec![DocValue::String("1".into())])
         );
         let bulk = json!({"errors": false, "items": [
             {"index": {"_id": "1", "result": "created"}},
             {"update": {"_id": "2", "result": "updated"}},
             {"delete": {"_id": "3", "result": "deleted"}}]});
-        let c = counts(bulk);
+        let c = counts(&bulk);
         assert_eq!((c.0, c.1, c.2, c.3), (1, 1, 1, 1));
         let bad = json!({"errors": true, "items": [{"index": {"_id": "1", "error": {"type": "mapper_parsing_exception", "reason": "bad"}}}]});
         assert!(written_of(&bad).err().unwrap().message.contains("1 of 1"));
         let dbq =
             json!({"took": 1, "total": 5, "deleted": 5, "batches": 1, "updated": 0, "created": 0});
-        assert_eq!(counts(dbq).3, 5);
+        assert_eq!(counts(&dbq).3, 5);
         assert!(
             written_of(&json!({"acknowledged": true}))
                 .unwrap()

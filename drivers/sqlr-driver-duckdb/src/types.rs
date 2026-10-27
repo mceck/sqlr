@@ -122,7 +122,8 @@ pub(crate) fn decode(value: ValueRef<'_>, column: &ColumnMeta) -> Result<Value, 
         }
         Blob(bytes) if column.type_name == "TIMETZ" => {
             let bits = u64::from_ne_bytes(fixed(bytes)?);
-            // The stable C API interprets DuckDB's packed local time and UTC offset.
+            // SAFETY: the stable C API only interprets DuckDB's packed local time and UTC
+            // offset: a pure conversion of a plain value with no pointers involved.
             let value =
                 unsafe { duckdb::ffi::duckdb_from_time_tz(duckdb::ffi::duckdb_time_tz { bits }) };
             let nanos = (i128::from(value.time.hour) * 3600
@@ -288,7 +289,8 @@ fn date(days: i32) -> String {
     if days == -i32::MAX {
         return "-infinity".into();
     }
-    // DuckDB's calendar conversion is valid for its full date domain.
+    // SAFETY: DuckDB's calendar conversion is a pure function of a plain value and is
+    // valid for its full date domain (infinities were handled above).
     let d = unsafe { duckdb::ffi::duckdb_from_date(duckdb::ffi::duckdb_date { days }) };
     format!("{:04}-{:02}-{:02}", d.year, d.month, d.day)
 }

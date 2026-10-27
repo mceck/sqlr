@@ -7,6 +7,7 @@ static NEXT_REVISION: AtomicU64 = AtomicU64::new(1);
 
 use crate::chunk::{Cell, ColumnMeta, ResultChunk};
 
+/// The rows of one result: the result chunks received so far, with their shared columns.
 #[derive(Clone, Debug, Default)]
 pub struct RowBuffer {
     columns: Arc<[ColumnMeta]>,
@@ -18,6 +19,7 @@ pub struct RowBuffer {
 }
 
 impl RowBuffer {
+    /// An empty buffer with `columns`.
     pub fn new(columns: Arc<[ColumnMeta]>) -> Self {
         Self {
             columns,
@@ -28,10 +30,12 @@ impl RowBuffer {
         }
     }
 
+    /// The columns every chunk of the buffer has.
     pub fn columns(&self) -> &[ColumnMeta] {
         &self.columns
     }
 
+    /// Appends `chunk`, whose columns must equal the buffer's.
     pub fn push_chunk(&mut self, chunk: ResultChunk) {
         debug_assert_eq!(
             **chunk.columns(),
@@ -48,10 +52,12 @@ impl RowBuffer {
         self.offsets.push(total);
     }
 
+    /// The number of rows across all chunks.
     pub fn row_count(&self) -> usize {
         self.offsets.last().copied().unwrap_or(0)
     }
 
+    /// The cell at `row`, `col`; `None` out of range.
     pub fn cell(&self, row: usize, col: usize) -> Option<Cell<'_>> {
         if row >= self.row_count() || col >= self.columns.len() {
             return None;
@@ -67,10 +73,12 @@ impl RowBuffer {
         self.revision
     }
 
+    /// The size of all chunks, in bytes.
     pub fn byte_size(&self) -> usize {
         self.bytes
     }
 
+    /// The bytes of the chunks held in memory, not counting spilled ones.
     pub fn resident_byte_size(&self) -> usize {
         self.chunks
             .iter()

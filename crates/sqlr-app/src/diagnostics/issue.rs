@@ -87,10 +87,7 @@ fn encode(text: &str) -> String {
 }
 
 fn title(value: &Value) -> String {
-    let prefix = match selected(value)
-        .map(|incident| text(incident, "kind"))
-        .unwrap_or("")
-    {
+    let prefix = match selected(value).map_or("", |incident| text(incident, "kind")) {
         "panic" | "engine_panic" => "Crash",
         "startup" => "Startup failure",
         "unclean_shutdown" => "Unclean shutdown",
@@ -298,7 +295,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    fn bundle(kind: &str, note: Option<&str>, logs: Vec<Value>) -> String {
+    fn bundle(kind: &str, note: Option<&str>, logs: &[Value]) -> String {
         let version = env!("CARGO_PKG_VERSION");
         let mut incident = json!({
             "schema": 1,
@@ -363,7 +360,7 @@ mod tests {
 
     #[test]
     fn a_small_bundle_rides_inside_the_issue_body() {
-        let draft = draft(&bundle("panic", None, Vec::new()));
+        let draft = draft(&bundle("panic", None, &[]));
         assert!(!draft.paste_required);
         assert!(draft.body.contains("\"session\""));
         assert_eq!(draft.title, "Crash: assertion failed: the plan is empty");
@@ -373,14 +370,14 @@ mod tests {
 
     #[test]
     fn a_large_bundle_is_copied_instead_and_the_issue_asks_for_a_paste() {
-        let logs = (0..2_000)
+        let logs: Vec<Value> = (0..2_000)
             .map(|i| {
                 json!(format!(
                     "2026-01-01T00:00:00Z INFO line {i} with some padding text"
                 ))
             })
             .collect();
-        let draft = draft(&bundle("panic", None, logs));
+        let draft = draft(&bundle("panic", None, &logs));
         assert!(draft.paste_required);
         assert!(!draft.body.contains("line 1999"));
         assert!(draft.body.contains("copied the full diagnostics bundle"));
@@ -392,7 +389,7 @@ mod tests {
         let draft = draft(&bundle(
             "manual",
             Some("the migration stopped\nhalf way"),
-            vec![],
+            &[],
         ));
         assert_eq!(
             draft.title,
@@ -403,7 +400,7 @@ mod tests {
 
     #[test]
     fn backticks_in_the_bundle_use_a_longer_fence() {
-        let bundle = bundle("panic", None, Vec::new()).replace("line two", "``` inside a log");
+        let bundle = bundle("panic", None, &[]).replace("line two", "``` inside a log");
         let draft = draft(&bundle);
         assert!(draft.body.contains("````json"));
         assert!(draft.body.contains("````\n\n</details>"));

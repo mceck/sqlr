@@ -54,12 +54,8 @@ async fn the_sidecar_announces_its_form() {
         .unwrap();
     assert!(password.secret);
     assert_eq!(password.ty, FieldType::Password);
-    let tls: Vec<_> = manifest
-        .fields
-        .iter()
-        .filter(|f| f.group == "TLS")
-        .collect();
-    assert_eq!(tls.len(), 3, "the TLS group");
+    let tls = manifest.fields.iter().filter(|f| f.group == "TLS").count();
+    assert_eq!(tls, 3, "the TLS group");
     assert!(manifest.capabilities.server_cancel);
 }
 

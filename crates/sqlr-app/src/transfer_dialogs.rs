@@ -616,14 +616,14 @@ struct Preview {
 }
 
 impl Preview {
-    fn new(columns: Vec<String>, rows: Vec<Vec<Value>>) -> Self {
+    fn new(columns: Vec<String>, rows: &[Vec<Value>]) -> Self {
         let metas: Arc<[ColumnMeta]> = columns
             .iter()
             .map(|c| ColumnMeta::new(c, "", ColumnKind::Mixed, DisplayHint::Plain))
             .collect();
         let mut buffer = RowBuffer::new(metas.clone());
         let mut b = ChunkBuilder::new(metas);
-        for row in &rows {
+        for row in rows {
             let mut cells: Vec<_> = row.iter().map(Value::as_cell).collect();
             cells.resize(columns.len(), sqlr_core::Cell::Null);
             // Mixed columns take any cell.
@@ -1076,7 +1076,7 @@ impl ImportDialog {
                         .iter()
                         .map(|c| targets.iter().find(|t| t.eq_ignore_ascii_case(c)).cloned())
                         .collect();
-                    self.preview = Some(Preview::new(columns, rows));
+                    self.preview = Some(Preview::new(columns, &rows));
                 }
                 JobOutcome::Failed(e) => self.error = Some(e.message),
                 _ => {}
@@ -1462,12 +1462,12 @@ mod file_ask_tests {
     #[test]
     fn a_pending_native_dialog_keeps_the_ui_polling() {
         let ctx = egui::Context::default();
-        let delays = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let delays = Arc::new(parking_lot::Mutex::new(Vec::new()));
         let seen = delays.clone();
-        ctx.set_request_repaint_callback(move |info| seen.lock().unwrap().push(info.delay));
+        ctx.set_request_repaint_callback(move |info| seen.lock().push(info.delay));
         let mut ask = FileAsk::Native(Box::pin(std::future::pending()));
         assert!(ask.poll(&ctx).is_none(), "still open");
-        let delays = delays.lock().unwrap();
+        let delays = delays.lock();
         assert!(
             delays
                 .iter()

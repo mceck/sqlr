@@ -2,37 +2,52 @@
 
 use serde::{Deserialize, Serialize};
 
+/// What a catalog relation is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RelationKind {
+    /// A base table.
     Table,
+    /// A view.
     View,
+    /// A materialized view.
     MaterializedView,
 }
 
+/// A column of a cached relation, as autocomplete sees it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CatalogColumn {
+    /// Column name.
     pub name: String,
+    /// The column's type name as the driver reports it.
     pub type_name: String,
 }
 
+/// A table or view of a cached schema, with its columns.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CatalogRelation {
+    /// Relation name.
     pub name: String,
+    /// Whether it is a table, a view or a materialized view.
     pub kind: RelationKind,
+    /// Its columns, in ordinal order.
     pub columns: Vec<CatalogColumn>,
 }
 
 /// All relations of one schema, sorted by name.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SchemaCatalog {
+    /// Schema name.
     pub schema: String,
+    /// The schema's relations.
     pub relations: Vec<CatalogRelation>,
 }
 
 /// A catalog piece autocomplete is missing and wants loaded.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum CatalogNeed {
+    /// The list of schemas of the connection.
     Schemas,
+    /// The relations of the named schema.
     Schema(String),
 }
 

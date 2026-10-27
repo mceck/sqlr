@@ -23,12 +23,13 @@ pub fn set_theme(h: &mut Harness<'static, SqlrApp>, light: bool) {
 }
 
 pub fn capture(h: &mut Harness<'static, SqlrApp>, name: &str, light: bool) {
-    let out = std::env::var_os("SQLR_AUDIT_DIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
+    let out = std::env::var_os("SQLR_AUDIT_DIR").map_or_else(
+        || {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../../docs/media/screenshots/audit")
-        });
+        },
+        std::path::PathBuf::from,
+    );
     std::fs::create_dir_all(&out).unwrap();
     h.event(egui::Event::PointerMoved(egui::pos2(1390.0, 890.0)));
     h.run_steps(8);

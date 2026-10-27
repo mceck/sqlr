@@ -45,7 +45,7 @@ type H = Harness<'static, State>;
 fn another_edit_moves_an_agent_highlight_without_panicking() {
     let mut editor = EditorState::new("SELECT 1", SqlSyntax::ansi());
     editor.highlight_agent_edit(7);
-    editor.replace_ranges(vec![(0..0, "--\n".into())]);
+    editor.replace_ranges(&[(0..0, "--\n".into())]);
     assert_eq!(editor.text(), "--\nSELECT 1");
     assert_eq!(editor.markers()[0].at, 10);
     assert_eq!(editor.markers()[0].message, "Agent edit");

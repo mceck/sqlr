@@ -1,7 +1,8 @@
 //! Redis driver against the fixed `redis:7` services (and a scripted fake server for clusters).
 
+use parking_lot::Mutex;
 use std::collections::{BTreeMap, HashSet};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use sqlr_core::{
@@ -180,7 +181,7 @@ async fn scan_never_uses_keys() {
     tokio::spawn(async move {
         let mut lines = BufReader::new(monitor).lines();
         while let Ok(Some(line)) = lines.next_line().await {
-            sink.lock().unwrap().push(line);
+            sink.lock().push(line);
         }
     });
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -194,7 +195,7 @@ async fn scan_never_uses_keys() {
     conn.browse(&db0[0].path).await.unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
 
-    let log = log.lock().unwrap().clone();
+    let log = log.lock().clone();
     let commands: Vec<String> = log
         .iter()
         .filter_map(|l| l.split("] \"").nth(1))
@@ -238,12 +239,8 @@ async fn scan_groups_and_types() {
     let ttl = keys[b"session".as_slice()].ttl_ms.expect("a TTL");
     assert!(ttl > 590_000 && ttl <= 600_000, "{ttl}");
     assert_eq!(keys[b"tags".as_slice()].ttl_ms, None);
-    let users: Vec<Vec<u8>> = scan_all(kv, "user:*")
-        .await
-        .into_iter()
-        .map(|k| k.name)
-        .collect();
-    assert_eq!(users.len(), 2);
+    let users = scan_all(kv, "user:*").await.len();
+    assert_eq!(users, 2);
 
     // The explorer: non-empty databases (and the configured one), then prefix groups.
     let root = conn.browse(&NodePath::root()).await.unwrap();

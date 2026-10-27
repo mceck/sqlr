@@ -4,7 +4,8 @@
 //! statement. A stream closed early first stops the statement with `KILL QUERY` (from the
 //! control connection), then reads what is left.
 
-use std::sync::{Arc, Mutex as StdMutex};
+use parking_lot::Mutex as StdMutex;
+use std::sync::Arc;
 
 use mysql_async::prelude::Queryable;
 use mysql_async::{BinaryProtocol, Column, Conn, Params, QueryResult, Row, TextProtocol};
@@ -108,7 +109,7 @@ impl QueryConn {
 async fn collect_warnings(conn: &mut Conn, notices: &Notices) {
     match conn.query::<Row, _>("SHOW WARNINGS").await {
         Ok(rows) => {
-            let mut list = notices.lock().unwrap_or_else(|e| e.into_inner());
+            let mut list = notices.lock();
             for row in rows {
                 let field = |i| match row.as_ref(i) {
                     Some(mysql_async::Value::Bytes(b)) => String::from_utf8_lossy(b).into_owned(),

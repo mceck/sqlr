@@ -1,6 +1,8 @@
 //! SQLite driver for sqlr: one worker thread per connection owns the `rusqlite::Connection`
 //! (spec §5.6). Values keep SQLite's dynamic typing: each cell is decoded by its storage class.
 
+#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+
 mod admin;
 mod browse;
 mod catalog;

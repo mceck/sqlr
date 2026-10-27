@@ -12,9 +12,13 @@ pub use spill::{SpillBacking, SpillEncoding};
 /// The physical kind of a column: how its values are stored in a chunk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ColumnKind {
+    /// Booleans.
     Bool,
+    /// 64-bit signed integers.
     Int,
+    /// 64-bit floats.
     Float,
+    /// UTF-8 text (offsets over a string arena).
     Text,
     /// Raw bytes (offsets over a byte arena).
     Bytes,
@@ -25,33 +29,51 @@ pub enum ColumnKind {
 /// How a column's values are shown; the physical kind stays one of [`ColumnKind`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum DisplayHint {
+    /// Shown as the value reads.
     Plain,
+    /// A number, right-aligned.
     Number,
     /// Exact numbers carried as text (`numeric`, `DECIMAL`).
     Decimal,
+    /// A date, time or timestamp.
     Temporal,
+    /// A time interval.
     Interval,
+    /// A JSON document.
     Json,
+    /// An XML document.
     Xml,
+    /// A UUID.
     Uuid,
+    /// An array value.
     Array,
+    /// A geometry or geography value.
     Geometry,
+    /// Binary data, shown in hex.
     Binary,
 }
 
 /// The table column a result column was read from, when the server reports it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct ColumnOrigin {
+    /// The table the column belongs to.
     pub table: TableRef,
+    /// The column's name in that table.
     pub column: String,
 }
 
+/// Name, type and display properties of one result column.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ColumnMeta {
+    /// Column name or alias as the result names it.
     pub name: String,
+    /// Type name as the server reports it.
     pub type_name: String,
+    /// How values are stored in a chunk.
     pub kind: ColumnKind,
+    /// How values are shown.
     pub hint: DisplayHint,
+    /// The table column it was read from, when known.
     pub origin: Option<ColumnOrigin>,
 }
 
@@ -72,6 +94,7 @@ impl ColumnMeta {
         }
     }
 
+    /// The column with `origin` set.
     pub fn with_origin(mut self, origin: Option<ColumnOrigin>) -> Self {
         self.origin = origin;
         self
@@ -81,11 +104,17 @@ impl ColumnMeta {
 /// A borrowed view of one cell.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Cell<'a> {
+    /// SQL `NULL`.
     Null,
+    /// A boolean.
     Bool(bool),
+    /// An integer.
     Int(i64),
+    /// A float.
     Float(f64),
+    /// Text.
     Text(&'a str),
+    /// Bytes.
     Bytes(&'a [u8]),
 }
 
@@ -167,12 +196,25 @@ impl fmt::Display for Cell<'_> {
     }
 }
 
+/// Why a row cannot be pushed to a [`ChunkBuilder`].
 #[derive(Debug, thiserror::Error, PartialEq)]
 pub enum ChunkError {
+    /// The row has a different number of cells than the chunk has columns.
     #[error("row has {got} cells, expected {expected}")]
-    Arity { expected: usize, got: usize },
+    Arity {
+        /// Number of columns.
+        expected: usize,
+        /// Number of cells in the row.
+        got: usize,
+    },
+    /// A cell does not fit the kind of its column.
     #[error("cell {col} does not match column kind {kind:?}")]
-    KindMismatch { col: usize, kind: ColumnKind },
+    KindMismatch {
+        /// Index of the cell.
+        col: usize,
+        /// The kind the column stores.
+        kind: ColumnKind,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -321,6 +363,7 @@ impl Column {
     }
 }
 
+/// Builds a [`ResultChunk`] row by row; a driver fills one per fetched page.
 pub struct ChunkBuilder {
     columns: Arc<[ColumnMeta]>,
     data: Vec<Column>,
@@ -328,6 +371,7 @@ pub struct ChunkBuilder {
 }
 
 impl ChunkBuilder {
+    /// A builder for rows over `columns`.
     pub fn new(columns: Arc<[ColumnMeta]>) -> Self {
         let data = columns
             .iter()
@@ -386,14 +430,17 @@ impl ChunkBuilder {
         Ok(())
     }
 
+    /// Number of rows pushed so far.
     pub fn len(&self) -> usize {
         self.len
     }
 
+    /// Whether no row was pushed.
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
 
+    /// Ends the builder and returns the immutable chunk.
     pub fn finish(self) -> ResultChunk {
         ResultChunk {
             columns: self.columns,
@@ -404,6 +451,7 @@ impl ChunkBuilder {
     }
 }
 
+/// An immutable, columnar block of result rows: the unit drivers stream and the engine stores. Cheap to clone; may be backed by spill storage.
 #[derive(Clone, Debug)]
 pub struct ResultChunk {
     columns: Arc<[ColumnMeta]>,
@@ -420,14 +468,17 @@ enum ChunkData {
 }
 
 impl ResultChunk {
+    /// The columns of every row.
     pub fn columns(&self) -> &Arc<[ColumnMeta]> {
         &self.columns
     }
 
+    /// Number of rows.
     pub fn len(&self) -> usize {
         self.len
     }
 
+    /// Whether the chunk has no row.
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -497,6 +548,7 @@ impl ResultChunk {
         }
     }
 
+    /// Whether the payload is read from spill storage rather than held in memory.
     pub fn is_spilled(&self) -> bool {
         matches!(self.data.as_ref(), ChunkData::Mapped(_))
     }

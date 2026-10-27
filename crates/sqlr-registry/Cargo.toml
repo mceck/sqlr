@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+parking_lot.workspace = true
 sqlr-core = { path = "../sqlr-core" }
 sqlr-sidecar = { path = "../sqlr-sidecar" }
 flate2 = "1"
@@ -29,3 +30,6 @@ sqlr-testkit = { path = "../sqlr-testkit" }
 minisign = "0.7"
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "net", "io-util", "time"] }
+
+[lints]
+workspace = true

@@ -44,7 +44,7 @@ impl LayeredSettings {
         match read_toml(&dir.join(SETTINGS_FILE)) {
             Ok(Some(table)) => me.global = read_global(&table),
             Ok(None) => {}
-            Err(e) => notice.corrupt = Some(keep_corrupt(dir, SETTINGS_FILE, e)),
+            Err(e) => notice.corrupt = Some(keep_corrupt(dir, SETTINGS_FILE, &e)),
         }
         match read_toml(&dir.join(OVERRIDES_FILE)) {
             Ok(Some(table)) => {
@@ -53,7 +53,7 @@ impl LayeredSettings {
             }
             Ok(None) => {}
             Err(e) => {
-                let message = keep_corrupt(dir, OVERRIDES_FILE, e);
+                let message = keep_corrupt(dir, OVERRIDES_FILE, &e);
                 notice.corrupt = Some(match notice.corrupt {
                     Some(first) => format!("{first}; {message}"),
                     None => message,
@@ -180,23 +180,23 @@ impl LayeredSettings {
     pub fn set(
         &mut self,
         id: &str,
-        level: Level,
+        level: &Level,
         value: Option<SettingValue>,
     ) -> Result<(), String> {
         let def: &SettingDef = setting_def(id).ok_or_else(|| format!("unknown setting {id}"))?;
-        if level != Level::Global && def.levels == Levels::GlobalOnly {
+        if *level != Level::Global && def.levels == Levels::GlobalOnly {
             return Err(format!("{} can only be set globally", def.label));
         }
         if let Some(v) = &value {
             def.check(v)?;
-            if def.safety == Safety::TightenOnly && level != Level::Global && !v.as_bool() {
+            if def.safety == Safety::TightenOnly && *level != Level::Global && !v.as_bool() {
                 return Err(format!(
                     "{} can only be switched on for a profile or a connection; clear the override instead",
                     def.label
                 ));
             }
         }
-        let layer = match &level {
+        let layer = match level {
             Level::Global => &mut self.global,
             Level::Profile(p) => self.profiles.entry(p.clone()).or_default(),
             Level::Connection(c) => self.connections.entry(c.clone()).or_default(),
@@ -245,7 +245,7 @@ fn read_toml(path: &Path) -> Result<Option<toml::Table>, String> {
 }
 
 /// Copies an unreadable file aside and says so.
-pub(crate) fn keep_corrupt(dir: &Path, name: &str, error: String) -> String {
+pub(crate) fn keep_corrupt(dir: &Path, name: &str, error: &str) -> String {
     let from = dir.join(name);
     let to = dir.join(format!("{name}.corrupt"));
     let kept = std::fs::copy(&from, &to).is_ok();

@@ -1,7 +1,7 @@
 //! Incremental native DuckDB results, bounded by the requested chunk size.
 
+use parking_lot::Mutex;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::mpsc;
 
 use duckdb::Rows;

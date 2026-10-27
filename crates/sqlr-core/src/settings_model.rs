@@ -6,21 +6,29 @@ use std::sync::LazyLock;
 /// A setting's value; [`SettingKind`] says which variant a key takes.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SettingValue {
+    /// A switch.
     Bool(bool),
+    /// A whole number.
     Int(i64),
+    /// A decimal number.
     Float(f64),
+    /// Free text.
     Text(String),
     /// One of a [`SettingKind::Choice`]'s ids.
     Choice(String),
+    /// An RGB color.
     Color([u8; 3]),
+    /// A file or directory path.
     Path(String),
 }
 
 impl SettingValue {
+    /// The boolean; any other kind reads as false.
     pub fn as_bool(&self) -> bool {
         matches!(self, Self::Bool(true))
     }
 
+    /// The integer; a float is truncated and any other kind reads as 0.
     pub fn as_i64(&self) -> i64 {
         match self {
             Self::Int(i) => *i,
@@ -29,6 +37,7 @@ impl SettingValue {
         }
     }
 
+    /// The float; an integer is widened and any other kind reads as 0.
     pub fn as_f64(&self) -> f64 {
         match self {
             Self::Float(f) => *f,
@@ -37,6 +46,7 @@ impl SettingValue {
         }
     }
 
+    /// The text of a text, choice or path value; any other kind reads as empty.
     pub fn as_str(&self) -> &str {
         match self {
             Self::Text(s) | Self::Choice(s) | Self::Path(s) => s,
@@ -59,21 +69,33 @@ impl SettingValue {
 /// The type of a setting, with its limits.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SettingKind {
+    /// A switch.
     Bool,
+    /// A whole number within `min..=max`.
     Int {
+        /// Lowest accepted value.
         min: i64,
+        /// Highest accepted value.
         max: i64,
     },
+    /// A decimal number within `min..=max`.
     Float {
+        /// Lowest accepted value.
         min: f64,
+        /// Highest accepted value.
         max: f64,
+        /// Increment of the editor widget.
         step: f64,
     },
+    /// Free text.
     Text,
     /// `(id, label)` pairs.
     Choice(&'static [(&'static str, &'static str)]),
+    /// An RGB color.
     Color,
+    /// A file or directory path.
     Path {
+        /// Whether the path is a directory rather than a file.
         dir: bool,
     },
 }
@@ -81,6 +103,7 @@ pub enum SettingKind {
 /// The levels a setting may be set at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Levels {
+    /// Only the global level.
     GlobalOnly,
     /// Global, connection profile and connection.
     All,
@@ -89,6 +112,7 @@ pub enum Levels {
 /// Whether a lower level may loosen a higher one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Safety {
+    /// Any level may set it freely.
     None,
     /// A safety flag: a profile or connection can switch it on, never off.
     TightenOnly,
@@ -97,6 +121,7 @@ pub enum Safety {
 /// Where a value was set.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Level {
+    /// The built-in level every setting starts from.
     Global,
     /// A connection profile, by id.
     Profile(String),
@@ -104,15 +129,25 @@ pub enum Level {
     Connection(String),
 }
 
+/// One entry of the settings catalogue: what a key is, how it is edited and where it may be overridden.
 pub struct SettingDef {
+    /// The dotted key, e.g. `formatter.keyword_case`.
     pub id: &'static str,
+    /// The section of the settings dialog it is listed under.
     pub section: &'static str,
+    /// The short name shown next to the editor.
     pub label: &'static str,
+    /// One sentence explaining the setting.
     pub description: &'static str,
+    /// Extra words a search matches besides the label.
     pub keywords: &'static [&'static str],
+    /// The type of the value, with its limits.
     pub kind: SettingKind,
+    /// The value used until one is set.
     pub default: SettingValue,
+    /// The levels the setting may be set at.
     pub levels: Levels,
+    /// Whether a lower level may loosen it.
     pub safety: Safety,
     /// Whether an MCP agent may read the value.
     pub agent_readable: bool,
@@ -256,22 +291,28 @@ pub fn search_settings(q: &str) -> Vec<&'static SettingDef> {
         .collect()
 }
 
+/// The definition of the setting `id`, when the catalogue has it.
 pub fn setting_def(id: &str) -> Option<&'static SettingDef> {
     setting_defs().iter().find(|d| d.id == id)
 }
 
+/// The `(id, label)` choices of the theme setting.
 pub const THEMES: &[(&str, &str)] = &[("system", "System"), ("light", "Light"), ("dark", "Dark")];
+/// The `(id, label)` choices for showing booleans in a grid.
 pub const BOOL_FORMATS: &[(&str, &str)] = &[
     ("true_false", "true / false"),
     ("one_zero", "1 / 0"),
     ("check", "✓ / ✗"),
 ];
+/// The `(id, label)` choices for showing binary values.
 pub const BINARY_FORMATS: &[(&str, &str)] = &[
     ("hex", "Hex"),
     ("base64", "Base64"),
     ("utf8", "UTF-8 when valid, else hex"),
 ];
+/// The `(id, label)` choices for showing JSON values.
 pub const JSON_FORMATS: &[(&str, &str)] = &[("compact", "Compact"), ("pretty", "Pretty")];
+/// The `(id, label)` choices for the digit grouping of numbers.
 pub const GROUPINGS: &[(&str, &str)] = &[
     ("none", "None"),
     ("comma", "1,234,567"),
@@ -279,7 +320,10 @@ pub const GROUPINGS: &[(&str, &str)] = &[
     ("underscore", "Underscore (1_234_567)"),
 ];
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one argument per SettingDef field, written positionally in the static table; a builder would only add noise"
+)]
 fn def(
     id: &'static str,
     section: &'static str,

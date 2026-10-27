@@ -37,6 +37,10 @@ pub(crate) fn is_connection_error(e: &RedisError) -> bool {
     e.is_io_error() || e.is_connection_dropped() || e.is_unrecoverable_error()
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "used as a `map_err` function pointer, which receives the error by value"
+)]
 pub(crate) fn map_error(e: RedisError) -> DriverError {
     if let Some(code) = e.code()
         && is_cluster_code(code)

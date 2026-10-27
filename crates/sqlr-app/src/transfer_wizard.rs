@@ -368,10 +368,10 @@ impl TransferWizard {
                             FileKind::Json => TextFormat::Json,
                             FileKind::JsonLines => TextFormat::JsonLines,
                             FileKind::SqlInsert => TextFormat::SqlInsert {
-                                table: path
-                                    .file_stem()
-                                    .map(|s| s.to_string_lossy().into_owned())
-                                    .unwrap_or_else(|| "data".into()),
+                                table: path.file_stem().map_or_else(
+                                    || "data".into(),
+                                    |s| s.to_string_lossy().into_owned(),
+                                ),
                             },
                             _ => TextFormat::Csv(CsvOptions::default()),
                         },

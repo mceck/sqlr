@@ -17,6 +17,7 @@ pub struct SpillEncoding {
 }
 
 impl SpillEncoding {
+    /// The encoded payload, to hand to the storage that will back it.
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
     }

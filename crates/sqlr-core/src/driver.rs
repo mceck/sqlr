@@ -16,15 +16,21 @@ use crate::syntax::{LexState, SqlSyntax, TokenKind};
 use crate::table::{TableInfo, TableRef};
 use crate::value::Value;
 
+/// What the server reports about itself.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ServerInfo {
+    /// The product name.
     pub product: String,
+    /// The server version.
     pub version: String,
 }
 
+/// A database driver: describes itself with a manifest and opens connections.
 #[async_trait::async_trait]
 pub trait Driver: Send + Sync {
+    /// The driver's manifest: its family, capabilities and connection fields.
     fn manifest(&self) -> &DriverManifest;
+    /// Opens a connection for the saved `cfg`, with the secrets entered or read from the vault.
     async fn connect(
         &self,
         cfg: &ConnectionConfig,
@@ -41,11 +47,16 @@ pub trait Driver: Send + Sync {
     }
 }
 
+/// An open connection to a server, shared by the explorer and the sessions.
 #[async_trait::async_trait]
 pub trait Connection: Send + Sync {
+    /// Checks that the server answers and returns what it reports about itself.
     async fn ping(&self) -> Result<ServerInfo, DriverError>;
+    /// The children of the node at `path`.
     async fn browse(&self, path: &NodePath) -> Result<Vec<Node>, DriverError>;
+    /// A handle that cancels the running statement and stays valid while the connection is busy.
     fn cancel_handle(&self) -> Arc<dyn CancelHandle>;
+    /// The relational family of the connection (SQL); `None` for other families.
     fn relational(&self) -> Option<&dyn RelationalConn> {
         None
     }
@@ -79,18 +90,25 @@ pub trait Connection: Send + Sync {
     }
 }
 
+/// Cancels what a connection is running, from another task.
 #[async_trait::async_trait]
 pub trait CancelHandle: Send + Sync {
+    /// Asks the server to cancel the current statement.
     async fn cancel(&self) -> Result<(), DriverError>;
 }
 
+/// What running a statement produced.
 pub enum Execution {
+    /// A stream of result chunks.
     Rows(Box<dyn RowStream>),
+    /// The number of rows a statement changed.
     Affected(u64),
 }
 
+/// The relational family of a driver: runs SQL and describes its dialect.
 #[async_trait::async_trait]
 pub trait RelationalConn: Send + Sync {
+    /// Runs `sql` as is.
     async fn execute(&self, sql: &str) -> Result<Execution, DriverError>;
     /// Runs `sql` with `params` bound to its placeholders ([`Dialect::placeholder`]).
     async fn execute_with(&self, _sql: &str, _params: &[Value]) -> Result<Execution, DriverError> {
@@ -185,6 +203,7 @@ pub trait RelationalConn: Send + Sync {
     async fn check_origin(&self, _table: &TableRef) -> Result<(), DriverError> {
         Ok(())
     }
+    /// The dialect of the connection.
     fn dialect(&self) -> &dyn Dialect;
     /// Tables, views and columns of `schema`, for autocomplete.
     async fn catalog(&self, _schema: &str) -> Result<SchemaCatalog, DriverError> {
@@ -192,8 +211,10 @@ pub trait RelationalConn: Send + Sync {
     }
 }
 
+/// The result chunks of one statement, read page by page.
 #[async_trait::async_trait]
 pub trait RowStream: Send {
+    /// The columns of the result.
     fn columns(&self) -> Arc<[ColumnMeta]>;
     /// Next chunk of at most `max_rows` rows; `Ok(None)` once the result is exhausted.
     async fn next_chunk(&mut self, max_rows: usize) -> Result<Option<ResultChunk>, DriverError>;
@@ -201,10 +222,13 @@ pub trait RowStream: Send {
     async fn close(&mut self) -> Result<(), DriverError>;
 }
 
+/// How a database writes SQL: quoting, placeholders, transaction statements and syntax.
 pub trait Dialect: Send + Sync {
+    /// `ident` quoted as one identifier, with embedded quotes doubled.
     fn quote_ident(&self, ident: &str) -> String;
     /// `SELECT * FROM <object>` (+ ` LIMIT n`) for nodes whose kind opens data; `None` otherwise.
     fn select_all(&self, node: &Node, limit: Option<usize>) -> Option<String>;
+    /// The lexical rules of the dialect; ANSI by default.
     fn syntax(&self) -> Arc<SqlSyntax> {
         SqlSyntax::ansi()
     }
@@ -232,6 +256,7 @@ pub trait Dialect: Send + Sync {
             None => self.quote_ident(&table.name),
         }
     }
+    /// The statement that starts a transaction.
     fn begin_sql(&self) -> &'static str {
         "BEGIN"
     }
@@ -249,9 +274,11 @@ pub trait Dialect: Send + Sync {
     fn savepoint_starts_transaction(&self) -> bool {
         false
     }
+    /// The statement that sets the savepoint `name`.
     fn savepoint_sql(&self, name: &str) -> String {
         format!("SAVEPOINT {}", self.quote_ident(name))
     }
+    /// The statement that rolls back to the savepoint `name`.
     fn rollback_to_sql(&self, name: &str) -> String {
         format!("ROLLBACK TO SAVEPOINT {}", self.quote_ident(name))
     }
@@ -429,7 +456,9 @@ pub fn merge_sql(
 /// Loads object definitions from the server's catalogs.
 #[async_trait::async_trait]
 pub trait Introspect: Send + Sync {
+    /// Loads the definition of one object.
     async fn load_object(&self, object: &ObjectRef) -> Result<ObjectDef, DriverError>;
+    /// The roles (users and groups) of the server.
     async fn list_roles(&self) -> Result<Vec<String>, DriverError>;
     /// Every table (with its columns, constraints, indexes and triggers), view, sequence
     /// and routine of `schema` on `database` (the connection's own when `None`), read in a

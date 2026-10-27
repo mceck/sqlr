@@ -90,10 +90,10 @@ fn which(name: &str) -> bool {
 
 /// A short label for the panel header: the shell's file name and the directory.
 pub fn summary(spec: &CommandSpec) -> String {
-    let shell = PathBuf::from(&spec.program)
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| spec.program.clone());
+    let shell = PathBuf::from(&spec.program).file_name().map_or_else(
+        || spec.program.clone(),
+        |s| s.to_string_lossy().into_owned(),
+    );
     format!("{shell} · {}", spec.cwd.display())
 }
 

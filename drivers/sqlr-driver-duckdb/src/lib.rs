@@ -1,5 +1,8 @@
 //! DuckDB sidecar driver: the bundled engine, with one worker thread per connection.
 //! Sessions of one connection share a native database inside the sidecar process.
+
+#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+
 mod catalog;
 mod dialect;
 mod execute;
@@ -155,6 +158,10 @@ impl CancelHandle for DuckdbCancel {
     }
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "used as a `map_err` function pointer, which receives the error by value"
+)]
 pub(crate) fn map_error(error: duckdb::Error) -> DriverError {
     let message = error.to_string();
     let lower = message.to_ascii_lowercase();

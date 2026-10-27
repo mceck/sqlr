@@ -10,11 +10,14 @@
 //!
 //! Protocol: <https://docs.snowflake.com/en/developer-guide/sql-api/reference>.
 
+#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+
 mod catalog;
 mod protocol;
 #[cfg(test)]
 mod tests;
 
+use parking_lot::Mutex;
 use reqwest::{
     Client, Url,
     header::{AUTHORIZATION, HeaderMap, HeaderValue},
@@ -22,7 +25,7 @@ use reqwest::{
 use serde_json::{Value as Json, json};
 use sqlr_core::*;
 use std::sync::{
-    Arc, Mutex,
+    Arc,
     atomic::{AtomicBool, Ordering},
 };
 use std::time::Duration;
@@ -154,24 +157,23 @@ impl Driver for SnowflakeDriver {
             .value(&self.manifest, "auth_type")
             .unwrap_or("OAUTH")
             .to_ascii_uppercase();
-        if !matches!(
-            auth_type.as_str(),
-            "OAUTH" | "KEYPAIR_JWT" | "PROGRAMMATIC_ACCESS_TOKEN"
-        ) {
-            return Err(DriverError::new(
-                ErrorKind::Auth,
-                "Unsupported Snowflake authentication type",
-            ));
-        }
+        let auth_type = match auth_type.as_str() {
+            "OAUTH" => HeaderValue::from_static("OAUTH"),
+            "KEYPAIR_JWT" => HeaderValue::from_static("KEYPAIR_JWT"),
+            "PROGRAMMATIC_ACCESS_TOKEN" => HeaderValue::from_static("PROGRAMMATIC_ACCESS_TOKEN"),
+            _ => {
+                return Err(DriverError::new(
+                    ErrorKind::Auth,
+                    "Unsupported Snowflake authentication type",
+                ));
+            }
+        };
         let mut headers = HeaderMap::new();
         let mut authorization = HeaderValue::from_str(&format!("Bearer {token}"))
             .map_err(|_| DriverError::new(ErrorKind::Auth, "Invalid Snowflake access token"))?;
         authorization.set_sensitive(true);
         headers.insert(AUTHORIZATION, authorization);
-        headers.insert(
-            "X-Snowflake-Authorization-Token-Type",
-            HeaderValue::from_str(&auth_type).unwrap(),
-        );
+        headers.insert("X-Snowflake-Authorization-Token-Type", auth_type);
         headers.insert("Accept", HeaderValue::from_static("application/json"));
         headers.insert("Content-Type", HeaderValue::from_static("application/json"));
         let _ = rustls::crypto::ring::default_provider().install_default();
@@ -277,7 +279,7 @@ struct QueryGuard {
 }
 impl Drop for QueryGuard {
     fn drop(&mut self) {
-        let mut active = self.active.lock().unwrap();
+        let mut active = self.active.lock();
         if active.as_ref().is_some_and(|q| Arc::ptr_eq(q, &self.query)) {
             *active = None;
         }
@@ -296,7 +298,7 @@ impl Query {
     }
     async fn cancel(&self) -> Result<(), DriverError> {
         self.cancelled.store(true, Ordering::Release);
-        let handle = self.handle.lock().unwrap().clone();
+        let handle = self.handle.lock().clone();
         if let Some(handle) = handle {
             self.api.cancel(&handle).await?;
         }
@@ -314,7 +316,7 @@ struct SnowflakeCancel {
 #[async_trait::async_trait]
 impl CancelHandle for SnowflakeCancel {
     async fn cancel(&self) -> Result<(), DriverError> {
-        let query = self.active.lock().unwrap().clone();
+        let query = self.active.lock().clone();
         if let Some(query) = query {
             query.cancel().await?;
         }
@@ -371,7 +373,7 @@ impl RelationalConn for SnowflakeConnection {
             cancelled: AtomicBool::new(false),
             api: self.api.clone(),
         });
-        *self.active.lock().unwrap() = Some(query.clone());
+        *self.active.lock() = Some(query.clone());
         let guard = QueryGuard {
             query: query.clone(),
             active: self.active.clone(),
@@ -395,10 +397,10 @@ impl RelationalConn for SnowflakeConnection {
         loop {
             if let Some(handle) = response.get("statementHandle").and_then(Json::as_str) {
                 protocol::validate_handle(handle)?;
-                *query.handle.lock().unwrap() = Some(handle.into());
+                *query.handle.lock() = Some(handle.into());
             }
             if query.cancelled.load(Ordering::Acquire) {
-                let handle = query.handle.lock().unwrap().clone();
+                let handle = query.handle.lock().clone();
                 if let Some(handle) = handle {
                     let _ = self.api.cancel(&handle).await;
                 }
@@ -407,7 +409,7 @@ impl RelationalConn for SnowflakeConnection {
             if !matches!(status, 202 | 429) {
                 break;
             }
-            let handle = query.handle.lock().unwrap().clone().ok_or_else(|| {
+            let handle = query.handle.lock().clone().ok_or_else(|| {
                 if status == 429 {
                     DriverError::new(
                         ErrorKind::Timeout,
@@ -429,12 +431,7 @@ impl RelationalConn for SnowflakeConnection {
                 )
                 .await?;
         }
-        let handle = query
-            .handle
-            .lock()
-            .unwrap()
-            .clone()
-            .ok_or_else(protocol::invalid)?;
+        let handle = query.handle.lock().clone().ok_or_else(protocol::invalid)?;
         // The SQL API reference does not promise statementTypeId; when available use
         // the server's DML family IDs from Snowflake's official Python connector:
         // https://github.com/snowflakedb/snowflake-connector-python/blob/main/src/snowflake/connector/cursor.py
@@ -451,7 +448,7 @@ impl RelationalConn for SnowflakeConnection {
                 Some("INSERT" | "UPDATE" | "DELETE" | "MERGE")
             )
         };
-        let mut stream = protocol::Stream::new(self.api.clone(), handle, response, guard)?;
+        let mut stream = protocol::Stream::new(self.api.clone(), handle, &response, guard)?;
         if dml {
             let mut affected = 0u64;
             while let Some(chunk) = stream.next_chunk(128).await? {

@@ -28,7 +28,10 @@ use crate::objects::AfterApply;
 
 /// An administration tab's content. It always lives boxed in its dock tab, so the
 /// variants' sizes do not matter.
-#[allow(clippy::large_enum_variant)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "one tab is alive per administration pane and is accessed on every frame; boxing the larger variants would add an indirection to each access to save a few hundred bytes of one value"
+)]
 pub enum AdminTab {
     Users(UsersTab),
     Sessions(SessionsTab),

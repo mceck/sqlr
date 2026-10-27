@@ -10,67 +10,104 @@ use crate::schema::ConstraintDef;
 use crate::table::{TableColumn, TableRef};
 use crate::value::Value;
 
+/// How the values of one generated column are produced.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Generator {
+    /// Consecutive numbers.
     Sequence {
+        /// The first value.
         start: i64,
+        /// The increment between rows.
         step: i64,
     },
+    /// Random whole numbers in a range.
     IntRange {
+        /// The lowest value.
         min: i64,
+        /// The highest value.
         max: i64,
     },
+    /// Random decimal numbers in a range.
     FloatRange {
+        /// The lowest value.
         min: f64,
+        /// The highest value.
         max: f64,
+        /// Digits kept after the decimal point.
         decimals: u32,
     },
+    /// Random exact decimals.
     Decimal {
+        /// Total number of digits.
         precision: u32,
+        /// Digits after the decimal point.
         scale: u32,
     },
+    /// Random booleans.
     Bool {
+        /// Share of rows that are true.
         true_ratio: f32,
     },
     /// Days since 1970-01-01.
     DateRange {
+        /// First day of the range.
         from: i64,
+        /// Last day of the range.
         to: i64,
     },
     /// Seconds since 1970-01-01 00:00:00 UTC.
     TimestampRange {
+        /// First instant of the range.
         from: i64,
+        /// Last instant of the range.
         to: i64,
     },
+    /// A random UUID.
     Uuid,
+    /// A first name.
     FirstName,
+    /// A last name.
     LastName,
+    /// A full name.
     FullName,
     /// Built from the row's name columns when it has any.
     Email,
+    /// A phone number.
     Phone,
+    /// A city name.
     City,
+    /// A country name.
     Country,
+    /// A company name.
     Company,
+    /// Lorem ipsum text.
     Lorem {
+        /// Number of words.
         words: u32,
     },
     /// `#` a digit, `?` a letter, `*` a letter or digit, anything else as written.
     Pattern(String),
+    /// One value picked at random from a list.
     OneOf(Vec<String>),
+    /// The same text in every row.
     Constant(String),
     /// A key of another table, picked from the keys read from it.
     ForeignKey {
+        /// The table the keys come from.
         table: TableRef,
+        /// The key column of that table.
         column: String,
     },
     /// Left to the database: the column is not written.
     Default,
 }
 
+/// How one column of a generated table gets its values.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ColumnGen {
+    /// The column name.
     pub column: String,
+    /// The generator for its values.
     pub generator: Generator,
     /// Share of rows that get NULL instead. Not applied to a unique column; the dialog only
     /// offers it for nullable columns.
@@ -79,11 +116,16 @@ pub struct ColumnGen {
     pub unique: bool,
 }
 
+/// What to generate: which table, how many rows and how each column is filled.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DataGenSpec {
+    /// The table to fill.
     pub table: TableRef,
+    /// Number of rows to generate.
     pub rows: u64,
+    /// Seed of the random generator: the same seed gives the same rows.
     pub seed: u64,
+    /// One entry per column to write.
     pub columns: Vec<ColumnGen>,
 }
 
@@ -795,7 +837,7 @@ mod tests {
             colgen(
                 "user_id",
                 Generator::ForeignKey {
-                    table: table.clone(),
+                    table,
                     column: "id".into(),
                 },
             ),

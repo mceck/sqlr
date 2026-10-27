@@ -16,3 +16,6 @@ sqlr-driver-sqlite = { path = "../sqlr-driver-sqlite" }
 async-trait.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "io-std", "time"] }
+
+[lints]
+workspace = true

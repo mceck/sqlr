@@ -85,7 +85,7 @@ impl Editing<'_> {
             && effective.as_bool()
             && from != *self.scope;
 
-        let mut edited = effective.clone();
+        let mut edited = effective;
         let mut changed = false;
         let mut reset = false;
         ui.add_space(Spacing::XS);
@@ -220,7 +220,7 @@ impl Editing<'_> {
         };
         *self.error = self
             .live
-            .set(def.id, self.scope.clone(), value)
+            .set(def.id, self.scope, value)
             .err()
             .map(|e| format!("Could not change the setting: {e}"));
     }

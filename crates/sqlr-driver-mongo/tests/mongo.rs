@@ -721,9 +721,8 @@ async fn auth_failure_message() {
         .expect("right password");
 
     let bad = Secrets([("password".to_string(), "wrong".to_string())].into());
-    let e = match connect_to(&server, &user, &bad).await {
-        Ok(_) => panic!("a wrong password must fail"),
-        Err(e) => e,
+    let Err(e) = connect_to(&server, &user, &bad).await else {
+        panic!("a wrong password must fail")
     };
     assert_eq!(e.kind, ErrorKind::Auth, "{e:?}");
     assert!(e.message.contains("Authentication failed"), "{}", e.message);

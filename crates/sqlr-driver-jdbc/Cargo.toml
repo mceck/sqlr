@@ -17,3 +17,6 @@ sqlr-sidecar = { path = "../sqlr-sidecar" }
 sha2 = "0.11"
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
+
+[lints]
+workspace = true

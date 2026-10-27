@@ -325,8 +325,7 @@ impl McpServer {
         let token = match options.token_store.get() {
             Ok(Some(token)) => token,
             Ok(None) => {
-                let token =
-                    generate_token().map_err(|e| StartError::Keychain(e.message.clone()))?;
+                let token = generate_token().map_err(|e| StartError::Keychain(e.message))?;
                 options
                     .token_store
                     .set(&token)

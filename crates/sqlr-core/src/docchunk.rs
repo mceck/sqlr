@@ -37,6 +37,7 @@ impl std::fmt::Display for DocChunkFull {
 
 impl std::error::Error for DocChunkFull {}
 
+/// A Doc chunk: a page of documents in one contiguous encoded buffer, the document counterpart of a Result chunk.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DocChunk {
     buf: Vec<u8>,
@@ -45,6 +46,7 @@ pub struct DocChunk {
 }
 
 impl DocChunk {
+    /// A chunk holding `docs` in order.
     pub fn from_docs(docs: &[DocValue]) -> Self {
         let mut chunk = DocChunk::default();
         for d in docs {
@@ -73,10 +75,12 @@ impl DocChunk {
         Ok(())
     }
 
+    /// The number of documents.
     pub fn len(&self) -> usize {
         self.offsets.len()
     }
 
+    /// Whether the chunk holds no document.
     pub fn is_empty(&self) -> bool {
         self.offsets.is_empty()
     }
@@ -87,6 +91,7 @@ impl DocChunk {
         decode(&self.buf, &mut at)
     }
 
+    /// The documents, decoded one by one.
     pub fn docs(&self) -> impl Iterator<Item = DocValue> + '_ {
         (0..self.len()).map(|i| self.doc(i))
     }
@@ -316,7 +321,9 @@ fn take_str(buf: &[u8], at: &mut usize) -> String {
 }
 
 fn take_array<const N: usize>(buf: &[u8], at: &mut usize) -> [u8; N] {
-    take(buf, at, N).try_into().unwrap()
+    take(buf, at, N)
+        .try_into()
+        .expect("take returns exactly N bytes")
 }
 
 fn decode(buf: &[u8], at: &mut usize) -> DocValue {

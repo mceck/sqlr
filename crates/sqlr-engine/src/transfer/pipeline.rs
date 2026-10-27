@@ -322,7 +322,10 @@ impl Shared {
     /// on (one connection cannot read a statement and write at the same time); the error
     /// is the outcome the job ends with.
     // The error is the outcome the job ends with, which is large by nature.
-    #[allow(clippy::result_large_err)]
+    #[expect(
+        clippy::result_large_err,
+        reason = "the error is a `JobOutcome` the caller returns as is when the source cannot be opened (cancelled, unsupported or failed); boxing it would only add an allocation on a path taken once per job"
+    )]
     pub(super) async fn open_source(
         self: &Arc<Self>,
         job: &JobControl,
@@ -723,7 +726,10 @@ impl Shared {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the job, session, I/O, records, table, mapping, options and optional new table are independent borrows of the transfer pipeline; grouping them would need a struct built at the single call site"
+    )]
     async fn records_to_table(
         self: &Arc<Self>,
         job: &JobControl,

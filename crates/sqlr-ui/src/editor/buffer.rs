@@ -35,7 +35,10 @@ pub struct TextBuffer {
 }
 
 impl TextBuffer {
-    #[allow(clippy::should_implement_trait)]
+    #[expect(
+        clippy::should_implement_trait,
+        reason = "an inherent infallible constructor taking `&str`; `FromStr` would force a `Result` return for an operation that cannot fail"
+    )]
     pub fn from_str(s: &str) -> Self {
         Self {
             rope: Rope::from_str(s),

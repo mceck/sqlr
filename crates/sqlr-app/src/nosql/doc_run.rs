@@ -30,13 +30,12 @@ impl SqlrApp {
         let language = self
             .connection(conn)
             .and_then(|c| self.manifest(&c.driver))
-            .map(|m| m.language())
-            .unwrap_or(sqlr_core::QueryLanguage::MongoShell);
+            .map_or(sqlr_core::QueryLanguage::MongoShell, |m| m.language());
         let page = self.settings.page_size;
         let key = self.new_tab(Some(title), Some(conn.to_string()), text);
         if let Some(tab) = self.tab(key) {
             doc_editor(&mut tab.editor, language);
-            tab.database = database.clone();
+            tab.database = database;
             tab.doc = Some(Box::new(DocTab::new(conn.to_string(), language, page)));
         }
         if run {

@@ -275,25 +275,21 @@ pub(crate) fn compute(
             .collect();
         view.sort_by(|&a, &b| {
             for (c, desc, values) in &prepared {
-                let cells = values.is_none().then(|| {
+                let pair = || {
                     (
                         rows.cell(a, *c).unwrap_or(Cell::Null),
                         rows.cell(b, *c).unwrap_or(Cell::Null),
                     )
-                });
+                };
+                let cells = values.is_none().then(pair);
                 let compare = || {
-                    let (x, y) = cells.unwrap_or_else(|| {
-                        (
-                            rows.cell(a, *c).unwrap_or(Cell::Null),
-                            rows.cell(b, *c).unwrap_or(Cell::Null),
-                        )
-                    });
+                    let (x, y) = cells.unwrap_or_else(pair);
                     compare_values(&columns[*c], x, y)
                 };
                 let (null_a, null_b) = if let Some(v) = values {
                     (v[a].null, v[b].null)
                 } else {
-                    let (x, y) = cells.unwrap();
+                    let (x, y) = cells.unwrap_or_else(pair);
                     (x == Cell::Null, y == Cell::Null)
                 };
                 let ord = match (null_a, null_b) {

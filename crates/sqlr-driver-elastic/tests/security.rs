@@ -73,9 +73,8 @@ async fn ambiguous_console_paths_never_reach_the_server() {
             "POST /idx/_search/..\\_delete_by_query\n{}",
             "POST /idx/_search?query=x#fragment\n{}",
         ] {
-            let error = match documents.run(None, sql).await {
-                Err(error) => error,
-                Ok(_) => panic!("ambiguous path was sent: {sql}"),
+            let Err(error) = documents.run(None, sql).await else {
+                panic!("ambiguous path was sent: {sql}")
             };
             assert_eq!(error.kind, ErrorKind::Syntax, "{sql}: {error}");
         }

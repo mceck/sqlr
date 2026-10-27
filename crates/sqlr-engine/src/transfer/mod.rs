@@ -132,7 +132,7 @@ pub(crate) enum Work {
     },
 }
 
-fn io_error(path: &Path, e: std::io::Error) -> DriverError {
+fn io_error(path: &Path, e: &std::io::Error) -> DriverError {
     DriverError::new(ErrorKind::Other, format!("{}: {e}", path.display()))
 }
 
@@ -140,8 +140,7 @@ fn io_error(path: &Path, e: std::io::Error) -> DriverError {
 fn partial_path(path: &Path) -> PathBuf {
     let name = path
         .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "export".into());
+        .map_or_else(|| "export".into(), |n| n.to_string_lossy().into_owned());
     path.with_file_name(format!(".{name}.sqlr-partial"))
 }
 
@@ -160,7 +159,7 @@ impl OutFile {
         let partial = partial_path(&target);
         let file = tokio::fs::File::create(&partial)
             .await
-            .map_err(|e| io_error(&partial, e))?;
+            .map_err(|e| io_error(&partial, &e))?;
         Ok(Self {
             file,
             partial,
@@ -178,7 +177,7 @@ impl OutFile {
         self.file
             .write_all(self.pending.as_bytes())
             .await
-            .map_err(|e| io_error(&self.partial, e))?;
+            .map_err(|e| io_error(&self.partial, &e))?;
         self.bytes += self.pending.len() as u64;
         self.pending.clear();
         Ok(())
@@ -189,11 +188,11 @@ impl OutFile {
         self.file
             .flush()
             .await
-            .map_err(|e| io_error(&self.partial, e))?;
+            .map_err(|e| io_error(&self.partial, &e))?;
         drop(self.file);
         tokio::fs::rename(&self.partial, &self.target)
             .await
-            .map_err(|e| io_error(&self.target, e))?;
+            .map_err(|e| io_error(&self.target, &e))?;
         Ok(self.target)
     }
 
@@ -474,7 +473,10 @@ impl Shared {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the job, session, I/O, database, SQL, format and path are independent values of one export run; grouping them would need a struct built at the single call site"
+    )]
     async fn export_rerun(
         self: &Arc<Self>,
         job: &JobControl,
@@ -596,7 +598,10 @@ impl Shared {
 
     /// Writes `rows` into `target`: creates it first when `create` says so, then inserts (or
     /// upserts) every mapped row in one transaction, or in one per batch.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the job, session, I/O, row source, target, mapping, options and optional new table are independent borrows of the transfer pipeline; grouping them would need a struct built at the single call site"
+    )]
     pub(super) async fn import(
         self: &Arc<Self>,
         job: &JobControl,

@@ -395,16 +395,12 @@ pub fn snippet_dialog(
                             .desired_width(f32::INFINITY),
                     );
                     theme::field_label(ui, "Scope");
-                    let current = draft
-                        .conn_id
-                        .as_ref()
-                        .map(|id| {
-                            conns
-                                .iter()
-                                .find(|(i, _)| i == id)
-                                .map_or(id.as_str(), |(_, name)| name.as_str())
-                        })
-                        .unwrap_or("Global");
+                    let current = draft.conn_id.as_ref().map_or("Global", |id| {
+                        conns
+                            .iter()
+                            .find(|(i, _)| i == id)
+                            .map_or(id.as_str(), |(_, name)| name.as_str())
+                    });
                     ComboBox::from_id_salt("snippet_scope")
                         .selected_text(current)
                         .show_ui(ui, |ui| {

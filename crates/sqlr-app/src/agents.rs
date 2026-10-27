@@ -157,7 +157,7 @@ impl AgentHost for AppHostClient {
                 SettingLevel::Connection => Level::Connection(level_id.unwrap_or_default()),
             };
             app.layered
-                .set(&id, level, value)
+                .set(&id, &level, value)
                 .map_err(ToolError::invalid)?;
             app.reload_live_settings();
             app.save_settings_now();
@@ -220,7 +220,11 @@ impl AgentHost for AppHostClient {
     }
 
     async fn folder(&self, op: FolderOp) -> ToolResult<()> {
-        self.request(move |app| app.agent_folder(op)).await
+        self.request(move |app| {
+            app.agent_folder(op);
+            Ok(())
+        })
+        .await
     }
 
     async fn delete(&self, target: &str, id: &str) -> ToolResult<()> {
@@ -406,7 +410,10 @@ impl AgentsUi {
 
     /// Starts or stops the server to follow the settings. Called after every frame that
     /// changes them.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the enabled flag, port, engine, host, data directory, token store and repaint callback are independent dependencies handed over once per frame by the app; a parameter struct would be built per frame only to be unpacked here"
+    )]
     pub fn sync(
         &mut self,
         enabled: bool,
@@ -538,7 +545,7 @@ impl AgentsUi {
             .map_err(|e| e.to_string())?;
         let (running, result) = rx.recv().map_err(|e| e.to_string())?;
         self.running = Some(running);
-        result.map_err(|e| e.to_string())
+        result
     }
 }
 
@@ -737,7 +744,7 @@ impl SqlrApp {
         Ok(())
     }
 
-    fn agent_folder(&mut self, op: FolderOp) -> ToolResult<()> {
+    fn agent_folder(&mut self, op: FolderOp) {
         use crate::store_worker::StoreOp;
         let target = match op {
             FolderOp::Create { name } => StoreOp::CreateFolder(name),
@@ -757,7 +764,6 @@ impl SqlrApp {
         };
         self.store.send(target);
         self.notify("Agent updated a folder".to_string());
-        Ok(())
     }
 
     fn agent_delete(&mut self, target: &str, id: &str) -> ToolResult<()> {
@@ -868,10 +874,10 @@ impl SqlrApp {
         let changes = match edit {
             TabEdit::Replace(text) => tab.editor.replace_all(&text),
             TabEdit::Edits(edits) => tab.editor.replace_ranges(
-                edits
+                &edits
                     .into_iter()
                     .map(|edit| (edit.start..edit.end, edit.text))
-                    .collect(),
+                    .collect::<Vec<_>>(),
             ),
         };
         if let Some(first) = changes.first() {
@@ -928,7 +934,7 @@ impl SqlrApp {
         self.settings.agents_enabled = enabled;
         if let Err(error) = self.layered.set(
             "agents.enabled",
-            Level::Global,
+            &Level::Global,
             Some(SettingValue::Bool(enabled)),
         ) {
             self.notify(format!("Could not change agent access: {error}"));
@@ -1395,17 +1401,14 @@ mod tests {
         );
         app.agent_folder(FolderOp::Create {
             name: "work".into(),
-        })
-        .unwrap();
+        });
         app.agent_folder(FolderOp::Rename {
             from: "work".into(),
             to: "renamed".into(),
-        })
-        .unwrap();
+        });
         app.agent_folder(FolderOp::Create {
             name: "parent".into(),
-        })
-        .unwrap();
+        });
         for target in [
             sqlr_mcp::host::MoveTarget::End,
             sqlr_mcp::host::MoveTarget::Before {
@@ -1421,8 +1424,7 @@ mod tests {
             app.agent_folder(FolderOp::Move {
                 name: "renamed".into(),
                 target,
-            })
-            .unwrap();
+            });
         }
         app.agent_delete("folder", "parent/renamed").unwrap();
         app.agent_delete("task", "missing").unwrap();

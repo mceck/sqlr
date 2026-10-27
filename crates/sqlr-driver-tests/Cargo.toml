@@ -9,3 +9,6 @@ description = "The conformance suite every sqlr driver must pass, in-process or 
 [dependencies]
 sqlr-core = { path = "../sqlr-core" }
 tokio = { workspace = true, features = ["time", "rt", "macros"] }
+
+[lints]
+workspace = true

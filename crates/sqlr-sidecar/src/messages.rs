@@ -17,60 +17,94 @@ pub const PROTOCOL: &str = "1.0.0";
 /// Client → driver.
 #[derive(Clone, Serialize, Deserialize)]
 pub enum Request {
+    /// The first message: the client offers its protocol version and expects `Welcome`.
     Hello {
+        /// The client's protocol version, as in [`PROTOCOL`].
         protocol: String,
+        /// The version of sqlr that started the driver.
         sqlr_version: String,
     },
     /// Connection secrets cross the pipe here.
     Connect {
+        /// The id the client gives the new connection.
         conn: u64,
+        /// The saved connection configuration.
         config: ConnectionConfig,
+        /// The secrets for the connection.
         secrets: Secrets,
     },
     /// Another database on the same server, as connection `new_conn`.
     ConnectDatabase {
+        /// The id of the connection to open it from.
         conn: u64,
+        /// The id the client gives the new connection.
         new_conn: u64,
+        /// The database to connect to.
         database: String,
     },
+    /// Checks that a connection still answers.
     Ping {
+        /// The connection to ping.
         conn: u64,
     },
+    /// Lists the children of a node.
     Browse {
+        /// The connection to browse.
         conn: u64,
+        /// The node whose children are listed.
         path: NodePath,
     },
     /// Runs `sql`; `params` binds placeholders when present.
     Execute {
+        /// The connection to run on.
         conn: u64,
+        /// The statement text.
         sql: String,
+        /// Values bound to the placeholders of `sql`, in order.
         params: Option<Vec<Value>>,
     },
     /// Up to `max` more rows of a stream: chunk frames, then `FetchDone`.
     Fetch {
+        /// The stream id from `Rows`.
         stream: u64,
+        /// The most rows to send.
         max: u32,
     },
+    /// Releases a stream's server resources.
     CloseStream {
+        /// The stream to close.
         stream: u64,
     },
+    /// Cancels the statement a connection is running.
     Cancel {
+        /// The connection to cancel on.
         conn: u64,
     },
+    /// Asks for the description of a table.
     Describe {
+        /// The connection to describe on.
         conn: u64,
+        /// The table to describe.
         table: TableRef,
     },
+    /// Asks for the tables, views and columns of a schema.
     Catalog {
+        /// The connection to read from.
         conn: u64,
+        /// The schema to read.
         schema: String,
     },
+    /// Asks for the messages the server sent since the last call.
     TakeNotices {
+        /// The connection to read from.
         conn: u64,
     },
+    /// Closes a connection and its streams.
     Disconnect {
+        /// The connection to close.
         conn: u64,
     },
+    /// Asks the driver to exit.
     Shutdown,
 }
 
@@ -150,38 +184,60 @@ impl fmt::Debug for Request {
 /// Driver → client.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Response {
+    /// The answer to `Hello`.
     Welcome {
+        /// The driver's protocol version.
         protocol: String,
+        /// The manifest of the driver.
         manifest: DriverManifest,
     },
+    /// The answer to `Connect` and `ConnectDatabase`.
     Connected {
+        /// What the server reports about itself.
         server_info: ServerInfo,
         /// Present for relational drivers.
         dialect: Option<DialectSpec>,
+        /// The database the connection is attached to, when the driver browses several.
         database_name: Option<String>,
+        /// The path whose children are the connection's schemas.
         schema_path: NodePath,
     },
+    /// The answer to `Ping`.
     Pong(ServerInfo),
+    /// The answer to `Browse`.
     Nodes(Vec<Node>),
+    /// The answer to `Execute` for a statement that returns rows; `Fetch` reads them.
     Rows {
+        /// The id of the stream to fetch from.
         stream: u64,
+        /// The columns of the result.
         columns: Vec<ColumnMeta>,
     },
+    /// The answer to `Execute` for a statement that returns no rows: how many it changed.
     Affected(u64),
+    /// The end of the chunk frames sent for a `Fetch`.
     FetchDone {
+        /// Whether the stream has no more rows.
         exhausted: bool,
     },
+    /// The answer to requests that return nothing.
     Ok,
+    /// The answer to `Describe`.
     Table(TableInfo),
+    /// The answer to `Catalog`.
     Catalog(SchemaCatalog),
+    /// The answer to `TakeNotices`.
     Notices(Vec<String>),
+    /// The request failed.
     Error(DriverError),
 }
 
+/// Encodes `message` as MessagePack with named fields.
 pub fn encode<T: Serialize>(message: &T) -> Vec<u8> {
     rmp_serde::to_vec_named(message).expect("protocol messages serialize")
 }
 
+/// Decodes a MessagePack message.
 pub fn decode<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> Result<T, rmp_serde::decode::Error> {
     rmp_serde::from_slice(bytes)
 }

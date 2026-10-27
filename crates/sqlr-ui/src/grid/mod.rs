@@ -524,7 +524,7 @@ impl GridState {
                         key.clone(),
                         RowOrder::Natural {
                             loaded: key.loaded,
-                            inserted: key.inserted.clone(),
+                            inserted: key.inserted,
                         },
                     ));
                 }
@@ -741,6 +741,7 @@ pub fn result_grid(
 }
 
 /// A context-menu choice, applied once the menu is drawn.
+#[derive(Clone, Copy)]
 enum MenuChoice {
     Undo,
     Redo,
@@ -838,8 +839,7 @@ pub fn data_grid(ui: &mut egui::Ui, state: &mut GridState, input: &GridInput<'_>
             .layout
             .take()
             .filter(|layout| layout.columns_key == columns_key)
-            .map(|layout| layout.manual_widths)
-            .unwrap_or_else(|| vec![None; columns.len()]);
+            .map_or_else(|| vec![None; columns.len()], |layout| layout.manual_widths);
         let mut layout = ColumnLayout {
             key,
             columns_key,

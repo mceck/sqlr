@@ -35,6 +35,10 @@ impl KeyringStore {
     }
 }
 
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "used as a `map_err` function pointer, which receives the error by value"
+)]
 fn secret_err(e: keyring::Error) -> StoreError {
     StoreError::Secret(e.to_string())
 }

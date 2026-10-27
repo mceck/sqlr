@@ -37,6 +37,7 @@ impl Drop for StoredSecret {
     }
 }
 
+#[derive(Clone, Copy)]
 enum Operation<'a> {
     Get,
     Set(&'a str),
@@ -171,11 +172,9 @@ impl VaultSecretStore {
             // The encrypted value/tombstone is already durable. On failure keep the
             // pending flag, the original keychain entry and a retryable error.
             legacy_delete()?;
-            data.get_mut(id)
-                .unwrap()
-                .get_mut(field)
-                .unwrap()
-                .legacy_pending = false;
+            if let Some(entry) = data.get_mut(id).and_then(|fields| fields.get_mut(field)) {
+                entry.legacy_pending = false;
+            }
             persist(&self.dir, key, &data)?;
         }
         Ok(if reading {
@@ -281,9 +280,10 @@ fn decrypt(key: &[u8; 32], bytes: Vec<u8>) -> Result<Data, StoreError> {
     if !bytes.starts_with(HEADER) || bytes.len() < HEADER.len() + NONCE_LEN + aead::MAX_TAG_LEN {
         return Err(invalid_vault());
     }
-    let nonce: [u8; NONCE_LEN] = bytes[HEADER.len()..HEADER.len() + NONCE_LEN]
-        .try_into()
-        .unwrap();
+    let Ok(nonce) = <[u8; NONCE_LEN]>::try_from(&bytes[HEADER.len()..HEADER.len() + NONCE_LEN])
+    else {
+        return Err(invalid_vault());
+    };
     let mut buffer = Zeroizing::new(bytes);
     let plaintext = cipher(key)?
         .open_in_place(

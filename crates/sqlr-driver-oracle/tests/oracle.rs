@@ -397,9 +397,8 @@ async fn wrong_password_is_an_auth_error() {
     )
     .await
     .expect("must not hang");
-    let err = match result {
-        Ok(_) => panic!("a wrong password fails"),
-        Err(e) => e,
+    let Err(err) = result else {
+        panic!("a wrong password fails")
     };
     assert_eq!(err.kind, ErrorKind::Auth, "{err:?}");
 }

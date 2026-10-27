@@ -164,7 +164,7 @@ pub struct EditRange {
     pub text: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum RunTarget {
     Script,
     Statement(usize),

@@ -84,8 +84,8 @@ impl EditorModel {
             return (0, Vec::new());
         }
         let count = found.len();
-        let reps = found.into_iter().map(|r| (r, with)).collect();
-        (count, self.replace_mapped(reps, now))
+        let reps: Vec<_> = found.into_iter().map(|r| (r, with)).collect();
+        (count, self.replace_mapped(&reps, now))
     }
 }
 

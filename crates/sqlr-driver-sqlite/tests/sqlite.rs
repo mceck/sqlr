@@ -106,9 +106,8 @@ async fn connect_and_ping() {
 async fn missing_file_without_create_fails() {
     let dir = tempfile::tempdir().unwrap();
     let cfg = config(&dir.path().join("missing.db"), false, false);
-    let err = match SqliteDriver::new().connect(&cfg, &Secrets::default()).await {
-        Ok(_) => panic!("opened a missing file"),
-        Err(e) => e,
+    let Err(err) = SqliteDriver::new().connect(&cfg, &Secrets::default()).await else {
+        panic!("opened a missing file")
     };
     assert_eq!(err.kind, ErrorKind::Connection);
 }
@@ -127,14 +126,13 @@ async fn read_only_refuses_writes() {
         .await
         .unwrap();
     assert_eq!(query(&ro, "SELECT x FROM t").await, [[Value::Int(1)]]);
-    let err = match ro
+    let Err(err) = ro
         .relational()
         .unwrap()
         .execute("INSERT INTO t VALUES (2)")
         .await
-    {
-        Ok(_) => panic!("write allowed on a read-only connection"),
-        Err(e) => e,
+    else {
+        panic!("write allowed on a read-only connection")
     };
     assert_eq!(err.kind, ErrorKind::Permission, "{err:?}");
 }
@@ -148,9 +146,8 @@ async fn read_only_enforced_by_server() {
     let rel = conn.relational().unwrap();
     let on = rel.dialect().read_only_sql(true).unwrap();
     exec(&conn, &on).await;
-    let err = match rel.execute("INSERT INTO t VALUES (1)").await {
-        Ok(_) => panic!("write allowed after {on}"),
-        Err(e) => e,
+    let Err(err) = rel.execute("INSERT INTO t VALUES (1)").await else {
+        panic!("write allowed after {on}")
     };
     assert!(err.message.contains("readonly"), "{err:?}");
     let off = rel.dialect().read_only_sql(false).unwrap();
@@ -537,18 +534,16 @@ async fn execute_with_binds_every_value_kind() {
             Value::Bytes(vec![0, 1, 255]),
         ]]
     );
-    let mut s = match rel
+    let Execution::Rows(mut s) = rel
         .execute_with("SELECT e FROM p WHERE c = ?", &[Value::Int(-9)])
         .await
         .unwrap()
-    {
-        Execution::Rows(s) => s,
-        Execution::Affected(_) => panic!("expected rows"),
+    else {
+        panic!("expected rows")
     };
     assert_eq!(values(&mut s).await, [[Value::Text("it's 😀".into())]]);
-    let err = match rel.execute_with("SELECT ?", &[]).await {
-        Ok(_) => panic!("missing parameter accepted"),
-        Err(e) => e,
+    let Err(err) = rel.execute_with("SELECT ?", &[]).await else {
+        panic!("missing parameter accepted")
     };
     assert_eq!(err.kind, ErrorKind::Other, "{err:?}");
 }
@@ -664,14 +659,13 @@ async fn dialect_sql_runs() {
     assert_eq!(query(&conn, "SELECT * FROM t").await.len(), 3);
 
     affected(&conn, &d.read_only_sql(true).unwrap()).await;
-    let err = match conn
+    let Err(err) = conn
         .relational()
         .unwrap()
         .execute("INSERT INTO t VALUES (3, 'q')")
         .await
-    {
-        Ok(_) => panic!("query_only allowed a write"),
-        Err(e) => e,
+    else {
+        panic!("query_only allowed a write")
     };
     assert_eq!(err.kind, ErrorKind::Permission, "{err:?}");
     affected(&conn, &d.read_only_sql(false).unwrap()).await;
@@ -681,9 +675,8 @@ async fn dialect_sql_runs() {
 #[tokio::test]
 async fn syntax_error_has_position() {
     let (_dir, conn) = temp_db().await;
-    let err = match conn.relational().unwrap().execute("SELECT 1 FROMM t").await {
-        Ok(_) => panic!("bad SQL accepted"),
-        Err(e) => e,
+    let Err(err) = conn.relational().unwrap().execute("SELECT 1 FROMM t").await else {
+        panic!("bad SQL accepted")
     };
     assert_eq!(err.kind, ErrorKind::Syntax, "{err:?}");
     assert!(err.position.is_some(), "{err:?}");

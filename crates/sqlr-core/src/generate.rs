@@ -7,13 +7,20 @@ use crate::schema::{ObjectDef, ObjectKind, TableDef};
 use crate::schema_change::SchemaChange;
 use crate::table::TableRef;
 
+/// A kind of statement the "Generate SQL" menu produces for an object.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SqlTemplate {
+    /// A `SELECT` of the object's columns.
     Select,
+    /// An `INSERT` with a value per column.
     Insert,
+    /// An `UPDATE` setting every column.
     Update,
+    /// A `DELETE` filtered by the key.
     Delete,
+    /// The DDL that creates the object.
     Create,
+    /// The statement that drops the object.
     Drop,
 }
 
@@ -94,6 +101,7 @@ fn drop_sql(def: &ObjectDef, d: &dyn Dialect) -> Result<String, DriverError> {
     Ok(format!("{sql};"))
 }
 
+/// The SQL of `template` for the object `def` in `dialect`; fails when the object kind or the dialect has no such template.
 pub fn generate_sql(
     template: SqlTemplate,
     def: &ObjectDef,

@@ -8,7 +8,8 @@
 //! or a server older than 7.12, runs one plain request. A body with aggregations or
 //! `size: 0` returns the response itself. Hits come back as `{_index, _id, …_source}`.
 
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 
 use serde_json::{Map, Value as Json, json};
 use sqlr_core::{
@@ -80,14 +81,14 @@ pub(crate) struct Running(Arc<Mutex<Option<String>>>);
 
 impl Running {
     pub(crate) fn start(slot: &Arc<Mutex<Option<String>>>, tag: &str) -> Self {
-        *slot.lock().unwrap() = Some(tag.to_string());
+        *slot.lock() = Some(tag.to_string());
         Self(slot.clone())
     }
 }
 
 impl Drop for Running {
     fn drop(&mut self) {
-        *self.0.lock().unwrap() = None;
+        *self.0.lock() = None;
     }
 }
 
@@ -316,10 +317,11 @@ fn syntax_error(text: &str, e: sqlr_core::ShellError) -> DriverError {
 /// The single request of `text`.
 pub(crate) fn parse_one(text: &str) -> Result<EsRequest, DriverError> {
     let mut reqs = parse_es_console(text).map_err(|e| syntax_error(text, e))?;
-    match reqs.len() {
-        1 => Ok(reqs.pop().unwrap().1),
-        0 => Err(DriverError::new(ErrorKind::Syntax, "nothing to run")),
-        n => Err(DriverError::new(
+    let n = reqs.len();
+    match (reqs.pop(), n) {
+        (Some((_, op)), 1) => Ok(op),
+        (_, 0) => Err(DriverError::new(ErrorKind::Syntax, "nothing to run")),
+        (_, n) => Err(DriverError::new(
             ErrorKind::Syntax,
             format!("the text holds {n} requests: run them one at a time or as a script"),
         )),

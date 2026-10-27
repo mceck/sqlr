@@ -23,3 +23,6 @@ sqlr-driver-sqlite = { path = "../sqlr-driver-sqlite" }
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time", "io-util"] }
 tracing-subscriber.workspace = true
+
+[lints]
+workspace = true

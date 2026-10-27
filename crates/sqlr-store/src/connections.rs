@@ -287,7 +287,7 @@ impl ConnectionRepo {
 
     /// Moves a folder (with its subfolders and connections) before or after another folder,
     /// into a folder, or to the end of the top level. Returns its new path.
-    pub fn move_folder(&self, name: &str, target: MoveTarget) -> Result<String, StoreError> {
+    pub fn move_folder(&self, name: &str, target: &MoveTarget) -> Result<String, StoreError> {
         let name = clean_folder_name(name)?;
         let mut file = self.read()?;
         materialize_folders(&mut file);
@@ -296,7 +296,7 @@ impl ConnectionRepo {
         }
         let prefix = format!("{name}/");
         let leaf = name.rsplit('/').next().unwrap_or(&name);
-        let parent = match &target {
+        let parent = match target {
             MoveTarget::Before(other) | MoveTarget::After(other) => {
                 let other = clean_folder_name(other)?;
                 if other == name || other.starts_with(&prefix) {

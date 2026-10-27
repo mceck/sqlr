@@ -28,10 +28,10 @@ fn job(engine: &Engine, id: JobId) -> JobOutcome {
     engine.job(id).unwrap().outcome.unwrap()
 }
 
-fn apply(engine: &Engine, conn: &str, statements: Vec<String>, transactional: bool) {
+fn apply(engine: &Engine, conn: &str, statements: &[String], transactional: bool) {
     let id = engine.apply_ddl(
         &SessionKey::meta(conn),
-        statements.clone(),
+        statements.to_vec(),
         ApplyOptions {
             transactional,
             ..Default::default()
@@ -98,7 +98,7 @@ pub fn create_alter_drop(
     let create = engine
         .preview_ddl(&conn, &[SchemaChange::Create(ObjectDef::Table(def))])
         .unwrap();
-    apply(&engine, &conn, create, transactional);
+    apply(&engine, &conn, &create, transactional);
     let JobOutcome::Object(ObjectDef::Table(loaded)) = load(&engine, &conn, &table) else {
         panic!("e2e did not load")
     };
@@ -108,7 +108,7 @@ pub fn create_alter_drop(
     after.columns[1].name = "label".into();
     after.columns.push(column("extra", int_type, true));
     let alter = engine.table_ddl(&conn, &loaded, &after).unwrap();
-    apply(&engine, &conn, alter, transactional);
+    apply(&engine, &conn, &alter, transactional);
     let JobOutcome::Object(ObjectDef::Table(altered)) = load(&engine, &conn, &table) else {
         panic!("e2e did not load")
     };
@@ -124,7 +124,7 @@ pub fn create_alter_drop(
             }],
         )
         .unwrap();
-    apply(&engine, &conn, drop, transactional);
+    apply(&engine, &conn, &drop, transactional);
     assert!(matches!(
         load(&engine, &conn, &table),
         JobOutcome::Failed(_)

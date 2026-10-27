@@ -78,9 +78,8 @@ async fn fake_document_connection_pages_and_edits() {
     assert_eq!(d.open_target_text(&target, 50), "db.c.find({}).limit(50)");
 
     d.set_read_only(true);
-    let e = match d.run(None, "db.c.insertOne({})").await {
-        Err(e) => e,
-        Ok(_) => panic!("read-only must refuse writes"),
+    let Err(e) = d.run(None, "db.c.insertOne({})").await else {
+        panic!("read-only must refuse writes")
     };
     assert_eq!(e.kind, ErrorKind::Permission);
     assert!(d.delete_doc(&target, &DocValue::Int32(1)).await.is_err());

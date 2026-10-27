@@ -278,12 +278,12 @@ mod tests {
         Text,
     }
 
-    fn encoded(value: Value, ty: Type) -> (Wire, Option<Vec<u8>>) {
-        let param = Param(&value);
+    fn encoded(value: &Value, ty: &Type) -> (Wire, Option<Vec<u8>>) {
+        let param = Param(value);
         let mut out = BytesMut::new();
-        let is_null = param.to_sql_checked(&ty, &mut out).unwrap();
+        let is_null = param.to_sql_checked(ty, &mut out).unwrap();
         let bytes = matches!(is_null, IsNull::No).then(|| out.to_vec());
-        let wire = match param.encode_format(&ty) {
+        let wire = match param.encode_format(ty) {
             Format::Text => Wire::Text,
             Format::Binary => Wire::Binary,
         };
@@ -293,42 +293,42 @@ mod tests {
     #[test]
     fn params_follow_the_target_type() {
         use Wire::{Binary, Text};
-        assert_eq!(encoded(Value::Null, Type::UUID).1, None);
+        assert_eq!(encoded(&Value::Null, &Type::UUID).1, None);
         assert_eq!(
-            encoded(Value::Int(7), Type::INT2),
+            encoded(&Value::Int(7), &Type::INT2),
             (Binary, Some(vec![0, 7]))
         );
         // Out of range for the binary form: the server reports the overflow.
         assert_eq!(
-            encoded(Value::Int(70_000), Type::INT2),
+            encoded(&Value::Int(70_000), &Type::INT2),
             (Text, Some(b"70000".to_vec()))
         );
         assert_eq!(
-            encoded(Value::Int(5), Type::NUMERIC),
+            encoded(&Value::Int(5), &Type::NUMERIC),
             (Text, Some(b"5".to_vec()))
         );
         assert_eq!(
-            encoded(Value::Bool(true), Type::BOOL),
+            encoded(&Value::Bool(true), &Type::BOOL),
             (Binary, Some(vec![1]))
         );
         assert_eq!(
-            encoded(Value::Bool(false), Type::TEXT),
+            encoded(&Value::Bool(false), &Type::TEXT),
             (Text, Some(b"false".to_vec()))
         );
         assert_eq!(
-            encoded(Value::Float(f64::NEG_INFINITY), Type::FLOAT4),
+            encoded(&Value::Float(f64::NEG_INFINITY), &Type::FLOAT4),
             (Text, Some(b"-Infinity".to_vec()))
         );
         assert_eq!(
-            encoded(Value::Bytes(vec![1, 2]), Type::BYTEA),
+            encoded(&Value::Bytes(vec![1, 2]), &Type::BYTEA),
             (Binary, Some(vec![1, 2]))
         );
         assert_eq!(
-            encoded(Value::Bytes(vec![1, 0xab]), Type::TEXT),
+            encoded(&Value::Bytes(vec![1, 0xab]), &Type::TEXT),
             (Text, Some(b"\\x01ab".to_vec()))
         );
         assert_eq!(
-            encoded(Value::Text("12.5".into()), Type::NUMERIC),
+            encoded(&Value::Text("12.5".into()), &Type::NUMERIC),
             (Text, Some(b"12.5".to_vec()))
         );
     }

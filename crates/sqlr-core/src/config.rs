@@ -5,15 +5,22 @@ use std::fmt;
 
 use crate::manifest::DriverManifest;
 
+/// A saved connection: which driver to use and its non-secret field values.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ConnectionConfig {
+    /// Stable identifier of the connection.
     pub id: String,
+    /// Display name.
     pub name: String,
+    /// Id of the driver (as in its manifest) that opens it.
     pub driver: String,
+    /// Name of the explorer group the connection is filed under.
     #[serde(default)]
     pub group: Option<String>,
+    /// Accent color as RGB, to tell connections apart.
     #[serde(default)]
     pub color: Option<[u8; 3]>,
+    /// Non-secret field values by field key; secrets live in the vault.
     #[serde(default)]
     pub values: BTreeMap<String, String>,
     /// The connection profile's id; `None` means the built-in `development` profile.
@@ -45,6 +52,7 @@ pub enum AgentAccess {
 }
 
 impl AgentAccess {
+    /// The lowercase name stored in configuration and shown to agents.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::None => "none",
@@ -58,6 +66,7 @@ impl AgentAccess {
         self != Self::None
     }
 
+    /// The access level named by `value` (`none`, `read`, `write`); `None` for anything else.
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "none" => Some(Self::None),
@@ -112,9 +121,12 @@ impl fmt::Debug for Secrets {
 /// The UI theme the user picked; `System` follows the OS light/dark setting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum ThemePref {
+    /// Follow the OS light/dark setting.
     #[default]
     System,
+    /// Always dark.
     Dark,
+    /// Always light.
     Light,
 }
 

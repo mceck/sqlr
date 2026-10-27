@@ -306,7 +306,7 @@ mod tests {
             ]
         );
         // The launcher then picks the first one that is new enough.
-        let javas: Vec<PathBuf> = homes.clone();
+        let javas: Vec<PathBuf> = homes;
         let found = find_java(&no_env, &[], &javas, &|_| Some(21)).unwrap();
         assert_eq!(found, asdf.join("openjdk-21/bin").join(java_name()));
     }

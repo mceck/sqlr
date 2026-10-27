@@ -204,7 +204,7 @@ impl Settings {
         for (id, value) in values {
             // Every field is in range here (the dialog clamps); a value that is not is
             // skipped and the old one stays.
-            let _ = layered.set(id, Level::Global, Some(value));
+            let _ = layered.set(id, &Level::Global, Some(value));
         }
     }
 

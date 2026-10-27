@@ -8,17 +8,23 @@ use crate::{Cell, ColumnMeta, Dialect, Encoder, RowBuffer, TextFormat, Value};
 /// Text plus owned cell values. `None` is an unselected hole, distinct from SQL NULL.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GridClipboard {
+    /// Metadata of the copied columns.
     pub columns: Vec<ColumnMeta>,
+    /// The copied values, one entry per row; `None` marks an unselected cell.
     pub rows: Vec<Vec<Option<Value>>>,
+    /// The same data encoded as text in the chosen format.
     pub text: String,
 }
 
 /// Clipboard data and its text are bounded together; larger transfers should use export.
 pub const MAX_CLIPBOARD_BYTES: usize = 128 * 1024 * 1024;
 
+/// A rectangular selection of the grid, in view coordinates.
 #[derive(Clone, Debug)]
 pub struct ClipboardRegion {
+    /// The selected view rows.
     pub rows: RangeInclusive<usize>,
+    /// The selected columns.
     pub cols: RangeInclusive<usize>,
 }
 
@@ -26,14 +32,19 @@ pub struct ClipboardRegion {
 /// chunks only clones their Arcs, so the UI can hand encoding to a background job.
 #[derive(Clone, Debug)]
 pub struct ClipboardSource {
+    /// The result rows the selection reads from.
     pub rows: RowBuffer,
     /// (view row, source row), including pending inserted rows.
     pub order: Vec<(usize, usize)>,
+    /// The selected source columns, in selection order.
     pub cols: Vec<usize>,
+    /// The selected rectangles.
     pub regions: Vec<ClipboardRegion>,
+    /// Pending cell edits by (view row, column), which replace the stored value.
     pub overrides: BTreeMap<(usize, usize), Value>,
 }
 
+/// Builds a `GridClipboard` row by row, enforcing `MAX_CLIPBOARD_BYTES`.
 pub struct ClipboardBuilder<'d> {
     data: GridClipboard,
     encoder: Encoder<'d>,
@@ -41,6 +52,7 @@ pub struct ClipboardBuilder<'d> {
 }
 
 impl<'d> ClipboardBuilder<'d> {
+    /// Starts a clipboard with `columns` and writes the header for `format`.
     pub fn new(
         columns: Vec<ColumnMeta>,
         format: TextFormat,
@@ -60,6 +72,7 @@ impl<'d> ClipboardBuilder<'d> {
         }
     }
 
+    /// Appends a row, failing when its width is wrong or the clipboard exceeds `MAX_CLIPBOARD_BYTES`.
     pub fn push(&mut self, row: Vec<Option<Value>>) -> Result<(), String> {
         if row.len() != self.data.columns.len() {
             return Err("Clipboard row width does not match its columns".into());
@@ -87,13 +100,16 @@ impl<'d> ClipboardBuilder<'d> {
         Ok(())
     }
 
+    /// The number of rows pushed so far.
     pub fn rows(&self) -> usize {
         self.data.rows.len()
     }
+    /// The size of the encoded text so far, in bytes.
     pub fn bytes(&self) -> usize {
         self.data.text.len()
     }
 
+    /// Writes the footer and returns the finished clipboard.
     pub fn finish(mut self) -> GridClipboard {
         self.encoder.footer(&mut self.data.text);
         self.data

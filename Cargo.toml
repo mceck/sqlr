@@ -82,6 +82,19 @@ objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSApplication", "NSImage", "NSResponder"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["NSAttributedString", "NSData", "NSDictionary", "NSString", "NSObject"] }
 
+# Rust best-practice gates (Architecture spec, "Code quality gates").
+[workspace.lints.clippy]
+redundant_clone = "warn"
+needless_collect = "warn"
+unnecessary_wraps = "warn"
+needless_pass_by_value = "warn"
+map_unwrap_or = "warn"
+manual_let_else = "warn"
+manual_ok_or = "warn"
+undocumented_unsafe_blocks = "warn"
+allow_attributes_without_reason = "warn"
+disallowed_types = "warn"
+
 # Tests need line tables, not full DWARF: this cuts link time and binary size significantly.
 # Dependencies keep no debug info; their frames still show by symbol in backtraces.
 # A debugging session can restore full info with `CARGO_PROFILE_DEV_DEBUG=2`.

@@ -1,8 +1,9 @@
 //! Connection setup for the MySQL/MariaDB driver.
 
+use parking_lot::Mutex as StdMutex;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use mysql_async::prelude::Queryable;
@@ -305,11 +306,7 @@ impl MyConnection {
     /// The server ids of this connection's own sessions: explorer, queries, the KILL
     /// side connection once opened, and the connections to other databases.
     pub(crate) fn own_ids(&self) -> Vec<u32> {
-        let others = self
-            .other_ids
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
+        let others = self.other_ids.lock().clone();
         [self.meta_id, self.query_id]
             .into_iter()
             .chain(self.killer.id())
@@ -333,10 +330,7 @@ impl MyConnection {
             .db_name(Some(database))
             .into();
         let conn = Arc::new(Self::open(opts, None, Some(database.to_string()), false).await?);
-        self.other_ids
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .extend([conn.meta_id, conn.query_id]);
+        self.other_ids.lock().extend([conn.meta_id, conn.query_id]);
         databases.insert(database.to_string(), conn.clone());
         Ok(conn)
     }
@@ -484,7 +478,7 @@ impl RelationalConn for MyConnection {
     }
 
     async fn take_notices(&self) -> Vec<String> {
-        std::mem::take(&mut *self.notices.lock().unwrap_or_else(|e| e.into_inner()))
+        std::mem::take(&mut *self.notices.lock())
     }
 
     fn dialect(&self) -> &dyn sqlr_core::Dialect {

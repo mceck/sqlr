@@ -58,3 +58,6 @@ reqwest.workspace = true
 mongodb.workspace = true
 rusqlite.workspace = true
 tokio = { workspace = true, features = ["macros"] }
+
+[lints]
+workspace = true

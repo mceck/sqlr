@@ -10,9 +10,13 @@ use crate::value::Value;
 /// How a server's explain output becomes a [`PlanTree`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExplainParser {
+    /// PostgreSQL `EXPLAIN (FORMAT JSON)`.
     PgJson,
+    /// MySQL `EXPLAIN FORMAT=TREE` text.
     MysqlTree,
+    /// MySQL `EXPLAIN FORMAT=JSON`.
     MysqlJson,
+    /// The rows of SQLite `EXPLAIN QUERY PLAN`.
     SqliteRows,
     /// The lines of `DBMS_XPLAN.DISPLAY`.
     OracleText,
@@ -69,9 +73,13 @@ impl ExplainParser {
 /// plan), then `after` (always, even when the plan failed).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExplainSpec {
+    /// Statements run before the explain statement (session setup).
     pub before: Vec<String>,
+    /// The statement whose result is the plan.
     pub sql: String,
+    /// Statements run afterwards to undo `before`.
     pub after: Vec<String>,
+    /// How to read the rows of `sql` into a plan tree.
     pub parser: ExplainParser,
 }
 
@@ -110,29 +118,43 @@ pub fn explain_check(syntax: &SqlSyntax, sql: &str) -> Result<String, DriverErro
     Ok(statement)
 }
 
+/// One operator of a query plan, with its estimates and measurements.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PlanNode {
+    /// The operator's name as the server prints it.
     pub label: String,
+    /// The operator type as the server names it, such as `Seq Scan`.
     pub kind: String,
+    /// The table or index it reads, when it reads one.
     pub relation: Option<String>,
     /// `(startup, total)` estimated cost.
     pub cost: Option<(f64, f64)>,
+    /// The estimated number of rows produced.
     pub rows_estimate: Option<f64>,
+    /// The measured number of rows produced.
     pub rows_actual: Option<f64>,
+    /// How many times the node ran.
     pub loops: Option<f64>,
     /// Inclusive time over all loops, in milliseconds.
     pub time_ms: Option<f64>,
     /// Time spent in the node itself.
     pub self_time_ms: Option<f64>,
+    /// Buffer or I/O counters by name.
     pub buffers: Vec<(String, i64)>,
+    /// Other server-specific attributes, in print order.
     pub extra: Vec<(String, String)>,
+    /// The operators this one feeds from.
     pub children: Vec<PlanNode>,
 }
 
+/// A query plan: the operator tree with the timings of the whole statement.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PlanTree {
+    /// The topmost operator.
     pub root: PlanNode,
+    /// Time the server spent planning, in milliseconds.
     pub planning_ms: Option<f64>,
+    /// Time the server spent executing, in milliseconds.
     pub execution_ms: Option<f64>,
     /// The plan as the server printed it.
     pub raw: String,
@@ -143,10 +165,15 @@ pub struct PlanTree {
 /// What an operator does, for the summary counts and the card colors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlanRole {
+    /// A join.
     Join,
+    /// A table or index scan.
     Scan,
+    /// A sort.
     Sort,
+    /// An aggregation.
     Aggregate,
+    /// Any other operator.
     Other,
 }
 
@@ -155,29 +182,37 @@ pub enum PlanRole {
 pub enum PlanIssueLevel {
     /// Worth knowing, not a problem (the plan carries no measured times).
     Note,
+    /// Something to fix or look at.
     Warning,
 }
 
 /// One thing the summary says about a plan node in plain words.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlanIssue {
+    /// How serious it is.
     pub level: PlanIssueLevel,
     /// The node the issue is about, as child indexes from the root (`[]` is the root).
     pub path: Vec<usize>,
     /// The node as "Seq Scan on orders"; empty for a plan-wide note.
     pub node: String,
+    /// What is wrong and what to do.
     pub message: String,
 }
 
 /// The composition of a plan and its issues: what the summary shows above the tree.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PlanInsights {
+    /// Number of operators in the plan.
     pub nodes: usize,
     /// The deepest node, the root counting as 1.
     pub depth: usize,
+    /// Number of join operators.
     pub joins: usize,
+    /// Number of scan operators.
     pub scans: usize,
+    /// Number of sort operators.
     pub sorts: usize,
+    /// Number of aggregate operators.
     pub aggregates: usize,
     /// Whether the plan carries measured times (`EXPLAIN ANALYZE`).
     pub timed: bool,
@@ -272,6 +307,7 @@ impl PlanTree {
         all.into_iter().take(n).map(|(_, p)| p).collect()
     }
 
+    /// The node at `path`, as child indexes from the root.
     pub fn node(&self, path: &[usize]) -> Option<&PlanNode> {
         path.iter().try_fold(&self.root, |n, &i| n.children.get(i))
     }
@@ -576,8 +612,7 @@ pub fn parse_mysql_tree(text: &str) -> Result<PlanTree, DriverError> {
                 .map(|t| t * loops.unwrap_or(1.0));
             n.rows_actual = numbers(part, "rows=");
         }
-        while stack.last().is_some_and(|(d, _)| *d >= depth) {
-            let (_, done) = stack.pop().unwrap();
+        while let Some((_, done)) = stack.pop_if(|(d, _)| *d >= depth) {
             match stack.last_mut() {
                 Some((_, parent)) => parent.children.push(done),
                 None => roots.push(done),
@@ -756,8 +791,7 @@ pub fn parse_oracle_text(text: &str) -> Result<PlanTree, DriverError> {
         {
             node.cost = Some((0.0, cost));
         }
-        while stack.last().is_some_and(|(d, _)| *d >= depth) {
-            let (_, done) = stack.pop().unwrap();
+        while let Some((_, done)) = stack.pop_if(|(d, _)| *d >= depth) {
             match stack.last_mut() {
                 Some((_, parent)) => parent.children.push(done),
                 None => roots.push(done),

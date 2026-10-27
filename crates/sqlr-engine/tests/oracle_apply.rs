@@ -62,7 +62,7 @@ fn engine() -> Engine {
     engine
 }
 
-fn default_insert(definition: &str, keys: &[&str], projection: &str, expected: Vec<Vec<Value>>) {
+fn default_insert(definition: &str, keys: &[&str], projection: &str, expected: &[Vec<Value>]) {
     let _lock = sqlr_testkit::TestLock::acquire("oracle");
     let engine = engine();
     let key = SessionKey::meta("o");
@@ -111,7 +111,7 @@ fn default_insert_accepts_a_virtual_primary_key() {
         "base NUMBER DEFAULT 7, virtual_id GENERATED ALWAYS AS (base + 0) VIRTUAL PRIMARY KEY",
         &["VIRTUAL_ID"],
         "base, virtual_id",
-        vec![vec![Value::Int(7), Value::Int(7)]],
+        &[vec![Value::Int(7), Value::Int(7)]],
     );
 }
 
@@ -122,7 +122,7 @@ fn default_insert_into_an_identity_only_table_needs_no_row_key() {
         "id NUMBER GENERATED ALWAYS AS IDENTITY",
         &[],
         "id",
-        vec![vec![Value::Int(1)]],
+        &[vec![Value::Int(1)]],
     );
 }
 

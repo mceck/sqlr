@@ -2439,7 +2439,7 @@ fn view_menu_toggles_soft_wrap() {
 
 #[test]
 fn settings_open_folder_spawns_opener() {
-    use std::sync::Mutex;
+    use parking_lot::Mutex;
 
     let dir = tempfile::tempdir().unwrap();
     let (deps, _) = deps_with(dir.path(), FakeScript::default());
@@ -2449,7 +2449,7 @@ fn settings_open_folder_spawns_opener() {
     let app = {
         let seen = seen.clone();
         let mut app = app;
-        app.set_folder_opener(move |path| seen.lock().unwrap().push(path.to_path_buf()));
+        app.set_folder_opener(move |path| seen.lock().push(path.to_path_buf()));
         app
     };
     let mut h = Harness::builder()
@@ -2464,7 +2464,7 @@ fn settings_open_folder_spawns_opener() {
     h.run_steps(2);
     h.get_by_label("Open settings folder").click();
     h.run_steps(2);
-    assert_eq!(*seen.lock().unwrap(), [config_dir]);
+    assert_eq!(*seen.lock(), [config_dir]);
 }
 
 // ----- Drivers that are not installed -----

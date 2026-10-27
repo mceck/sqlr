@@ -4,8 +4,8 @@
 
 mod support;
 
+use parking_lot::Mutex;
 use std::io::{BufRead, BufWriter, Read, Write};
-use std::sync::Mutex;
 
 use sqlr_core::{CsvOptions, Endpoint, TextFormat, TransferOptions, TransferSpec, read_rows};
 use sqlr_engine::{DriverRegistry, Engine, JobOutcome};
@@ -16,7 +16,10 @@ static SERIAL: Mutex<()> = Mutex::new(());
 
 /// The process's peak resident set size in bytes.
 fn peak_rss() -> u64 {
+    // SAFETY: `rusage` is a plain C struct of integers and timevals, for which the all-zero
+    // bit pattern is a valid value.
     let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
+    // SAFETY: `usage` is a valid, exclusively borrowed `rusage` that `getrusage` fills in.
     unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
     let max = usage.ru_maxrss as u64;
     // macOS reports bytes, Linux kilobytes.
@@ -93,7 +96,7 @@ impl BufRead for JsonArray {
 
 #[test]
 fn json_array_streamed() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = SERIAL.lock();
     let before = peak_rss();
     let mut rows = 0u64;
     read_rows(&TextFormat::Json, JsonArray::new(128 << 20), |_, _, _| {
@@ -112,7 +115,7 @@ fn json_array_streamed() {
 
 #[test]
 fn transfer_memory_bounded() {
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = SERIAL.lock();
     let dir = tempfile::tempdir().unwrap();
     let source = dir.path().join("big.csv");
     {
@@ -157,7 +160,7 @@ fn transfer_memory_bounded() {
 #[test]
 fn generator_memory_bounded() {
     use sqlr_core::{ColumnGen, DataGenSpec, Generator, TableRef};
-    let _guard = SERIAL.lock().unwrap();
+    let _guard = SERIAL.lock();
     let dir = tempfile::tempdir().unwrap();
     let engine = Engine::new(DriverRegistry::default(), no_repaint());
     let target = dir.path().join("gen.jsonl");

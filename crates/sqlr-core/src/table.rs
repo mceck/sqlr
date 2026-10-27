@@ -4,15 +4,22 @@
 /// connection can reach (MySQL databases, SQLite attached files use `schema`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct TableRef {
+    /// The database, when the connection reaches several.
     pub database: Option<String>,
+    /// The schema, when the database has them.
     pub schema: Option<String>,
+    /// The table or view name.
     pub name: String,
 }
 
+/// A column of a described table.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TableColumn {
+    /// Column name.
     pub name: String,
+    /// The type name as the server prints it.
     pub type_name: String,
+    /// Whether the column accepts NULL.
     pub nullable: bool,
     /// The default expression as the server prints it.
     pub default: Option<String>,
@@ -23,9 +30,12 @@ pub struct TableColumn {
     pub automatic: bool,
 }
 
+/// A table's columns and the keys that identify its rows.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct TableInfo {
+    /// The table described.
     pub table: TableRef,
+    /// Its columns, in ordinal order.
     pub columns: Vec<TableColumn>,
     /// Primary-key columns in key order; empty when the table has none.
     pub primary_key: Vec<String>,
@@ -34,6 +44,7 @@ pub struct TableInfo {
 }
 
 impl TableInfo {
+    /// The column called `name`.
     pub fn column(&self, name: &str) -> Option<&TableColumn> {
         self.columns.iter().find(|c| c.name == name)
     }

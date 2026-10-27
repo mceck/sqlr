@@ -15,13 +15,17 @@ pub enum CommitMode {
     Smart,
 }
 
+/// The settings a connection starts with: how it commits, what it confirms and whether it is read-only.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ConnectionProfile {
+    /// Stable identifier; the built-in profiles use the `DEVELOPMENT`, `TEST` and `PRODUCTION` ids.
     pub id: String,
+    /// Display name.
     pub name: String,
     /// Tints the connection wherever it shows; overrides the connection's own color.
     #[serde(default)]
     pub color: Option<[u8; 3]>,
+    /// How statements are committed.
     #[serde(default)]
     pub commit_mode: CommitMode,
     /// Ask before running statements that modify data.
@@ -30,6 +34,7 @@ pub struct ConnectionProfile {
     /// Ask before running destructive statements (DROP, TRUNCATE, DELETE without WHERE…).
     #[serde(default)]
     pub confirm_destructive: bool,
+    /// Refuse statements that may modify data.
     #[serde(default)]
     pub read_only: bool,
     /// Minutes an open transaction may stay idle before the user is asked about it.
@@ -38,8 +43,11 @@ pub struct ConnectionProfile {
 }
 
 impl ConnectionProfile {
+    /// Id of the built-in development profile.
     pub const DEVELOPMENT: &'static str = "development";
+    /// Id of the built-in test profile.
     pub const TEST: &'static str = "test";
+    /// Id of the built-in production profile.
     pub const PRODUCTION: &'static str = "production";
 
     /// The built-in profiles, with their fixed ids, in this order: development, test,

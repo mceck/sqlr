@@ -40,7 +40,7 @@ fn frame_decoder_rejects_malformed_input() {
     let max = (u32::MAX).to_be_bytes();
     assert!(matches!(decode_frame(&max), Err(FrameError::TooLarge(_))));
     // Unknown frame type.
-    let mut unknown = good.clone();
+    let mut unknown = good;
     unknown[4] = 0x7f;
     assert!(matches!(
         decode_frame(&unknown),

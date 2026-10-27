@@ -4,7 +4,8 @@
 //! egui's defaults stay as further fallbacks and include an emoji font (Noto Emoji); the system
 //! color-emoji fonts are bitmap formats egui cannot render, so only CJK is added here.
 
-use std::sync::{Arc, Mutex, OnceLock};
+use parking_lot::Mutex;
+use std::sync::{Arc, OnceLock};
 
 use sqlr_ui::theme;
 
@@ -52,7 +53,7 @@ pub fn install(ctx: &egui::Context) {
         "sqlr-cjk-fallback",
         Arc::new(move |ui| {
             let ctx = ui.ctx();
-            let mut load = state.lock().unwrap();
+            let mut load = state.lock();
             match *load {
                 Load::Installed | Load::Loading | Load::Failed => return,
                 Load::Ready => {
@@ -104,7 +105,7 @@ pub fn install(ctx: &egui::Context) {
                 .name("sqlr-cjk-font".into())
                 .spawn(move || {
                     let result = std::panic::catch_unwind(fallback_fonts);
-                    *state.lock().unwrap_or_else(|e| e.into_inner()) = if result.is_ok() {
+                    *state.lock() = if result.is_ok() {
                         Load::Ready
                     } else {
                         Load::Failed

@@ -10,35 +10,57 @@
 
 use std::fmt::Write as _;
 
+/// A document value in the BSON data model: what the Mongo Driver and the Doc chunk carry.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DocValue {
+    /// BSON null.
     Null,
+    /// A boolean.
     Bool(bool),
+    /// A 32-bit integer.
     Int32(i32),
+    /// A 64-bit integer.
     Int64(i64),
+    /// A 64-bit float.
     Double(f64),
     /// The decimal's canonical string (`"1.10"`), so no precision is lost.
     Decimal128(String),
+    /// UTF-8 text.
     String(String),
+    /// A 12-byte ObjectId.
     ObjectId([u8; 12]),
     /// Milliseconds since the Unix epoch, UTC.
     DateTime(i64),
+    /// Binary data with its BSON subtype.
     Binary {
+        /// The BSON binary subtype byte.
         subtype: u8,
+        /// The raw bytes.
         bytes: Vec<u8>,
     },
+    /// A regular expression.
     Regex {
+        /// The pattern, without delimiters.
         pattern: String,
+        /// The flag letters, sorted (`i`, `m`, ...).
         options: String,
     },
+    /// The internal BSON timestamp (not a date).
     Timestamp {
+        /// Seconds since the Unix epoch.
         t: u32,
+        /// Ordinal of the operation within that second.
         i: u32,
     },
+    /// Sorts before every other value.
     MinKey,
+    /// Sorts after every other value.
     MaxKey,
+    /// An ordered list of values.
     Array(Vec<DocValue>),
+    /// Fields in their stored order; names are kept as written.
     Document(Vec<(String, DocValue)>),
+    /// The deprecated BSON `undefined`.
     Undefined,
 }
 
@@ -577,6 +599,7 @@ pub fn new_object_id() -> [u8; 12] {
 
 const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
+/// Encodes `bytes` as standard base64 with `=` padding.
 pub fn base64_encode(bytes: &[u8]) -> String {
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
@@ -594,6 +617,7 @@ pub fn base64_encode(bytes: &[u8]) -> String {
     out
 }
 
+/// Decodes standard base64; the error message quotes the invalid text.
 pub fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
     let bad = || format!("invalid base64 \"{s}\"");
     let s = s.trim_end_matches('=');
@@ -679,7 +703,10 @@ pub fn parse_iso_date(s: &str) -> Result<i64, String> {
         if !part.iter().all(u8::is_ascii_digit) {
             return Err(bad());
         }
-        Ok(std::str::from_utf8(part).unwrap().parse().unwrap())
+        std::str::from_utf8(part)
+            .ok()
+            .and_then(|digits| digits.parse().ok())
+            .ok_or_else(bad)
     };
     let year = num(0, 4)?;
     if b.get(4) != Some(&b'-') || b.get(7) != Some(&b'-') {
@@ -731,7 +758,7 @@ pub fn parse_iso_date(s: &str) -> Result<i64, String> {
                 }
                 let frac = &s.trim()[start..i];
                 let milli: String = frac.chars().chain("000".chars()).take(3).collect();
-                ms += milli.parse::<i64>().unwrap();
+                ms += milli.parse::<i64>().map_err(|_| bad())?;
             }
         }
     }

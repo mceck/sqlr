@@ -668,7 +668,7 @@ mod tests {
         );
         let before = RoleDef {
             password: None,
-            ..new.clone()
+            ..new
         };
         let after = RoleDef {
             name: "c".into(),

@@ -29,7 +29,7 @@ impl OracleDriver {
 
 pub struct OracleConnection {
     /// The live connection; replaced when Oracle closes it (see [`Self::healed`]).
-    conn: std::sync::Mutex<Arc<OraConnection>>,
+    conn: parking_lot::Mutex<Arc<OraConnection>>,
     config: Config,
     service: String,
     dialect: OracleDialect,
@@ -139,7 +139,7 @@ impl Driver for OracleDriver {
             .await
             .map_err(map_error)?;
         Ok(Arc::new(OracleConnection {
-            conn: std::sync::Mutex::new(Arc::new(conn)),
+            conn: parking_lot::Mutex::new(Arc::new(conn)),
             config,
             service,
             dialect: OracleDialect,
@@ -150,7 +150,7 @@ impl Driver for OracleDriver {
 
 impl OracleConnection {
     fn conn(&self) -> Arc<OraConnection> {
-        self.conn.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.conn.lock().clone()
     }
 
     /// The connection to use: the current one, or a fresh one when Oracle has closed it (a
@@ -166,7 +166,7 @@ impl OracleConnection {
         match OraConnection::connect_with_config(self.config.clone()).await {
             Ok(fresh) => {
                 let fresh = Arc::new(fresh);
-                *self.conn.lock().unwrap_or_else(|e| e.into_inner()) = fresh.clone();
+                *self.conn.lock() = fresh.clone();
                 // The old session's transaction did not survive the new connection.
                 if self.explicit_transaction.swap(false, Ordering::SeqCst) {
                     return Err(DriverError::new(
@@ -241,7 +241,7 @@ impl OracleConnection {
             other => return other,
         };
         if let Ok(fresh) = OraConnection::connect_with_config(self.config.clone()).await {
-            *self.conn.lock().unwrap_or_else(|e| e.into_inner()) = Arc::new(fresh);
+            *self.conn.lock() = Arc::new(fresh);
             self.explicit_transaction.store(false, Ordering::SeqCst);
             error.message = format!(
                 "{} (the connection was reopened: an open transaction was lost)",
@@ -400,7 +400,7 @@ mod tests {
             .await
             .unwrap();
         OracleConnection {
-            conn: std::sync::Mutex::new(Arc::new(conn)),
+            conn: parking_lot::Mutex::new(Arc::new(conn)),
             config,
             service: "FREEPDB1".into(),
             dialect: OracleDialect,

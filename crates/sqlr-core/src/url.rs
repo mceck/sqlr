@@ -15,10 +15,15 @@ const PASSWORD_REFUSED: &str = "Remove the password from the URL; enter it in th
 pub struct ConnectionUrl {
     /// Lowercase.
     pub scheme: String,
+    /// User name, without a password.
     pub user: Option<String>,
+    /// Host name.
     pub host: Option<String>,
+    /// Port number.
     pub port: Option<u16>,
+    /// Database name.
     pub database: Option<String>,
+    /// File path of a file database.
     pub path: Option<String>,
     /// Query parameters in order, percent-decoded.
     pub params: Vec<(String, String)>,

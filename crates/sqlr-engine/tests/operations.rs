@@ -125,8 +125,9 @@ fn a_panic_in_a_background_job_settles_the_job_and_operation() {
 
 #[test]
 fn a_failed_query_logs_one_structured_line_subject_to_the_sql_setting() {
+    use parking_lot::Mutex;
     use sqlr_core::ErrorKind;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::OnceLock;
     use tracing::Subscriber;
     use tracing::field::{Field, Visit};
     use tracing_subscriber::Layer;
@@ -157,7 +158,7 @@ fn a_failed_query_logs_one_structured_line_subject_to_the_sql_setting() {
         ) {
             let mut visitor = Collector::default();
             event.record(&mut visitor);
-            events().lock().unwrap().push(Event {
+            events().lock().push(Event {
                 level: event.metadata().level().to_string(),
                 fields: visitor.0,
             });
@@ -204,7 +205,6 @@ fn a_failed_query_logs_one_structured_line_subject_to_the_sql_setting() {
     query("select bad");
     let lines: Vec<Event> = events()
         .lock()
-        .unwrap()
         .iter()
         .filter(|e| {
             e.fields.get("op").map(String::as_str) == Some("query")
@@ -231,7 +231,6 @@ fn a_failed_query_logs_one_structured_line_subject_to_the_sql_setting() {
     query("select bad again");
     let last = events()
         .lock()
-        .unwrap()
         .iter()
         .rev()
         .find(|e| e.fields.get("op").map(String::as_str) == Some("query"))
@@ -249,7 +248,7 @@ fn a_failed_query_logs_one_structured_line_subject_to_the_sql_setting() {
     )));
     engine.fetch_more(q);
     assert!(
-        wait_until(TIMEOUT, || events().lock().unwrap().iter().any(|e| e
+        wait_until(TIMEOUT, || events().lock().iter().any(|e| e
             .fields
             .get("op")
             .map(String::as_str)
@@ -267,7 +266,7 @@ fn a_failed_query_logs_one_structured_line_subject_to_the_sql_setting() {
         .outcome
         .is_some()));
     assert!(
-        wait_until(TIMEOUT, || events().lock().unwrap().iter().any(|e| e
+        wait_until(TIMEOUT, || events().lock().iter().any(|e| e
             .fields
             .get("op")
             .map(String::as_str)

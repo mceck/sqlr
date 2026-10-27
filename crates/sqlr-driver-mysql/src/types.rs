@@ -289,8 +289,8 @@ pub(crate) fn param(value: &sqlr_core::Value) -> Value {
 mod tests {
     use super::*;
 
-    fn cell(d: Decode, v: Value) -> String {
-        match decode(d, &v) {
+    fn cell(d: Decode, v: &Value) -> String {
+        match decode(d, v) {
             Ok(x) => format!("{:?}", x.cell()),
             Err(e) => format!("error: {}", e.message),
         }
@@ -299,75 +299,75 @@ mod tests {
     #[test]
     fn decodes_text_protocol() {
         let b = |s: &str| Value::Bytes(s.as_bytes().to_vec());
-        assert_eq!(cell(Decode::Int, b("-42")), "Int(-42)");
-        assert_eq!(cell(Decode::Float, b("1e3")), "Float(1000.0)");
+        assert_eq!(cell(Decode::Int, &b("-42")), "Int(-42)");
+        assert_eq!(cell(Decode::Float, &b("1e3")), "Float(1000.0)");
         assert_eq!(
-            cell(Decode::Unsigned, b("18446744073709551615")),
+            cell(Decode::Unsigned, &b("18446744073709551615")),
             "Text(\"18446744073709551615\")"
         );
-        assert_eq!(cell(Decode::Bool, Value::Bytes(vec![1])), "Bool(true)");
+        assert_eq!(cell(Decode::Bool, &Value::Bytes(vec![1])), "Bool(true)");
         assert_eq!(
-            cell(Decode::Bits { wide: false }, Value::Bytes(vec![1, 2])),
+            cell(Decode::Bits { wide: false }, &Value::Bytes(vec![1, 2])),
             "Int(258)"
         );
         assert_eq!(
-            cell(Decode::Bits { wide: true }, Value::Bytes(vec![0xff; 8])),
+            cell(Decode::Bits { wide: true }, &Value::Bytes(vec![0xff; 8])),
             "Text(\"18446744073709551615\")"
         );
         assert_eq!(
-            cell(Decode::Bytes, Value::Bytes(vec![0, 1])),
+            cell(Decode::Bytes, &Value::Bytes(vec![0, 1])),
             "Bytes([0, 1])"
         );
         assert_eq!(
-            cell(Decode::Text, Value::Bytes(vec![b'a', 0xff])),
+            cell(Decode::Text, &Value::Bytes(vec![b'a', 0xff])),
             "Text(\"a\u{fffd}\")"
         );
         assert_eq!(
             cell(
                 Decode::DateTime { decimals: 3 },
-                b("2024-01-02 03:04:05.123")
+                &b("2024-01-02 03:04:05.123")
             ),
             "Text(\"2024-01-02 03:04:05.123\")"
         );
-        assert_eq!(cell(Decode::Text, Value::NULL), "Null");
-        assert!(cell(Decode::Int, b("x")).starts_with("error"));
+        assert_eq!(cell(Decode::Text, &Value::NULL), "Null");
+        assert!(cell(Decode::Int, &b("x")).starts_with("error"));
     }
 
     #[test]
     fn decodes_binary_protocol() {
-        assert_eq!(cell(Decode::Int, Value::UInt(7)), "Int(7)");
-        assert!(cell(Decode::Int, Value::UInt(u64::MAX)).starts_with("error"));
-        assert_eq!(cell(Decode::Float, Value::Float(1.1)), "Float(1.1)");
+        assert_eq!(cell(Decode::Int, &Value::UInt(7)), "Int(7)");
+        assert!(cell(Decode::Int, &Value::UInt(u64::MAX)).starts_with("error"));
+        assert_eq!(cell(Decode::Float, &Value::Float(1.1)), "Float(1.1)");
         assert_eq!(
-            cell(Decode::Unsigned, Value::UInt(u64::MAX)),
+            cell(Decode::Unsigned, &Value::UInt(u64::MAX)),
             "Text(\"18446744073709551615\")"
         );
         assert_eq!(
-            cell(Decode::Date, Value::Date(2024, 1, 2, 0, 0, 0, 0)),
+            cell(Decode::Date, &Value::Date(2024, 1, 2, 0, 0, 0, 0)),
             "Text(\"2024-01-02\")"
         );
         assert_eq!(
             cell(
                 Decode::DateTime { decimals: 3 },
-                Value::Date(2024, 1, 2, 3, 4, 5, 123_000)
+                &Value::Date(2024, 1, 2, 3, 4, 5, 123_000)
             ),
             "Text(\"2024-01-02 03:04:05.123\")"
         );
         assert_eq!(
             cell(
                 Decode::DateTime { decimals: 0 },
-                Value::Date(2024, 1, 2, 3, 4, 5, 0)
+                &Value::Date(2024, 1, 2, 3, 4, 5, 0)
             ),
             "Text(\"2024-01-02 03:04:05\")"
         );
         assert_eq!(
             cell(
                 Decode::Time { decimals: 0 },
-                Value::Time(true, 1, 2, 3, 4, 0)
+                &Value::Time(true, 1, 2, 3, 4, 0)
             ),
             "Text(\"-26:03:04\")"
         );
-        assert_eq!(cell(Decode::Text, Value::Int(5)), "Text(\"5\")");
+        assert_eq!(cell(Decode::Text, &Value::Int(5)), "Text(\"5\")");
     }
 
     #[test]

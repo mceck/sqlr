@@ -1,7 +1,7 @@
 //! Connection setup for the PostgreSQL driver.
 
 use std::collections::HashMap;
-use std::sync::{Arc, PoisonError};
+use std::sync::Arc;
 use std::time::Duration;
 
 use sqlr_core::{
@@ -58,7 +58,7 @@ struct Notices {
 /// A statement that raises notices in a loop must not grow memory without bound.
 const MAX_NOTICES: usize = 1000;
 
-type NoticeSink = Arc<std::sync::Mutex<Notices>>;
+type NoticeSink = Arc<parking_lot::Mutex<Notices>>;
 
 pub struct PgConnection {
     /// Explorer, catalog, describe, DDL, administration and ping.
@@ -73,7 +73,7 @@ pub struct PgConnection {
     /// (administration marks them as this connection's; connecting does not need them).
     pub(crate) pids: [Option<i32>; 2],
     /// The process ids of the connections to other databases, as they open.
-    other_pids: std::sync::Mutex<Vec<i32>>,
+    other_pids: parking_lot::Mutex<Vec<i32>>,
     /// Reused to open the other databases of the same server.
     pub(crate) config: Config,
     database: String,
@@ -108,7 +108,7 @@ impl PgConnection {
             tls: tls.clone(),
             dialect: PgDialect,
             pids: [meta_pid, query_pid],
-            other_pids: std::sync::Mutex::new(Vec::new()),
+            other_pids: parking_lot::Mutex::new(Vec::new()),
             config: pg.clone(),
             database,
             show_all_databases,
@@ -119,11 +119,7 @@ impl PgConnection {
     /// The server process ids of this connection's own sessions: its two clients, when
     /// known, and those of its connections to other databases.
     pub(crate) fn own_pids(&self) -> Vec<i32> {
-        let others = self
-            .other_pids
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
+        let others = self.other_pids.lock().clone();
         self.pids.iter().flatten().copied().chain(others).collect()
     }
 
@@ -142,10 +138,7 @@ impl PgConnection {
         let mut config = self.config.clone();
         config.dbname(database);
         let conn = Arc::new(Self::open(&config, &self.tls, database.to_string(), false).await?);
-        self.other_pids
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .extend(conn.pids.iter().flatten());
+        self.other_pids.lock().extend(conn.pids.iter().flatten());
         databases.insert(database.to_string(), conn.clone());
         Ok(conn)
     }
@@ -277,7 +270,7 @@ async fn open(
             match std::future::poll_fn(|cx| connection.poll_message(cx)).await {
                 Some(Ok(AsyncMessage::Notice(notice))) => {
                     if let Some(sink) = &notices {
-                        let mut sink = sink.lock().unwrap_or_else(PoisonError::into_inner);
+                        let mut sink = sink.lock();
                         if sink.kept.len() < MAX_NOTICES {
                             sink.kept
                                 .push(format!("{}: {}", notice.severity(), notice.message()));
@@ -487,7 +480,7 @@ impl RelationalConn for PgConnection {
     }
 
     async fn take_notices(&self) -> Vec<String> {
-        let mut sink = self.notices.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut sink = self.notices.lock();
         let mut notices = std::mem::take(&mut sink.kept);
         if sink.dropped > 0 {
             notices.push(format!("({} more notices not shown)", sink.dropped));

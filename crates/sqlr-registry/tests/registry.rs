@@ -1,10 +1,11 @@
 //! Signed index, verified downloads, release downloads, install layout, versions and manual
 //! installs.
 
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use sqlr_registry::{Registry, RegistryError, ReleaseSource, platform_key};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -27,7 +28,7 @@ fn archive(id: &str, version: &str) -> Vec<u8> {
         &std::fs::read(echo_binary()).unwrap(),
         0o644,
     );
-    gzip(tar.into_inner().unwrap())
+    gzip(&tar.into_inner().unwrap())
 }
 
 fn add(tar: &mut tar::Builder<Vec<u8>>, path: &str, data: &[u8], mode: u32) {
@@ -38,10 +39,10 @@ fn add(tar: &mut tar::Builder<Vec<u8>>, path: &str, data: &[u8], mode: u32) {
     tar.append_data(&mut header, path, data).unwrap();
 }
 
-fn gzip(bytes: Vec<u8>) -> Vec<u8> {
+fn gzip(bytes: &[u8]) -> Vec<u8> {
     use std::io::Write;
     let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
-    gz.write_all(&bytes).unwrap();
+    gz.write_all(bytes).unwrap();
     gz.finish().unwrap()
 }
 
@@ -114,7 +115,7 @@ impl Server {
                         .and_then(|l| l.split(' ').nth(1))
                         .unwrap_or("/")
                         .to_string();
-                    let route = routes.lock().unwrap().get(&path).cloned();
+                    let route = routes.lock().get(&path).cloned();
                     let _ = match route {
                         Some(Route::Ok(body)) => {
                             let head = format!(
@@ -154,7 +155,7 @@ impl Server {
         format!("http://127.0.0.1:{}{path}", self.port)
     }
     fn set(&self, path: &str, route: Route) {
-        self.routes.lock().unwrap().insert(path.into(), route);
+        self.routes.lock().insert(path.into(), route);
     }
 }
 
@@ -298,9 +299,7 @@ async fn install_layout_and_active() {
     let entry = registry.fetch_index().await.unwrap().remove(0);
     let seen = Mutex::new(Vec::new());
     let installed = registry
-        .install(&entry, |done, total| {
-            seen.lock().unwrap().push((done, total))
-        })
+        .install(&entry, |done, total| seen.lock().push((done, total)))
         .await
         .unwrap();
     assert_eq!(
@@ -318,7 +317,7 @@ async fn install_layout_and_active() {
         std::fs::read_to_string(root.join("active")).unwrap(),
         "1.0.0"
     );
-    assert!(!seen.lock().unwrap().is_empty(), "progress was reported");
+    assert!(!seen.lock().is_empty(), "progress was reported");
     assert!(world.staging_is_empty());
 
     // The installed executable is the one that runs.
@@ -534,7 +533,7 @@ fn raw_tar(entries: &[(&str, tar::EntryType, &[u8], Option<&str>)]) -> Vec<u8> {
         out.resize(out.len().div_ceil(512) * 512, 0);
     }
     out.extend_from_slice(&[0u8; 1024]);
-    gzip(out)
+    gzip(&out)
 }
 
 #[tokio::test]
@@ -619,7 +618,7 @@ async fn a_driver_that_does_not_start_is_not_installed() {
     );
     add(&mut tar, "dud", b"#!/bin/sh\nexit 1\n", 0o755);
     let file = world.dir.path().join("dud.tar.gz");
-    std::fs::write(&file, gzip(tar.into_inner().unwrap())).unwrap();
+    std::fs::write(&file, gzip(&tar.into_inner().unwrap())).unwrap();
     let inspection = registry.install_manual(&file).await.unwrap();
     let error = registry.confirm_manual(&inspection).await.unwrap_err();
     assert!(matches!(error, RegistryError::Probe(_)), "{error}");
@@ -727,7 +726,7 @@ async fn driver_toml_args_reach_the_installed_driver() {
         0o644,
     );
     let file = world.dir.path().join("a.tar.gz");
-    std::fs::write(&file, gzip(tar.into_inner().unwrap())).unwrap();
+    std::fs::write(&file, gzip(&tar.into_inner().unwrap())).unwrap();
     let inspection = registry.install_manual(&file).await.unwrap();
     let installed = registry.confirm_manual(&inspection).await.unwrap();
     assert_eq!(installed.args(), ["--preset", "h2"]);
@@ -791,7 +790,7 @@ async fn a_release_driver_downloads_checks_and_installs() {
     let seen = Mutex::new(Vec::new());
     let installed = registry
         .install_release(&release, "echo", |done, total| {
-            seen.lock().unwrap().push((done, total))
+            seen.lock().push((done, total))
         })
         .await
         .unwrap();
@@ -800,7 +799,7 @@ async fn a_release_driver_downloads_checks_and_installs() {
         ("echo", "1.2.0")
     );
     assert!(!installed.manual, "a release download is not a manual file");
-    assert!(!seen.lock().unwrap().is_empty(), "progress was reported");
+    assert!(!seen.lock().is_empty(), "progress was reported");
     assert!(world.staging_is_empty());
     let again = registry
         .install_release(&release, "echo", no_progress)

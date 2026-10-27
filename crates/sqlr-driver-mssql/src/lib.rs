@@ -1,5 +1,7 @@
 //! Native SQL Server driver for sqlr (`tiberius` over rustls).
 
+#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+
 mod browse;
 mod catalog;
 mod connect;
