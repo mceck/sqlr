@@ -72,6 +72,25 @@ fn click(h: &mut Harness<'static, App>, pos: Pos2) {
     h.run_steps(2);
 }
 
+fn double_click(h: &mut Harness<'static, App>, pos: Pos2) {
+    // The harness advances a quarter second per frame.
+    h.ctx
+        .options_mut(|o| o.input_options.max_double_click_delay = 2.0);
+    for _ in 0..2 {
+        for pressed in [true, false] {
+            h.event(Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            });
+        }
+        // One frame apart is 0.25 s, inside egui's double-click delay.
+        h.run_steps(1);
+    }
+    h.run_steps(1);
+}
+
 fn drag(h: &mut Harness<'static, App>, from: Pos2, to: Pos2) {
     h.event(Event::PointerMoved(from));
     h.run_steps(1);
@@ -133,6 +152,41 @@ fn last_column_can_grow_past_automatic_width_and_shrink_to_minimum() {
     drag(&mut h, from, from - vec2(900.0, 0.0));
     assert!((h.get_by_label("name 0").rect().width() - 60.0).abs() < 1.0);
     assert!(h.state().state.sort.is_empty());
+}
+
+#[test]
+fn double_clicking_a_header_boundary_fits_the_column_to_its_values() {
+    let mut h = harness(50, false);
+    let fitted = h.get_by_label("name 0").rect().width();
+
+    // Widen the column, then fit it back.
+    let from = h.get_by_label("name").rect().right_center();
+    drag(&mut h, from, from + vec2(300.0, 0.0));
+    assert!(h.get_by_label("name 0").rect().width() > fitted + 250.0);
+    let at = h.get_by_label("name").rect().right_center();
+    h.event(Event::PointerMoved(at));
+    h.run_steps(1);
+    double_click(&mut h, at);
+    assert!((h.get_by_label("name 0").rect().width() - fitted).abs() < 1.0);
+    assert!(h.state().state.sort.is_empty());
+}
+
+#[test]
+fn fitting_a_column_reads_rows_past_the_initial_width_sample() {
+    let mut h = harness(50, false);
+    let fitted = h.get_by_label("name 0").rect().width();
+    let columns = h.state().rows.columns().to_vec().into();
+    let mut chunk = ChunkBuilder::new(columns);
+    chunk
+        .push_row(&[Cell::Int(50), Cell::Text(&"w".repeat(150))])
+        .unwrap();
+    h.state_mut().rows.push_chunk(chunk.finish());
+    h.run_steps(2);
+    let at = h.get_by_label("name").rect().right_center();
+    h.event(Event::PointerMoved(at));
+    h.run_steps(1);
+    double_click(&mut h, at);
+    assert!(h.get_by_label("name 0").rect().width() > fitted + 500.0);
 }
 
 #[test]

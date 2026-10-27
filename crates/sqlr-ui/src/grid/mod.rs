@@ -54,6 +54,10 @@ const MIN_COL_WIDTH: f32 = 60.0;
 const MAX_COL_WIDTH: f32 = 400.0;
 const MIN_GUTTER: f32 = 36.0;
 const WIDTH_SAMPLE_ROWS: usize = 100;
+/// Rows read when a double click fits a column to its values.
+const AUTOFIT_ROWS: usize = 10_000;
+/// Widest a fitted column gets.
+const AUTOFIT_MAX_WIDTH: f32 = 2000.0;
 const OVERSCAN_ROWS: usize = 2;
 const NULL_TEXT: &str = "NULL";
 /// Shown in the cells of an inserted row left to their default.
@@ -699,23 +703,33 @@ fn layout_key(
     h.finish()
 }
 
+/// Width of column `col` fitted to its header and the first `sampled` rows.
+fn fit_width(
+    rows: &RowBuffer,
+    col: usize,
+    sampled: usize,
+    glyph_width: f32,
+    formats: Option<&DataFormats>,
+) -> f32 {
+    let meta = &rows.columns()[col];
+    // Room for the sort arrow next to the name.
+    let mut chars = (meta.name.chars().count() + 2).max(meta.type_name.chars().count());
+    for row in 0..sampled {
+        if let Some(cell) = rows.cell(row, col) {
+            chars = chars.max(grid_text(formats, meta, cell).chars().count());
+        }
+    }
+    chars as f32 * glyph_width + 2.0 * CELL_PADDING
+}
+
 fn measure_columns(rows: &RowBuffer, glyph_width: f32, formats: Option<&DataFormats>) -> Vec<f32> {
-    let columns = rows.columns();
     let sampled = rows.row_count().min(WIDTH_SAMPLE_ROWS);
-    let mut x = Vec::with_capacity(columns.len() + 1);
+    let mut x = Vec::with_capacity(rows.columns().len() + 1);
     let mut left = 0.0;
     x.push(left);
-    for (col, meta) in columns.iter().enumerate() {
-        // Room for the sort arrow next to the name.
-        let mut chars = (meta.name.chars().count() + 2).max(meta.type_name.chars().count());
-        for row in 0..sampled {
-            if let Some(cell) = rows.cell(row, col) {
-                chars = chars.max(grid_text(formats, meta, cell).chars().count());
-            }
-        }
-        let width =
-            (chars as f32 * glyph_width + 2.0 * CELL_PADDING).clamp(MIN_COL_WIDTH, MAX_COL_WIDTH);
-        left += width;
+    for col in 0..rows.columns().len() {
+        left +=
+            fit_width(rows, col, sampled, glyph_width, formats).clamp(MIN_COL_WIDTH, MAX_COL_WIDTH);
         x.push(left);
     }
     x
@@ -897,7 +911,15 @@ pub fn data_grid(ui: &mut egui::Ui, state: &mut GridState, input: &GridInput<'_>
             response.request_focus();
             state.refocus = false;
         }
-        let resizing = resize_columns(ui, state, response.id, &geo);
+        let resizing = resize_columns(
+            ui,
+            state,
+            response.id,
+            &geo,
+            input.rows,
+            glyph_width,
+            formats.as_deref(),
+        );
         if !resizing {
             output.selection_changed |= pointer(ui, state, input, &response, &geo);
         }
@@ -948,7 +970,17 @@ pub fn data_grid(ui: &mut egui::Ui, state: &mut GridState, input: &GridInput<'_>
 }
 
 /// Header boundary handles take precedence over sorting and cell selection.
-fn resize_columns(ui: &egui::Ui, state: &mut GridState, id: egui::Id, geo: &Geometry<'_>) -> bool {
+///
+/// A double click on a boundary fits the column to its header and loaded values.
+fn resize_columns(
+    ui: &egui::Ui,
+    state: &mut GridState,
+    id: egui::Id,
+    geo: &Geometry<'_>,
+    rows: &RowBuffer,
+    glyph_width: f32,
+    formats: Option<&DataFormats>,
+) -> bool {
     let header = geo.header_rect();
     let left = header.left() + geo.gutter;
     let mut active = false;
@@ -966,7 +998,7 @@ fn resize_columns(ui: &egui::Ui, state: &mut GridState, id: egui::Id, geo: &Geom
             continue;
         }
         let handle = ui
-            .interact(rect, handle_id, Sense::drag())
+            .interact(rect, handle_id, Sense::click_and_drag())
             .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
         active |= handle.hovered() || handle.dragged() || handle.drag_stopped();
         if handle.drag_started_by(egui::PointerButton::Primary) {
@@ -984,6 +1016,14 @@ fn resize_columns(ui: &egui::Ui, state: &mut GridState, id: egui::Id, geo: &Geom
         }
         if handle.drag_stopped() {
             state.resizing = None;
+        }
+        if handle.double_clicked_by(egui::PointerButton::Primary)
+            && let Some(layout) = &mut state.layout
+        {
+            let sampled = rows.row_count().min(AUTOFIT_ROWS);
+            let width = fit_width(rows, col, sampled, glyph_width, formats)
+                .clamp(MIN_COL_WIDTH, AUTOFIT_MAX_WIDTH);
+            layout.resize(col, width);
         }
     }
     active
