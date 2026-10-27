@@ -38,7 +38,7 @@ impl AccessFilter {
 
 /// Edits the app's live settings; the app derives everything else from them each frame.
 struct PendingSave {
-    receiver: std::sync::mpsc::Receiver<Result<(), String>>,
+    receiver: std::sync::mpsc::Receiver<Result<(), sqlr_store::StoreError>>,
     live: LayeredSettings,
     keymap: sqlr_store::StoredKeymap,
     close: bool,
@@ -143,9 +143,9 @@ impl PrefsWindow {
             ctx.request_repaint_after(std::time::Duration::from_millis(20));
             if ctx.cumulative_frame_nr() > pending.frame {
                 let result = match pending.receiver.try_recv() {
-                    Ok(result) => Some(result),
+                    Ok(result) => Some(result.map_err(|error| error.to_string())),
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                        Some(Err("Preferences writer stopped".into()))
+                        Some(Err("Preferences writer stopped".to_string()))
                     }
                     Err(_) => None,
                 };
@@ -705,10 +705,7 @@ impl PrefsWindow {
         });
         let repaint = ctx.clone();
         std::thread::spawn(move || {
-            let result = live
-                .save(&dir)
-                .and_then(|()| keymap.save(&dir))
-                .map_err(|e| e.to_string());
+            let result = live.save(&dir).and_then(|()| keymap.save(&dir));
             let _ = sender.send(result);
             repaint.request_repaint();
         });

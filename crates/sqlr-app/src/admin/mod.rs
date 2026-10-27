@@ -252,7 +252,7 @@ impl SqlrApp {
                         self.request_ddl(&conn, c.statements, c.options, then);
                     }
                     Ok(None) => {}
-                    Err(e) => self.notify(e),
+                    Err(e) => self.notify(e.to_string()),
                 }
             }
             AdminCommand::DropRole(role) => match self.engine.drop_role_ddl(&conn, &role) {

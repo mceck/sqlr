@@ -10,7 +10,7 @@
 //!
 //! Protocol: <https://docs.snowflake.com/en/developer-guide/sql-api/reference>.
 
-#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 mod catalog;
 mod protocol;

@@ -29,7 +29,18 @@ impl Pane {
 }
 
 /// A snapshot as loaded, or why it failed.
-type Loaded<T> = Option<Result<T, String>>;
+type Loaded<T> = Option<Result<T, LoadError>>;
+
+/// Why a snapshot is not shown.
+#[derive(Debug, thiserror::Error)]
+enum LoadError {
+    /// The server refused the request.
+    #[error(transparent)]
+    Failed(#[from] sqlr_core::DriverError),
+    /// The job ended with something other than a snapshot.
+    #[error("Nothing was loaded")]
+    Nothing,
+}
 
 pub struct ServerTab {
     pub conn: String,
@@ -111,16 +122,15 @@ impl ServerTab {
             return;
         };
         self.job = None;
-        let failed = |o: &JobOutcome| match o {
-            JobOutcome::Failed(e) => Some(e.message.clone()),
-            _ => None,
-        };
         match (pane, outcome) {
             (_, JobOutcome::Admin(AdminSnapshot::Properties(p))) => self.properties = Some(Ok(p)),
             (_, JobOutcome::Admin(AdminSnapshot::DatabaseSizes(s))) => self.sizes = Some(Ok(s)),
             (_, JobOutcome::Admin(AdminSnapshot::TableStats(s))) => self.stats = Some(Ok(s)),
             (pane, other) => {
-                let e = failed(&other).unwrap_or_else(|| "Nothing was loaded".into());
+                let e = match other {
+                    JobOutcome::Failed(e) => LoadError::Failed(e),
+                    _ => LoadError::Nothing,
+                };
                 match pane {
                     Pane::Properties => self.properties = Some(Err(e)),
                     Pane::Sizes => self.sizes = Some(Err(e)),
@@ -182,8 +192,8 @@ impl ServerTab {
         });
         ui.add_space(Spacing::S);
         let error = theme::palette(ui.ctx()).error;
-        let show_error = |ui: &mut egui::Ui, e: &str| {
-            ui.label(RichText::new(e).color(error));
+        let show_error = |ui: &mut egui::Ui, e: &LoadError| {
+            ui.label(RichText::new(e.to_string()).color(error));
         };
         match self.pane {
             Pane::Properties => match &self.properties {
@@ -202,5 +212,20 @@ impl ServerTab {
                 None => {}
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod load_error_tests {
+    use super::*;
+
+    #[test]
+    fn load_errors_keep_their_messages() {
+        assert_eq!(LoadError::Nothing.to_string(), "Nothing was loaded");
+        let failed = LoadError::from(sqlr_core::DriverError::new(
+            sqlr_core::ErrorKind::Other,
+            "denied",
+        ));
+        assert_eq!(failed.to_string(), "denied");
     }
 }

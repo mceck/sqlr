@@ -1,6 +1,6 @@
 //! Persistence for sqlr: connection configs (TOML), encrypted secrets and settings.
 
-#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 mod catalog;
 pub mod client_migration;

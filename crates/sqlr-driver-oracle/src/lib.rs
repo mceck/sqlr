@@ -1,6 +1,6 @@
 //! Native Oracle driver for sqlr (`oracle-rs`, pure Rust, no Instant Client).
 
-#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 mod browse;
 mod catalog;

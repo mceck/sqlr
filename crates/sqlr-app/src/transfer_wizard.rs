@@ -16,6 +16,7 @@ use sqlr_ui::{WizardAction, WizardStep, mapping_table, wizard_footer, wizard_ste
 
 use crate::app::SqlrApp;
 use crate::database_tools::human_bytes;
+use crate::job_failure::JobFailure;
 use crate::transfer_dialogs::{FileAsk, suggested_name};
 
 /// A connection the wizard can read from or write to.
@@ -188,7 +189,7 @@ pub(crate) struct TransferWizard {
     run: Option<JobId>,
     progress: JobProgress,
     log: Vec<String>,
-    outcome: Option<Result<String, String>>,
+    outcome: Option<Result<String, WizardError>>,
     /// Look into the source as soon as its connections are up (an edited task).
     autoprobe: bool,
     /// The mapping and the edited DDL come from a task: the first look keeps them.
@@ -383,12 +384,16 @@ impl TransferWizard {
     }
 
     /// The transfer the choices describe; the reason when they do not yet.
-    pub(crate) fn spec(&self) -> Result<TransferSpec, String> {
-        let source = self.source_endpoint().ok_or("The source is incomplete")?;
-        let target = self.target_endpoint().ok_or("The target is incomplete")?;
+    pub(crate) fn spec(&self) -> Result<TransferSpec, WizardError> {
+        let source = self
+            .source_endpoint()
+            .ok_or(WizardError::SourceIncomplete)?;
+        let target = self
+            .target_endpoint()
+            .ok_or(WizardError::TargetIncomplete)?;
         let table_target = self.target_kind != TargetKind::File;
         if table_target && !self.mapping.iter().any(|m| m.target.is_some()) {
-            return Err("No column is mapped".into());
+            return Err(WizardError::NoColumnMapped);
         }
         let mut options = self.options.clone();
         options.upsert_key = (self.upsert && table_target).then(|| {
@@ -399,7 +404,7 @@ impl TransferWizard {
                 .collect()
         });
         if options.upsert_key.as_ref().is_some_and(Vec::is_empty) {
-            return Err("Name the upsert key columns".into());
+            return Err(WizardError::NoUpsertKey);
         }
         options.rejected_file = (!self.rejected_path.trim().is_empty())
             .then(|| PathBuf::from(self.rejected_path.trim()));
@@ -498,7 +503,7 @@ impl TransferWizard {
             match engine.job(id) {
                 None => {
                     self.run = None;
-                    self.outcome = Some(Err("The job disappeared".into()));
+                    self.outcome = Some(Err(JobFailure::Disappeared.into()));
                 }
                 Some(state) => {
                     self.progress = state.progress;
@@ -506,7 +511,7 @@ impl TransferWizard {
                     if let Some(outcome) = state.outcome {
                         engine.forget_job(id);
                         self.run = None;
-                        self.outcome = Some(summarize(outcome));
+                        self.outcome = Some(summarize(outcome).map_err(WizardError::from));
                     }
                 }
             }
@@ -552,7 +557,7 @@ impl TransferWizard {
         } else if self.outcome.is_some() {
             Some("The transfer has run".into())
         } else {
-            self.spec().err()
+            self.spec().err().map(|error| error.to_string())
         };
         steps.push(WizardStep::new("Review", blocked));
         steps
@@ -1437,8 +1442,8 @@ impl TransferWizard {
             Some(Ok(message)) => {
                 ui.colored_label(p.success, message);
             }
-            Some(Err(message)) => {
-                ui.colored_label(p.error, message);
+            Some(Err(failure)) => {
+                ui.colored_label(p.error, failure.to_string());
             }
             None => {}
         }
@@ -1513,7 +1518,22 @@ impl SqlrApp {
     }
 }
 
-fn summarize(outcome: JobOutcome) -> Result<String, String> {
+/// Why the wizard choices do not describe a transfer yet, or why a run did not finish.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum WizardError {
+    #[error("The source is incomplete")]
+    SourceIncomplete,
+    #[error("The target is incomplete")]
+    TargetIncomplete,
+    #[error("No column is mapped")]
+    NoColumnMapped,
+    #[error("Name the upsert key columns")]
+    NoUpsertKey,
+    #[error(transparent)]
+    Job(#[from] JobFailure),
+}
+
+fn summarize(outcome: JobOutcome) -> Result<String, JobFailure> {
     match outcome {
         JobOutcome::Imported {
             read,
@@ -1526,8 +1546,8 @@ fn summarize(outcome: JobOutcome) -> Result<String, String> {
         JobOutcome::Exported { rows, path } => {
             Ok(format!("Wrote {rows} rows to {}", path.display()))
         }
-        JobOutcome::Failed(e) => Err(e.message),
-        JobOutcome::Cancelled => Err("Cancelled".into()),
+        JobOutcome::Failed(e) => Err(e.into()),
+        JobOutcome::Cancelled => Err(JobFailure::Cancelled),
         _ => Ok("Done".into()),
     }
 }
@@ -1663,7 +1683,10 @@ mod tests {
             "the target defaults to another connection"
         );
         assert_eq!(wizard.t_schema, "public");
-        assert_eq!(wizard.spec().unwrap_err(), "No column is mapped");
+        assert_eq!(
+            wizard.spec().unwrap_err().to_string(),
+            "No column is mapped"
+        );
         wizard.mapping = vec![ColumnMapping::new(0, Some("id".into()))];
         let spec = wizard.spec().unwrap();
         assert_eq!(
@@ -1696,7 +1719,10 @@ mod tests {
             Some(PathBuf::from("/tmp/r.csv"))
         );
         wizard.upsert_text = " , ".into();
-        assert_eq!(wizard.spec().unwrap_err(), "Name the upsert key columns");
+        assert_eq!(
+            wizard.spec().unwrap_err().to_string(),
+            "Name the upsert key columns"
+        );
     }
 
     #[test]
@@ -1951,7 +1977,7 @@ mod tests {
 
         for outcome in [
             Ok("Read 1 rows, wrote 1, rejected 0".into()),
-            Err("boom".into()),
+            Err(WizardError::NoColumnMapped),
         ] {
             wizard.outcome = Some(outcome);
             frame(&mut wizard, &engine, &conns(), None);
@@ -1994,10 +2020,34 @@ mod tests {
                 ErrorKind::Other,
                 "boom"
             )))
-            .unwrap_err(),
+            .unwrap_err()
+            .to_string(),
             "boom"
         );
-        assert_eq!(summarize(JobOutcome::Cancelled).unwrap_err(), "Cancelled");
+        assert_eq!(
+            summarize(JobOutcome::Cancelled).unwrap_err().to_string(),
+            "Cancelled"
+        );
+    }
+
+    #[test]
+    fn wizard_errors_keep_their_messages() {
+        assert_eq!(
+            WizardError::SourceIncomplete.to_string(),
+            "The source is incomplete"
+        );
+        assert_eq!(
+            WizardError::TargetIncomplete.to_string(),
+            "The target is incomplete"
+        );
+        assert_eq!(
+            WizardError::NoColumnMapped.to_string(),
+            "No column is mapped"
+        );
+        assert_eq!(
+            WizardError::NoUpsertKey.to_string(),
+            "Name the upsert key columns"
+        );
     }
 
     #[test]

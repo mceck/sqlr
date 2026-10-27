@@ -116,7 +116,7 @@ fn json_field(ui: &mut egui::Ui, text: &mut String, label: &str) {
 
 impl CreateDialog {
     /// The statement to run, or why the form is not complete.
-    fn statement(&self) -> Result<(Option<String>, String), String> {
+    fn statement(&self) -> Result<(Option<String>, String), sqlr_core::DocAdminError> {
         match &self.form {
             Form::Mongo {
                 target,
@@ -133,19 +133,13 @@ impl CreateDialog {
                     ttl_seconds: *ttl,
                     partial_filter: partial.clone(),
                 };
-                Ok((
-                    target.database.clone(),
-                    mongo_create_index(target, &spec).map_err(|e| e.to_string())?,
-                ))
+                Ok((target.database.clone(), mongo_create_index(target, &spec)?))
             }
             Form::Es {
                 name,
                 settings,
                 mappings,
-            } => Ok((
-                None,
-                es_create_index(name.trim(), settings, mappings).map_err(|e| e.to_string())?,
-            )),
+            } => Ok((None, es_create_index(name.trim(), settings, mappings)?)),
         }
     }
 
@@ -358,7 +352,7 @@ impl SqlrApp {
             match answer {
                 Some(false) => self.index_admin.create = None,
                 Some(true) => match dialog.statement() {
-                    Err(e) => dialog.error = Some(e),
+                    Err(e) => dialog.error = Some(e.to_string()),
                     Ok((database, text)) => {
                         let command = DocCommand::CreateIndex {
                             conn: dialog.conn.clone(),

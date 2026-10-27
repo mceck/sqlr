@@ -6,7 +6,7 @@ pub(crate) mod create;
 pub(crate) mod menus;
 pub(crate) mod tab;
 
-pub use tab::ObjectTab;
+pub use tab::{ObjectTab, ObjectTabError};
 
 use egui::Id;
 use sqlr_core::{
@@ -94,7 +94,7 @@ pub(crate) struct ObjectsUi {
     destructive: Option<DestructiveDialog>,
     confirm: Option<ConfirmDdl>,
     /// The object tab whose pending DDL is previewed, and the statements.
-    preview: Option<(u64, Result<Vec<String>, String>)>,
+    preview: Option<(u64, Result<Vec<String>, ObjectTabError>)>,
     jobs: Vec<(JobId, ExplorerJob)>,
     /// An object or users tab whose pending edits would be lost, and what then happens.
     pub(crate) discard: Option<(u64, Discard)>,
@@ -529,7 +529,7 @@ impl SqlrApp {
                 let options = tab.apply_options();
                 self.request_ddl(&conn, statements, options, AfterApply::Tab(key));
             }
-            Err(e) => tab.message = Some((e, true)),
+            Err(e) => tab.message = Some((e.to_string(), true)),
         }
     }
 
@@ -604,7 +604,7 @@ impl SqlrApp {
                 };
                 self.request_ddl(&conn, statements, options, AfterApply::Grants(key));
             }
-            Err(e) => self.notify(e),
+            Err(e) => self.notify(e.to_string()),
         }
     }
 
@@ -952,7 +952,7 @@ impl SqlrApp {
                 d.body(|ui| match (&text, statements) {
                     (Some(text), _) => sql_view(ui, "preview_sql", text, &syntax, 360.0),
                     (None, Err(e)) => {
-                        ui.colored_label(theme::palette(ui.ctx()).error, e);
+                        ui.colored_label(theme::palette(ui.ctx()).error, e.to_string());
                     }
                     (None, Ok(_)) => {}
                 });

@@ -1,6 +1,6 @@
 //! The sqlr application shell: layout A, wiring the engine, store and widgets together.
 
-#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 mod actions;
 mod agents;
@@ -25,6 +25,7 @@ mod explorer;
 mod fonts;
 mod help;
 mod icon;
+mod job_failure;
 pub use icon::window_icon;
 mod library;
 mod logging;

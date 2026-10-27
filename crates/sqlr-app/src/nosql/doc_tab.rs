@@ -153,18 +153,33 @@ impl DocTab {
     }
 }
 
+/// Why a document cannot be edited.
+#[derive(Debug, thiserror::Error)]
+enum IdentityError {
+    /// The result is read-only, for the reason the driver gave.
+    #[error("{0}")]
+    ReadOnly(String),
+    /// The result is read-only, for no stated reason.
+    #[error("the result is read-only")]
+    ResultReadOnly,
+    /// The document carries no `_id`.
+    #[error("the document has no `_id`: it is read-only")]
+    NoId,
+}
+
 /// Where a document of `r` is and its `_id`: the result's target, and on Elasticsearch
 /// (`es`) its hit's own `_index`; why it cannot be edited otherwise.
-fn identity(r: &DocResult, doc: &DocValue, es: bool) -> Result<(DocTarget, DocValue), String> {
+fn identity(
+    r: &DocResult,
+    doc: &DocValue,
+    es: bool,
+) -> Result<(DocTarget, DocValue), IdentityError> {
     let mut target = r.target.clone().ok_or_else(|| {
         r.read_only
             .clone()
-            .unwrap_or_else(|| "the result is read-only".into())
+            .map_or(IdentityError::ResultReadOnly, IdentityError::ReadOnly)
     })?;
-    let id = doc
-        .get("_id")
-        .cloned()
-        .ok_or("the document has no `_id`: it is read-only")?;
+    let id = doc.get("_id").cloned().ok_or(IdentityError::NoId)?;
     if es && let Some(DocValue::String(index)) = doc.get("_index") {
         target.collection = index.clone();
         target.database = None;
@@ -670,10 +685,9 @@ mod tests {
         let (es, id) = identity(&r, &doc, true).unwrap();
         assert_eq!((es.collection.as_str(), id), ("other", DocValue::Int32(1)));
         let no_id = DocValue::Document(vec![("a".into(), DocValue::Int32(1))]);
-        assert!(
-            identity(&r, &no_id, false)
-                .unwrap_err()
-                .contains("no `_id`")
+        assert_eq!(
+            identity(&r, &no_id, false).unwrap_err().to_string(),
+            "the document has no `_id`: it is read-only"
         );
     }
 }

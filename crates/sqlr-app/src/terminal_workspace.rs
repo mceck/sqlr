@@ -5,6 +5,15 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 
+/// Why the terminal workspace could not be prepared or refreshed.
+#[derive(Debug, thiserror::Error)]
+enum WorkspaceError {
+    #[error("Could not prepare terminal workspace: {0}")]
+    Prepare(#[source] std::io::Error),
+    #[error("Could not write terminal MCP config: {0}")]
+    WriteConfig(#[source] std::io::Error),
+}
+
 const EMPTY_CONFIG: &str = "{\"mcpServers\":{}}\n";
 
 struct ConfigUpdate {
@@ -14,7 +23,7 @@ struct ConfigUpdate {
 
 struct WorkspaceUpdate {
     revision: u64,
-    result: Result<PathBuf, String>,
+    result: Result<PathBuf, WorkspaceError>,
 }
 
 #[derive(Default)]
@@ -53,7 +62,7 @@ impl TerminalWorkspace {
                     Err(error) => {
                         let _ = updates.send(WorkspaceUpdate {
                             revision: 0,
-                            result: Err(format!("Could not prepare terminal workspace: {error}")),
+                            result: Err(WorkspaceError::Prepare(error)),
                         });
                         ctx.request_repaint();
                         return;
@@ -66,7 +75,7 @@ impl TerminalWorkspace {
                     }
                     let result = write_config(&directory, update.config.as_deref())
                         .map(|()| directory.clone())
-                        .map_err(|error| format!("Could not write terminal MCP config: {error}"));
+                        .map_err(WorkspaceError::WriteConfig);
                     if updates
                         .send(WorkspaceUpdate {
                             revision: update.revision,
@@ -123,7 +132,7 @@ impl TerminalWorkspace {
                         self.error = None;
                         self.ready = true;
                     }
-                    Err(error) => self.error = Some(error),
+                    Err(error) => self.error = Some(error.to_string()),
                 }
             }
         }
@@ -366,6 +375,25 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(path.join(".mcp.json")).unwrap(),
             EMPTY_CONFIG
+        );
+    }
+}
+
+#[cfg(test)]
+mod error_tests {
+    use super::*;
+
+    #[test]
+    fn workspace_errors_keep_their_messages() {
+        let prepare = WorkspaceError::Prepare(std::io::Error::other("denied"));
+        assert_eq!(
+            prepare.to_string(),
+            "Could not prepare terminal workspace: denied"
+        );
+        let write = WorkspaceError::WriteConfig(std::io::Error::other("full"));
+        assert_eq!(
+            write.to_string(),
+            "Could not write terminal MCP config: full"
         );
     }
 }

@@ -15,6 +15,7 @@ use sqlr_ui::theme::{self, Spacing};
 use sqlr_ui::{ToastKind, datagen_table};
 
 use crate::app::SqlrApp;
+use crate::job_failure::JobFailure;
 
 pub(crate) enum DatagenEvent {
     None,
@@ -32,7 +33,7 @@ pub(crate) struct DatagenDialog {
     preview: Option<Result<Vec<Vec<Value>>, DatagenError>>,
     run: Option<JobId>,
     progress: JobProgress,
-    outcome: Option<Result<String, String>>,
+    outcome: Option<Result<String, JobFailure>>,
     error: Option<String>,
     confirm_insert: bool,
 }
@@ -171,8 +172,8 @@ impl DatagenDialog {
                     JobOutcome::Imported {
                         written, rejected, ..
                     } => Ok(format!("Wrote {written} rows, rejected {}", rejected.len())),
-                    JobOutcome::Failed(e) => Err(e.message),
-                    JobOutcome::Cancelled => Err("Cancelled".into()),
+                    JobOutcome::Failed(e) => Err(e.into()),
+                    JobOutcome::Cancelled => Err(JobFailure::Cancelled),
                     _ => Ok("Done".into()),
                 });
             }
@@ -225,7 +226,7 @@ impl DatagenDialog {
                         ui.colored_label(p.success, m);
                     }
                     Some(Err(m)) => {
-                        ui.colored_label(p.error, m);
+                        ui.colored_label(p.error, m.to_string());
                     }
                     None => {}
                 }

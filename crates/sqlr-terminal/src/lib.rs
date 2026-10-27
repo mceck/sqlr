@@ -3,7 +3,7 @@
 //! The crate is a leaf: the application gives it the theme and font and owns visibility.
 //! Terminal output and the shell command never leave it for a log.
 
-#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 pub mod input;
 pub mod pty;

@@ -4,7 +4,7 @@
 //! with JSON bodies, `ESQL …` (8.11+) and `SQL …`. Searches page with a point in time and
 //! `search_after`; ES|QL and SQL results are tabular.
 
-#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 mod browse;
 mod client;

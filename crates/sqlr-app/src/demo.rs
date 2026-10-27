@@ -439,10 +439,12 @@ fn temp_config(id: &str, path: &Path) -> ConnectionConfig {
     }
 }
 
-fn names(state: Option<LoadState<Vec<sqlr_core::Node>>>) -> Option<Result<Vec<String>, String>> {
+fn names(
+    state: Option<LoadState<Vec<sqlr_core::Node>>>,
+) -> Option<Result<Vec<String>, sqlr_core::DriverError>> {
     match state? {
         LoadState::Ready(nodes) => Some(Ok(nodes.into_iter().map(|n| n.name).collect())),
-        LoadState::Failed(e) => Some(Err(e.message)),
+        LoadState::Failed(e) => Some(Err(e)),
         LoadState::Loading => None,
     }
 }
@@ -505,7 +507,7 @@ impl SqlrApp {
                 };
                 let (tables, views) = match (tables, views) {
                     (Ok(t), Ok(v)) => (t, v),
-                    (Err(e), _) | (_, Err(e)) => return self.demo_failed(&setup, &e),
+                    (Err(e), _) | (_, Err(e)) => return self.demo_failed(&setup, &e.message),
                 };
                 match probe(&tables, &views) {
                     Probe::Ready => Some(self.demo_ready(setup)),

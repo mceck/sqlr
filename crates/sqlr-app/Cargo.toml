@@ -26,6 +26,7 @@ path = "src/main.rs"
 
 [dependencies]
 parking_lot.workspace = true
+thiserror.workspace = true
 sqlr-core = { path = "../sqlr-core" }
 sqlr-driver-elastic = { path = "../sqlr-driver-elastic" }
 sqlr-driver-mongo = { path = "../sqlr-driver-mongo" }

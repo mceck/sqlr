@@ -296,7 +296,7 @@ impl MigrationDialog {
                 self.warnings = warnings;
                 self.done = Some(format!("Connections exported to {}", path.display()));
             }
-            MigrationResult::Error(e) => self.error = Some(e),
+            MigrationResult::Error(e) => self.error = Some(e.to_string()),
         }
     }
 
@@ -889,7 +889,7 @@ mod tests {
         d.busy = true;
         d.receive(
             "old request",
-            MigrationResult::Error("old error".into()),
+            MigrationResult::Error(crate::store_worker::StoreWorkerError::ClipboardTooLarge),
             &[],
             &DriverRegistry::default(),
         );

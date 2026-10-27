@@ -42,7 +42,7 @@ enum StoreResult {
     Acknowledged,
     Manual(Option<Box<Incident>>, bool, bool, BundleAction),
     Copied(Option<String>),
-    Saved(Result<(), String>),
+    Saved(std::io::Result<()>),
 }
 
 pub struct PendingBundle {
@@ -313,12 +313,12 @@ impl SqlrApp {
 
         if let Some(level) = level_change {
             let result = self.diagnostics.as_ref().map_or_else(
-                || Err("logging is not initialized".into()),
+                || Err(crate::diagnostics::DiagnosticsError::NotInitialized),
                 |diagnostics| diagnostics.set_log_level(level),
             );
             self.diagnostics_ui.status = Some(match result {
                 Ok(()) => format!("Log level set to {} for this session", level.as_str()),
-                Err(error) => error,
+                Err(error) => error.to_string(),
             });
         }
         if let Some(include) = sql_change {
@@ -899,11 +899,7 @@ impl SqlrApp {
             && let Some(text) = self.diagnostics_ui.preview.clone()
         {
             self.store_work(move |diagnostics| {
-                StoreResult::Saved(
-                    diagnostics
-                        .save_bundle(&path, &text)
-                        .map_err(|e| e.to_string()),
-                )
+                StoreResult::Saved(diagnostics.save_bundle(&path, &text))
             });
             self.diagnostics_ui.preview_open = false;
         }

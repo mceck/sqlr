@@ -75,10 +75,24 @@ impl LogLevel {
     }
 }
 
+/// Why the log level could not be changed.
+#[derive(Debug, thiserror::Error)]
+pub enum DiagnosticsError {
+    /// `RUST_LOG` owns the filter for this launch.
+    #[error("RUST_LOG controls the log level for this launch")]
+    EnvControlled,
+    /// Logging has not been set up.
+    #[error("logging is not initialized")]
+    NotInitialized,
+    /// The tracing filter could not be replaced.
+    #[error("could not change the log level: {0}")]
+    Reload(#[source] tracing_subscriber::reload::Error),
+}
+
 /// A session-only handle to the logging filter. `RUST_LOG` wins and disables the setter.
 #[derive(Clone)]
 pub struct LogLevelControl {
-    set: Arc<dyn Fn(LogLevel) -> Result<(), String> + Send + Sync>,
+    set: Arc<dyn Fn(LogLevel) -> Result<(), DiagnosticsError> + Send + Sync>,
     current: Arc<Mutex<LogLevel>>,
     pub env_controlled: bool,
 }
@@ -87,7 +101,7 @@ impl LogLevelControl {
     pub fn new(
         current: Arc<Mutex<LogLevel>>,
         env_controlled: bool,
-        set: impl Fn(LogLevel) -> Result<(), String> + Send + Sync + 'static,
+        set: impl Fn(LogLevel) -> Result<(), DiagnosticsError> + Send + Sync + 'static,
     ) -> Self {
         Self {
             set: Arc::new(set),
@@ -100,9 +114,9 @@ impl LogLevelControl {
         *self.current.lock()
     }
 
-    pub fn set(&self, level: LogLevel) -> Result<(), String> {
+    pub fn set(&self, level: LogLevel) -> Result<(), DiagnosticsError> {
         if self.env_controlled {
-            return Err("RUST_LOG controls the log level for this launch".into());
+            return Err(DiagnosticsError::EnvControlled);
         }
         (self.set)(level)
     }
@@ -330,11 +344,11 @@ impl Diagnostics {
             .is_some_and(|c| c.env_controlled)
     }
 
-    pub fn set_log_level(&self, level: LogLevel) -> Result<(), String> {
+    pub fn set_log_level(&self, level: LogLevel) -> Result<(), DiagnosticsError> {
         let control = self.log_level.lock().clone();
         match control {
             Some(control) => control.set(level),
-            None => Err("logging is not initialized".into()),
+            None => Err(DiagnosticsError::NotInitialized),
         }
     }
 
@@ -962,5 +976,27 @@ mod tests {
         assert!(text.contains(diag.session_id()));
         assert!(text.contains("something broke"));
         assert!(outline.incidents >= 1);
+    }
+}
+
+#[cfg(test)]
+mod error_tests {
+    use super::*;
+
+    #[test]
+    fn diagnostics_errors_keep_their_messages() {
+        assert_eq!(
+            DiagnosticsError::EnvControlled.to_string(),
+            "RUST_LOG controls the log level for this launch"
+        );
+        assert_eq!(
+            DiagnosticsError::NotInitialized.to_string(),
+            "logging is not initialized"
+        );
+        let control = LogLevelControl::new(Arc::new(Mutex::new(LogLevel::Info)), true, |_| Ok(()));
+        assert_eq!(
+            control.set(LogLevel::Debug).unwrap_err().to_string(),
+            "RUST_LOG controls the log level for this launch"
+        );
     }
 }

@@ -18,8 +18,8 @@
 //! The process talks to sqlr over stdin and stdout; never print to stdout. Log to stderr —
 //! sqlr shows it in its log, prefixed with the driver id.
 
-#![cfg_attr(not(test), warn(clippy::unwrap_used))]
-#![warn(missing_docs)]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![deny(missing_docs)]
 
 pub use sqlr_core::*;
 pub use sqlr_sidecar::{LimitStyle, PROTOCOL, serve, serve_arc, serve_io};

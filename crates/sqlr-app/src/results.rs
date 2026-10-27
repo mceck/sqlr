@@ -16,6 +16,21 @@ use crate::app::{SqlrApp, tab_mut};
 use crate::tabs::{QueryTab, ServerView, TabRun};
 use crate::transfer_dialogs::{JobWhat, TrackedJob};
 
+/// Why the pending edits of a result cannot be turned into a changeset.
+#[derive(Debug, thiserror::Error)]
+enum ChangesetError {
+    #[error("The tab is closed")]
+    TabClosed,
+    #[error("The result's table is unknown")]
+    UnknownTable,
+    #[error("The result cannot be edited")]
+    NotEditable,
+    #[error("The result is closed")]
+    ResultClosed,
+    #[error(transparent)]
+    Edit(#[from] sqlr_ui::EditError),
+}
+
 /// Whether a result can be edited, as far as it is known this frame.
 enum Editability {
     ReadOnly(String),
@@ -182,21 +197,21 @@ impl SqlrApp {
     }
 
     /// The changeset of the result's pending edits.
-    fn changeset(&mut self, tab: u64, q: QueryId) -> Result<Changeset, String> {
-        let t = tab_mut(&mut self.dock, tab).ok_or("The tab is closed")?;
+    fn changeset(&mut self, tab: u64, q: QueryId) -> Result<Changeset, ChangesetError> {
+        let t = tab_mut(&mut self.dock, tab).ok_or(ChangesetError::TabClosed)?;
         let table = t
             .edits
             .get(&q)
             .and_then(|e| e.table.clone())
-            .ok_or("The result's table is unknown")?;
+            .ok_or(ChangesetError::UnknownTable)?;
         let edits = t
             .grids
             .get(&q)
             .and_then(|g| g.edits.as_ref())
-            .ok_or("The result cannot be edited")?;
-        let result = self.engine.result(q).ok_or("The result is closed")?;
+            .ok_or(ChangesetError::NotEditable)?;
+        let result = self.engine.result(q).ok_or(ChangesetError::ResultClosed)?;
         let r = result.read();
-        edits.changeset(&r.rows, table).map_err(|e| e.to_string())
+        Ok(edits.changeset(&r.rows, table)?)
     }
 
     pub(crate) fn changes_action(&mut self, tab: u64, q: QueryId, action: ChangesAction) {
@@ -228,7 +243,7 @@ impl SqlrApp {
         let changeset = match self.changeset(tab, q) {
             Ok(c) => c,
             Err(e) => {
-                self.notify(e);
+                self.notify(e.to_string());
                 return;
             }
         };
@@ -261,7 +276,7 @@ impl SqlrApp {
         let changeset = match self.changeset(tab, q) {
             Ok(c) => c,
             Err(e) => {
-                self.notify(e);
+                self.notify(e.to_string());
                 return;
             }
         };
@@ -709,5 +724,27 @@ impl SqlrApp {
             Some(value) => value_panel(ui, Some((meta, value.as_cell()))),
             None => value_panel(ui, r.rows.cell(row, col).map(|cell| (meta, cell))),
         }
+    }
+}
+
+#[cfg(test)]
+mod changeset_error_tests {
+    use super::*;
+
+    #[test]
+    fn changeset_errors_keep_their_messages() {
+        assert_eq!(ChangesetError::TabClosed.to_string(), "The tab is closed");
+        assert_eq!(
+            ChangesetError::UnknownTable.to_string(),
+            "The result's table is unknown"
+        );
+        assert_eq!(
+            ChangesetError::NotEditable.to_string(),
+            "The result cannot be edited"
+        );
+        assert_eq!(
+            ChangesetError::ResultClosed.to_string(),
+            "The result is closed"
+        );
     }
 }

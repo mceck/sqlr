@@ -20,7 +20,22 @@ use sqlr_ui::{
 type Tables = Arc<Vec<(TableRef, Vec<String>)>>;
 
 /// The pending statements of a `(before, after)` pair, or why there are none.
-type PendingDdl = (Option<ObjectDef>, ObjectDef, Result<Vec<String>, String>);
+type PendingDdl = (
+    Option<ObjectDef>,
+    ObjectDef,
+    Result<Vec<String>, ObjectTabError>,
+);
+
+/// Why an object tab has no DDL to show or apply.
+#[derive(Debug, thiserror::Error)]
+pub enum ObjectTabError {
+    /// The definition has not loaded yet.
+    #[error("Nothing loaded")]
+    NothingLoaded,
+    /// The driver could not build the DDL.
+    #[error(transparent)]
+    Driver(#[from] sqlr_core::DriverError),
+}
 
 /// An object editor tab.
 pub struct ObjectTab {
@@ -43,7 +58,7 @@ pub struct ObjectTab {
     /// The Data sub-tab's page (the hosting tab's run) shows a definition that changed: the
     /// host closes it, and the editor asks for it again.
     data_stale: bool,
-    current_ddl: Option<(ObjectDef, Result<String, String>)>,
+    current_ddl: Option<(ObjectDef, Result<String, ObjectTabError>)>,
     /// The pending statements of one `(before, after)` pair.
     pending_ddl: Option<PendingDdl>,
     /// The catalog revision they were built from.
@@ -199,11 +214,9 @@ impl ObjectTab {
     }
 
     /// The statements that apply the grid's changes, and whether any revokes.
-    pub fn grant_statements(&self, engine: &Engine) -> Result<Vec<String>, String> {
+    pub fn grant_statements(&self, engine: &Engine) -> Result<Vec<String>, ObjectTabError> {
         let (add, revoke) = self.admin.grid.changes();
-        engine
-            .grant_ddl(&self.conn, &add, &revoke)
-            .map_err(|e| e.message)
+        Ok(engine.grant_ddl(&self.conn, &add, &revoke)?)
     }
 
     /// Starts applying grant statements (after the confirmations).
@@ -350,8 +363,8 @@ impl ObjectTab {
 
     /// The statements that apply the pending changes: a table through `table_ddl` (a SQLite
     /// rebuild needs both definitions), a new object through its creation.
-    pub fn statements(&self, engine: &Engine) -> Result<Vec<String>, String> {
-        let state = self.state.as_ref().ok_or("Nothing loaded")?;
+    pub fn statements(&self, engine: &Engine) -> Result<Vec<String>, ObjectTabError> {
+        let state = self.state.as_ref().ok_or(ObjectTabError::NothingLoaded)?;
         let result = match (&state.before, &state.after) {
             (None, after) => engine.preview_ddl(&self.conn, &[SchemaChange::Create(after.clone())]),
             (Some(ObjectDef::Table(b)), ObjectDef::Table(a)) => engine.table_ddl(&self.conn, b, a),
@@ -359,7 +372,7 @@ impl ObjectTab {
                 engine.preview_ddl(&self.conn, &sqlr_core::diff_object(before, after))
             }
         };
-        result.map_err(|e| e.message)
+        Ok(result?)
     }
 
     /// How this tab's applies run: the driver's transactional DDL, the object's database,
@@ -479,7 +492,9 @@ impl ObjectTab {
             None => self.current_ddl = None,
             Some(before) => {
                 if self.current_ddl.as_ref().is_none_or(|(d, _)| d != before) {
-                    let ddl = engine.create_ddl(&self.conn, before).map_err(|e| e.message);
+                    let ddl = engine
+                        .create_ddl(&self.conn, before)
+                        .map_err(ObjectTabError::from);
                     self.current_ddl = Some((before.clone(), ddl));
                 }
             }
@@ -597,14 +612,22 @@ impl ObjectTab {
         } else {
             None
         };
+        let current_error = match &self.current_ddl {
+            Some((_, Err(e))) => e.to_string(),
+            _ => String::new(),
+        };
         let current = self.current_ddl.as_ref().map(|(_, d)| match d {
             Ok(ddl) => ddl.as_str(),
-            Err(e) => e.as_str(),
+            Err(_) => current_error.as_str(),
         });
+        let pending_error = match &self.pending_ddl {
+            Some((_, _, Err(e))) => e.to_string(),
+            _ => String::new(),
+        };
         let pending = self.pending_ddl.as_ref().and_then(|(_, _, p)| match p {
             Ok(statements) if statements.is_empty() => None,
             Ok(statements) => Some(Ok(statements.as_slice())),
-            Err(e) => Some(Err(e.as_str())),
+            Err(_) => Some(Err(pending_error.as_str())),
         });
         let message = self.message.as_ref().map(|(t, e)| (t.as_str(), *e));
         let ctx = ObjectEditorContext {
@@ -666,5 +689,20 @@ mod tests {
         );
         assert!(!keeps_edits(&none));
         assert!(!keeps_edits(&report(vec![DdlStepOutcome::Applied], false)));
+    }
+}
+
+#[cfg(test)]
+mod error_tests {
+    use super::*;
+
+    #[test]
+    fn object_tab_errors_keep_their_messages() {
+        assert_eq!(ObjectTabError::NothingLoaded.to_string(), "Nothing loaded");
+        let driver = ObjectTabError::from(sqlr_core::DriverError::new(
+            sqlr_core::ErrorKind::Other,
+            "unsupported",
+        ));
+        assert_eq!(driver.to_string(), "unsupported");
     }
 }

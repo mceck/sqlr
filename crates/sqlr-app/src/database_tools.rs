@@ -11,6 +11,7 @@ use sqlr_engine::{Engine, JobId, JobOutcome, JobProgress};
 use sqlr_ui::theme::{self, Spacing};
 
 use crate::app::SqlrApp;
+use crate::job_failure::JobFailure;
 use crate::transfer_dialogs::{FileAsk, suggested_name};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,7 +67,7 @@ struct ToolDialog {
     job: Option<JobId>,
     progress: JobProgress,
     log: Vec<String>,
-    outcome: Option<Result<String, String>>,
+    outcome: Option<Result<String, JobFailure>>,
 }
 
 impl ToolDialog {
@@ -92,7 +93,7 @@ impl ToolDialog {
         };
         let Some(state) = engine.job(id) else {
             self.job = None;
-            self.outcome = Some(Err("The job disappeared".into()));
+            self.outcome = Some(Err(JobFailure::Disappeared));
             return;
         };
         self.progress = state.progress;
@@ -109,8 +110,8 @@ impl ToolDialog {
                 engine.refresh(&self.conn, NodePath::root());
                 Ok(format!("Restored from {}", path.display()))
             }
-            JobOutcome::Failed(e) => Err(e.message),
-            JobOutcome::Cancelled => Err("Cancelled".into()),
+            JobOutcome::Failed(e) => Err(e.into()),
+            JobOutcome::Cancelled => Err(JobFailure::Cancelled),
             _ => Ok("Done".into()),
         });
     }
@@ -203,8 +204,8 @@ impl ToolDialog {
             Ok(message) => {
                 ui.colored_label(theme::palette(ui.ctx()).success, message);
             }
-            Err(message) => {
-                ui.colored_label(theme::palette(ui.ctx()).error, message);
+            Err(failure) => {
+                ui.colored_label(theme::palette(ui.ctx()).error, failure.to_string());
             }
         }
     }
@@ -1066,7 +1067,7 @@ mod tests {
                 });
             }
             dialog.state.progress = JobProgress { bytes: 0, rows: 7 };
-            dialog.state.outcome = Some(Err("boom".into()));
+            dialog.state.outcome = Some(Err(JobFailure::Cancelled));
             frame(&engine, |ctx| {
                 dialog.show(ctx, &engine, None);
             });

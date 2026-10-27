@@ -84,16 +84,16 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["NSA
 
 # Rust best-practice gates (Architecture spec, "Code quality gates").
 [workspace.lints.clippy]
-redundant_clone = "warn"
-needless_collect = "warn"
-unnecessary_wraps = "warn"
-needless_pass_by_value = "warn"
-map_unwrap_or = "warn"
-manual_let_else = "warn"
-manual_ok_or = "warn"
-undocumented_unsafe_blocks = "warn"
-allow_attributes_without_reason = "warn"
-disallowed_types = "warn"
+redundant_clone = "deny"
+needless_collect = "deny"
+unnecessary_wraps = "deny"
+needless_pass_by_value = "deny"
+map_unwrap_or = "deny"
+manual_let_else = "deny"
+manual_ok_or = "deny"
+undocumented_unsafe_blocks = "deny"
+allow_attributes_without_reason = "deny"
+disallowed_types = "deny"
 
 # Tests need line tables, not full DWARF: this cuts link time and binary size significantly.
 # Dependencies keep no debug info; their frames still show by symbol in backtraces.

@@ -27,6 +27,101 @@ use crate::app::SqlrApp;
 use sqlr_ui::ToastKind;
 use sqlr_ui::theme::{self, Spacing};
 
+/// Why checking for, downloading or installing an update failed. The text is what the
+/// update prompt and the logs show.
+#[derive(Debug, thiserror::Error)]
+pub enum UpdateError {
+    /// A file or directory operation failed.
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    /// The HTTP request or the body transfer failed.
+    #[error(transparent)]
+    Http(#[from] reqwest::Error),
+    /// The update state could not be serialized.
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    /// The release JSON did not parse.
+    #[error("the release did not parse: {source}")]
+    ReleaseParse {
+        #[source]
+        source: serde_json::Error,
+    },
+    /// The release tag is not a version.
+    #[error("{tag} is not a version: {source}")]
+    BadTag {
+        tag: String,
+        #[source]
+        source: semver::Error,
+    },
+    /// The TLS configuration could not be built.
+    #[error("TLS setup failed: {0}")]
+    Tls(#[source] rustls::Error),
+    /// The HTTP client could not be built.
+    #[error("no HTTP client: {0}")]
+    NoClient(#[source] reqwest::Error),
+    /// A release URL did not parse.
+    #[error("invalid release URL: {0}")]
+    InvalidUrl(#[source] <reqwest::Url as std::str::FromStr>::Err),
+    /// A release URL is not on GitHub.
+    #[error("the release points outside GitHub: {url}")]
+    OutsideGithub { url: String },
+    /// The release list is over the size bound.
+    #[error("the release list is too large")]
+    ListTooLarge,
+    /// A small text answer is over the size bound.
+    #[error("the answer is too large")]
+    AnswerTooLarge,
+    /// The download is over the size bound.
+    #[error("the download is implausibly large")]
+    DownloadTooLarge,
+    /// The install was cancelled.
+    #[error("cancelled")]
+    Cancelled,
+    /// The release ships no checksum list.
+    #[error("release {version} has no SHA256SUMS.txt")]
+    NoChecksums { version: String },
+    /// The checksum list has no line for the archive.
+    #[error("{list} lists no checksum for {asset}")]
+    NoChecksum { list: String, asset: String },
+    /// The archive does not match its checksum.
+    #[error("the download does not match its checksum (expected {expected}, got {got})")]
+    ChecksumMismatch { expected: String, got: String },
+    /// The release has no archive for this platform.
+    #[error("the release has no {os} build")]
+    NoBuild { os: &'static str },
+    /// Windows cannot install in place.
+    #[error("automatic install is not available on Windows")]
+    WindowsUnsupported,
+    /// The unpacked archive holds nothing installable.
+    #[error("the archive holds nothing this platform can install")]
+    EmptyArchive,
+    /// The updater thread could not start.
+    #[error("the updater did not start: {0}")]
+    Spawn(#[source] std::io::Error),
+    /// The new executable could not be written.
+    #[error("the new binary could not be written: {0}")]
+    WriteBinary(#[source] std::io::Error),
+    /// The new app bundle could not be opened.
+    #[error("the new app did not start: {0}")]
+    RelaunchApp(#[source] std::io::Error),
+    /// The new executable could not be started.
+    #[error("the new program did not start: {0}")]
+    RelaunchProgram(#[source] std::io::Error),
+    /// A path is not valid UTF-8.
+    #[error("a path here is not valid UTF-8")]
+    NotUtf8,
+    /// A helper program could not run.
+    #[error("{program} could not run: {source}")]
+    Run {
+        program: String,
+        #[source]
+        source: std::io::Error,
+    },
+    /// A helper program exited with an error.
+    #[error("{program} failed: {reason}")]
+    Failed { program: String, reason: String },
+}
+
 /// The releases API: the latest *stable* release (GitHub leaves out drafts and
 /// prereleases), which is the only thing ever offered.
 pub const API_URL: &str = "https://api.github.com/repos/mceck/sqlr/releases/latest";
@@ -140,7 +235,7 @@ pub enum Msg {
     /// The check's answer; an `Err` is logged and never shown, unless the person asked
     /// for the check explicitly. `manual` is that request.
     Checked {
-        result: Result<Latest, String>,
+        result: Result<Latest, UpdateError>,
         manual: bool,
     },
     /// Bytes downloaded so far, reported about ten times a second.
@@ -148,7 +243,7 @@ pub enum Msg {
     /// The new version replaced the running one.
     Installed { version: String },
     /// The install stopped; the prompt comes back with the reason.
-    Failed { error: String },
+    Failed { error: UpdateError },
     /// The download was cancelled from the prompt.
     Cancelled,
 }
@@ -199,12 +294,12 @@ impl State {
     /// The stored state, written beside `settings.toml`. A write is a temp file and a
     /// rename, so an interrupted save leaves the previous state in place. The temp name is
     /// unique per write: a check finishing while a skip is saved must not share it.
-    pub fn save(&self, dir: &Path) -> Result<(), String> {
+    pub fn save(&self, dir: &Path) -> Result<(), UpdateError> {
         use std::sync::atomic::AtomicU64;
 
         static NEXT_TMP: AtomicU64 = AtomicU64::new(0);
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-        let text = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(dir)?;
+        let text = serde_json::to_string_pretty(self)?;
         let path = dir.join(STATE_FILE);
         let mut tmp_name = path.as_os_str().to_owned();
         tmp_name.push(format!(
@@ -215,7 +310,7 @@ impl State {
         let tmp = PathBuf::from(tmp_name);
         if let Err(error) = std::fs::write(&tmp, text).and_then(|()| std::fs::rename(&tmp, &path)) {
             let _ = std::fs::remove_file(&tmp);
-            return Err(error.to_string());
+            return Err(error.into());
         }
         Ok(())
     }
@@ -236,7 +331,7 @@ impl State {
 
 /// The release parsed from the API's JSON. A body that does not parse, or a tag that is not
 /// a version, is an error: nothing is ever offered on a guess.
-pub fn parse_latest(bytes: &[u8]) -> Result<Latest, String> {
+pub fn parse_latest(bytes: &[u8]) -> Result<Latest, UpdateError> {
     #[derive(Deserialize)]
     struct Release {
         tag_name: String,
@@ -253,10 +348,12 @@ pub fn parse_latest(bytes: &[u8]) -> Result<Latest, String> {
     }
 
     let release: Release =
-        serde_json::from_slice(bytes).map_err(|e| format!("the release did not parse: {e}"))?;
+        serde_json::from_slice(bytes).map_err(|source| UpdateError::ReleaseParse { source })?;
     let version = release.tag_name.trim_start_matches('v').to_string();
-    semver::Version::parse(&version)
-        .map_err(|e| format!("{} is not a version: {e}", release.tag_name))?;
+    semver::Version::parse(&version).map_err(|source| UpdateError::BadTag {
+        tag: release.tag_name.clone(),
+        source,
+    })?;
     Ok(Latest {
         version,
         url: release.html_url,
@@ -368,7 +465,7 @@ fn writable(dir: &Path) -> bool {
 
 /// The HTTPS client: ring, the system's roots, and redirects that may only stay on GitHub
 /// and its CDN (`github.com` sends downloads to `…githubusercontent.com`).
-fn client() -> Result<reqwest::blocking::Client, String> {
+fn client() -> Result<reqwest::blocking::Client, UpdateError> {
     let _ = rustls::crypto::ring::default_provider().install_default();
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let mut roots = rustls::RootCertStore::empty();
@@ -377,7 +474,7 @@ fn client() -> Result<reqwest::blocking::Client, String> {
     }
     let tls = rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
-        .map_err(|e| format!("TLS setup failed: {e}"))?
+        .map_err(UpdateError::Tls)?
         .with_root_certificates(roots)
         .with_no_client_auth();
     let policy = reqwest::redirect::Policy::custom(|attempt| {
@@ -397,7 +494,7 @@ fn client() -> Result<reqwest::blocking::Client, String> {
         .redirect(policy)
         .tls_backend_preconfigured(tls)
         .build()
-        .map_err(|e| format!("no HTTP client: {e}"))
+        .map_err(UpdateError::NoClient)
 }
 
 fn is_allowed_host(host: &str) -> bool {
@@ -407,27 +504,27 @@ fn is_allowed_host(host: &str) -> bool {
 /// Parses a URL the release points at, and refuses anything that is not an HTTPS URL on
 /// GitHub or its download CDN. The API's answer is trusted over TLS; this is the second
 /// check, so a compromised body cannot send the updater to an arbitrary server.
-fn release_url(url: &str) -> Result<reqwest::Url, String> {
-    let parsed = reqwest::Url::parse(url).map_err(|e| format!("invalid release URL: {e}"))?;
+fn release_url(url: &str) -> Result<reqwest::Url, UpdateError> {
+    let parsed = reqwest::Url::parse(url).map_err(UpdateError::InvalidUrl)?;
     if parsed.scheme() != "https" || !parsed.host_str().is_some_and(is_allowed_host) {
-        return Err(format!("the release points outside GitHub: {url}"));
+        return Err(UpdateError::OutsideGithub {
+            url: url.to_string(),
+        });
     }
     Ok(parsed)
 }
 
 /// The latest release, as the API describes it.
-pub fn fetch_latest() -> Result<Latest, String> {
+pub fn fetch_latest() -> Result<Latest, UpdateError> {
     let response = client()?
         .get(release_url(API_URL)?)
         .header("Accept", "application/vnd.github+json")
         .timeout(CHECK_TIMEOUT)
-        .send()
-        .map_err(|e| e.to_string())?
-        .error_for_status()
-        .map_err(|e| e.to_string())?;
-    let bytes = response.bytes().map_err(|e| e.to_string())?;
+        .send()?
+        .error_for_status()?;
+    let bytes = response.bytes()?;
     if bytes.len() > MAX_TEXT_BYTES {
-        return Err("the release list is too large".into());
+        return Err(UpdateError::ListTooLarge);
     }
     parse_latest(&bytes)
 }
@@ -441,23 +538,21 @@ fn download(
     tx: &Sender<Msg>,
     repaint: &egui::Context,
     cancel: &Arc<AtomicBool>,
-) -> Result<(), String> {
+) -> Result<(), UpdateError> {
     let mut response = client()?
         .get(release_url(&asset.url)?)
         .timeout(DOWNLOAD_TIMEOUT)
-        .send()
-        .map_err(|e| e.to_string())?
-        .error_for_status()
-        .map_err(|e| e.to_string())?;
+        .send()?
+        .error_for_status()?;
     let total = response
         .content_length()
         .or((asset.size > 0).then_some(asset.size));
     let total = match total {
         Some(total) if total <= MAX_ASSET_BYTES => Some(total),
-        Some(_) => return Err("the download is implausibly large".into()),
+        Some(_) => return Err(UpdateError::DownloadTooLarge),
         None => None,
     };
-    let file = std::fs::File::create(dest).map_err(|e| e.to_string())?;
+    let file = std::fs::File::create(dest)?;
     let mut progress = Progress {
         file,
         tx: tx.clone(),
@@ -467,7 +562,7 @@ fn download(
         total,
         last: Instant::now(),
     };
-    response.copy_to(&mut progress).map_err(|e| e.to_string())?;
+    response.copy_to(&mut progress)?;
     // The last write may have been before `PROGRESS_EVERY`; report where it ended.
     let _ = progress.tx.send(Msg::Progress {
         done: progress.done,
@@ -520,50 +615,50 @@ impl std::io::Write for Progress {
 /// The archive against the release's `SHA256SUMS.txt`. The release workflow always ships
 /// that file, and the replacement is code: a release that cannot be checked is not
 /// installed.
-fn verify(latest: &Latest, asset: &Asset, file: &Path) -> Result<(), String> {
+fn verify(latest: &Latest, asset: &Asset, file: &Path) -> Result<(), UpdateError> {
     let sums = latest
         .assets
         .iter()
         .find(|a| a.name.eq_ignore_ascii_case("SHA256SUMS.txt"))
-        .ok_or_else(|| format!("release {} has no SHA256SUMS.txt", latest.version))?;
+        .ok_or_else(|| UpdateError::NoChecksums {
+            version: latest.version.clone(),
+        })?;
     let text = get(&sums.url, CHECK_TIMEOUT)?;
     let text = String::from_utf8_lossy(&text);
-    let expected = checksum_for(&text, &asset.name)
-        .ok_or_else(|| format!("{} lists no checksum for {}", sums.name, asset.name))?;
+    let expected = checksum_for(&text, &asset.name).ok_or_else(|| UpdateError::NoChecksum {
+        list: sums.name.clone(),
+        asset: asset.name.clone(),
+    })?;
     let got = sha256_file(file)?;
     if !got.eq_ignore_ascii_case(&expected) {
-        return Err(format!(
-            "the download does not match its checksum (expected {expected}, got {got})"
-        ));
+        return Err(UpdateError::ChecksumMismatch { expected, got });
     }
     Ok(())
 }
 
 /// A bounded GET for the two small text files this feature reads.
-fn get(url: &str, timeout: Duration) -> Result<Vec<u8>, String> {
+fn get(url: &str, timeout: Duration) -> Result<Vec<u8>, UpdateError> {
     let response = client()?
         .get(release_url(url)?)
         .timeout(timeout)
-        .send()
-        .map_err(|e| e.to_string())?
-        .error_for_status()
-        .map_err(|e| e.to_string())?;
-    let bytes = response.bytes().map_err(|e| e.to_string())?;
+        .send()?
+        .error_for_status()?;
+    let bytes = response.bytes()?;
     if bytes.len() > MAX_TEXT_BYTES {
-        return Err("the answer is too large".into());
+        return Err(UpdateError::AnswerTooLarge);
     }
     Ok(bytes.to_vec())
 }
 
 /// The file's sha-256 as lower-case hex, the spelling `sha256sum` prints.
-pub fn sha256_file(path: &Path) -> Result<String, String> {
+pub fn sha256_file(path: &Path) -> Result<String, UpdateError> {
     use std::io::Read as _;
 
-    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut file = std::fs::File::open(path)?;
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; 64 * 1024];
     loop {
-        let read = file.read(&mut buffer).map_err(|e| e.to_string())?;
+        let read = file.read(&mut buffer)?;
         if read == 0 {
             break;
         }
@@ -588,7 +683,7 @@ pub fn spawn_install(
     tx: Sender<Msg>,
     repaint: egui::Context,
     cancel: Arc<AtomicBool>,
-) -> Result<(), String> {
+) -> Result<(), UpdateError> {
     std::thread::Builder::new()
         .name("sqlr-update".into())
         .spawn(move || {
@@ -606,14 +701,14 @@ pub fn spawn_install(
             repaint.request_repaint();
         })
         .map(|_| ())
-        .map_err(|e| format!("the updater did not start: {e}"))
+        .map_err(UpdateError::Spawn)
 }
 
 /// Stops an install at the next safe point. Once the replacement has begun it is allowed
 /// to finish: half a bundle is worse than a finished one.
-fn check_cancel(cancel: &AtomicBool) -> Result<(), String> {
+fn check_cancel(cancel: &AtomicBool) -> Result<(), UpdateError> {
     if cancel.load(Ordering::Relaxed) {
-        return Err("cancelled".into());
+        return Err(UpdateError::Cancelled);
     }
     Ok(())
 }
@@ -625,13 +720,11 @@ fn install(
     tx: &Sender<Msg>,
     repaint: &egui::Context,
     cancel: &Arc<AtomicBool>,
-) -> Result<(), String> {
-    let asset = pick_asset(latest, platform())
-        .ok_or_else(|| format!("the release has no {} build", std::env::consts::OS))?;
-    let temp = tempfile::Builder::new()
-        .prefix("sqlr-update-")
-        .tempdir()
-        .map_err(|e| e.to_string())?;
+) -> Result<(), UpdateError> {
+    let asset = pick_asset(latest, platform()).ok_or_else(|| UpdateError::NoBuild {
+        os: std::env::consts::OS,
+    })?;
+    let temp = tempfile::Builder::new().prefix("sqlr-update-").tempdir()?;
     let archive = temp.path().join(&asset.name);
     download(asset, &archive, tx, repaint, cancel)?;
     check_cancel(cancel)?;
@@ -646,16 +739,16 @@ fn install(
 }
 
 /// Unpacks the archive and returns the `.app` or the binary inside it.
-fn unpack(archive: &Path, into: &Path) -> Result<PathBuf, String> {
-    std::fs::create_dir_all(into).map_err(|e| e.to_string())?;
+fn unpack(archive: &Path, into: &Path) -> Result<PathBuf, UpdateError> {
+    std::fs::create_dir_all(into)?;
     match platform() {
         // The download is the new AppImage itself.
         Platform::LinuxAppImage => Ok(archive.to_path_buf()),
         Platform::Macos => {
             let mount = into.join("mount");
             let app = into.join("app");
-            std::fs::create_dir_all(&mount).map_err(|e| e.to_string())?;
-            std::fs::create_dir_all(&app).map_err(|e| e.to_string())?;
+            std::fs::create_dir_all(&mount)?;
+            std::fs::create_dir_all(&app)?;
             run(
                 "hdiutil",
                 &[
@@ -685,22 +778,23 @@ fn unpack(archive: &Path, into: &Path) -> Result<PathBuf, String> {
                 is_file && name == "sqlr"
             })
         }
-        Platform::Windows => Err("automatic install is not available on Windows".into()),
+        Platform::Windows => Err(UpdateError::WindowsUnsupported),
     }
 }
 
 /// The first path under `root`, at most `depth` levels down, whose name `wanted` accepts.
 /// The predicate is a trait object: a generic `impl Fn` nests a new type at every recursion
 /// level and exceeds the compiler's instantiation limit.
-fn find(root: &Path, depth: usize, wanted: &dyn Fn(&str, bool) -> bool) -> Result<PathBuf, String> {
+fn find(
+    root: &Path,
+    depth: usize,
+    wanted: &dyn Fn(&str, bool) -> bool,
+) -> Result<PathBuf, UpdateError> {
     if depth == 0 {
-        return Err("the archive holds nothing this platform can install".into());
+        return Err(UpdateError::EmptyArchive);
     }
     let mut dirs = Vec::new();
-    for entry in std::fs::read_dir(root)
-        .map_err(|e| e.to_string())?
-        .flatten()
-    {
+    for entry in std::fs::read_dir(root)?.flatten() {
         let is_file = entry.file_type().is_ok_and(|t| t.is_file());
         let name = entry.file_name().to_string_lossy().into_owned();
         if wanted(&name, is_file) {
@@ -715,20 +809,20 @@ fn find(root: &Path, depth: usize, wanted: &dyn Fn(&str, bool) -> bool) -> Resul
             return Ok(found);
         }
     }
-    Err("the archive holds nothing this platform can install".into())
+    Err(UpdateError::EmptyArchive)
 }
 
 /// Replaces the bundle. The running one is moved aside first and put back when the new
 /// copy fails, so a failed install never leaves this Mac without a sqlr app: `/Applications`
 /// is written through `osascript` when this user cannot write it there.
-fn install_bundle(new: &Path, bundle: &Path) -> Result<(), String> {
+fn install_bundle(new: &Path, bundle: &Path) -> Result<(), UpdateError> {
     let backup = beside(bundle, ".old");
     if backup.exists() {
-        std::fs::remove_dir_all(&backup).map_err(|e| e.to_string())?;
+        std::fs::remove_dir_all(&backup)?;
     }
     let writable_here = bundle.parent().is_some_and(writable);
     if writable_here {
-        std::fs::rename(bundle, &backup).map_err(|e| e.to_string())?;
+        std::fs::rename(bundle, &backup)?;
         if let Err(error) = run("ditto", &[path(new)?, path(bundle)?]) {
             let _ = std::fs::rename(&backup, bundle);
             return Err(error);
@@ -764,15 +858,15 @@ fn install_bundle(new: &Path, bundle: &Path) -> Result<(), String> {
 
 /// Replaces the executable: rename the running one aside, copy the new one in its place,
 /// then drop the old one.
-fn install_binary(new: &Path, exe: &Path) -> Result<(), String> {
+fn install_binary(new: &Path, exe: &Path) -> Result<(), UpdateError> {
     let backup = beside(exe, ".old");
     if backup.exists() {
         let _ = std::fs::remove_file(&backup);
     }
-    std::fs::rename(exe, &backup).map_err(|e| e.to_string())?;
+    std::fs::rename(exe, &backup)?;
     if let Err(error) = std::fs::copy(new, exe).and_then(|_| set_executable(exe)) {
         let _ = std::fs::rename(&backup, exe);
-        return Err(format!("the new binary could not be written: {error}"));
+        return Err(UpdateError::WriteBinary(error));
     }
     let _ = std::fs::remove_file(&backup);
     Ok(())
@@ -792,19 +886,19 @@ fn set_executable(_: &Path) -> std::io::Result<()> {
 }
 
 /// Starts the copy that was just installed. The caller closes this one afterwards.
-pub fn relaunch(target: &Target) -> Result<(), String> {
+pub fn relaunch(target: &Target) -> Result<(), UpdateError> {
     match target {
         Target::Bundle(bundle) => std::process::Command::new("open")
             .arg("-n")
             .arg(bundle)
             .spawn()
             .map(|_| ())
-            .map_err(|e| format!("the new app did not start: {e}")),
+            .map_err(UpdateError::RelaunchApp),
         Target::Binary(exe) => std::process::Command::new(exe)
             .args(std::env::args().skip(1))
             .spawn()
             .map(|_| ())
-            .map_err(|e| format!("the new program did not start: {e}")),
+            .map_err(UpdateError::RelaunchProgram),
     }
 }
 
@@ -818,10 +912,8 @@ fn beside(path: &Path, suffix: &str) -> PathBuf {
     path.with_file_name(name)
 }
 
-fn path(value: &Path) -> Result<&str, String> {
-    value
-        .to_str()
-        .ok_or_else(|| "a path here is not valid UTF-8".to_string())
+fn path(value: &Path) -> Result<&str, UpdateError> {
+    value.to_str().ok_or(UpdateError::NotUtf8)
 }
 
 fn shell_quote(value: &str) -> String {
@@ -829,19 +921,22 @@ fn shell_quote(value: &str) -> String {
 }
 
 /// Runs a program to completion, its standard error as the reason when it fails.
-fn run(program: &str, args: &[&str]) -> Result<(), String> {
+fn run(program: &str, args: &[&str]) -> Result<(), UpdateError> {
     let output = std::process::Command::new(program)
         .args(args)
         .output()
-        .map_err(|e| format!("{program} could not run: {e}"))?;
+        .map_err(|source| UpdateError::Run {
+            program: program.to_string(),
+            source,
+        })?;
     if output.status.success() {
         return Ok(());
     }
     let stderr = String::from_utf8_lossy(&output.stderr);
-    Err(format!(
-        "{program} failed: {}",
-        stderr.trim().trim_end_matches('.')
-    ))
+    Err(UpdateError::Failed {
+        program: program.to_string(),
+        reason: stderr.trim().trim_end_matches('.').to_string(),
+    })
 }
 
 fn unix_now() -> i64 {
@@ -1013,7 +1108,7 @@ impl SqlrApp {
                 self.update_cancel = None;
                 self.update = UpdateFlow::Installed { version };
             }
-            Msg::Failed { error } => self.stop_installing(Some(error)),
+            Msg::Failed { error } => self.stop_installing(Some(error.to_string())),
             Msg::Cancelled => self.stop_installing(None),
         }
     }
@@ -1057,15 +1152,15 @@ impl SqlrApp {
         let Some(receiver) = &self.update_state_save else {
             return;
         };
-        let result = match receiver.try_recv() {
-            Ok(result) => result,
+        let failure = match receiver.try_recv() {
+            Ok(result) => result.err().map(|error| error.to_string()),
             Err(std::sync::mpsc::TryRecvError::Empty) => return,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                Err("the save thread stopped".into())
+                Some("the save thread stopped".to_string())
             }
         };
         self.update_state_save = None;
-        if let Err(error) = result {
+        if let Some(error) = failure {
             tracing::debug!(target: "sqlr_updates", error = %error, "the update state did not save");
         }
         if std::mem::take(&mut self.update_state_dirty) {
@@ -1150,7 +1245,7 @@ impl SqlrApp {
             self.update_rx = None;
             return UpdateFlow::Available {
                 latest,
-                error: Some(error),
+                error: Some(error.to_string()),
             };
         }
         UpdateFlow::Installing {
@@ -1222,7 +1317,7 @@ impl SqlrApp {
                 url: format!("https://github.com/mceck/sqlr/releases/tag/v{version}"),
                 assets: vec![],
             }),
-            None => Err(error.unwrap_or("no answer").to_string()),
+            None => Err(std::io::Error::other(error.unwrap_or("no answer")).into()),
         };
         self.apply_update(Msg::Checked { result, manual }, ctx);
     }
@@ -1546,5 +1641,51 @@ mod tests {
         assert_eq!(found, binary);
 
         assert!(find(dir.path(), 1, &|name, _| name == "missing").is_err());
+    }
+}
+
+#[cfg(test)]
+mod error_tests {
+    use super::*;
+
+    #[test]
+    fn update_errors_keep_their_user_visible_messages() {
+        assert_eq!(
+            UpdateError::ChecksumMismatch {
+                expected: "aa".into(),
+                got: "bb".into(),
+            }
+            .to_string(),
+            "the download does not match its checksum (expected aa, got bb)"
+        );
+        assert_eq!(
+            UpdateError::NoChecksums {
+                version: "1.2.3".into(),
+            }
+            .to_string(),
+            "release 1.2.3 has no SHA256SUMS.txt"
+        );
+        assert_eq!(
+            UpdateError::Failed {
+                program: "tar".into(),
+                reason: "bad archive".into(),
+            }
+            .to_string(),
+            "tar failed: bad archive"
+        );
+        assert_eq!(
+            UpdateError::OutsideGithub {
+                url: "https://example.com".into(),
+            }
+            .to_string(),
+            "the release points outside GitHub: https://example.com"
+        );
+        assert_eq!(UpdateError::Cancelled.to_string(), "cancelled");
+        let parse = parse_latest(b"not json").unwrap_err().to_string();
+        assert!(parse.starts_with("the release did not parse: "), "{parse}");
+        let tag = parse_latest(br#"{"tag_name":"nightly","html_url":"u"}"#)
+            .unwrap_err()
+            .to_string();
+        assert!(tag.starts_with("nightly is not a version: "), "{tag}");
     }
 }

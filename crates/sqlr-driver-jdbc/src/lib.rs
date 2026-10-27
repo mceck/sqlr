@@ -3,7 +3,7 @@
 //! from the bridge jar and the driver jars, and starts the Java bridge, which then speaks the
 //! sidecar protocol on the inherited stdin and stdout.
 
-#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 mod java;
 mod presets;

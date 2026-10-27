@@ -1,4 +1,4 @@
-#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 use std::path::Path;
 use std::sync::Arc;

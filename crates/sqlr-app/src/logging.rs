@@ -68,7 +68,7 @@ pub fn init(
         let filter = EnvFilter::new(format!("{},rmcp=warn", level.as_str()));
         reload_handle
             .reload(filter)
-            .map_err(|e| format!("could not change the log level: {e}"))?;
+            .map_err(crate::diagnostics::DiagnosticsError::Reload)?;
         *set_current.lock() = level;
         Ok(())
     });
@@ -96,7 +96,7 @@ pub fn init(
                     });
                 (Some(layer), Some(guard), None)
             }
-            Err(error) => (None, None, Some(error)),
+            Err(error) => (None, None, Some(error.to_string())),
         },
         None => (None, None, None),
     };
@@ -154,13 +154,24 @@ where
     }
 }
 
+/// Why the log directory or today's log file could not be prepared.
+#[derive(Debug, thiserror::Error)]
+#[error("{}: {source}", dir.display())]
+struct LogDirError {
+    dir: PathBuf,
+    #[source]
+    source: std::io::Error,
+}
+
 /// A daily file writer that opens each file owner-only and prunes to [`LOG_FILES`].
 impl DailyWriter {
     fn open(
         dir: &Path,
-    ) -> Result<(tracing_appender::non_blocking::NonBlocking, WorkerGuard), String> {
-        crate::diagnostics::store::ensure_private_dir(dir)
-            .map_err(|e| format!("{}: {e}", dir.display()))?;
+    ) -> Result<(tracing_appender::non_blocking::NonBlocking, WorkerGuard), LogDirError> {
+        crate::diagnostics::store::ensure_private_dir(dir).map_err(|source| LogDirError {
+            dir: dir.to_path_buf(),
+            source,
+        })?;
         let writer = DailyWriter {
             dir: dir.to_path_buf(),
             state: Mutex::new(DailyState::default()),
@@ -171,7 +182,10 @@ impl DailyWriter {
             .state
             .lock()
             .ensure(dir)
-            .map_err(|e| format!("{}: {e}", dir.display()))?;
+            .map_err(|source| LogDirError {
+                dir: dir.to_path_buf(),
+                source,
+            })?;
         let (writer, guard) = tracing_appender::non_blocking(writer);
         Ok((writer, guard))
     }
@@ -613,5 +627,19 @@ mod tests {
         assert!(logging.guard.is_none());
         assert!(logging.file_error.is_some());
         assert!(logging.warning().unwrap().contains("stderr"));
+    }
+}
+
+#[cfg(test)]
+mod log_dir_error_tests {
+    use super::*;
+
+    #[test]
+    fn a_log_directory_error_names_the_directory() {
+        let error = LogDirError {
+            dir: PathBuf::from("/tmp/logs"),
+            source: std::io::Error::other("denied"),
+        };
+        assert_eq!(error.to_string(), "/tmp/logs: denied");
     }
 }

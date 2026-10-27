@@ -668,7 +668,7 @@ pub(crate) struct ImportDialog {
     save_rejected: Option<FileAsk>,
     /// The job writing the rejected rows, and what it said once done.
     save_job: Option<JobId>,
-    saved: Option<Result<String, String>>,
+    saved: Option<Result<String, SaveRejectsError>>,
     error: Option<String>,
 }
 
@@ -915,7 +915,7 @@ impl ImportDialog {
                     ui.colored_label(palette.success, done);
                 }
                 Some(Err(e)) => {
-                    ui.colored_label(palette.error, e);
+                    ui.colored_label(palette.error, e.to_string());
                 }
                 None if self.save_job.is_some() => {
                     ui.spinner();
@@ -1055,10 +1055,8 @@ impl ImportDialog {
                 JobOutcome::Exported { path, .. } => {
                     Ok(format!("Saved the rejected rows to {}", path.display()))
                 }
-                JobOutcome::Failed(e) => {
-                    Err(format!("Saving the rejected rows failed: {}", e.message))
-                }
-                _ => Err("Saving the rejected rows was cancelled".into()),
+                JobOutcome::Failed(e) => Err(SaveRejectsError::Failed(e)),
+                _ => Err(SaveRejectsError::Cancelled),
             });
         }
         if let Some(job) = self.preview_job
@@ -1419,9 +1417,34 @@ fn job_what_copy(what: &JobWhat) -> Option<usize> {
     }
 }
 
+/// Why the rejected rows were not saved to a file.
+#[derive(Debug, thiserror::Error)]
+enum SaveRejectsError {
+    #[error("Saving the rejected rows failed: {}", .0.message)]
+    Failed(#[source] sqlr_core::DriverError),
+    #[error("Saving the rejected rows was cancelled")]
+    Cancelled,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saving_the_rejected_rows_reports_why_it_stopped() {
+        let failed = SaveRejectsError::Failed(sqlr_core::DriverError::new(
+            sqlr_core::ErrorKind::Other,
+            "disk full",
+        ));
+        assert_eq!(
+            failed.to_string(),
+            "Saving the rejected rows failed: disk full"
+        );
+        assert_eq!(
+            SaveRejectsError::Cancelled.to_string(),
+            "Saving the rejected rows was cancelled"
+        );
+    }
 
     #[test]
     fn a_collection_import_asks_when_the_profile_confirms_writes() {

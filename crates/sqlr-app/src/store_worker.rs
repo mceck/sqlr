@@ -6,8 +6,38 @@
 use std::sync::mpsc;
 
 use sqlr_core::{ConnectionConfig, DriverManifest, Secrets};
-use sqlr_store::client_migration::{self, ClientFormat, DetectedSource, ImportBatch};
-use sqlr_store::{ConnectionRepo, MoveTarget};
+use sqlr_store::client_migration::{
+    self, ClientFormat, DetectedSource, ExportError, ImportBatch, ImportError,
+};
+use sqlr_store::{ConnectionRepo, MoveTarget, StoreError};
+
+/// Why a request to the store worker failed. The text is what the dialogs and toasts show.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum StoreWorkerError {
+    /// The connections file, the database or the keychain failed.
+    #[error(transparent)]
+    Store(#[from] StoreError),
+    /// A connection file from another client could not be read.
+    #[error(transparent)]
+    Import(#[from] ImportError),
+    /// Connections could not be exported.
+    #[error(transparent)]
+    Export(#[from] ExportError),
+    /// The worker panicked while running the request.
+    #[error("internal panic in the store worker")]
+    Panic,
+    /// The home folder is unknown, so no other client can be looked for.
+    #[error("Could not locate your home folder. Choose a connection file instead.")]
+    NoHomeFolder,
+    /// The pasted text is over the size limit.
+    #[error("Clipboard contents exceed the 16 MiB limit.")]
+    ClipboardTooLarge,
+    /// Credentials cannot be exported without knowing the driver's secret fields.
+    #[error(
+        "Cannot export credentials without the connection's driver manifest. Install the driver first."
+    )]
+    NoManifest,
+}
 
 pub(crate) enum MigrationRequest {
     Discover,
@@ -36,13 +66,13 @@ pub(crate) enum MigrationResult {
         path: std::path::PathBuf,
         warnings: Vec<String>,
     },
-    Error(String),
+    Error(StoreWorkerError),
 }
 
 /// The saved connections and folders, or why they could not be read.
 pub(crate) struct Listing {
-    pub connections: Result<Vec<ConnectionConfig>, String>,
-    pub folders: Result<Vec<String>, String>,
+    pub connections: Result<Vec<ConnectionConfig>, StoreWorkerError>,
+    pub folders: Result<Vec<String>, StoreWorkerError>,
 }
 
 impl Listing {
@@ -103,7 +133,7 @@ pub(crate) enum StoreOp {
     },
 }
 
-/// What a [`StoreOp`] did. `Err` holds the store error's text.
+/// What a [`StoreOp`] did. `Err` holds the store error.
 pub(crate) enum StoreReply {
     ClientMigration {
         id: String,
@@ -113,60 +143,60 @@ pub(crate) enum StoreReply {
     Listed(Listing),
     FolderCreated {
         name: String,
-        result: Result<(), String>,
+        result: Result<(), StoreWorkerError>,
         listing: Listing,
     },
     FolderRenamed {
         from: String,
         to: String,
-        result: Result<(), String>,
+        result: Result<(), StoreWorkerError>,
         listing: Listing,
     },
     FolderDeleted {
         name: String,
-        result: Result<(), String>,
+        result: Result<(), StoreWorkerError>,
         listing: Listing,
     },
     ConnectionMoved {
         conn: String,
         folder: Option<String>,
-        result: Result<(), String>,
+        result: Result<(), StoreWorkerError>,
         listing: Listing,
     },
     FolderMoved {
         folder: String,
         /// The folder's path after the move (its leaf name may have changed with its parent).
         to: String,
-        result: Result<(), String>,
+        result: Result<(), StoreWorkerError>,
         listing: Listing,
     },
     Saved {
         id: String,
         editing: bool,
-        result: Result<(), String>,
+        result: Result<(), StoreWorkerError>,
         listing: Listing,
     },
     Deleted {
         id: String,
         name: String,
-        result: Result<(), String>,
+        result: Result<(), StoreWorkerError>,
         listing: Listing,
     },
     Secrets {
         id: String,
-        result: Result<Secrets, String>,
+        result: Result<Secrets, StoreWorkerError>,
     },
     /// `copy` is the duplicate's id.
     Duplicated {
         name: String,
-        copy: Result<String, String>,
+        copy: Result<String, StoreWorkerError>,
         listing: Listing,
     },
 }
 
 impl StoreOp {
     fn panic_reply(&self) -> StoreReply {
-        let error = || "internal panic in the store worker".to_string();
+        let error = || StoreWorkerError::Panic;
         let listing = || Listing {
             connections: Err(error()),
             folders: Err(error()),
@@ -292,20 +322,16 @@ impl StoreWorker {
     }
 }
 
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "used as a `map_err` function pointer, which receives the error by value"
-)]
-fn store_error(error: sqlr_store::StoreError) -> String {
-    if !matches!(error, sqlr_store::StoreError::Invalid(_)) {
+fn store_error(error: StoreError) -> StoreWorkerError {
+    if !matches!(error, StoreError::Invalid(_)) {
         tracing::error!(op = "store", error = %error, "local storage operation failed");
     }
-    error.to_string()
+    StoreWorkerError::Store(error)
 }
 
 /// Runs `op` on `repo` (on the store thread; tests call it in place).
 pub(crate) fn run(repo: &ConnectionRepo, op: StoreOp) -> StoreReply {
-    let text = |r: Result<(), sqlr_store::StoreError>| r.map_err(store_error);
+    let text = |r: Result<(), StoreError>| r.map_err(store_error);
     match op {
         StoreOp::ClientMigration { id, request } => {
             let importing = matches!(&request, MigrationRequest::Import(_));
@@ -399,9 +425,10 @@ pub(crate) fn run(repo: &ConnectionRepo, op: StoreOp) -> StoreReply {
             let result = repo
                 .list()
                 .and_then(|list| {
-                    let mut cfg = list.into_iter().find(|cfg| cfg.id == id).ok_or_else(|| {
-                        sqlr_store::StoreError::Invalid("unknown connection".into())
-                    })?;
+                    let mut cfg = list
+                        .into_iter()
+                        .find(|cfg| cfg.id == id)
+                        .ok_or_else(|| StoreError::Invalid("unknown connection".into()))?;
                     cfg.agent_access = access;
                     repo.save(&cfg, &Secrets::default())
                 })
@@ -425,13 +452,16 @@ pub(crate) fn run(repo: &ConnectionRepo, op: StoreOp) -> StoreReply {
     }
 }
 
-fn migrate(repo: &ConnectionRepo, request: MigrationRequest) -> Result<MigrationResult, String> {
+fn migrate(
+    repo: &ConnectionRepo,
+    request: MigrationRequest,
+) -> Result<MigrationResult, StoreWorkerError> {
     match request {
         MigrationRequest::Discover => {
             let home = std::env::var_os("HOME")
                 .or_else(|| std::env::var_os("USERPROFILE"))
                 .map(std::path::PathBuf::from)
-                .ok_or("Could not locate your home folder. Choose a connection file instead.")?;
+                .ok_or(StoreWorkerError::NoHomeFolder)?;
             let sources = client_migration::discover(&home);
             let mut combined = ImportBatch::default();
             for source in &sources {
@@ -459,17 +489,15 @@ fn migrate(repo: &ConnectionRepo, request: MigrationRequest) -> Result<Migration
             })
         }
         MigrationRequest::Read(path) => {
-            let (format, batch) =
-                client_migration::read_source(&path).map_err(|e| e.to_string())?;
+            let (format, batch) = client_migration::read_source(&path)?;
             Ok(MigrationResult::Loaded { format, batch })
         }
         MigrationRequest::Clipboard(text) => {
             if text.len() > 16 * 1024 * 1024 {
-                return Err("Clipboard contents exceed the 16 MiB limit.".into());
+                return Err(StoreWorkerError::ClipboardTooLarge);
             }
-            let format = client_migration::detect(text.as_bytes()).map_err(|e| e.to_string())?;
-            let batch =
-                client_migration::decode(format, text.as_bytes()).map_err(|e| e.to_string())?;
+            let format = client_migration::detect(text.as_bytes())?;
+            let batch = client_migration::decode(format, text.as_bytes())?;
             Ok(MigrationResult::Loaded { format, batch })
         }
         MigrationRequest::Import(mut connections) => {
@@ -499,7 +527,7 @@ fn migrate(repo: &ConnectionRepo, request: MigrationRequest) -> Result<Migration
                 let mut credentials = std::collections::BTreeMap::new();
                 for c in &connections {
                     let mut secrets = Secrets::default();
-                    let keys = fields.get(&c.id).ok_or("Cannot export credentials without the connection's driver manifest. Install the driver first.")?;
+                    let keys = fields.get(&c.id).ok_or(StoreWorkerError::NoManifest)?;
                     for key in keys.iter().filter(|_| c.save_secrets) {
                         if let Some(value) =
                             repo.secret_store().get(&c.id, key).map_err(store_error)?
@@ -510,12 +538,10 @@ fn migrate(repo: &ConnectionRepo, request: MigrationRequest) -> Result<Migration
                     credentials.insert(c.id.clone(), secrets);
                 }
                 let doc =
-                    client_migration::encode_with_credentials(format, &connections, &credentials)
-                        .map_err(|e| e.to_string())?;
-                client_migration::save_document(&path, doc).map_err(|e| e.to_string())?
+                    client_migration::encode_with_credentials(format, &connections, &credentials)?;
+                client_migration::save_document(&path, doc)?
             } else {
-                client_migration::save_export(&path, format, &connections)
-                    .map_err(|e| e.to_string())?
+                client_migration::save_export(&path, format, &connections)?
             };
             Ok(MigrationResult::Exported { path, warnings })
         }
@@ -564,6 +590,26 @@ mod tests {
     use sqlr_core::Driver;
     use sqlr_store::{ConnectionRepo, MemorySecretStore};
     use sqlr_testkit::FakeDriver;
+
+    #[test]
+    fn worker_errors_keep_their_user_visible_messages() {
+        assert_eq!(
+            StoreWorkerError::ClipboardTooLarge.to_string(),
+            "Clipboard contents exceed the 16 MiB limit."
+        );
+        assert_eq!(
+            StoreWorkerError::NoHomeFolder.to_string(),
+            "Could not locate your home folder. Choose a connection file instead."
+        );
+        assert_eq!(
+            StoreWorkerError::from(StoreError::Invalid("duplicate name".into())).to_string(),
+            "invalid: duplicate name"
+        );
+        assert_eq!(
+            StoreWorkerError::from(ImportError::InvalidJson).to_string(),
+            "Invalid connection JSON file."
+        );
+    }
 
     fn repo(dir: &std::path::Path) -> ConnectionRepo {
         ConnectionRepo::open(dir, Box::new(MemorySecretStore::default())).unwrap()
@@ -710,7 +756,7 @@ mod tests {
                 result: Err(error), ..
             }) = worker.try_recv()
             {
-                assert!(error.contains("internal panic"));
+                assert!(error.to_string().contains("internal panic"));
                 break;
             }
             assert!(

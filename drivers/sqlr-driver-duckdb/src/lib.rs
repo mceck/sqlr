@@ -1,7 +1,7 @@
 //! DuckDB sidecar driver: the bundled engine, with one worker thread per connection.
 //! Sessions of one connection share a native database inside the sidecar process.
 
-#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 mod catalog;
 mod dialect;

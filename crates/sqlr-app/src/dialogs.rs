@@ -29,7 +29,7 @@ use sqlr_ui::{
 
 use crate::app::SqlrApp;
 use crate::prefs::Scopes;
-use crate::store_worker::StoreOp;
+use crate::store_worker::{StoreOp, StoreWorkerError};
 
 /// The connection test's result line: `"<product> <version> · <ms> ms"`, and the SSH host
 /// key when a tunnel was used.
@@ -363,7 +363,7 @@ impl ConnDialog {
     /// The stored secrets of connection `id` (the one edited, or a draft of the list) were
     /// read: they fill the secret fields the user left empty. If the keychain could not be
     /// read, the dialog says so.
-    pub(crate) fn secrets_arrived(&mut self, id: &str, result: Result<Secrets, String>) {
+    pub(crate) fn secrets_arrived(&mut self, id: &str, result: Result<Secrets, StoreWorkerError>) {
         let (form, error, stored) = if self.editing.as_deref() == Some(id) {
             (&mut self.form, &mut self.error, &mut self.stored_secrets)
         } else if let Some(draft) = self.others.get_mut(id) {
@@ -1213,7 +1213,11 @@ impl SqlrApp {
     }
 
     /// The store saved (or failed to save) the copy `copy` of the connection `name`.
-    pub(crate) fn connection_duplicated(&mut self, name: &str, copy: Result<String, String>) {
+    pub(crate) fn connection_duplicated(
+        &mut self,
+        name: &str,
+        copy: Result<String, StoreWorkerError>,
+    ) {
         match copy {
             Ok(id) => {
                 self.tree.selected = Some((id, NodePath::root()));
@@ -1237,7 +1241,7 @@ impl SqlrApp {
         &mut self,
         id: &str,
         editing: bool,
-        result: Result<(), String>,
+        result: Result<(), StoreWorkerError>,
     ) {
         match result {
             Ok(()) => {
@@ -1254,7 +1258,7 @@ impl SqlrApp {
                     self.demo = None;
                 }
                 match &mut self.conn_dialog {
-                    Some(dialog) if dialog.is_saving() => dialog.save_failed(id, &e),
+                    Some(dialog) if dialog.is_saving() => dialog.save_failed(id, &e.to_string()),
                     _ => self.notify(format!("Could not save the connection: {e}")),
                 }
             }
@@ -1370,7 +1374,7 @@ mod tests {
                 StoreReply::Secrets { id, result } => dialog.secrets_arrived(&id, result),
                 StoreReply::Saved {
                     id, result: Err(e), ..
-                } => dialog.save_failed(&id, &e),
+                } => dialog.save_failed(&id, &e.to_string()),
                 StoreReply::Saved { result: Ok(()), .. } => dialog.saving = false,
                 _ => {}
             }

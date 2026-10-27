@@ -13,7 +13,7 @@ use sqlr_mcp::host::{
     AgentConnection, AgentHost, ApprovalRequest, ConnectionWrite, FolderOp, KeymapEntry, Risk,
     RunTarget, SettingEntry, SettingLevel, TabDetail, TabEdit, TabSummary,
 };
-use sqlr_mcp::server::{McpServer, StartError, StartOptions};
+use sqlr_mcp::server::{McpServer, RotateTokenError, StartError, StartOptions};
 use sqlr_store::McpTokenStore;
 use tokio::sync::oneshot;
 
@@ -527,9 +527,9 @@ impl AgentsUi {
         self.status = McpStatus::Stopped;
     }
 
-    pub fn rotate(&mut self) -> Result<(), String> {
+    pub fn rotate(&mut self) -> Result<(), RotateError> {
         let Some(mut running) = self.running.take() else {
-            return Err("The MCP server is not running".into());
+            return Err(RotateError::NotRunning);
         };
         let (tx, rx) = mpsc::channel();
         std::thread::Builder::new()
@@ -542,11 +542,28 @@ impl AgentsUi {
                     .block_on(running.server.rotate_token());
                 let _ = tx.send((running, result));
             })
-            .map_err(|e| e.to_string())?;
-        let (running, result) = rx.recv().map_err(|e| e.to_string())?;
+            .map_err(RotateError::Spawn)?;
+        let (running, result) = rx.recv()?;
         self.running = Some(running);
-        result.map_err(|e| e.to_string())
+        Ok(result?)
     }
+}
+
+/// Why the MCP token could not be rotated.
+#[derive(Debug, thiserror::Error)]
+pub enum RotateError {
+    /// There is no running server to rotate for.
+    #[error("The MCP server is not running")]
+    NotRunning,
+    /// The rotation thread could not start.
+    #[error("{0}")]
+    Spawn(#[source] std::io::Error),
+    /// The rotation thread ended without an answer.
+    #[error("{0}")]
+    Stopped(#[from] mpsc::RecvError),
+    /// The server could not replace the keychain token.
+    #[error(transparent)]
+    Token(#[from] RotateTokenError),
 }
 
 fn start_error(error: StartError) -> (McpStatus, String) {
@@ -1561,5 +1578,19 @@ mod tests {
             Err(oneshot::error::TryRecvError::Empty)
         ));
         assert_eq!(app.pending_approvals.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod rotate_error_tests {
+    use super::*;
+
+    #[test]
+    fn rotating_without_a_server_says_so() {
+        let mut host = AgentsUi::default();
+        assert_eq!(
+            host.rotate().unwrap_err().to_string(),
+            "The MCP server is not running"
+        );
     }
 }

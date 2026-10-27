@@ -34,6 +34,17 @@ pub enum UsersDiscard {
     Reload,
 }
 
+/// Why the pending role changes cannot be turned into statements.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum RoleChangesError {
+    /// The role editor has a problem the person must fix first.
+    #[error("{0}")]
+    Problem(String),
+    /// The driver could not build the statements.
+    #[error(transparent)]
+    Driver(#[from] sqlr_core::DriverError),
+}
+
 /// What applying the users tab runs.
 pub(crate) struct RoleChanges {
     /// The statements as run (with the password).
@@ -225,24 +236,20 @@ impl UsersTab {
         &self,
         engine: &Engine,
         transactional: bool,
-    ) -> Result<Option<RoleChanges>, String> {
+    ) -> Result<Option<RoleChanges>, RoleChangesError> {
         let Some(editor) = &self.editor else {
             return Ok(None);
         };
         if let Some(problem) = editor.problems().into_iter().next() {
-            return Err(problem);
+            return Err(RoleChangesError::Problem(problem));
         }
         let conn = &self.conn;
         let mut statements = Vec::new();
         let mut shown = Vec::new();
         if editor.pending() {
             let before = editor.before.as_ref();
-            statements = engine
-                .role_ddl(conn, before, &editor.after)
-                .map_err(|e| e.message)?;
-            shown = engine
-                .role_ddl(conn, before, &editor.after.masked())
-                .map_err(|e| e.message)?;
+            statements = engine.role_ddl(conn, before, &editor.after)?;
+            shown = engine.role_ddl(conn, before, &editor.after.masked())?;
         }
         // The grid's grants go to the role's name as edited (a rename comes first).
         let grantee = editor.after.grantee();
@@ -257,9 +264,7 @@ impl UsersTab {
                 .collect()
         };
         let (add, revoke) = (to_role(add), to_role(revoke));
-        let grants = engine
-            .grant_ddl(conn, &add, &revoke)
-            .map_err(|e| e.message)?;
+        let grants = engine.grant_ddl(conn, &add, &revoke)?;
         statements.extend(grants.iter().cloned());
         shown.extend(grants);
         if statements.is_empty() {
@@ -541,7 +546,7 @@ impl UsersTab {
                         theme::hint(ui, "No pending changes");
                     }
                     Err(e) => {
-                        ui.colored_label(p.error, e);
+                        ui.colored_label(p.error, e.to_string());
                     }
                 }
             }
@@ -701,5 +706,23 @@ mod tests {
         tab.set_loaded(Vec::new());
         assert_eq!(tab.privilege_rows(&engine).len(), 5_000);
         assert_eq!(tab.rows_built, 2);
+    }
+}
+
+#[cfg(test)]
+mod role_changes_error_tests {
+    use super::*;
+
+    #[test]
+    fn role_changes_errors_keep_their_messages() {
+        assert_eq!(
+            RoleChangesError::Problem("The name is empty".into()).to_string(),
+            "The name is empty"
+        );
+        let driver = RoleChangesError::from(sqlr_core::DriverError::new(
+            sqlr_core::ErrorKind::Other,
+            "no roles here",
+        ));
+        assert_eq!(driver.to_string(), "no roles here");
     }
 }

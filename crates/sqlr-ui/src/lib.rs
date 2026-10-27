@@ -1,7 +1,7 @@
 //! egui widgets for sqlr: the query editor, result grid, value panel, schema tree, connection
 //! form, command palette, history panel and snippets panel.
 
-#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 mod admin;
 mod chrome;

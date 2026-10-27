@@ -6,7 +6,7 @@
 //! and `<data dir>/drivers/<id>/active`, which names the version in use. Nothing is fetched
 //! until a caller asks.
 
-#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 mod download;
 mod index;

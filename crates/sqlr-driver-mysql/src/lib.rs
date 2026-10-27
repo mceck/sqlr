@@ -1,6 +1,6 @@
 //! MySQL and MariaDB driver for sqlr (`mysql_async` over rustls).
 
-#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 mod admin;
 mod browse;

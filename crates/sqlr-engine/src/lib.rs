@@ -4,7 +4,7 @@
 //! method returns immediately; the UI reads shared state each frame and is told to repaint
 //! on every change.
 
-#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 mod admin;
 mod apply;

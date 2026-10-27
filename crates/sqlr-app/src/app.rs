@@ -176,7 +176,7 @@ pub struct SqlrApp {
     /// Every level of the settings; `settings` is its global resolution.
     pub(crate) layered: LayeredSettings,
     /// A settings save running off the UI thread; its error is shown when it lands.
-    settings_save: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+    settings_save: Option<std::sync::mpsc::Receiver<Result<(), sqlr_store::StoreError>>>,
     /// A save was asked for while another one was running.
     settings_dirty: bool,
     /// The display formats of the grids, per connection.
@@ -308,7 +308,8 @@ pub struct SqlrApp {
     /// What the check remembers: the skipped version and when it last ran.
     pub(crate) update_state: crate::updates::State,
     /// A running update-state save; one at a time.
-    pub(crate) update_state_save: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+    pub(crate) update_state_save:
+        Option<std::sync::mpsc::Receiver<Result<(), crate::updates::UpdateError>>>,
     /// A state save asked for while one ran; saved when it ends.
     pub(crate) update_state_dirty: bool,
     /// What a running install replaces, kept for **Restart now**.
@@ -730,7 +731,7 @@ impl SqlrApp {
         self.settings_save = Some(receiver);
         let repaint = ctx.clone();
         std::thread::spawn(move || {
-            let _ = sender.send(live.save(&dir).map_err(|e| e.to_string()));
+            let _ = sender.send(live.save(&dir));
             repaint.request_repaint();
         });
     }
@@ -741,15 +742,15 @@ impl SqlrApp {
         let Some(receiver) = &self.settings_save else {
             return;
         };
-        let result = match receiver.try_recv() {
-            Ok(result) => result,
+        let failure = match receiver.try_recv() {
+            Ok(result) => result.err().map(|error| error.to_string()),
             Err(std::sync::mpsc::TryRecvError::Empty) => return,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                Err("the save thread stopped".into())
+                Some("the save thread stopped".to_string())
             }
         };
         self.settings_save = None;
-        if let Err(error) = result {
+        if let Some(error) = failure {
             self.toasts.push(
                 ToastKind::Error,
                 format!("Could not save settings: {error}"),
@@ -1539,7 +1540,7 @@ impl SqlrApp {
                 listing,
             } => {
                 self.apply_listing(listing);
-                let outcome = result.clone();
+                let outcome = result.as_ref().map(|_| ()).map_err(ToString::to_string);
                 self.connection_save_ended(&id, editing, result);
                 if let Some(acks) = self.pending_connection_writes.remove(&id) {
                     for (ack, name) in acks {

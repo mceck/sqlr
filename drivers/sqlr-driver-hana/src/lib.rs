@@ -1,7 +1,7 @@
 //! SAP HANA sidecar driver built on `hdbconnect_async`. It handles custom certificates,
 //! cancellation, and redirects that advertise an unreachable host.
 
-#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 mod browse;
 mod cancel;

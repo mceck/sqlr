@@ -1,6 +1,6 @@
 //! sqlr's MCP server: a loopback-only Streamable HTTP endpoint while the application runs.
 
-#![cfg_attr(not(test), warn(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 pub mod discovery;
 pub mod error;
