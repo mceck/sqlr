@@ -120,7 +120,7 @@ Safety flags are tighten-only for Agents:
 
 A rejected relaxation returns `invalid` with a message naming the flag.
 
-A configuration write or delete reaches an existing Connection when that Connection is exposed, or when the same MCP session created it. Any other id answers `not_exposed`, the same answer an unknown id receives. The exception for created Connections lets an Agent finish the Connection it just made, which starts at `None`, by writing its secrets and correcting its fields.
+A configuration write or delete reaches an existing Connection when that Connection is exposed, or when the same MCP session created it. Any other id answers `not_exposed`, the same answer an unknown id receives. A setting written at the Connection level follows the same rule. The exception for created Connections lets an Agent finish the Connection it just made, which starts at `None`, by writing its secrets and correcting its fields.
 
 Configuration writes are partial: only the provided fields change, and omitted fields stay. `remove_values` and `remove_secrets` name keys to delete. A Connection's driver is immutable after creation, and `agent_access` is rejected rather than ignored. Writes are serialized by the app, the last write wins per field, and `save_secrets` keeps its existing meaning: secrets for a Connection with it off stay in memory for the session and are written neither to the vault nor to `connections.toml`.
 
@@ -139,7 +139,7 @@ The server exposes 24 tools with flat names. The tool catalogue is generated fro
 | `config_delete` | `target`: `connection`, `folder`, `profile`; `id` | Deletes after an Approval. A Connection, exposed or created by the session, is disconnected and its secrets removed. A folder is removed and its Connections and subfolders move to the parent. A profile in use is rejected before the dialog. |
 | `test_connection` | `connection_id` | Opens a temporary test Session, as the connection dialog's Test does, and closes it. Answers `{ok: true, server_version}` or `{ok: false, error}` with `auth`, `connection`, `tls` or `timeout`, or `secret_required` with the missing field keys. Accepts exposed Connections and those created by the session. |
 | `browse` | `connection_id`, optional `path` segments | Returns child Nodes with name, kind, path, has-children flag and detail, plus whether the catalog answer came from the cache. Works for every family. |
-| `describe_object` | `connection_id`, `name`, optional `database`, `schema` | Relational table details: columns with type, nullability, default and generated flag, primary key, unique keys, indexes (name, columns, unique, method, predicate) and foreign keys (name, columns, referenced table and columns, update and delete actions). Non-relational Connections return `unsupported`; `browse` is the generic path. |
+| `describe_object` | `connection_id`, `name`, optional `database`, `schema` | Relational table details: columns with type, nullability, default and generated flag, primary key, unique keys, indexes (name, columns, unique, method, predicate) and foreign keys (name, columns, referenced table and columns, update and delete actions). Indexes and foreign keys come from the Driver's object definitions and are empty lists for a Driver that reads none. Non-relational Connections return `unsupported`; `browse` is the generic path. |
 | `get_ddl` | `connection_id`, `path` from `browse` | The `CREATE` script of the Node, as the DDL viewer shows it. |
 | `search_objects` | `query`, optional `connection_id`, optional `limit` | Case-insensitive search of relation names across the default databases of exposed relational Connections, with at most 200 matches, 50 by default. Reports cache state and skips unreachable Connections. |
 | `run_query` | `connection_id`, `query`, optional `database`, `max_rows`, `timeout_s` | Runs one statement or native command, family-aware, and returns a tagged Result with a page, `truncated`, `query_id` and status. |
@@ -230,16 +230,16 @@ The editor tools operate on SQL Editor tabs. They read the text of any open tab;
 - `statement` with a zero-based index runs one split statement;
 - `selection` runs the current selection and returns `invalid` when there is none.
 
-It uses the tab's Session and database, applies the same read-only rules as the person's run, records History, and places Results in the tab's normal result area. When the profile asks for confirmation, the call waits on an Approval like `run_query` does. The run starts once, after the person allows it. The tool answers `{tab_id, status, query_ids}`. A tab that is already running returns `busy` and the run is not interrupted. A tab whose Connection is not exposed returns `not_exposed`; a tab without a Connection returns `invalid`.
+It uses the tab's Session and database, applies the same read-only rules as the person's run, records History, and places Results in the tab's normal result area. `script` and `statement` use the whole buffer even when the person has a selection. When the profile asks for confirmation, the call waits on an Approval like `run_query` does. The run starts once, after the person allows it. The tool waits up to 30 seconds and answers `{tab_id, status, query_ids}` with an id for every statement executed so far; a run still going at that point answers `status: "running"`. A tab that is already running returns `busy` and the run is not interrupted. A tab whose Connection is not exposed returns `not_exposed`; a tab without a Connection returns `invalid`.
 
 A tab's Results are paged with `get_query_result` and use the same envelope as `run_query`, so an Agent polls the same tool until the status leaves `running`. The tab owns them:
 
-- `close_result` on a tab Result answers `invalid` and leaves the grid as it is;
+- `close_result` and `cancel_query` on a tab Result answer `invalid`: closing the Result and stopping the run stay with the person;
 - they have no TTL and live as long as the tab shows them;
 - running the tab again or closing it turns the previous ids into `not_found`;
 - paging reads the rows the grid has loaded and asks for more as scrolling would, within the 1000-row and 256 KiB page caps.
 
-One MCP session opens at most five tabs, counted across `open_query_tab` and the `show_in_app` views that open a tab. The sixth returns `busy` with a message to reuse the open tabs.
+One MCP session opens at most five tabs, counted across `open_query_tab` and the `show_in_app` views that open a tab. A view that only focuses a tab already open does not count. Once five tabs are open, every tab-opening call returns `busy` with a message to reuse the open tabs.
 
 #### Show-in-app contract
 
@@ -369,13 +369,13 @@ Each agent has one state:
 - **Outdated**: a `sqlr` entry exists and differs from the running server;
 - **Manual setup**: the file exists and sqlr cannot read its format, with the reason.
 
-The actions are Install for Not installed, Remove for Installed, Update for Outdated, and Copy config, in that agent's format, for Manual setup. Install, Update and Copy config need a running server, because they write its current token. The first write to an agent's file asks once for confirmation, naming the file and saying it will hold the sqlr token. After Install or Update a toast says "Restart <agent> to load sqlr".
+The actions are Install for Not installed, Remove for Installed, Update for Outdated, and Copy config, in that agent's format, for Manual setup. Install, Update and Copy config need a running server, because they write its current token. While the server is off, the token is not read from the vault, so an entry counts as Installed when its URL matches the configured port. A write to an agent file that has no recorded installation asks for confirmation first, naming the file and saying it will hold the sqlr token. After Install or Update a toast says "Restart <agent> to load sqlr".
 
-Writes keep the file as the person had it. sqlr changes only its own entry. Comments, order, formatting and every other key stay, in JSON, JSONC and TOML alike. The write goes through a temporary file in the same directory and a rename and keeps the file's permissions; a file sqlr creates is owner-only on Unix. Before the first change to a file, sqlr saves a copy beside it as `<file>.sqlr-backup`, once. Remove deletes the `sqlr` entry and leaves the surrounding map in place.
+Writes keep the file as the person had it. sqlr changes only its own entry, and within it only the URL and the authorization header, so keys the person added to the entry stay. A configuration file that is a symbolic link stays a link, and its target is written. Comments, order, formatting and every other key stay, in JSON, JSONC and TOML alike. The write goes through a temporary file in the same directory and a rename and keeps the file's permissions; a file sqlr creates is owner-only on Unix. Before the first change to a file, sqlr saves a copy beside it as `<file>.sqlr-backup`, once. Remove deletes the `sqlr` entry and leaves the surrounding map in place.
 
-An installation registry in the data directory records each Agent installation by agent and file, without the token. Rotating the token or changing the port rewrites every recorded installation with the new URL and token. An installation that cannot be rewritten turns Outdated, and the log records the agent and the error. Remove drops the record. Turning the server off keeps the installations, so turning it on again reconnects them.
+An installation registry in the data directory records each Agent installation by agent and file, without the token. Whenever the running server's URL or token differs from the one the installations were last written with, after a token rotation, a port change, or a port changed while the server was off, sqlr rewrites every recorded installation whose entry differs. An installation that cannot be rewritten turns Outdated, and the log records the agent and the error. Remove drops the record. Turning the server off keeps the installations, so turning it on again reconnects them.
 
-States are computed on a background worker when Settings → Agents opens and after every action. An agent may rewrite its own file while it runs, so an entry it dropped reads Not installed the next time the list is computed.
+States are computed on a background worker when Settings → Agents opens and after every action. An agent may rewrite its own file while it runs. A recorded entry that is no longer in the file reads Not installed, its record is dropped, and sqlr does not add it back on its own.
 
 **Copy MCP config** gives any other MCP client a ready-to-paste configuration with the token, from the "Other agent…" link under the list.
 
