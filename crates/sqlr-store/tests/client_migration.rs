@@ -106,7 +106,9 @@ fn supported_exports_round_trip_and_never_copy_agent_consent_or_passwords() {
 #[test]
 fn malformed_input_does_not_echo_secrets_in_errors() {
     for format in ClientFormat::ALL {
-        let error = decode(format, b"NEVER_ECHO_THIS invalid file").unwrap_err();
+        let error = decode(format, b"NEVER_ECHO_THIS invalid file")
+            .unwrap_err()
+            .to_string();
         assert!(!error.contains("NEVER_ECHO_THIS"));
     }
 }
@@ -570,7 +572,9 @@ fn tabularis_ssh_credentials_and_groups_round_trip_without_leaking_when_disabled
         .is_empty()
     );
     let encrypted = br#"{"format":"tabularis-connections-encrypted","version":1,"encrypted":true,"ciphertext":"SECRET"}"#;
-    let error = sqlr_store::client_migration::detect(encrypted).unwrap_err();
+    let error = sqlr_store::client_migration::detect(encrypted)
+        .unwrap_err()
+        .to_string();
     assert!(error.contains("Encrypted"));
     assert!(!error.contains("SECRET"));
 }
@@ -610,5 +614,25 @@ fn credential_export_files_are_owner_only() {
     assert_eq!(
         std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
         0o600
+    );
+}
+
+#[test]
+fn migration_errors_keep_their_messages() {
+    let export = sqlr_store::client_migration::encode_with_credentials(
+        ClientFormat::Dbeaver,
+        &[],
+        &Default::default(),
+    )
+    .err()
+    .unwrap();
+    assert_eq!(
+        export.to_string(),
+        "This export format does not support credentials."
+    );
+    let import = sqlr_store::client_migration::detect(b"plain words").unwrap_err();
+    assert_eq!(
+        import.to_string(),
+        "Unrecognized connection file. Choose DBeaver data-sources.json, DataGrip XML, TablePlus Connections.plist / URLs, pgAdmin servers.json, or a sqlr backup."
     );
 }

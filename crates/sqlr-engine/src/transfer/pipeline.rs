@@ -19,6 +19,7 @@ use sqlr_core::{
 };
 use tokio::sync::mpsc;
 
+use super::error::TransferFileError;
 use super::{ImportOptions, NewTable, OutFile, RowSource, TransferRun, Work, take_turn};
 use crate::engine::{Command, Engine, Shared, not_connected};
 use crate::job::{JobControl, JobId, JobKind, JobOutcome, JobProgress};
@@ -28,7 +29,7 @@ use crate::session::{SessionIo, SessionKey};
 const FK_POOL: usize = 100_000;
 
 /// Documents in batches, or why reading stopped.
-pub(crate) type DocBatch = Result<Vec<DocValue>, String>;
+pub(crate) type DocBatch = Result<Vec<DocValue>, TransferFileError>;
 
 /// What a source sends.
 pub(crate) enum Records {
@@ -158,7 +159,12 @@ impl Shared {
                 let path = path.clone();
                 match tokio::task::spawn_blocking(move || super::xlsx::sheet_names(&path)).await {
                     Ok(Ok(sheets)) => sheets,
-                    Ok(Err(e)) => return JobOutcome::Failed(DriverError::new(ErrorKind::Other, e)),
+                    Ok(Err(e)) => {
+                        return JobOutcome::Failed(DriverError::new(
+                            ErrorKind::Other,
+                            e.to_string(),
+                        ));
+                    }
                     Err(e) => {
                         return JobOutcome::Failed(DriverError::new(
                             ErrorKind::Other,
@@ -185,7 +191,9 @@ impl Shared {
         while rows.len() < super::PREVIEW_ROWS {
             match reader.recv().await {
                 Some(Ok(batch)) => rows.extend(batch.into_iter().map(|(_, row)| row)),
-                Some(Err(e)) => return JobOutcome::Failed(DriverError::new(ErrorKind::Other, e)),
+                Some(Err(e)) => {
+                    return JobOutcome::Failed(DriverError::new(ErrorKind::Other, e.to_string()));
+                }
                 None => break,
             }
         }
@@ -478,7 +486,7 @@ impl Shared {
                         }
                     }
                     Err(e) => {
-                        let _ = tx.blocking_send(Err(e));
+                        let _ = tx.blocking_send(Err(e.into()));
                         break;
                     }
                 }
@@ -559,7 +567,7 @@ impl Shared {
                         })
                         .collect()),
                     Ok(None) => break,
-                    Err(e) => Err(e.message),
+                    Err(e) => Err(e.into()),
                 };
                 let failed = batch.is_err();
                 if tx.send(batch).await.is_err() || failed {
@@ -704,7 +712,7 @@ impl Shared {
         };
         if let Some(e) = failure {
             out.discard().await;
-            return JobOutcome::Failed(DriverError::new(ErrorKind::Other, e));
+            return JobOutcome::Failed(DriverError::new(ErrorKind::Other, e.to_string()));
         }
         if job.is_cancelled() {
             out.discard().await;

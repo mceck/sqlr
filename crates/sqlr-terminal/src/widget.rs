@@ -957,7 +957,12 @@ mod tests {
             }
         }
         impl BackendFactory for Output {
-            fn start(&self, _: &CommandSpec, _: u16, _: u16) -> Result<BackendParts, String> {
+            fn start(
+                &self,
+                _: &CommandSpec,
+                _: u16,
+                _: u16,
+            ) -> Result<BackendParts, crate::session::PtyError> {
                 let killed = self.1.clone();
                 let stopped = self.1.clone();
                 Ok(BackendParts {
@@ -1053,8 +1058,10 @@ mod tests {
                 _: &crate::shell::CommandSpec,
                 _: u16,
                 _: u16,
-            ) -> Result<crate::session::BackendParts, String> {
-                Err("test backend unavailable".into())
+            ) -> Result<crate::session::BackendParts, crate::session::PtyError> {
+                Err(crate::session::PtyError::Backend(
+                    "test backend unavailable".into(),
+                ))
             }
         }
         let config = SessionConfig {

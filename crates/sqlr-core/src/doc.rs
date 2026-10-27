@@ -10,6 +10,38 @@
 
 use std::fmt::Write as _;
 
+/// Why an Extended JSON wrapper or a typed literal (ObjectId, UUID, base64, decimal,
+/// ISO date) could not be read.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum DocParseError {
+    /// A wrapper field that must be a string is not one.
+    #[error("{what} needs a string")]
+    NeedsString {
+        /// The wrapper field, e.g. `$oid`.
+        what: &'static str,
+    },
+    /// A value of the named kind has invalid text.
+    #[error("invalid {what} \"{text}\"")]
+    Invalid {
+        /// The kind of value, e.g. `ObjectId` or `$numberInt`.
+        what: &'static str,
+        /// The offending text.
+        text: String,
+    },
+    /// A wrapper whose shape is wrong.
+    #[error("invalid {what}")]
+    InvalidWrapper {
+        /// The wrapper, e.g. `$date` or `$timestamp.t`.
+        what: &'static str,
+    },
+    /// An ISO 8601 date that cannot be parsed.
+    #[error("invalid ISO 8601 date \"{text}\" (expected e.g. \"2024-01-31T12:00:00Z\")")]
+    InvalidDate {
+        /// The offending text.
+        text: String,
+    },
+}
+
 /// A document value in the BSON data model: what the Mongo Driver and the Doc chunk carry.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DocValue {
@@ -207,7 +239,7 @@ impl DocValue {
 
     /// Reads canonical or relaxed Extended JSON. Plain JSON numbers become `Int32` when
     /// they fit, else `Int64`, else `Double`.
-    pub fn from_ejson(v: &serde_json::Value) -> Result<DocValue, String> {
+    pub fn from_ejson(v: &serde_json::Value) -> Result<DocValue, DocParseError> {
         use serde_json::Value;
         Ok(match v {
             Value::Null => DocValue::Null,
@@ -230,7 +262,7 @@ impl DocValue {
                 let fields = map
                     .iter()
                     .map(|(k, v)| Ok((k.clone(), DocValue::from_ejson(v)?)))
-                    .collect::<Result<Vec<_>, String>>()?;
+                    .collect::<Result<Vec<_>, DocParseError>>()?;
                 decode_wrapper(fields)?
             }
         })
@@ -248,28 +280,28 @@ pub(crate) fn int_value(i: i64) -> DocValue {
 /// A document of exactly one Extended JSON wrapper (`{"$oid": …}`, …) as the value it
 /// stands for; any other document unchanged. A wrapper key with a malformed value is an
 /// error. `$regex`/`$options` is a query operator and stays a document.
-pub(crate) fn decode_wrapper(fields: Vec<(String, DocValue)>) -> Result<DocValue, String> {
+pub(crate) fn decode_wrapper(fields: Vec<(String, DocValue)>) -> Result<DocValue, DocParseError> {
     let keys: Vec<&str> = fields.iter().map(|(k, _)| k.as_str()).collect();
     let first = fields.first().map(|(_, v)| v);
-    let text = |v: Option<&DocValue>, what: &str| match v {
+    let text = |v: Option<&DocValue>, what: &'static str| match v {
         Some(DocValue::String(s)) => Ok(s.clone()),
-        _ => Err(format!("{what} needs a string")),
+        _ => Err(DocParseError::NeedsString { what }),
     };
     let value = match keys.as_slice() {
         ["$oid"] => DocValue::ObjectId(parse_object_id(&text(first, "$oid")?)?),
         ["$numberInt"] => {
             let s = text(first, "$numberInt")?;
-            DocValue::Int32(
-                s.parse()
-                    .map_err(|_| format!("invalid $numberInt \"{s}\""))?,
-            )
+            DocValue::Int32(s.parse().map_err(|_| DocParseError::Invalid {
+                what: "$numberInt",
+                text: s.clone(),
+            })?)
         }
         ["$numberLong"] => {
             let s = text(first, "$numberLong")?;
-            DocValue::Int64(
-                s.parse()
-                    .map_err(|_| format!("invalid $numberLong \"{s}\""))?,
-            )
+            DocValue::Int64(s.parse().map_err(|_| DocParseError::Invalid {
+                what: "$numberLong",
+                text: s.clone(),
+            })?)
         }
         ["$numberDouble"] => DocValue::Double(parse_double_text(&text(first, "$numberDouble")?)?),
         ["$numberDecimal"] => {
@@ -283,7 +315,7 @@ pub(crate) fn decode_wrapper(fields: Vec<(String, DocValue)>) -> Result<DocValue
             Some(DocValue::Int64(v)) => *v,
             Some(DocValue::Double(v)) if v.fract() == 0.0 => *v as i64,
             // Inner wrappers decode first, so `{"$numberLong": "…"}` arrives as `Int64`.
-            _ => return Err("invalid $date".into()),
+            _ => return Err(DocParseError::InvalidWrapper { what: "$date" }),
         }),
         ["$binary"] => match first {
             Some(d @ DocValue::Document(_)) if d_len(d) == 2 => {
@@ -291,7 +323,7 @@ pub(crate) fn decode_wrapper(fields: Vec<(String, DocValue)>) -> Result<DocValue
                 let sub = text(d.get("subType"), "$binary.subType")?;
                 binary(&b64, &sub)?
             }
-            _ => return Err("invalid $binary".into()),
+            _ => return Err(DocParseError::InvalidWrapper { what: "$binary" }),
         },
         ["$binary", "$type"] => {
             let b64 = text(first, "$binary")?;
@@ -307,14 +339,22 @@ pub(crate) fn decode_wrapper(fields: Vec<(String, DocValue)>) -> Result<DocValue
                 pattern: text(d.get("pattern"), "$regularExpression.pattern")?,
                 options: text(d.get("options"), "$regularExpression.options")?,
             },
-            _ => return Err("invalid $regularExpression".into()),
+            _ => {
+                return Err(DocParseError::InvalidWrapper {
+                    what: "$regularExpression",
+                });
+            }
         },
         ["$timestamp"] => match first {
             Some(d @ DocValue::Document(_)) if d_len(d) == 2 => DocValue::Timestamp {
-                t: u32_field(d.get("t")).ok_or("invalid $timestamp.t")?,
-                i: u32_field(d.get("i")).ok_or("invalid $timestamp.i")?,
+                t: u32_field(d.get("t")).ok_or(DocParseError::InvalidWrapper {
+                    what: "$timestamp.t",
+                })?,
+                i: u32_field(d.get("i")).ok_or(DocParseError::InvalidWrapper {
+                    what: "$timestamp.i",
+                })?,
             },
-            _ => return Err("invalid $timestamp".into()),
+            _ => return Err(DocParseError::InvalidWrapper { what: "$timestamp" }),
         },
         ["$minKey"] => DocValue::MinKey,
         ["$maxKey"] => DocValue::MaxKey,
@@ -344,16 +384,19 @@ fn u32_field(v: Option<&DocValue>) -> Option<u32> {
     }
 }
 
-fn binary(b64: &str, sub: &str) -> Result<DocValue, String> {
+fn binary(b64: &str, sub: &str) -> Result<DocValue, DocParseError> {
     Ok(DocValue::Binary {
-        subtype: u8::from_str_radix(sub, 16).map_err(|_| format!("invalid subType \"{sub}\""))?,
+        subtype: u8::from_str_radix(sub, 16).map_err(|_| DocParseError::Invalid {
+            what: "subType",
+            text: sub.to_string(),
+        })?,
         bytes: base64_decode(b64)?,
     })
 }
 
 /// A decimal string as MongoDB accepts it: digits with an optional sign, point and
 /// exponent, or `Infinity`/`NaN`.
-pub(crate) fn check_decimal(s: &str) -> Result<(), String> {
+pub(crate) fn check_decimal(s: &str) -> Result<(), DocParseError> {
     let t = s.strip_prefix(['-', '+']).unwrap_or(s);
     if matches!(t, "Infinity" | "Inf" | "NaN") {
         return Ok(());
@@ -373,7 +416,10 @@ pub(crate) fn check_decimal(s: &str) -> Result<(), String> {
     if ok_mantissa && ok_exp && digits <= 34 {
         Ok(())
     } else {
-        Err(format!("invalid decimal \"{s}\""))
+        Err(DocParseError::Invalid {
+            what: "decimal",
+            text: s.to_string(),
+        })
     }
 }
 
@@ -395,14 +441,15 @@ pub(crate) fn double_text(v: f64) -> String {
     }
 }
 
-fn parse_double_text(s: &str) -> Result<f64, String> {
+fn parse_double_text(s: &str) -> Result<f64, DocParseError> {
     match s {
         "NaN" => Ok(f64::NAN),
         "Infinity" | "+Infinity" => Ok(f64::INFINITY),
         "-Infinity" => Ok(f64::NEG_INFINITY),
-        _ => s
-            .parse()
-            .map_err(|_| format!("invalid $numberDouble \"{s}\"")),
+        _ => s.parse().map_err(|_| DocParseError::Invalid {
+            what: "$numberDouble",
+            text: s.to_string(),
+        }),
     }
 }
 
@@ -547,8 +594,11 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
     s
 }
 
-fn hex_digits(s: &str, n: usize, what: &str) -> Result<Vec<u8>, String> {
-    let bad = || format!("invalid {what} \"{s}\"");
+fn hex_digits(s: &str, n: usize, what: &'static str) -> Result<Vec<u8>, DocParseError> {
+    let bad = || DocParseError::Invalid {
+        what,
+        text: s.to_string(),
+    };
     if s.len() != n * 2 || !s.is_ascii() {
         return Err(bad());
     }
@@ -558,7 +608,7 @@ fn hex_digits(s: &str, n: usize, what: &str) -> Result<Vec<u8>, String> {
 }
 
 /// 24 hex digits, either case.
-pub fn parse_object_id(s: &str) -> Result<[u8; 12], String> {
+pub fn parse_object_id(s: &str) -> Result<[u8; 12], DocParseError> {
     let v = hex_digits(s, 12, "ObjectId")?;
     let mut out = [0u8; 12];
     out.copy_from_slice(&v);
@@ -566,9 +616,12 @@ pub fn parse_object_id(s: &str) -> Result<[u8; 12], String> {
 }
 
 /// `00112233-4455-6677-8899-aabbccddeeff` (dashes optional).
-pub fn parse_uuid(s: &str) -> Result<Vec<u8>, String> {
+pub fn parse_uuid(s: &str) -> Result<Vec<u8>, DocParseError> {
     let plain: String = s.chars().filter(|&c| c != '-').collect();
-    hex_digits(&plain, 16, "UUID").map_err(|_| format!("invalid UUID \"{s}\""))
+    hex_digits(&plain, 16, "UUID").map_err(|_| DocParseError::Invalid {
+        what: "UUID",
+        text: s.to_string(),
+    })
 }
 
 /// A fresh ObjectId: seconds since the epoch, then a per-process random value and a counter.
@@ -618,8 +671,12 @@ pub fn base64_encode(bytes: &[u8]) -> String {
 }
 
 /// Decodes standard base64; the error message quotes the invalid text.
-pub fn base64_decode(s: &str) -> Result<Vec<u8>, String> {
-    let bad = || format!("invalid base64 \"{s}\"");
+pub fn base64_decode(s: &str) -> Result<Vec<u8>, DocParseError> {
+    let orig = s;
+    let bad = || DocParseError::Invalid {
+        what: "base64",
+        text: orig.to_string(),
+    };
     let s = s.trim_end_matches('=');
     let mut out = Vec::with_capacity(s.len() * 3 / 4);
     let (mut acc, mut bits) = (0u32, 0u32);
@@ -695,10 +752,12 @@ pub fn format_iso_date(ms: i64) -> String {
 }
 
 /// Parses `YYYY-MM-DD[(T| )HH:MM[:SS[.fff…]]][Z|±HH[:]MM]`; no zone means UTC.
-pub fn parse_iso_date(s: &str) -> Result<i64, String> {
-    let bad = || format!("invalid ISO 8601 date \"{s}\" (expected e.g. \"2024-01-31T12:00:00Z\")");
+pub fn parse_iso_date(s: &str) -> Result<i64, DocParseError> {
+    let bad = || DocParseError::InvalidDate {
+        text: s.to_string(),
+    };
     let b = s.trim().as_bytes();
-    let num = |from: usize, len: usize| -> Result<i64, String> {
+    let num = |from: usize, len: usize| -> Result<i64, DocParseError> {
         let part = b.get(from..from + len).ok_or_else(bad)?;
         if !part.iter().all(u8::is_ascii_digit) {
             return Err(bad());
@@ -787,6 +846,32 @@ pub fn parse_iso_date(s: &str) -> Result<i64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_errors_keep_their_messages() {
+        assert_eq!(
+            parse_object_id("xyz").unwrap_err().to_string(),
+            "invalid ObjectId \"xyz\""
+        );
+        assert_eq!(
+            base64_decode("a$").unwrap_err().to_string(),
+            "invalid base64 \"a$\""
+        );
+        assert_eq!(
+            parse_iso_date("nope").unwrap_err().to_string(),
+            "invalid ISO 8601 date \"nope\" (expected e.g. \"2024-01-31T12:00:00Z\")"
+        );
+        let bad = serde_json::json!({"$oid": 1});
+        assert_eq!(
+            DocValue::from_ejson(&bad).unwrap_err().to_string(),
+            "$oid needs a string"
+        );
+        let bad = serde_json::json!({"$date": true});
+        assert_eq!(
+            DocValue::from_ejson(&bad).unwrap_err().to_string(),
+            "invalid $date"
+        );
+    }
 
     #[test]
     fn unmodelled_types_are_found_at_any_depth() {

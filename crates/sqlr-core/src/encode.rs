@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use crate::chunk::{Cell, ColumnKind, ColumnMeta, DisplayHint, hex_bytes};
 use crate::driver::Dialect;
 use crate::formats::DataFormats;
+use crate::read::ReadError;
 use crate::value::Value;
 
 /// Settings of the CSV and TSV text format.
@@ -580,7 +581,10 @@ pub type NumberedRows = Vec<(u64, Vec<Value>)>;
 
 /// Reads CSV, TSV, JSON (an array of objects) or JSON Lines into column names and rows.
 /// CSV and TSV values are text or NULL; JSON keeps numbers and booleans.
-pub fn decode(format: &TextFormat, text: &str) -> Result<(Vec<String>, Vec<Vec<Value>>), String> {
+pub fn decode(
+    format: &TextFormat,
+    text: &str,
+) -> Result<(Vec<String>, Vec<Vec<Value>>), ReadError> {
     let (names, rows) = decode_numbered(format, text)?;
     Ok((names, rows.into_iter().map(|(_, row)| row).collect()))
 }
@@ -591,7 +595,7 @@ pub fn decode(format: &TextFormat, text: &str) -> Result<(Vec<String>, Vec<Vec<V
 pub fn decode_numbered(
     format: &TextFormat,
     text: &str,
-) -> Result<(Vec<String>, NumberedRows), String> {
+) -> Result<(Vec<String>, NumberedRows), ReadError> {
     let mut rows = Vec::new();
     let names = crate::read::read_rows(format, text.as_bytes(), |_, line, row| {
         rows.push((line, row));
@@ -1093,7 +1097,22 @@ mod tests {
     #[test]
     fn malformed_input_is_an_error() {
         let csv = TextFormat::Csv(CsvOptions::default());
-        assert!(decode(&csv, "a,b\n\"open,1\n").is_err());
+        assert_eq!(
+            decode(&csv, "a,b\n\"open,1\n").unwrap_err().to_string(),
+            "Unclosed quote starting on line 2"
+        );
+        assert_eq!(
+            decode(&TextFormat::Markdown, "| a |")
+                .unwrap_err()
+                .to_string(),
+            "This format cannot be read back"
+        );
+        assert!(
+            decode(&TextFormat::Json, "{\"a\":1}")
+                .unwrap_err()
+                .to_string()
+                .starts_with("Expected a JSON array of objects: ")
+        );
         assert!(decode(&TextFormat::Json, "{\"a\":1}").is_err());
         assert!(decode(&TextFormat::JsonLines, "[1]").is_err());
         assert!(decode(&TextFormat::Markdown, "| a |").is_err());

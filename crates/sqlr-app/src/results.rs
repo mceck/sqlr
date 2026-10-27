@@ -102,7 +102,7 @@ pub(crate) fn refresh_editability(
                     }
                 }
                 Err(reason) => {
-                    edit.read_only = Some(reason);
+                    edit.read_only = Some(reason.to_string());
                     grid.discard_edits();
                     grid.edits = None;
                 }
@@ -196,7 +196,7 @@ impl SqlrApp {
             .ok_or("The result cannot be edited")?;
         let result = self.engine.result(q).ok_or("The result is closed")?;
         let r = result.read();
-        edits.changeset(&r.rows, table)
+        edits.changeset(&r.rows, table).map_err(|e| e.to_string())
     }
 
     pub(crate) fn changes_action(&mut self, tab: u64, q: QueryId, action: ChangesAction) {
@@ -242,7 +242,7 @@ impl SqlrApp {
         let text = match changeset.preview(&*dialect) {
             Ok(text) => text,
             Err(e) => {
-                self.notify(e);
+                self.notify(e.to_string());
                 return;
             }
         };
@@ -675,8 +675,10 @@ impl SqlrApp {
                 Some(ValueEditAction::SetNull) => sqlr_core::Value::Null,
             };
             let outcome = match tab.grids.get_mut(&q) {
-                Some(grid) => grid.set_cell(&r.rows, row, col, value),
-                None => Err("The result is closed".into()),
+                Some(grid) => grid
+                    .set_cell(&r.rows, row, col, value)
+                    .map_err(|e| e.to_string()),
+                None => Err("The result is closed".to_string()),
             };
             drop(r);
             match outcome {

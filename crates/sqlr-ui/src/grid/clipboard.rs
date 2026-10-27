@@ -12,7 +12,7 @@ use sqlr_core::{
     GridClipboard, TextFormat, Value,
 };
 
-use super::{GridAction, GridInput, GridState, parse_input};
+use super::{CellEditError, EditError, GridAction, GridInput, GridState, InputError, parse_input};
 
 fn clipboard_id() -> Id {
     Id::new("sqlr_typed_grid_clipboard")
@@ -25,7 +25,10 @@ pub fn set_grid_clipboard(ctx: &Context, data: Arc<GridClipboard>) {
     ctx.data_mut(|d| d.insert_temp(clipboard_id(), data));
 }
 
-fn clipboard_data(ctx: &Context, text: &str) -> Result<(Arc<GridClipboard>, bool), String> {
+fn clipboard_data(
+    ctx: &Context,
+    text: &str,
+) -> Result<(Arc<GridClipboard>, bool), sqlr_core::ReadError> {
     if let Some(data) = ctx.data(|d| d.get_temp::<Arc<GridClipboard>>(clipboard_id()))
         && data.text == text
     {
@@ -88,7 +91,7 @@ impl GridState {
     }
 }
 
-fn coerce(meta: &ColumnMeta, value: &Value) -> Result<Value, String> {
+fn coerce(meta: &ColumnMeta, value: &Value) -> Result<Value, InputError> {
     if value.is_null() || meta.kind == ColumnKind::Mixed {
         return Ok(value.clone());
     }
@@ -105,7 +108,7 @@ fn coerce(meta: &ColumnMeta, value: &Value) -> Result<Value, String> {
 pub(super) fn paste_text(ctx: &Context, state: &mut GridState, input: &GridInput<'_>, text: &str) {
     let Some(mut trial) = state.edits.clone() else {
         state.actions.push(GridAction::PasteFailed(
-            "The result cannot be edited".into(),
+            EditError::ResultNotEditable.to_string(),
         ));
         return;
     };
@@ -115,7 +118,9 @@ pub(super) fn paste_text(ctx: &Context, state: &mut GridState, input: &GridInput
     let data = match clipboard_data(ctx, text) {
         Ok((data, _)) => data,
         Err(error) => {
-            state.actions.push(GridAction::PasteFailed(error));
+            state
+                .actions
+                .push(GridAction::PasteFailed(error.to_string()));
             return;
         }
     };
@@ -130,11 +135,12 @@ pub(super) fn paste_text(ctx: &Context, state: &mut GridState, input: &GridInput
                  row: usize,
                  col: usize,
                  value: &Value|
-     -> Result<(), String> {
+     -> Result<(), CellEditError> {
         let value = coerce(&columns[col], value)?;
-        trial.set(input.rows, view[row], col, value)
+        trial.set(input.rows, view[row], col, value)?;
+        Ok(())
     };
-    let result = (|| -> Result<(), String> {
+    let result = (|| -> Result<(), CellEditError> {
         if height == 1 && width == 1 {
             if let Some(Some(value)) = data.rows[0].first() {
                 for row in state.selected_view_rows() {
@@ -168,8 +174,51 @@ pub(super) fn paste_text(ctx: &Context, state: &mut GridState, input: &GridInput
     })();
     match result {
         Ok(()) => state.replace_edits(trial),
-        Err(error) => state.actions.push(GridAction::PasteFailed(error)),
+        Err(error) => state
+            .actions
+            .push(GridAction::PasteFailed(error.to_string())),
     }
+}
+
+/// Why pasted rows cannot be added to a result.
+#[derive(Debug, thiserror::Error)]
+pub(super) enum PasteError {
+    /// The result cannot take the rows at all.
+    #[error(transparent)]
+    Edit(#[from] EditError),
+    /// Two clipboard columns map to one result column.
+    #[error("{column} is mapped more than once")]
+    MappedTwice {
+        /// The result column.
+        column: String,
+    },
+    /// A required result column has no clipboard column mapped to it.
+    #[error("Map the required column {column} before pasting")]
+    MapRequired {
+        /// The result column.
+        column: String,
+    },
+    /// The user cancelled the preparation.
+    #[error("Paste cancelled")]
+    Cancelled,
+    /// A pasted value does not fit its cell.
+    #[error("Row {row}, {column}: {source}")]
+    Cell {
+        /// The 1-based pasted row.
+        row: usize,
+        /// The result column.
+        column: String,
+        /// Why the value was refused.
+        source: CellEditError,
+    },
+    /// A pasted row leaves a required column empty.
+    #[error("Row {row} has no value for required column {column}")]
+    MissingValue {
+        /// The 1-based pasted row.
+        row: usize,
+        /// The result column.
+        column: String,
+    },
 }
 
 pub(super) struct PasteRowsDialog {
@@ -183,7 +232,7 @@ pub(super) struct PasteRowsDialog {
 }
 
 struct PasteRowsWork {
-    receiver: mpsc::Receiver<Result<super::EditBuffer, String>>,
+    receiver: mpsc::Receiver<Result<super::EditBuffer, PasteError>>,
     cancelled: Arc<AtomicBool>,
     processed: Arc<AtomicUsize>,
     baseline: super::EditBuffer,
@@ -228,7 +277,7 @@ impl PasteRowsDialog {
         mut trial: super::EditBuffer,
         rows: &sqlr_core::RowBuffer,
         mut progress: impl FnMut(usize) -> bool,
-    ) -> Result<super::EditBuffer, String> {
+    ) -> Result<super::EditBuffer, PasteError> {
         trial.check_insert_columns()?;
         let columns = rows.columns();
         let mut used = std::collections::BTreeSet::new();
@@ -240,7 +289,9 @@ impl PasteRowsDialog {
                 continue;
             }
             if !used.insert(col) {
-                return Err(format!("{} is mapped more than once", columns[col].name));
+                return Err(PasteError::MappedTwice {
+                    column: columns[col].name.clone(),
+                });
             }
         }
         for (col, meta) in columns.iter().enumerate() {
@@ -249,17 +300,16 @@ impl PasteRowsDialog {
                 && !trial.has_default(col)
                 && !used.contains(&col)
             {
-                return Err(format!(
-                    "Map the required column {} before pasting",
-                    meta.name
-                ));
+                return Err(PasteError::MapRequired {
+                    column: meta.name.clone(),
+                });
             }
         }
         let records = self.data.rows.iter().skip(usize::from(self.header));
         let mut count = 0;
         for values in records {
             if !progress(count) {
-                return Err("Paste cancelled".into());
+                return Err(PasteError::Cancelled);
             }
             let row = trial.add_row();
             for (source, target) in self.mapping.iter().enumerate() {
@@ -270,11 +320,15 @@ impl PasteRowsDialog {
                     continue;
                 }
                 if let Some(Some(value)) = values.get(source) {
-                    let value = coerce(&columns[col], value)
-                        .map_err(|e| format!("Row {}, {}: {e}", count + 1, columns[col].name))?;
+                    let cell_error = |source: CellEditError| PasteError::Cell {
+                        row: count + 1,
+                        column: columns[col].name.clone(),
+                        source,
+                    };
+                    let value = coerce(&columns[col], value).map_err(|e| cell_error(e.into()))?;
                     trial
                         .set(rows, row, col, value)
-                        .map_err(|e| format!("Row {}, {}: {e}", count + 1, columns[col].name))?;
+                        .map_err(|e| cell_error(e.into()))?;
                 }
             }
             for (col, meta) in columns.iter().enumerate() {
@@ -283,20 +337,19 @@ impl PasteRowsDialog {
                     && !trial.has_default(col)
                     && trial.value(rows, row, col).is_none()
                 {
-                    return Err(format!(
-                        "Row {} has no value for required column {}",
-                        count + 1,
-                        meta.name
-                    ));
+                    return Err(PasteError::MissingValue {
+                        row: count + 1,
+                        column: meta.name.clone(),
+                    });
                 }
             }
             count += 1;
         }
         Ok(trial)
     }
-    fn append(&self, state: &mut GridState, input: &GridInput<'_>) -> Result<usize, String> {
+    fn append(&self, state: &mut GridState, input: &GridInput<'_>) -> Result<usize, PasteError> {
         let trial = self.prepare(
-            state.edits.clone().ok_or("The result cannot be edited")?,
+            state.edits.clone().ok_or(EditError::ResultNotEditable)?,
             input.rows,
             |_| true,
         )?;
@@ -361,7 +414,9 @@ pub(super) fn begin_paste_rows(
             state.paste_dialog = Some(dialog)
         }
         Ok(_) => {}
-        Err(error) => state.actions.push(GridAction::PasteFailed(error)),
+        Err(error) => state
+            .actions
+            .push(GridAction::PasteFailed(error.to_string())),
     }
 }
 
@@ -387,7 +442,7 @@ pub(super) fn mapping_ui(ui: &mut egui::Ui, state: &mut GridState, input: &GridI
                 dialog.work = None;
             }
             Ok(Err(error)) => {
-                dialog.error = Some(error);
+                dialog.error = Some(error.to_string());
                 dialog.work = None;
             }
             Err(mpsc::TryRecvError::Disconnected) => {
@@ -559,7 +614,7 @@ pub(super) fn mapping_ui(ui: &mut egui::Ui, state: &mut GridState, input: &GridI
                 state.refocus = true;
                 return;
             }
-            Err(error) => dialog.error = Some(error),
+            Err(error) => dialog.error = Some(error.to_string()),
         }
     }
     if !cancel {
@@ -662,7 +717,7 @@ mod tests {
             edits: Some(edits),
             ..Default::default()
         };
-        assert_eq!(dialog.append(&mut grid, &input), Ok(1));
+        assert_eq!(dialog.append(&mut grid, &input).unwrap(), 1);
         let edits = grid.edits.as_ref().unwrap();
         let row = edits.inserted_row_numbers()[0];
         assert_eq!(edits.value(&rows, row, 0), None);
@@ -699,6 +754,7 @@ mod tests {
             dialog
                 .append(&mut grid, &input)
                 .unwrap_err()
+                .to_string()
                 .contains("required column name")
         );
         dialog.mapping = vec![Some(1), Some(1)];
@@ -706,12 +762,13 @@ mod tests {
             dialog
                 .append(&mut grid, &input)
                 .unwrap_err()
+                .to_string()
                 .contains("more than once")
         );
         assert_eq!(grid.edits.as_ref().unwrap().pending(), 0);
         assert!(!grid.can_undo());
         dialog.mapping = vec![Some(1), Some(2)];
-        assert_eq!(dialog.append(&mut grid, &input), Ok(1));
+        assert_eq!(dialog.append(&mut grid, &input).unwrap(), 1);
     }
 
     #[test]
@@ -733,7 +790,7 @@ mod tests {
             edits: Some(edits),
             ..Default::default()
         };
-        assert_eq!(dialog.append(&mut grid, &input), Ok(1));
+        assert_eq!(dialog.append(&mut grid, &input).unwrap(), 1);
         let edits = grid.edits.as_ref().unwrap();
         let row = edits.inserted_row_numbers()[0];
         assert_eq!(edits.value(&rows, row, 0), Some(Value::Int(42)));

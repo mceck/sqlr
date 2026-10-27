@@ -149,7 +149,7 @@ impl Shared {
                 let (keys, next) = match kv.scan(db, &pattern, cursor, SCAN_COUNT).await {
                     Ok(page) => page,
                     Err(e) => {
-                        let _ = tx.send(Err(e.message)).await;
+                        let _ = tx.send(Err(e.into())).await;
                         return;
                     }
                 };
@@ -157,7 +157,7 @@ impl Shared {
                     let value = match read_value(kv, db, &info.name, &info.ty).await {
                         Ok(v) => v,
                         Err(e) => {
-                            let _ = tx.send(Err(e.message)).await;
+                            let _ = tx.send(Err(e.into())).await;
                             return;
                         }
                     };

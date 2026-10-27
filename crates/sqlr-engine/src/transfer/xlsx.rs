@@ -9,6 +9,7 @@ use calamine::{Data, Reader, Xlsx, open_workbook};
 use sqlr_core::Value;
 
 use super::convert::civil_from_days;
+use super::error::TransferFileError;
 
 /// The columns and rows of `sheet` (the first sheet when `None`). With `header` the first
 /// row names the columns, otherwise they are `column1`, `column2`…. Dates become ISO text,
@@ -17,19 +18,25 @@ pub(super) fn read_sheet(
     path: &Path,
     sheet: Option<&str>,
     header: bool,
-) -> Result<(Vec<String>, Vec<Vec<Value>>), String> {
-    let mut book: Xlsx<_> = open_workbook(path).map_err(|e| format!("{}: {e}", path.display()))?;
+) -> Result<(Vec<String>, Vec<Vec<Value>>), TransferFileError> {
+    let mut book: Xlsx<_> = open_workbook(path).map_err(|source| TransferFileError::Workbook {
+        path: path.to_path_buf(),
+        source,
+    })?;
     let name = match sheet {
         Some(name) => name.to_string(),
         None => book
             .sheet_names()
             .first()
             .cloned()
-            .ok_or_else(|| "The workbook has no sheets".to_string())?,
+            .ok_or(TransferFileError::NoSheets)?,
     };
     let range = book
         .worksheet_range(&name)
-        .map_err(|e| format!("Sheet \"{name}\": {e}"))?;
+        .map_err(|source| TransferFileError::Sheet {
+            name: name.clone(),
+            source,
+        })?;
     let mut rows = range.rows();
     let width = range.width();
     let names: Vec<String> = if header {
@@ -56,8 +63,11 @@ pub(super) fn read_sheet(
 }
 
 /// The names of a workbook's sheets.
-pub(super) fn sheet_names(path: &Path) -> Result<Vec<String>, String> {
-    let book: Xlsx<_> = open_workbook(path).map_err(|e| format!("{}: {e}", path.display()))?;
+pub(super) fn sheet_names(path: &Path) -> Result<Vec<String>, TransferFileError> {
+    let book: Xlsx<_> = open_workbook(path).map_err(|source| TransferFileError::Workbook {
+        path: path.to_path_buf(),
+        source,
+    })?;
     Ok(book.sheet_names())
 }
 
@@ -135,16 +145,12 @@ const MAX_ROWS: u32 = 1_048_576;
 const MAX_CELL_CHARS: usize = 32_767;
 
 impl SheetWriter {
-    pub fn new(names: &[String]) -> Result<Self, String> {
+    pub fn new(names: &[String]) -> Result<Self, TransferFileError> {
         let mut book = rust_xlsxwriter::Workbook::new();
-        let sheet = book
-            .add_worksheet_with_constant_memory()
-            .map_err(|e| e.to_string())?;
+        let sheet = book.add_worksheet_with_constant_memory()?;
         let bold = rust_xlsxwriter::Format::new().set_bold();
         for (i, name) in names.iter().enumerate() {
-            sheet
-                .write_string_with_format(0, i as u16, name, &bold)
-                .map_err(|e| e.to_string())?;
+            sheet.write_string_with_format(0, i as u16, name, &bold)?;
         }
         Ok(Self {
             book,
@@ -153,14 +159,11 @@ impl SheetWriter {
         })
     }
 
-    pub fn write_row(&mut self, row: &[Value]) -> Result<(), String> {
+    pub fn write_row(&mut self, row: &[Value]) -> Result<(), TransferFileError> {
         if self.row >= MAX_ROWS {
-            return Err("An Excel sheet holds at most 1 048 576 rows".into());
+            return Err(TransferFileError::SheetFull);
         }
-        let sheet = self
-            .book
-            .worksheet_from_index(0)
-            .map_err(|e| e.to_string())?;
+        let sheet = self.book.worksheet_from_index(0)?;
         for (i, value) in row.iter().enumerate().take(self.columns) {
             let col = i as u16;
             let done = match value {
@@ -177,14 +180,14 @@ impl SheetWriter {
                     sheet.write_string(self.row, col, &hex)
                 }
             };
-            done.map_err(|e| e.to_string())?;
+            done?;
         }
         self.row += 1;
         Ok(())
     }
 
-    pub fn save(mut self, path: &Path) -> Result<(), String> {
-        self.book.save(path).map_err(|e| e.to_string())
+    pub fn save(mut self, path: &Path) -> Result<(), TransferFileError> {
+        Ok(self.book.save(path)?)
     }
 }
 

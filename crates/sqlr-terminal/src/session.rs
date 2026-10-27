@@ -27,6 +27,17 @@ impl TerminalStatus {
     }
 }
 
+/// Why a terminal backend could not start or wait for its child.
+#[derive(Debug, thiserror::Error)]
+pub enum PtyError {
+    /// The pseudo-terminal library refused to open, spawn or clone a handle.
+    #[error("{0}")]
+    Backend(Box<dyn std::error::Error + Send + Sync>),
+    /// Waiting for the child failed.
+    #[error("{0}")]
+    Wait(#[from] std::io::Error),
+}
+
 /// The pieces a backend hands the session. The reader and writer are owned by the session's
 /// threads; the closures keep the backend alive.
 pub struct BackendParts {
@@ -35,12 +46,12 @@ pub struct BackendParts {
     pub resize: Box<dyn Fn(u16, u16) + Send + Sync>,
     pub kill: Box<dyn Fn() + Send + Sync>,
     /// Blocks until the child exits (run on the monitor thread).
-    pub wait: Box<dyn FnOnce() -> Result<u32, String> + Send>,
+    pub wait: Box<dyn FnOnce() -> Result<u32, PtyError> + Send>,
     pub pid: Option<u32>,
 }
 
 pub trait BackendFactory: Send + Sync {
-    fn start(&self, spec: &CommandSpec, rows: u16, cols: u16) -> Result<BackendParts, String>;
+    fn start(&self, spec: &CommandSpec, rows: u16, cols: u16) -> Result<BackendParts, PtyError>;
 }
 
 /// The settings a session starts with.
@@ -94,8 +105,10 @@ impl TerminalSession {
         let emulator = Arc::new(Emulator::new(config.rows, config.cols, config.scrollback));
         let parts = match factory.start(spec, config.rows, config.cols) {
             Ok(parts) => parts,
-            Err(message) => {
-                *status.lock() = TerminalStatus::Failed { message };
+            Err(error) => {
+                *status.lock() = TerminalStatus::Failed {
+                    message: error.to_string(),
+                };
                 return Self {
                     emulator,
                     writer: Arc::new(Mutex::new(Box::new(std::io::sink()))),
@@ -177,8 +190,10 @@ impl TerminalSession {
                                 *status = TerminalStatus::Exited { code };
                             }
                         }
-                        Err(message) => {
-                            *monitor_status.lock() = TerminalStatus::Failed { message };
+                        Err(error) => {
+                            *monitor_status.lock() = TerminalStatus::Failed {
+                                message: error.to_string(),
+                            };
                         }
                     },
                 }
@@ -310,7 +325,7 @@ mod tests {
             _spec: &CommandSpec,
             _rows: u16,
             _cols: u16,
-        ) -> Result<BackendParts, String> {
+        ) -> Result<BackendParts, PtyError> {
             struct BrokenReader;
             impl Read for BrokenReader {
                 fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {

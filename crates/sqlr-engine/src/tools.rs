@@ -159,7 +159,7 @@ impl Shared {
         let command = match dump_command(&endpoint.driver, &endpoint.conn, opts, &partial, temp_dir)
         {
             Ok(command) => command,
-            Err(message) => return JobOutcome::Failed(config_error(message)),
+            Err(e) => return JobOutcome::Failed(config_error(e.to_string())),
         };
         let shown = command.display().replace(
             &partial.display().to_string(),
@@ -222,7 +222,7 @@ impl Shared {
         let command = match restore_command(&endpoint.driver, &endpoint.conn, opts, input, temp_dir)
         {
             Ok(command) => command,
-            Err(message) => return JobOutcome::Failed(config_error(message)),
+            Err(e) => return JobOutcome::Failed(config_error(e.to_string())),
         };
         job.log(format!("$ {}", command.display()));
         job.log(format!("Restoring from {}", input.display()));

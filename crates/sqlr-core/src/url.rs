@@ -7,7 +7,52 @@ use std::collections::BTreeMap;
 
 use crate::manifest::{DriverManifest, FieldType};
 
-const PASSWORD_REFUSED: &str = "Remove the password from the URL; enter it in the Password field";
+/// Why a connection URL is refused. No message echoes text that may hold a password.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum UrlError {
+    /// A `%` that is not followed by two hex digits.
+    #[error("Invalid percent-encoding in the URL")]
+    InvalidPercentEncoding,
+    /// Percent-decoded text that is not UTF-8.
+    #[error("Invalid UTF-8 in the URL")]
+    InvalidUtf8,
+    /// The URL holds a password.
+    #[error("Remove the password from the URL; enter it in the Password field")]
+    PasswordRefused,
+    /// The text has no scheme.
+    #[error("Not a connection URL: \"{url}\"")]
+    NotAUrl {
+        /// The text, with any password redacted.
+        url: String,
+    },
+    /// A file URL with an authority other than `localhost`.
+    #[error(
+        "A {scheme} URL names a local file by its full path: \
+         {scheme}:///path/to/file.db"
+    )]
+    FileUrlAuthority {
+        /// The URL scheme.
+        scheme: String,
+    },
+    /// A network URL without `//` after the scheme.
+    #[error("Expected \"{scheme}://\" in the URL")]
+    MissingSlashes {
+        /// The URL scheme.
+        scheme: String,
+    },
+    /// A `[` host without its `]`.
+    #[error("Unclosed \"[\" in the host")]
+    UnclosedBracket,
+    /// Something other than `:port` after a bracketed host.
+    #[error("Expected \":port\" after the host")]
+    ExpectedPort,
+    /// An unbracketed IPv6 address.
+    #[error("Put an IPv6 address in brackets, as in [::1]:5432")]
+    Ipv6NeedsBrackets,
+    /// A port that is not a number from 1 to 65535.
+    #[error("Invalid port: it must be a number from 1 to 65535")]
+    InvalidPort,
+}
 
 /// The parts of a connection URL. `path` is set for file databases (`sqlite:`), the
 /// network parts otherwise.
@@ -32,7 +77,7 @@ pub struct ConnectionUrl {
 /// Schemes whose URL names a file instead of a server.
 const FILE_SCHEMES: &[&str] = &["sqlite", "sqlite3", "duckdb", "file"];
 
-fn percent_decode(text: &str) -> Result<String, String> {
+fn percent_decode(text: &str) -> Result<String, UrlError> {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
@@ -41,7 +86,7 @@ fn percent_decode(text: &str) -> Result<String, String> {
             let hex = text
                 .get(i + 1..i + 3)
                 .and_then(|h| u8::from_str_radix(h, 16).ok())
-                .ok_or_else(|| "Invalid percent-encoding in the URL".to_string())?;
+                .ok_or(UrlError::InvalidPercentEncoding)?;
             out.push(hex);
             i += 3;
         } else {
@@ -49,7 +94,7 @@ fn percent_decode(text: &str) -> Result<String, String> {
             i += 1;
         }
     }
-    String::from_utf8(out).map_err(|_| "Invalid UTF-8 in the URL".to_string())
+    String::from_utf8(out).map_err(|_| UrlError::InvalidUtf8)
 }
 
 fn is_password_key(key: &str) -> bool {
@@ -76,13 +121,13 @@ fn may_hide_password(authority: &str) -> bool {
         .is_some_and(|(_, port)| !port.is_empty() && !port.bytes().all(|b| b.is_ascii_digit()))
 }
 
-fn parse_params(query: &str) -> Result<Vec<(String, String)>, String> {
+fn parse_params(query: &str) -> Result<Vec<(String, String)>, UrlError> {
     let mut params = Vec::new();
     for pair in query.split('&').filter(|p| !p.is_empty()) {
         let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
         let key = percent_decode(k)?;
         if is_password_key(&key) {
-            return Err(PASSWORD_REFUSED.into());
+            return Err(UrlError::PasswordRefused);
         }
         params.push((key, percent_decode(v)?));
     }
@@ -91,7 +136,7 @@ fn parse_params(query: &str) -> Result<Vec<(String, String)>, String> {
 
 /// Parses `scheme://[user@]host[:port][/database][?k=v&…]` or `sqlite:[//]/path[?k=v]`.
 /// A URL holding a password is refused.
-pub fn parse_connection_url(url: &str) -> Result<ConnectionUrl, String> {
+pub fn parse_connection_url(url: &str) -> Result<ConnectionUrl, UrlError> {
     let url = url.trim();
     let (scheme, rest) = url
         .split_once(':')
@@ -100,7 +145,9 @@ pub fn parse_connection_url(url: &str) -> Result<ConnectionUrl, String> {
                 && s.chars()
                     .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
         })
-        .ok_or_else(|| format!("Not a connection URL: \"{}\"", redact_url(url)))?;
+        .ok_or_else(|| UrlError::NotAUrl {
+            url: redact_url(url),
+        })?;
     let scheme = scheme.to_ascii_lowercase();
     // The fragment ends the query too.
     let rest = rest.split('#').next().unwrap_or_default();
@@ -119,10 +166,7 @@ pub fn parse_connection_url(url: &str) -> Result<ConnectionUrl, String> {
                 let slash = after.find('/').unwrap_or(after.len());
                 let authority = &after[..slash];
                 if !authority.is_empty() && !authority.eq_ignore_ascii_case("localhost") {
-                    return Err(format!(
-                        "A {scheme} URL names a local file by its full path: \
-                         {scheme}:///path/to/file.db"
-                    ));
+                    return Err(UrlError::FileUrlAuthority { scheme });
                 }
                 &after[slash..]
             }
@@ -142,7 +186,9 @@ pub fn parse_connection_url(url: &str) -> Result<ConnectionUrl, String> {
 
     let after = rest
         .strip_prefix("//")
-        .ok_or_else(|| format!("Expected \"{scheme}://\" in the URL"))?;
+        .ok_or_else(|| UrlError::MissingSlashes {
+            scheme: scheme.clone(),
+        })?;
     let (authority, database) = match after.find('/') {
         Some(slash) => (&after[..slash], Some(&after[slash + 1..])),
         None => (after, None),
@@ -155,7 +201,7 @@ pub fn parse_connection_url(url: &str) -> Result<ConnectionUrl, String> {
         Some(info) => {
             if let Some((user, password)) = info.split_once(':') {
                 if !password.is_empty() {
-                    return Err(PASSWORD_REFUSED.into());
+                    return Err(UrlError::PasswordRefused);
                 }
                 Some(percent_decode(user)?)
             } else {
@@ -165,20 +211,15 @@ pub fn parse_connection_url(url: &str) -> Result<ConnectionUrl, String> {
         None => None,
     };
     let (host, port) = if let Some(v6) = hostport.strip_prefix('[') {
-        let (host, tail) = v6
-            .split_once(']')
-            .ok_or_else(|| "Unclosed \"[\" in the host".to_string())?;
+        let (host, tail) = v6.split_once(']').ok_or(UrlError::UnclosedBracket)?;
         let port = match tail {
             "" => None,
-            t => Some(
-                t.strip_prefix(':')
-                    .ok_or("Expected \":port\" after the host")?,
-            ),
+            t => Some(t.strip_prefix(':').ok_or(UrlError::ExpectedPort)?),
         };
         (host.to_string(), port)
     } else if hostport.matches(':').count() > 1 {
         // `::1` is not host `:` and port `1`. The text is not echoed: it may hold a password.
-        return Err("Put an IPv6 address in brackets, as in [::1]:5432".into());
+        return Err(UrlError::Ipv6NeedsBrackets);
     } else {
         match hostport.rsplit_once(':') {
             Some((h, p)) => (percent_decode(h)?, Some(p)),
@@ -192,7 +233,7 @@ pub fn parse_connection_url(url: &str) -> Result<ConnectionUrl, String> {
             p.parse::<u16>()
                 .ok()
                 .filter(|&p| p > 0)
-                .ok_or("Invalid port: it must be a number from 1 to 65535")?,
+                .ok_or(UrlError::InvalidPort)?,
         ),
     };
     let database = match database {
@@ -551,7 +592,11 @@ mod tests {
             "mysql://u:p@[::1]:3306",
             "postgresql://h/db?password=secret",
         ] {
-            assert_eq!(parse_connection_url(url).unwrap_err(), message, "{url}");
+            assert_eq!(
+                parse_connection_url(url).unwrap_err().to_string(),
+                message,
+                "{url}"
+            );
         }
     }
 
@@ -574,7 +619,7 @@ mod tests {
             "postgresql://host/db?custom=secret-credential%FF",
             "postgresql://secret-credential%ZZ@host/db",
         ] {
-            let error = parse_connection_url(url).unwrap_err();
+            let error = parse_connection_url(url).unwrap_err().to_string();
             assert!(!error.contains("secret-credential"), "{error}");
         }
     }
@@ -596,7 +641,9 @@ mod tests {
     #[test]
     fn partial_password_never_leaks() {
         // Typing `user:password` before the `@` looks like a host and a port.
-        let err = parse_connection_url("postgresql://bob:secr").unwrap_err();
+        let err = parse_connection_url("postgresql://bob:secr")
+            .unwrap_err()
+            .to_string();
         assert!(!err.contains("secr"), "{err}");
         assert_eq!(redact_url("postgresql://bob:secr"), "postgresql://***");
         assert_eq!(
@@ -608,9 +655,11 @@ mod tests {
             "postgresql://host:5432/db"
         );
         assert_eq!(redact_url("postgresql://host:/db"), "postgresql://host:/db");
-        assert!(
-            parse_connection_url("postgresql://host:54a2/db").unwrap_err()
-                == "Invalid port: it must be a number from 1 to 65535"
+        assert_eq!(
+            parse_connection_url("postgresql://host:54a2/db")
+                .unwrap_err()
+                .to_string(),
+            "Invalid port: it must be a number from 1 to 65535"
         );
         for key in [
             "sslpassword",
@@ -621,7 +670,7 @@ mod tests {
         ] {
             let url = format!("postgresql://h/db?{key}=hunter2");
             assert_eq!(
-                parse_connection_url(&url).unwrap_err(),
+                parse_connection_url(&url).unwrap_err().to_string(),
                 "Remove the password from the URL; enter it in the Password field",
                 "{key}"
             );
@@ -634,7 +683,10 @@ mod tests {
         // `parse_params` decodes the key before refusing it, so `redact_url` must decode
         // it too or the error path leaves the password in plain sight.
         let url = "postgresql://h/db?pass%77ord=hunter2";
-        assert_eq!(parse_connection_url(url).unwrap_err(), PASSWORD_REFUSED);
+        assert_eq!(
+            parse_connection_url(url).unwrap_err(),
+            UrlError::PasswordRefused
+        );
         let redacted = redact_url(url);
         assert!(!redacted.contains("hunter2"), "{redacted}");
     }
@@ -683,7 +735,7 @@ mod tests {
             "postgresql://bob:pa:ss/db",
             "postgresql://::1/db",
         ] {
-            let err = parse_connection_url(url).unwrap_err();
+            let err = parse_connection_url(url).unwrap_err().to_string();
             for secret in ["pa/ss", "pa?ss", "pa#ss", "pa:ss", "bob:"] {
                 assert!(!err.contains(secret), "{url}: {err}");
             }
@@ -710,7 +762,7 @@ mod tests {
         let u = parse_connection_url("sqlite://localhost/abs/a.db").unwrap();
         assert_eq!(u.path.as_deref(), Some("/abs/a.db"));
         for url in ["sqlite://foo.db", "sqlite://host/abs/a.db"] {
-            let err = parse_connection_url(url).unwrap_err();
+            let err = parse_connection_url(url).unwrap_err().to_string();
             assert!(err.contains("sqlite:///path/to/file.db"), "{url}: {err}");
         }
         let u = parse_connection_url("sqlite:///a.db?mode=ro#x").unwrap();

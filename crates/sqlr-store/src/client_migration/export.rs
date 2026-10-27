@@ -1,7 +1,7 @@
 use serde_json::json;
 use sqlr_core::ConnectionConfig;
 
-use super::{ClientFormat, ExportDocument, portable};
+use super::{ClientFormat, ExportDocument, ExportError, portable};
 
 fn val<'a>(c: &'a ConnectionConfig, k: &str) -> &'a str {
     c.values.get(k).map(String::as_str).unwrap_or_default()
@@ -30,18 +30,18 @@ fn xml(s: &str) -> String {
         .replace('\'', "&apos;")
 }
 
-fn jdbc_url(c: &ConnectionConfig) -> Result<String, String> {
+fn jdbc_url(c: &ConnectionConfig) -> Result<String, ExportError> {
     if c.driver == "sqlite" {
         return Ok(format!("jdbc:sqlite:{}", val(c, "path")));
     }
-    let mut u =
-        url::Url::parse(&connection_url(c, false)?).map_err(|_| "Invalid connection URL.")?;
-    u.set_username("").map_err(|_| "Invalid JDBC URL.")?;
+    let mut u = url::Url::parse(&connection_url(c, false)?).map_err(|_| ExportError::InvalidUrl)?;
+    u.set_username("")
+        .map_err(|_| ExportError::InvalidJdbcUrl)?;
     if c.driver == "sqlserver" {
         let authority = &u[url::Position::BeforeHost..url::Position::AfterPort];
         let db = val(c, "database");
         if db.contains([';', '{', '}']) {
-            return Err("SQL Server database name needs manual JDBC URL configuration.".into());
+            return Err(ExportError::SqlServerJdbc);
         }
         let encryption = if val(c, "encryption") == "disabled" {
             "false"
@@ -56,23 +56,19 @@ fn jdbc_url(c: &ConnectionConfig) -> Result<String, String> {
     Ok(format!("jdbc:{u}"))
 }
 
-fn connection_url(c: &ConnectionConfig, tableplus: bool) -> Result<String, String> {
-    let scheme =
-        match c.driver.as_str() {
-            "postgres" => "postgresql",
-            "mysql" => "mysql",
-            "sqlite" => "sqlite",
-            "sqlserver" => "mssql",
-            // Complex Oracle/JDBC, document and HTTP configurations need their own adapters.
-            _ => return Err(
-                "This driver cannot be represented by this client's portable connection format."
-                    .into(),
-            ),
-        };
-    let mut u = url::Url::parse(&format!("{scheme}://localhost"))
-        .map_err(|_| "Cannot build connection URL.")?;
+fn connection_url(c: &ConnectionConfig, tableplus: bool) -> Result<String, ExportError> {
+    let scheme = match c.driver.as_str() {
+        "postgres" => "postgresql",
+        "mysql" => "mysql",
+        "sqlite" => "sqlite",
+        "sqlserver" => "mssql",
+        // Complex Oracle/JDBC, document and HTTP configurations need their own adapters.
+        _ => return Err(ExportError::UnsupportedDriver),
+    };
+    let mut u =
+        url::Url::parse(&format!("{scheme}://localhost")).map_err(|_| ExportError::BuildUrl)?;
     if c.driver == "sqlite" {
-        u.set_host(None).map_err(|_| "Cannot build SQLite URL.")?;
+        u.set_host(None).map_err(|_| ExportError::BuildSqliteUrl)?;
         u.set_path(val(c, "path"));
     } else {
         let host = val(c, "host");
@@ -84,11 +80,11 @@ fn connection_url(c: &ConnectionConfig, tableplus: bool) -> Result<String, Strin
             host.to_string()
         };
         u.set_host(Some(&host))
-            .map_err(|_| "Invalid connection host.")?;
+            .map_err(|_| ExportError::InvalidHost)?;
         u.set_port(Some(port(c)))
-            .map_err(|_| "Invalid connection port.")?;
+            .map_err(|_| ExportError::InvalidPort)?;
         u.set_username(val(c, "user"))
-            .map_err(|_| "Invalid connection user.")?;
+            .map_err(|_| ExportError::InvalidUser)?;
         u.set_path(&format!("/{}", val(c, "database")));
     }
     {
@@ -128,7 +124,7 @@ fn connection_url(c: &ConnectionConfig, tableplus: bool) -> Result<String, Strin
 pub fn encode(
     format: ClientFormat,
     connections: &[ConnectionConfig],
-) -> Result<ExportDocument, String> {
+) -> Result<ExportDocument, ExportError> {
     encode_inner(format, connections, None)
 }
 
@@ -136,9 +132,9 @@ pub fn encode_with_credentials(
     format: ClientFormat,
     connections: &[ConnectionConfig],
     credentials: &std::collections::BTreeMap<String, sqlr_core::Secrets>,
-) -> Result<ExportDocument, String> {
+) -> Result<ExportDocument, ExportError> {
     if !format.supports_credentials() {
-        return Err("This export format does not support credentials.".into());
+        return Err(ExportError::NoCredentials);
     }
     encode_inner(format, connections, Some(credentials))
 }
@@ -147,12 +143,12 @@ fn encode_inner(
     format: ClientFormat,
     connections: &[ConnectionConfig],
     credentials: Option<&std::collections::BTreeMap<String, sqlr_core::Secrets>>,
-) -> Result<ExportDocument, String> {
+) -> Result<ExportDocument, ExportError> {
     if matches!(format, ClientFormat::Beekeeper | ClientFormat::Tabularis) {
         return super::native_clients::encode(format, connections, credentials);
     }
     if connections.is_empty() {
-        return Err("Select at least one connection.".into());
+        return Err(ExportError::NothingSelected);
     }
     let mut warnings = Vec::new();
     if credentials.is_some() {
@@ -193,7 +189,7 @@ fn encode_inner(
         configs.push(portable(c.clone()));
     }
     if configs.is_empty() {
-        return Err("None of the selected connections can be exported to this format. Choose sqlr to back up all drivers and portable settings.".into());
+        return Err(ExportError::NothingExportable);
     }
     if format != ClientFormat::Sqlr {
         warnings.push("Client-specific preferences and custom sqlr profile definitions are not exported. Review the target client's connection settings.".into());
@@ -299,7 +295,7 @@ fn encode_inner(
                 map.insert(format!("sqlr-{i}-{}",c.id),json!({"provider":provider,"driver":driver,"name":c.name,"folder":c.group,"save-password":false,"configuration":cfg}));
             }
             if map.is_empty() {
-                return Err("No selected connection has a supported DBeaver driver.".into());
+                return Err(ExportError::NoDbeaverDriver);
             }
             Some(json!({"folders":{},"connections":map}))
         }
@@ -334,7 +330,7 @@ fn encode_inner(
         _ => None,
     };
     let contents = if let Some(value) = value {
-        serde_json::to_string_pretty(&value).map_err(|_| "Could not serialize connections.")?
+        serde_json::to_string_pretty(&value).map_err(|_| ExportError::SerializeConnections)?
     } else if format == ClientFormat::Datagrip {
         let mut s = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<data-sources>\n");
         for c in &configs {
@@ -357,9 +353,9 @@ fn encode_inner(
                 .and_then(|all| all.get(&c.id))
                 .and_then(|s| s.0.get("password"))
             {
-                let mut url = url::Url::parse(&raw).map_err(|_| "Invalid connection URL.")?;
+                let mut url = url::Url::parse(&raw).map_err(|_| ExportError::InvalidUrl)?;
                 url.set_password(Some(password))
-                    .map_err(|_| "Cannot export a password for this connection URL.")?;
+                    .map_err(|_| ExportError::PasswordInUrl)?;
                 raw = url.to_string();
             }
             s.push_str(&raw);

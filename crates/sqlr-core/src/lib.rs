@@ -61,7 +61,9 @@ pub use classify::*;
 pub use clipboard::*;
 pub use compare::{DiffKind, ObjectDiff, SchemaSnapshot, compare, migration_script, normalize};
 pub use config::*;
-pub use datagen::{ColumnGen, DataGenSpec, Generator, RowGenerator, default_generator};
+pub use datagen::{
+    ColumnGen, DataGenSpec, DatagenError, Generator, RowGenerator, default_generator,
+};
 pub use doc::*;
 pub use doc_admin::*;
 pub use doc_rows::*;
@@ -90,7 +92,7 @@ pub use plan::{
     PlanTree, explain_check, parse_mysql_json, parse_mysql_tree, parse_pg_json, parse_sqlite_rows,
 };
 pub use profile::*;
-pub use read::read_rows;
+pub use read::{ReadError, read_rows};
 pub use rows::*;
 pub use schema::*;
 pub use schema_change::*;

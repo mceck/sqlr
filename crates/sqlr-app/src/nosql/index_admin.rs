@@ -133,13 +133,19 @@ impl CreateDialog {
                     ttl_seconds: *ttl,
                     partial_filter: partial.clone(),
                 };
-                Ok((target.database.clone(), mongo_create_index(target, &spec)?))
+                Ok((
+                    target.database.clone(),
+                    mongo_create_index(target, &spec).map_err(|e| e.to_string())?,
+                ))
             }
             Form::Es {
                 name,
                 settings,
                 mappings,
-            } => Ok((None, es_create_index(name.trim(), settings, mappings)?)),
+            } => Ok((
+                None,
+                es_create_index(name.trim(), settings, mappings).map_err(|e| e.to_string())?,
+            )),
         }
     }
 
@@ -276,7 +282,7 @@ impl SqlrApp {
                     text,
                 ),
                 Err(e) => {
-                    self.notify(e);
+                    self.notify(e.to_string());
                     return;
                 }
             },

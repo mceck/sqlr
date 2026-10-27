@@ -92,6 +92,40 @@ impl SshContext {
     }
 }
 
+/// Why a host key or the SSH agent cannot be used.
+#[derive(Debug, thiserror::Error)]
+enum SshError {
+    /// The server presented a host certificate instead of a key.
+    #[error("SSH host certificates are not supported ({host})")]
+    HostCertificate { host: String },
+    /// The host key differs from the one in `known_hosts`.
+    #[error("Host key changed for {host}")]
+    HostKeyChanged { host: String },
+    /// The host key is not in `known_hosts` and new keys are not trusted.
+    #[error(
+        "Host key for {host} is not known ({fingerprint}). Verify it and add it to known_hosts, \
+         or enable \"Trust new host keys\" for this connection"
+    )]
+    HostKeyUnknown { host: String, fingerprint: String },
+    /// `known_hosts` could not be read or written.
+    #[error("Could not check the host key of {host}: {source}")]
+    HostKeyCheck {
+        host: String,
+        #[source]
+        source: russh::keys::Error,
+    },
+    /// The SSH agent could not be reached.
+    #[error("{0}")]
+    Agent(#[from] russh::keys::Error),
+    /// Neither the OpenSSH pipe nor Pageant could be reached.
+    #[cfg(windows)]
+    #[error("OpenSSH agent pipe: {pipe}; Pageant: {pageant}")]
+    WindowsAgent {
+        pipe: russh::keys::Error,
+        pageant: russh::keys::Error,
+    },
+}
+
 /// What checking a host key found.
 enum KeyCheck {
     Known,
@@ -108,7 +142,7 @@ impl KnownHosts {
         port: u16,
         key: &PublicKey,
         trust_new: bool,
-    ) -> Result<KeyCheck, String> {
+    ) -> Result<KeyCheck, russh::keys::Error> {
         match &self.path {
             None => {
                 let mut memory = self.memory.lock();
@@ -129,7 +163,7 @@ impl KnownHosts {
                         Err(russh::keys::Error::KeyChanged { .. }) => {
                             return Ok(KeyCheck::Changed);
                         }
-                        Err(e) => return Err(e.to_string()),
+                        Err(e) => return Err(e),
                     }
                 } else {
                     false
@@ -140,8 +174,7 @@ impl KnownHosts {
                 if !trust_new {
                     return Ok(KeyCheck::Unknown);
                 }
-                russh::keys::known_hosts::learn_known_hosts_path(host, port, key, path)
-                    .map_err(|e| e.to_string())?;
+                russh::keys::known_hosts::learn_known_hosts_path(host, port, key, path)?;
                 Ok(KeyCheck::New)
             }
         }
@@ -156,7 +189,7 @@ struct Client {
     /// Learn an unknown host key instead of refusing it (an explicit per-connection opt-in).
     trust_new: bool,
     /// What the host key check found, for the error or the report.
-    seen: Arc<Mutex<Option<Result<HostKeyInfo, String>>>>,
+    seen: Arc<Mutex<Option<Result<HostKeyInfo, SshError>>>>,
 }
 
 impl client::Handler for Client {
@@ -167,10 +200,9 @@ impl client::Handler for Client {
         server_key: &PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
         let PublicKeyOrCertificate::PublicKey { key, .. } = server_key else {
-            *self.seen.lock() = Some(Err(format!(
-                "SSH host certificates are not supported ({})",
-                self.host
-            )));
+            *self.seen.lock() = Some(Err(SshError::HostCertificate {
+                host: self.host.clone(),
+            }));
             return Ok(false);
         };
         let info = |new| HostKeyInfo {
@@ -181,21 +213,24 @@ impl client::Handler for Client {
         let (seen, ok) = match self.known.check(&self.host, self.port, key, self.trust_new) {
             Ok(KeyCheck::Known) => (Ok(info(false)), true),
             Ok(KeyCheck::New) => (Ok(info(true)), true),
-            Ok(KeyCheck::Changed) => (Err(format!("Host key changed for {}", self.host)), false),
-            Ok(KeyCheck::Unknown) => (
-                Err(format!(
-                    "Host key for {} is not known ({}). Verify it and add it to known_hosts, \
-                     or enable \"Trust new host keys\" for this connection",
-                    self.host,
-                    key.fingerprint(HashAlg::Sha256)
-                )),
+            Ok(KeyCheck::Changed) => (
+                Err(SshError::HostKeyChanged {
+                    host: self.host.clone(),
+                }),
                 false,
             ),
-            Err(e) => (
-                Err(format!(
-                    "Could not check the host key of {}: {e}",
-                    self.host
-                )),
+            Ok(KeyCheck::Unknown) => (
+                Err(SshError::HostKeyUnknown {
+                    host: self.host.clone(),
+                    fingerprint: key.fingerprint(HashAlg::Sha256).to_string(),
+                }),
+                false,
+            ),
+            Err(source) => (
+                Err(SshError::HostKeyCheck {
+                    host: self.host.clone(),
+                    source,
+                }),
                 false,
             ),
         };
@@ -570,7 +605,7 @@ async fn connect_hop(
     let seen = seen.lock().take();
     match (connected, seen) {
         (Ok(handle), Some(Ok(info))) => Ok((handle, info)),
-        (_, Some(Err(message))) => Err(DriverError::new(ErrorKind::Connection, message)),
+        (_, Some(Err(e))) => Err(DriverError::new(ErrorKind::Connection, e.to_string())),
         (Err(e), _) => Err(DriverError::new(
             ErrorKind::Connection,
             format!("SSH connection to {}:{} failed: {e}", hop.host, hop.port),
@@ -600,13 +635,13 @@ fn ssh_error(hop: &Hop, e: impl std::fmt::Display) -> DriverError {
 type AgentConnection = AgentClient<Box<dyn AgentStream + Send + Unpin>>;
 
 /// Connects to the SSH agent the platform provides.
-async fn connect_agent() -> Result<AgentConnection, String> {
+async fn connect_agent() -> Result<AgentConnection, SshError> {
     #[cfg(unix)]
     {
         AgentClient::connect_env()
             .await
             .map(|agent| agent.dynamic())
-            .map_err(|e| e.to_string())
+            .map_err(SshError::from)
     }
     #[cfg(windows)]
     {
@@ -617,7 +652,7 @@ async fn connect_agent() -> Result<AgentConnection, String> {
             Err(pipe) => AgentClient::connect_pageant()
                 .await
                 .map(|agent| agent.dynamic())
-                .map_err(|pageant| format!("OpenSSH agent pipe: {pipe}; Pageant: {pageant}")),
+                .map_err(|pageant| SshError::WindowsAgent { pipe, pageant }),
         }
     }
 }
@@ -683,4 +718,30 @@ async fn authenticate(
         }
     };
     if ok { Ok(()) } else { Err(auth_failed(hop)) }
+}
+
+#[cfg(test)]
+mod ssh_error_tests {
+    use super::SshError;
+
+    #[test]
+    fn host_key_messages_stay_as_the_user_saw_them() {
+        assert_eq!(
+            SshError::HostKeyChanged { host: "db".into() }.to_string(),
+            "Host key changed for db"
+        );
+        assert_eq!(
+            SshError::HostKeyUnknown {
+                host: "db".into(),
+                fingerprint: "SHA256:abc".into()
+            }
+            .to_string(),
+            "Host key for db is not known (SHA256:abc). Verify it and add it to known_hosts, \
+             or enable \"Trust new host keys\" for this connection"
+        );
+        assert_eq!(
+            SshError::HostCertificate { host: "db".into() }.to_string(),
+            "SSH host certificates are not supported (db)"
+        );
+    }
 }

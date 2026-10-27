@@ -7404,6 +7404,7 @@ dependencies = [
  "sqlr-driver-tests",
  "sqlr-sidecar",
  "tempfile",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -7566,6 +7567,7 @@ name = "sqlr-driver-tests"
 version = "0.1.3"
 dependencies = [
  "sqlr-core",
+ "thiserror 2.0.21",
  "tokio",
 ]
 
@@ -7605,6 +7607,7 @@ dependencies = [
  "sqlr-testkit",
  "tar",
  "tempfile",
+ "thiserror 2.0.21",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -7720,6 +7723,7 @@ dependencies = [
  "parking_lot",
  "portable-pty",
  "tempfile",
+ "thiserror 2.0.21",
  "tracing",
  "vt100",
 ]
@@ -7753,6 +7757,7 @@ dependencies = [
  "similar",
  "sqlr-core",
  "sqlr-testkit",
+ "thiserror 2.0.21",
  "tree-sitter",
  "tree-sitter-sequel",
 ]

@@ -6,14 +6,14 @@ use std::time::Duration;
 use parking_lot::Mutex;
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 
-use crate::session::{BackendFactory, BackendParts};
+use crate::session::{BackendFactory, BackendParts, PtyError};
 use crate::shell::CommandSpec;
 
 #[derive(Default)]
 pub struct PortablePty;
 
 impl BackendFactory for PortablePty {
-    fn start(&self, spec: &CommandSpec, rows: u16, cols: u16) -> Result<BackendParts, String> {
+    fn start(&self, spec: &CommandSpec, rows: u16, cols: u16) -> Result<BackendParts, PtyError> {
         let pair = native_pty_system()
             .openpty(PtySize {
                 rows,
@@ -21,7 +21,7 @@ impl BackendFactory for PortablePty {
                 pixel_width: 0,
                 pixel_height: 0,
             })
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| PtyError::Backend(e.into()))?;
         let mut command = CommandBuilder::new(&spec.program);
         command.args(&spec.args);
         command.cwd(&spec.cwd);
@@ -32,12 +32,18 @@ impl BackendFactory for PortablePty {
         let mut child = pair
             .slave
             .spawn_command(command)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| PtyError::Backend(e.into()))?;
         drop(pair.slave);
         let pid = child.process_id();
         let killer = child.clone_killer();
-        let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
-        let writer = pair.master.take_writer().map_err(|e| e.to_string())?;
+        let reader = pair
+            .master
+            .try_clone_reader()
+            .map_err(|e| PtyError::Backend(e.into()))?;
+        let writer = pair
+            .master
+            .take_writer()
+            .map_err(|e| PtyError::Backend(e.into()))?;
         let master: Arc<Mutex<Box<dyn MasterPty + Send>>> = Arc::new(Mutex::new(pair.master));
         let resize_master = master.clone();
         let resize = Box::new(move |rows: u16, cols: u16| {
@@ -68,7 +74,7 @@ impl BackendFactory for PortablePty {
             }
         });
         let wait = Box::new(move || {
-            let status = child.wait().map_err(|e| e.to_string())?;
+            let status = child.wait()?;
             Ok(status.exit_code())
         });
         Ok(BackendParts {

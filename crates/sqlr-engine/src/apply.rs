@@ -159,7 +159,7 @@ impl Shared {
             match changeset.statements_with_default_column(dialect, default_column.as_deref()) {
                 Ok(statements) => statements,
                 Err(e) => {
-                    let e = DriverError::new(ErrorKind::Other, e);
+                    let e = DriverError::new(ErrorKind::Other, e.to_string());
                     self.undo(key, io, &conn, mode, &e).await;
                     return Err(e);
                 }

@@ -1,7 +1,7 @@
 use serde_json::Value;
 use sqlr_core::{ConnectionConfig, ConnectionProfile, parse_connection_url};
 
-use super::{ClientFormat, ImportBatch, blank, driver, portable};
+use super::{ClientFormat, ImportBatch, ImportError, blank, driver, portable};
 
 fn text(v: &Value, key: &str) -> String {
     match &v[key] {
@@ -66,11 +66,11 @@ fn color(c: &mut ConnectionConfig, s: &str) {
     }
 }
 
-pub fn detect(bytes: &[u8]) -> Result<ClientFormat, String> {
+pub fn detect(bytes: &[u8]) -> Result<ClientFormat, ImportError> {
     if bytes.starts_with(b"bplist00") {
         return Ok(ClientFormat::TablePlus);
     }
-    let s = std::str::from_utf8(bytes).map_err(|_| "Unrecognized connection file. Encrypted TablePlus archives are not supported; choose Connections.plist or connection URLs instead.".to_string())?;
+    let s = std::str::from_utf8(bytes).map_err(|_| ImportError::EncryptedTablePlus)?;
     let s = s.trim_start_matches('\u{feff}').trim();
     if s.starts_with('<') {
         return if s.contains("<plist") {
@@ -78,14 +78,13 @@ pub fn detect(bytes: &[u8]) -> Result<ClientFormat, String> {
         } else if s.contains("<data-source") {
             Ok(ClientFormat::Datagrip)
         } else {
-            Err("This XML file does not contain JetBrains data sources or a TablePlus property list.".into())
+            Err(ImportError::UnknownXml)
         };
     }
     if s.starts_with('{') || s.starts_with('[') {
-        let v: Value =
-            serde_json::from_str(s).map_err(|_| "Invalid connection JSON file.".to_string())?;
+        let v: Value = serde_json::from_str(s).map_err(|_| ImportError::InvalidJson)?;
         if v.get("encrypted").is_some() || v.get("ciphertext").is_some() {
-            return Err("Encrypted connection backups are not supported. Export plaintext JSON from Tabularis first.".into());
+            return Err(ImportError::EncryptedBackup);
         }
         if v["connections"].is_array()
             && (v.get("version").is_some() || v.get("groups").is_some())
@@ -113,10 +112,10 @@ pub fn detect(bytes: &[u8]) -> Result<ClientFormat, String> {
     if s.lines().any(|l| l.trim().contains("://")) {
         return Ok(ClientFormat::TablePlus);
     }
-    Err("Unrecognized connection file. Choose DBeaver data-sources.json, DataGrip XML, TablePlus Connections.plist / URLs, pgAdmin servers.json, or a sqlr backup.".into())
+    Err(ImportError::Unrecognized)
 }
 
-pub fn decode(format: ClientFormat, bytes: &[u8]) -> Result<ImportBatch, String> {
+pub fn decode(format: ClientFormat, bytes: &[u8]) -> Result<ImportBatch, ImportError> {
     let mut batch = match format {
         ClientFormat::Beekeeper | ClientFormat::Tabularis => {
             super::native_clients::decode(format, bytes)
@@ -124,16 +123,15 @@ pub fn decode(format: ClientFormat, bytes: &[u8]) -> Result<ImportBatch, String>
         ClientFormat::Datagrip => datagrip(bytes),
         ClientFormat::TablePlus => tableplus(bytes),
         _ => {
-            let v: Value = serde_json::from_slice(bytes)
-                .map_err(|_| "Invalid connection JSON file.".to_string())?;
+            let v: Value = serde_json::from_slice(bytes).map_err(|_| ImportError::InvalidJson)?;
             match format {
                 ClientFormat::Sqlr => {
                     if v["sqlr_version"] != 1 && v["sqlr_version"] != 2 {
-                        return Err("Unsupported sqlr backup version.".into());
+                        return Err(ImportError::UnsupportedSqlrVersion);
                     }
                     let connections: Vec<ConnectionConfig> =
                         serde_json::from_value(v["connections"].clone())
-                            .map_err(|_| "Invalid sqlr connection definitions.".to_string())?;
+                            .map_err(|_| ImportError::InvalidSqlrConnections)?;
                     let mut credentials = std::collections::BTreeMap::new();
                     let mut configs = Vec::new();
                     for (index, c) in connections.into_iter().enumerate() {
@@ -141,7 +139,7 @@ pub fn decode(format: ClientFormat, bytes: &[u8]) -> Result<ImportBatch, String>
                         if let Some(value) = v["credentials"].get(&cfg.id) {
                             let fields: std::collections::BTreeMap<String, String> =
                                 serde_json::from_value(value.clone())
-                                    .map_err(|_| "Invalid backup credentials.".to_string())?;
+                                    .map_err(|_| ImportError::InvalidBackupCredentials)?;
                             credentials.insert(index, sqlr_core::Secrets(fields));
                         }
                         cfg.id.clear();
@@ -169,7 +167,7 @@ pub fn decode(format: ClientFormat, bytes: &[u8]) -> Result<ImportBatch, String>
 
 /// Convert endpoint URLs without ever persisting the URL or its embedded credentials.
 /// Drop passwords before handing the endpoint to the core's strict parser.
-fn url_into(c: &mut ConnectionConfig, raw: &str) -> Result<(), String> {
+fn url_into(c: &mut ConnectionConfig, raw: &str) -> Result<(), ImportError> {
     let raw = raw.strip_prefix("jdbc:").unwrap_or(raw);
     // JDBC SQLite paths are not URL-encoded, unlike sqlite: URLs.
     if c.driver == "sqlite" && !raw.starts_with("sqlite://") {
@@ -204,18 +202,20 @@ fn url_into(c: &mut ConnectionConfig, raw: &str) -> Result<(), String> {
         return Ok(());
     }
     if let Some(rest) = raw.strip_prefix("oracle:thin:@//") {
-        let (authority, service) = rest.split_once('/').ok_or("Unsupported Oracle URL.")?;
+        let (authority, service) = rest
+            .split_once('/')
+            .ok_or(ImportError::UnsupportedOracleUrl)?;
         url_into(c, &format!("oracle://{authority}"))?;
         put(c, "service", service);
         return Ok(());
     }
-    let mut safe = url::Url::parse(raw).map_err(|_| "Unsupported connection URL.".to_string())?;
+    let mut safe = url::Url::parse(raw).map_err(|_| ImportError::UnsupportedUrl)?;
     if safe.password().is_some() {
         safe.set_password(None)
-            .map_err(|_| "Unsupported connection URL.".to_string())?;
+            .map_err(|_| ImportError::UnsupportedUrl)?;
     }
     if safe.scheme() == "mongodb+srv" {
-        return Err("MongoDB SRV connections require manual setup.".into());
+        return Err(ImportError::MongoSrv);
     }
     let pairs: Vec<(String, String)> = safe
         .query_pairs()
@@ -233,9 +233,7 @@ fn url_into(c: &mut ConnectionConfig, raw: &str) -> Result<(), String> {
         safe.query_pairs_mut().extend_pairs(&pairs);
     }
     let raw = safe.as_str();
-    let parsed = parse_connection_url(raw).map_err(|_| {
-        "Unsupported or credential-bearing URL; use an export without passwords.".to_string()
-    })?;
+    let parsed = parse_connection_url(raw).map_err(|_| ImportError::CredentialBearingUrl)?;
     if parsed.scheme == "rediss" {
         put(c, "tls", "required");
     }
@@ -283,10 +281,10 @@ fn url_into(c: &mut ConnectionConfig, raw: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn dbeaver(v: &Value) -> Result<ImportBatch, String> {
+fn dbeaver(v: &Value) -> Result<ImportBatch, ImportError> {
     let map = v["connections"]
         .as_object()
-        .ok_or("No DBeaver connections map found.")?;
+        .ok_or(ImportError::NoDbeaverConnections)?;
     let mut b = ImportBatch::default();
     for row in map.values() {
         let name = text(row, "name");
@@ -471,9 +469,9 @@ fn xml_text(node: roxmltree::Node<'_, '_>, tag: &str) -> String {
         .to_string()
 }
 
-fn datagrip(bytes: &[u8]) -> Result<ImportBatch, String> {
-    let s = std::str::from_utf8(bytes).map_err(|_| "Invalid XML encoding.")?;
-    let doc = roxmltree::Document::parse(s).map_err(|_| "Invalid DataGrip XML file.")?;
+fn datagrip(bytes: &[u8]) -> Result<ImportBatch, ImportError> {
+    let s = std::str::from_utf8(bytes).map_err(|_| ImportError::InvalidXmlEncoding)?;
+    let doc = roxmltree::Document::parse(s).map_err(|_| ImportError::InvalidDatagripXml)?;
     let mut b = ImportBatch::default();
     for n in doc.descendants().filter(|n| n.has_tag_name("data-source")) {
         let name = n.attribute("name").unwrap_or("Imported connection");
@@ -513,9 +511,12 @@ fn datagrip(bytes: &[u8]) -> Result<ImportBatch, String> {
     Ok(b)
 }
 
-pub(super) fn merge_datagrip_local(batch: &mut ImportBatch, bytes: &[u8]) -> Result<(), String> {
-    let s = std::str::from_utf8(bytes).map_err(|_| "Invalid local DataGrip XML encoding.")?;
-    let doc = roxmltree::Document::parse(s).map_err(|_| "Invalid local DataGrip XML file.")?;
+pub(super) fn merge_datagrip_local(
+    batch: &mut ImportBatch,
+    bytes: &[u8],
+) -> Result<(), ImportError> {
+    let s = std::str::from_utf8(bytes).map_err(|_| ImportError::InvalidLocalDatagripEncoding)?;
+    let doc = roxmltree::Document::parse(s).map_err(|_| ImportError::InvalidLocalDatagripXml)?;
     let mut excluded = Vec::new();
     for c in &mut batch.connections {
         let Some(n) = doc
@@ -562,7 +563,10 @@ pub(super) fn merge_datagrip_local(batch: &mut ImportBatch, bytes: &[u8]) -> Res
     Ok(())
 }
 
-pub(super) fn datagrip_file(bytes: &[u8], local: Option<&[u8]>) -> Result<ImportBatch, String> {
+pub(super) fn datagrip_file(
+    bytes: &[u8],
+    local: Option<&[u8]>,
+) -> Result<ImportBatch, ImportError> {
     let mut b = datagrip(bytes)?;
     if let Some(bytes) = local {
         merge_datagrip_local(&mut b, bytes)?;
@@ -573,20 +577,20 @@ pub(super) fn datagrip_file(bytes: &[u8], local: Option<&[u8]>) -> Result<Import
     Ok(b)
 }
 
-fn tableplus(bytes: &[u8]) -> Result<ImportBatch, String> {
+fn tableplus(bytes: &[u8]) -> Result<ImportBatch, ImportError> {
     let s = std::str::from_utf8(bytes).unwrap_or_default().trim();
     if bytes.starts_with(b"bplist00") || s.contains("<plist") {
-        let v: Value = plist::from_bytes(bytes).map_err(|_| "Invalid TablePlus property list. Encrypted .tableplusconnection archives are not supported.".to_string())?;
+        let v: Value = plist::from_bytes(bytes).map_err(|_| ImportError::InvalidTablePlusPlist)?;
         return tableplus_rows(&v);
     }
     if s.starts_with('[') {
-        let v: Value = serde_json::from_slice(bytes)
-            .map_err(|_| "Invalid TablePlus JSON file.".to_string())?;
+        let v: Value =
+            serde_json::from_slice(bytes).map_err(|_| ImportError::InvalidTablePlusJson)?;
         return tableplus_rows(&v);
     }
     let mut b = ImportBatch::default();
     if !s.lines().any(|l| l.contains("://")) {
-        return Err("No connection URLs found. Choose Connections.plist or a text file containing connection URLs.".into());
+        return Err(ImportError::NoConnectionUrls);
     }
     for (i, line) in s.lines().enumerate() {
         let line = line.trim();
@@ -612,15 +616,13 @@ fn tableplus(bytes: &[u8]) -> Result<ImportBatch, String> {
         b.connections.push(c);
     }
     if b.connections.is_empty() && b.warnings.is_empty() {
-        return Err("No connection URLs found. Choose Connections.plist or a text file containing connection URLs.".into());
+        return Err(ImportError::NoConnectionUrls);
     }
     Ok(b)
 }
 
-fn tableplus_rows(v: &Value) -> Result<ImportBatch, String> {
-    let rows = v
-        .as_array()
-        .ok_or("Expected a TablePlus connection array.")?;
+fn tableplus_rows(v: &Value) -> Result<ImportBatch, ImportError> {
+    let rows = v.as_array().ok_or(ImportError::ExpectedTablePlusArray)?;
     let mut b = ImportBatch::default();
     for row in rows {
         let name = text(row, "ConnectionName");
@@ -672,10 +674,10 @@ fn tableplus_rows(v: &Value) -> Result<ImportBatch, String> {
     Ok(b)
 }
 
-fn pgadmin(v: &Value) -> Result<ImportBatch, String> {
+fn pgadmin(v: &Value) -> Result<ImportBatch, ImportError> {
     let rows = v["Servers"]
         .as_object()
-        .ok_or("No pgAdmin Servers map found.")?;
+        .ok_or(ImportError::NoPgAdminServers)?;
     let mut b = ImportBatch::default();
     for row in rows.values() {
         let mut c = blank(&text(row, "Name"), "postgres");

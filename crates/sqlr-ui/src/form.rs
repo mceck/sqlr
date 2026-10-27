@@ -294,7 +294,7 @@ impl FormState {
             Err(e) => {
                 // Never keep a typed password around.
                 self.url = redact_url(&text);
-                self.url_error = Some(e);
+                self.url_error = Some(e.to_string());
             }
             Ok(url) if !manifest.url_schemes.contains(&url.scheme) => {
                 let schemes: Vec<String> = manifest

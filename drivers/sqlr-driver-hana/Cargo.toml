@@ -12,6 +12,7 @@ async-trait.workspace = true
 hdbconnect_async = "0.33"
 rustls.workspace = true
 tempfile.workspace = true
+thiserror.workspace = true
 tokio = { workspace = true, features = ["rt", "macros", "time", "sync"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true

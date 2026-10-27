@@ -74,6 +74,17 @@ pub enum StartError {
     Other(String),
 }
 
+/// Why the keychain token could not be replaced.
+#[derive(Debug, thiserror::Error)]
+pub enum RotateTokenError {
+    /// The operating system has no randomness for a new token.
+    #[error("{0}")]
+    Generate(String),
+    /// The new token could not be stored.
+    #[error("{0}")]
+    Store(#[from] sqlr_store::StoreError),
+}
+
 #[derive(Clone)]
 struct AuthState {
     state: Arc<ServerState>,
@@ -465,9 +476,9 @@ impl McpServer {
     }
 
     /// Replaces the keychain token and drops every session. The listener stays bound.
-    pub async fn rotate_token(&mut self) -> Result<(), String> {
-        let token = generate_token().map_err(|e| e.message)?;
-        self.token_store.set(&token).map_err(|e| e.to_string())?;
+    pub async fn rotate_token(&mut self) -> Result<(), RotateTokenError> {
+        let token = generate_token().map_err(|e| RotateTokenError::Generate(e.message))?;
+        self.token_store.set(&token)?;
         self.state.rotate_token(token.clone());
         self.token = token;
         self.drop_all_sessions().await;
@@ -511,4 +522,17 @@ pub fn close_result(engine: &Engine, id: sqlr_engine::QueryId, kind: ResultKind)
 /// A tool error for a refused approval, reused by scripted hosts.
 pub fn denied() -> ToolError {
     ToolError::denied()
+}
+
+#[cfg(test)]
+mod rotate_error_tests {
+    use super::RotateTokenError;
+
+    #[test]
+    fn rotate_errors_show_the_underlying_message() {
+        let store = RotateTokenError::from(sqlr_store::StoreError::Secret("locked".into()));
+        assert_eq!(store.to_string(), "keychain: locked");
+        let random = RotateTokenError::Generate("no OS randomness available: x".into());
+        assert_eq!(random.to_string(), "no OS randomness available: x");
+    }
 }

@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use sqlr_core::{ColumnMeta, DriverError, ErrorKind, Value};
 use tokio::sync::mpsc;
 
+use super::error::TransferFileError;
 use super::pipeline::{Records, text_columns};
 use super::{RowBatch, parquet, partial_path, xlsx};
 use crate::job::{JobControl, JobOutcome, JobProgress};
@@ -26,7 +27,7 @@ pub(super) async fn workbook_rows(
         tokio::task::spawn_blocking(move || xlsx::read_sheet(&path, sheet.as_deref(), header))
             .await
             .map_err(|e| failed(e.to_string()))?
-            .map_err(failed)?;
+            .map_err(|e| failed(e.to_string()))?;
     let (names, rows) = loaded;
     let (tx, rx) = mpsc::channel::<RowBatch>(2);
     let first_line = if header { 2 } else { 1 };
@@ -55,7 +56,7 @@ pub(super) async fn parquet_rows(path: PathBuf, batch: usize) -> Result<Records,
     let names = tokio::task::spawn_blocking(move || parquet::column_names(&probe))
         .await
         .map_err(|e| failed(e.to_string()))?
-        .map_err(failed)?;
+        .map_err(|e| failed(e.to_string()))?;
     let (tx, rx) = mpsc::channel::<RowBatch>(2);
     tokio::task::spawn_blocking(move || {
         let mut chunk = Vec::with_capacity(batch);
@@ -79,8 +80,8 @@ pub(super) async fn parquet_rows(path: PathBuf, batch: usize) -> Result<Records,
 
 /// A file written row by row on a blocking thread.
 trait RowSink: Send {
-    fn row(&mut self, row: Vec<Value>) -> Result<(), String>;
-    fn finish(self: Box<Self>) -> Result<(), String>;
+    fn row(&mut self, row: Vec<Value>) -> Result<(), TransferFileError>;
+    fn finish(self: Box<Self>) -> Result<(), TransferFileError>;
 }
 
 struct XlsxSink {
@@ -89,11 +90,11 @@ struct XlsxSink {
 }
 
 impl RowSink for XlsxSink {
-    fn row(&mut self, row: Vec<Value>) -> Result<(), String> {
+    fn row(&mut self, row: Vec<Value>) -> Result<(), TransferFileError> {
         self.writer.write_row(&row)
     }
 
-    fn finish(self: Box<Self>) -> Result<(), String> {
+    fn finish(self: Box<Self>) -> Result<(), TransferFileError> {
         let Self { writer, path } = *self;
         writer.save(&path)
     }
@@ -102,11 +103,11 @@ impl RowSink for XlsxSink {
 struct ParquetSink(parquet::ParquetWriter);
 
 impl RowSink for ParquetSink {
-    fn row(&mut self, row: Vec<Value>) -> Result<(), String> {
+    fn row(&mut self, row: Vec<Value>) -> Result<(), TransferFileError> {
         self.0.write_row(row)
     }
 
-    fn finish(self: Box<Self>) -> Result<(), String> {
+    fn finish(self: Box<Self>) -> Result<(), TransferFileError> {
         self.0.finish()
     }
 }
@@ -130,7 +131,7 @@ pub(super) async fn records_to_workbook(
             writer,
             path: partial.clone(),
         }) as Box<dyn RowSink>,
-        Err(e) => return JobOutcome::Failed(failed(e)),
+        Err(e) => return JobOutcome::Failed(failed(e.to_string())),
     };
     sink_rows(job, reader, sink, partial, path).await
 }
@@ -152,7 +153,7 @@ pub(super) async fn records_to_parquet(
     let kinds = parquet_kinds(&columns);
     let sink = match parquet::ParquetWriter::create(&partial, names, kinds) {
         Ok(writer) => Box::new(ParquetSink(writer)) as Box<dyn RowSink>,
-        Err(e) => return JobOutcome::Failed(failed(e)),
+        Err(e) => return JobOutcome::Failed(failed(e.to_string())),
     };
     sink_rows(job, reader, sink, partial, path).await
 }
@@ -180,7 +181,7 @@ async fn sink_rows(
         sink.finish()
     });
     let mut written = 0u64;
-    let mut failure: Option<String> = None;
+    let mut failure: Option<TransferFileError> = None;
     let mut cancelled = false;
     while let Some(batch) = reader.recv().await {
         if job.is_cancelled() {
@@ -207,7 +208,10 @@ async fn sink_rows(
         }
     }
     drop(tx);
-    let wrote = writer.await.map_err(|e| e.to_string()).and_then(|r| r);
+    let wrote = writer
+        .await
+        .map_err(TransferFileError::from)
+        .and_then(|r| r);
     let remove = |p: &Path| {
         let _ = std::fs::remove_file(p);
     };
@@ -217,7 +221,7 @@ async fn sink_rows(
     }
     if let Some(e) = failure.or(wrote.err()) {
         remove(&partial);
-        return JobOutcome::Failed(failed(e));
+        return JobOutcome::Failed(failed(e.to_string()));
     }
     if let Err(e) = tokio::fs::rename(&partial, &path).await {
         remove(&partial);

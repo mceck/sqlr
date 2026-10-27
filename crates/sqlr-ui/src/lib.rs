@@ -69,20 +69,20 @@ pub use form::{
     connection_form_status, connection_identity,
 };
 pub use grid::{
-    CopyFormat, DocTableState, EditBuffer, GridAction, GridInput, GridOutput, GridState,
-    INSERTED_ROW_BASE, MAX_CELL_BYTES, MAX_CELL_CHARS, MAX_COPY_BYTES, MAX_COPY_CELLS,
-    NEED_MORE_MARGIN, RowState, Selection, cell_display, change_tint, data_formats, data_grid,
-    doc_table, is_inserted_row, parse_hex, parse_input, result_grid, set_data_formats,
-    set_grid_clipboard,
+    CellEditError, CopyFormat, DocTableState, EditBuffer, EditError, GridAction, GridInput,
+    GridOutput, GridState, INSERTED_ROW_BASE, InputError, MAX_CELL_BYTES, MAX_CELL_CHARS,
+    MAX_COPY_BYTES, MAX_COPY_CELLS, NEED_MORE_MARGIN, RowState, Selection, cell_display,
+    change_tint, data_formats, data_grid, doc_table, is_inserted_row, parse_hex, parse_input,
+    result_grid, set_data_formats, set_grid_clipboard,
 };
 pub use history::{HistoryAction, HistoryPanelState, format_duration, format_when, history_panel};
-pub use json_view::{JsonViewState, json_view};
+pub use json_view::{DocumentTextError, JsonViewState, json_view};
 pub use key_browser::{
     KeyBrowserAction, KeyBrowserState, badge_color, badge_text, format_ttl, key_browser, type_badge,
 };
 pub use key_value_view::{KvViewAction, KvViewState, format_size, key_value_view, parse_ttl};
 pub use mapping::mapping_table;
-pub use new_key::{NewKeyDraft, NewKeyType, new_key_dialog};
+pub use new_key::{NewKeyDraft, NewKeyError, NewKeyType, new_key_dialog};
 pub use objects::{
     ObjectEditorAction, ObjectEditorContext, ObjectEditorState, ObjectSubTab, Problem, code_editor,
     highlighted, kind_icon, object_editor, sql_view, template_label, templates_for,
@@ -108,6 +108,8 @@ pub use tree::{
     Children, ConnBadge, NodeMenu, SchemaSource, TreeAction, TreeConn, TreeDrop, TreeState,
     kind_label, schema_tree,
 };
-pub use value_panel::{ValueEdit, ValueEditAction, ValueEditMode, value_editor, value_panel};
+pub use value_panel::{
+    ValueEdit, ValueEditAction, ValueEditError, ValueEditMode, value_editor, value_panel,
+};
 pub use welcome::{DriverCard, RecentItem, WelcomeAction, welcome};
 pub use wizard::{WizardAction, WizardStep, wizard_footer, wizard_steps};

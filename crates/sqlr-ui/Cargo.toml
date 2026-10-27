@@ -14,6 +14,7 @@ path = "tests/integration.rs"
 [dependencies]
 parking_lot.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 sqlr-core = { path = "../sqlr-core" }
 arboard.workspace = true
 egui.workspace = true

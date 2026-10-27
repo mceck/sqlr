@@ -9,6 +9,84 @@ use sqlr_core::{
     Cell, Change, Changeset, ColumnKind, ColumnMeta, RowBuffer, TableInfo, TableRef, Value,
 };
 
+/// Why a result's rows cannot be edited, or an edit is refused.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum EditError {
+    /// The result has columns that come from no table column.
+    #[error("computed columns")]
+    ComputedColumns,
+    /// The result mixes columns of several tables.
+    #[error("columns from several tables")]
+    SeveralTables,
+    /// The table has no primary or unique key.
+    #[error("no primary or unique key on {table}")]
+    NoRowKey {
+        /// The table name.
+        table: String,
+    },
+    /// The result does not hold the table's key columns.
+    #[error("the key of {table} is not in the result")]
+    KeyNotInResult {
+        /// The table name.
+        table: String,
+    },
+    /// The result as a whole cannot be edited.
+    #[error("The result cannot be edited")]
+    ResultNotEditable,
+    /// The column is generated or not part of the table.
+    #[error("This column cannot be edited")]
+    ColumnNotEditable,
+    /// NULL for a `NOT NULL` column.
+    #[error("The column is NOT NULL")]
+    NotNull,
+    /// The inserted row does not exist.
+    #[error("No such row")]
+    NoSuchRow,
+    /// The row is marked for deletion.
+    #[error("The row is deleted")]
+    RowDeleted,
+    /// A paste into a result that omits required columns.
+    #[error("Open all table columns before pasting; this result omits required columns: {columns}")]
+    MissingRequired {
+        /// The omitted columns, comma separated.
+        columns: String,
+    },
+    /// A row's key holds NULL or is not loaded.
+    #[error("row {row} has no key value")]
+    NoKeyValue {
+        /// The 1-based row number.
+        row: usize,
+    },
+}
+
+/// Text typed into a cell that is not a value of the column's kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum InputError {
+    /// A whole number was expected.
+    #[error("Not an integer")]
+    NotInteger,
+    /// A number was expected.
+    #[error("Not a number")]
+    NotNumber,
+    /// A boolean was expected.
+    #[error("Not a boolean (true or false)")]
+    NotBoolean,
+    /// Hex bytes (`0x…`) were expected.
+    #[error("Not hex bytes (0x…)")]
+    NotHexBytes,
+}
+
+/// Why a typed or pasted value cannot be put in a cell.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum CellEditError {
+    /// The text is not a value of the column's kind.
+    #[error(transparent)]
+    Input(#[from] InputError),
+    /// The edit buffer refuses the cell.
+    #[error(transparent)]
+    Edit(#[from] EditError),
+}
+
 /// The row number of the first inserted row; inserted rows count up from it, far above any
 /// loaded row.
 pub const INSERTED_ROW_BASE: usize = 1 << 48;
@@ -67,17 +145,19 @@ impl EditBuffer {
     /// The edit buffer for a result read from `info`'s table, or why its rows cannot be
     /// edited: `computed columns`, `columns from several tables`, `no primary or unique key
     /// on <table>`, `the key of <table> is not in the result`.
-    pub fn for_table(columns: &[ColumnMeta], info: &TableInfo) -> Result<Self, String> {
+    pub fn for_table(columns: &[ColumnMeta], info: &TableInfo) -> Result<Self, EditError> {
         let origins: Vec<_> = columns.iter().map(|c| c.origin.as_ref()).collect();
         let Some(first) = origins.iter().flatten().next() else {
-            return Err("computed columns".into());
+            return Err(EditError::ComputedColumns);
         };
         if origins.iter().flatten().any(|o| o.table != first.table) {
-            return Err("columns from several tables".into());
+            return Err(EditError::SeveralTables);
         }
         let table = &info.table.name;
         let Some(key) = info.row_key() else {
-            return Err(format!("no primary or unique key on {table}"));
+            return Err(EditError::NoRowKey {
+                table: table.clone(),
+            });
         };
         let key_cols = key
             .iter()
@@ -87,7 +167,9 @@ impl EditBuffer {
                     .position(|o| o.is_some_and(|o| &o.column == name))
             })
             .collect::<Option<Vec<usize>>>()
-            .ok_or_else(|| format!("the key of {table} is not in the result"))?;
+            .ok_or_else(|| EditError::KeyNotInResult {
+                table: table.clone(),
+            })?;
         let table_column = |c: usize| origins[c].and_then(|o| info.column(&o.column));
         let writable = (0..columns.len())
             .map(|c| table_column(c).is_some_and(|t| !t.generated))
@@ -178,14 +260,13 @@ impl EditBuffer {
         self.defaults.get(col).copied().unwrap_or(false) || self.automatic(col)
     }
 
-    pub(super) fn check_insert_columns(&self) -> Result<(), String> {
+    pub(super) fn check_insert_columns(&self) -> Result<(), EditError> {
         if self.missing_required.is_empty() {
             Ok(())
         } else {
-            Err(format!(
-                "Open all table columns before pasting; this result omits required columns: {}",
-                self.missing_required.join(", ")
-            ))
+            Err(EditError::MissingRequired {
+                columns: self.missing_required.join(", "),
+            })
         }
     }
 
@@ -308,12 +389,12 @@ impl EditBuffer {
         row: usize,
         col: usize,
         value: Value,
-    ) -> Result<(), String> {
+    ) -> Result<(), EditError> {
         if !self.writable(col) {
-            return Err("This column cannot be edited".into());
+            return Err(EditError::ColumnNotEditable);
         }
         if value.is_null() && self.not_null(col) {
-            return Err("The column is NOT NULL".into());
+            return Err(EditError::NotNull);
         }
         if is_inserted_row(row) {
             let width = self.writable.len();
@@ -323,12 +404,12 @@ impl EditBuffer {
                 .ok()
                 .and_then(|index| self.inserted.get_mut(index))
                 .map(|(_, cells)| cells)
-                .ok_or("No such row")?;
+                .ok_or(EditError::NoSuchRow)?;
             cells.resize(width, None);
             cells[col] = Some(value);
         } else {
             if self.deleted.contains(&row) {
-                return Err("The row is deleted".into());
+                return Err(EditError::RowDeleted);
             }
             let original = rows.cell(row, col).map(Value::from_cell);
             let edits = self.updates.entry(row).or_default();
@@ -404,7 +485,7 @@ impl EditBuffer {
     /// The pending changes as DML input: deletes, then updates, then inserts (so a deleted
     /// key can be inserted again). Columns are named after the table columns they were
     /// read from.
-    pub fn changeset(&self, rows: &RowBuffer, table: TableRef) -> Result<Changeset, String> {
+    pub fn changeset(&self, rows: &RowBuffer, table: TableRef) -> Result<Changeset, EditError> {
         let columns = rows.columns();
         let name = |c: usize| {
             columns[c]
@@ -412,11 +493,11 @@ impl EditBuffer {
                 .as_ref()
                 .map_or(columns[c].name.clone(), |o| o.column.clone())
         };
-        let key_of = |row: usize| -> Result<Vec<Value>, String> {
+        let key_of = |row: usize| -> Result<Vec<Value>, EditError> {
             self.key_cols
                 .iter()
                 .map(|&c| match rows.cell(row, c).map(Value::from_cell) {
-                    Some(Value::Null) | None => Err(format!("row {} has no key value", row + 1)),
+                    Some(Value::Null) | None => Err(EditError::NoKeyValue { row: row + 1 }),
                     Some(v) => Ok(v),
                 })
                 .collect()
@@ -455,25 +536,25 @@ impl EditBuffer {
 }
 
 /// `text` typed into a cell of `meta`'s column, as a value of its kind.
-pub fn parse_input(meta: &ColumnMeta, text: &str) -> Result<Value, String> {
+pub fn parse_input(meta: &ColumnMeta, text: &str) -> Result<Value, InputError> {
     let t = text.trim();
     match meta.kind {
         ColumnKind::Int => t
             .parse::<i64>()
             .map(Value::Int)
-            .map_err(|_| "Not an integer".into()),
+            .map_err(|_| InputError::NotInteger),
         ColumnKind::Float => t
             .parse::<f64>()
             .map(Value::Float)
-            .map_err(|_| "Not a number".into()),
+            .map_err(|_| InputError::NotNumber),
         ColumnKind::Bool => match t.to_ascii_lowercase().as_str() {
             "true" | "t" | "1" | "yes" => Ok(Value::Bool(true)),
             "false" | "f" | "0" | "no" => Ok(Value::Bool(false)),
-            _ => Err("Not a boolean (true or false)".into()),
+            _ => Err(InputError::NotBoolean),
         },
         ColumnKind::Bytes => parse_hex(text)
             .map(Value::Bytes)
-            .ok_or_else(|| "Not hex bytes (0x…)".into()),
+            .ok_or(InputError::NotHexBytes),
         ColumnKind::Text | ColumnKind::Mixed => Ok(Value::Text(text.to_string())),
     }
 }
@@ -573,23 +654,31 @@ mod tests {
         assert_eq!(edits.writable, [true, true, false, false]);
         assert_eq!(edits.not_null, [true, false, false, false]);
         assert_eq!(
-            EditBuffer::for_table(r.columns(), &info(&[])),
-            Err("no primary or unique key on orders".into())
+            EditBuffer::for_table(r.columns(), &info(&[]))
+                .unwrap_err()
+                .to_string(),
+            "no primary or unique key on orders"
         );
         assert_eq!(
-            EditBuffer::for_table(&r.columns()[1..], &info(&["id"])),
-            Err("the key of orders is not in the result".into())
+            EditBuffer::for_table(&r.columns()[1..], &info(&["id"]))
+                .unwrap_err()
+                .to_string(),
+            "the key of orders is not in the result"
         );
         assert_eq!(
-            EditBuffer::for_table(&r.columns()[3..], &info(&["id"])),
-            Err("computed columns".into())
+            EditBuffer::for_table(&r.columns()[3..], &info(&["id"]))
+                .unwrap_err()
+                .to_string(),
+            "computed columns"
         );
         let mut other = col("y", ColumnKind::Int, Some("y"));
         other.origin.as_mut().unwrap().table.name = "items".into();
         let mixed = vec![r.columns()[0].clone(), other];
         assert_eq!(
-            EditBuffer::for_table(&mixed, &info(&["id"])),
-            Err("columns from several tables".into())
+            EditBuffer::for_table(&mixed, &info(&["id"]))
+                .unwrap_err()
+                .to_string(),
+            "columns from several tables"
         );
     }
 
@@ -670,7 +759,10 @@ mod tests {
     fn typed_input() {
         let int = ColumnMeta::new("i", "int", ColumnKind::Int, DisplayHint::Number);
         assert_eq!(parse_input(&int, " 42 "), Ok(Value::Int(42)));
-        assert_eq!(parse_input(&int, "4x"), Err("Not an integer".into()));
+        assert_eq!(
+            parse_input(&int, "4x").unwrap_err().to_string(),
+            "Not an integer"
+        );
         let bytes = ColumnMeta::new("b", "bytea", ColumnKind::Bytes, DisplayHint::Binary);
         assert_eq!(
             parse_input(&bytes, "0x01 ff"),

@@ -158,7 +158,7 @@ impl AgentHost for AppHostClient {
             };
             app.layered
                 .set(&id, &level, value)
-                .map_err(ToolError::invalid)?;
+                .map_err(|e| ToolError::invalid(e.to_string()))?;
             app.reload_live_settings();
             app.save_settings_now();
             app.notify(format!("Agent updated setting {id}"));
@@ -545,7 +545,7 @@ impl AgentsUi {
             .map_err(|e| e.to_string())?;
         let (running, result) = rx.recv().map_err(|e| e.to_string())?;
         self.running = Some(running);
-        result
+        result.map_err(|e| e.to_string())
     }
 }
 

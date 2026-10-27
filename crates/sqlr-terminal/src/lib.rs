@@ -16,5 +16,7 @@ pub use screen::{
     CellView, CursorShape, Emulator, MouseProtocolEncoding, MouseProtocolMode, ScreenSnapshot,
     TermColor,
 };
-pub use session::{BackendFactory, BackendParts, SessionConfig, TerminalSession, TerminalStatus};
+pub use session::{
+    BackendFactory, BackendParts, PtyError, SessionConfig, TerminalSession, TerminalStatus,
+};
 pub use widget::{Selection, TerminalAction, TerminalPanel, TerminalTheme};

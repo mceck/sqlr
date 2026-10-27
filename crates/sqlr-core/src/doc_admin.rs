@@ -6,6 +6,70 @@
 use crate::doc::DocValue;
 use crate::document::DocTarget;
 use crate::lang::QueryLanguage;
+use crate::mongo_shell::ShellError;
+
+/// Why an index or batch-insert statement for a document database cannot be written.
+#[derive(Debug, thiserror::Error)]
+pub enum DocAdminError {
+    /// A MongoDB index without keys.
+    #[error("An index needs at least one key")]
+    NoIndexKeys,
+    /// A TTL index must have exactly one key.
+    #[error("A TTL index has exactly one key (a date field)")]
+    TtlNeedsOneKey,
+    /// A negative TTL.
+    #[error("The TTL must be zero or more seconds")]
+    NegativeTtl,
+    /// The partial filter is not valid relaxed Extended JSON.
+    #[error("Partial filter: {}", .0.message)]
+    PartialFilter(#[source] ShellError),
+    /// The partial filter is valid JSON but not a document.
+    #[error("The partial filter must be a document")]
+    PartialFilterNotDocument,
+    /// An Elasticsearch index name that Elasticsearch would reject.
+    #[error(
+        "\"{index}\" is not a valid index name: use lowercase letters, digits, '-', '_' or '.'"
+    )]
+    InvalidIndexName {
+        /// The rejected name.
+        index: String,
+    },
+    /// The settings or mappings text is not JSON.
+    #[error("{section}: {source}")]
+    InvalidBody {
+        /// `settings` or `mappings`.
+        section: &'static str,
+        /// The parser's complaint.
+        source: serde_json::Error,
+    },
+    /// The settings or mappings JSON is not an object.
+    #[error("{section} must be a JSON object")]
+    BodyNotObject {
+        /// `settings` or `mappings`.
+        section: &'static str,
+    },
+    /// The request body could not be serialized.
+    #[error("{0}")]
+    Serialize(#[from] serde_json::Error),
+    /// A name that is not an Elasticsearch index name (index deletion).
+    #[error("\"{index}\" is not an index name")]
+    NotAnIndexName {
+        /// The rejected name.
+        index: String,
+    },
+    /// The target index of a bulk insert is not an index name.
+    #[error("\"{index}\" is not an index name to write into")]
+    NotWritableIndex {
+        /// The rejected name.
+        index: String,
+    },
+    /// A value to insert is not a document.
+    #[error("expected a document, not {type_name}")]
+    NotADocument {
+        /// The value's type name.
+        type_name: &'static str,
+    },
+}
 
 /// A key's direction or kind in a MongoDB index.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -79,7 +143,10 @@ fn collection_expr(target: &DocTarget) -> String {
 }
 
 /// `db.getCollection("…").createIndex({…}, {…})` for `spec`.
-pub fn mongo_create_index(target: &DocTarget, spec: &MongoIndexSpec) -> Result<String, String> {
+pub fn mongo_create_index(
+    target: &DocTarget,
+    spec: &MongoIndexSpec,
+) -> Result<String, DocAdminError> {
     let keys: Vec<(String, DocValue)> = spec
         .keys
         .iter()
@@ -87,7 +154,7 @@ pub fn mongo_create_index(target: &DocTarget, spec: &MongoIndexSpec) -> Result<S
         .map(|(k, d)| (k.trim().to_string(), d.value()))
         .collect();
     if keys.is_empty() {
-        return Err("An index needs at least one key".into());
+        return Err(DocAdminError::NoIndexKeys);
     }
     let mut options = Vec::new();
     if !spec.name.trim().is_empty() {
@@ -101,18 +168,18 @@ pub fn mongo_create_index(target: &DocTarget, spec: &MongoIndexSpec) -> Result<S
     }
     if let Some(ttl) = spec.ttl_seconds {
         if keys.len() != 1 {
-            return Err("A TTL index has exactly one key (a date field)".into());
+            return Err(DocAdminError::TtlNeedsOneKey);
         }
         if ttl < 0 {
-            return Err("The TTL must be zero or more seconds".into());
+            return Err(DocAdminError::NegativeTtl);
         }
         options.push(("expireAfterSeconds".to_string(), DocValue::Int64(ttl)));
     }
     if !spec.partial_filter.trim().is_empty() {
         let filter = DocValue::from_relaxed_json(&spec.partial_filter)
-            .map_err(|e| format!("Partial filter: {}", e.message))?;
+            .map_err(DocAdminError::PartialFilter)?;
         if !matches!(filter, DocValue::Document(_)) {
-            return Err("The partial filter must be a document".into());
+            return Err(DocAdminError::PartialFilterNotDocument);
         }
         options.push(("partialFilterExpression".to_string(), filter));
     }
@@ -146,11 +213,15 @@ pub fn es_index_name_ok(name: &str) -> bool {
 
 /// `PUT /<index>` with a body of `settings` and `mappings` (JSON text each; empty for
 /// none).
-pub fn es_create_index(index: &str, settings: &str, mappings: &str) -> Result<String, String> {
+pub fn es_create_index(
+    index: &str,
+    settings: &str,
+    mappings: &str,
+) -> Result<String, DocAdminError> {
     if !es_index_name_ok(index) {
-        return Err(format!(
-            "\"{index}\" is not a valid index name: use lowercase letters, digits, '-', '_' or '.'"
-        ));
+        return Err(DocAdminError::InvalidIndexName {
+            index: index.to_string(),
+        });
     }
     let mut body = serde_json::Map::new();
     for (key, text) in [("settings", settings), ("mappings", mappings)] {
@@ -158,24 +229,28 @@ pub fn es_create_index(index: &str, settings: &str, mappings: &str) -> Result<St
             continue;
         }
         let value: serde_json::Value =
-            serde_json::from_str(text).map_err(|e| format!("{key}: {e}"))?;
+            serde_json::from_str(text).map_err(|source| DocAdminError::InvalidBody {
+                section: key,
+                source,
+            })?;
         if !value.is_object() {
-            return Err(format!("{key} must be a JSON object"));
+            return Err(DocAdminError::BodyNotObject { section: key });
         }
         body.insert(key.to_string(), value);
     }
     if body.is_empty() {
         return Ok(format!("PUT /{index}"));
     }
-    let body = serde_json::to_string_pretty(&serde_json::Value::Object(body))
-        .map_err(|e| e.to_string())?;
+    let body = serde_json::to_string_pretty(&serde_json::Value::Object(body))?;
     Ok(format!("PUT /{index}\n{body}"))
 }
 
 /// `DELETE /<index>`.
-pub fn es_drop_index(index: &str) -> Result<String, String> {
+pub fn es_drop_index(index: &str) -> Result<String, DocAdminError> {
     if !es_index_name_ok(index) {
-        return Err(format!("\"{index}\" is not an index name"));
+        return Err(DocAdminError::NotAnIndexName {
+            index: index.to_string(),
+        });
     }
     Ok(format!("DELETE /{index}"))
 }
@@ -188,19 +263,20 @@ pub fn insert_many_text(
     language: QueryLanguage,
     target: &DocTarget,
     docs: &[DocValue],
-) -> Result<String, String> {
+) -> Result<String, DocAdminError> {
     match language {
         QueryLanguage::EsConsole => {
             if !es_index_name_ok(&target.collection) {
-                return Err(format!(
-                    "\"{}\" is not an index name to write into",
-                    target.collection
-                ));
+                return Err(DocAdminError::NotWritableIndex {
+                    index: target.collection.clone(),
+                });
             }
             let mut text = format!("POST /{}/_bulk?refresh=wait_for\n", target.collection);
             for doc in docs {
                 let DocValue::Document(fields) = doc else {
-                    return Err(format!("expected a document, not {}", doc.type_name()));
+                    return Err(DocAdminError::NotADocument {
+                        type_name: doc.type_name(),
+                    });
                 };
                 let mut source = serde_json::Map::new();
                 let mut action = serde_json::Map::new();
@@ -285,11 +361,16 @@ mod tests {
             ttl_seconds: Some(60),
             ..spec.clone()
         };
-        assert!(
-            mongo_create_index(&users(), &ttl).is_err(),
-            "TTL needs one key"
+        assert_eq!(
+            mongo_create_index(&users(), &ttl).unwrap_err().to_string(),
+            "A TTL index has exactly one key (a date field)"
         );
-        assert!(mongo_create_index(&users(), &MongoIndexSpec::default()).is_err());
+        assert_eq!(
+            mongo_create_index(&users(), &MongoIndexSpec::default())
+                .unwrap_err()
+                .to_string(),
+            "An index needs at least one key"
+        );
         let bad = MongoIndexSpec {
             partial_filter: "{a:".into(),
             ..spec
@@ -297,7 +378,8 @@ mod tests {
         assert!(
             mongo_create_index(&users(), &bad)
                 .unwrap_err()
-                .contains("Partial filter")
+                .to_string()
+                .starts_with("Partial filter: ")
         );
     }
 
@@ -308,11 +390,20 @@ mod tests {
             "PUT /logs-1\n{\n  \"settings\": {\n    \"number_of_shards\": 1\n  }\n}"
         );
         assert_eq!(es_create_index("logs", "", "").unwrap(), "PUT /logs");
-        assert!(es_create_index("Logs", "", "").is_err());
+        assert_eq!(
+            es_create_index("Logs", "", "").unwrap_err().to_string(),
+            "\"Logs\" is not a valid index name: use lowercase letters, digits, '-', '_' or '.'"
+        );
         assert!(es_create_index("a/../b", "", "").is_err());
-        assert!(es_create_index("ok", "[1]", "").is_err());
+        assert_eq!(
+            es_create_index("ok", "[1]", "").unwrap_err().to_string(),
+            "settings must be a JSON object"
+        );
         assert_eq!(es_drop_index("logs").unwrap(), "DELETE /logs");
-        assert!(es_drop_index("logs*").is_err());
+        assert_eq!(
+            es_drop_index("logs*").unwrap_err().to_string(),
+            "\"logs*\" is not an index name"
+        );
     }
 
     #[test]

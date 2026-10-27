@@ -470,10 +470,24 @@ pub fn glob_escape(bytes: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Why a console line or a key name could not be read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum KvCommandError {
+    /// A quote is opened and never closed.
+    #[error("unbalanced quotes in the command")]
+    UnbalancedQuotes,
+    /// A closing quote is followed by something other than whitespace.
+    #[error("a closing quote must be followed by a space")]
+    QuoteNotFollowedBySpace,
+    /// A key name with spaces is not quoted.
+    #[error("Put the name in double quotes when it has spaces")]
+    NameNeedsQuotes,
+}
+
 /// Splits a console line into arguments like `redis-cli`: whitespace separates them;
 /// double quotes take `\n`, `\r`, `\t`, `\b`, `\a`, `\\`, `\"` and `\xHH` escapes; single
 /// quotes take `\'`. A closing quote must end the argument.
-pub fn split_command_line(line: &str) -> Result<Vec<Vec<u8>>, String> {
+pub fn split_command_line(line: &str) -> Result<Vec<Vec<u8>>, KvCommandError> {
     fn push(arg: &mut Vec<u8>, c: char) {
         let mut buf = [0; 4];
         arg.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
@@ -491,11 +505,11 @@ pub fn split_command_line(line: &str) -> Result<Vec<Vec<u8>>, String> {
             chars.next();
             loop {
                 let Some(c) = chars.next() else {
-                    return Err("unbalanced quotes in the command".into());
+                    return Err(KvCommandError::UnbalancedQuotes);
                 };
                 if c == quote {
                     if chars.peek().is_some_and(|n| !n.is_whitespace()) {
-                        return Err("a closing quote must be followed by a space".into());
+                        return Err(KvCommandError::QuoteNotFollowedBySpace);
                     }
                     break;
                 }
@@ -504,7 +518,7 @@ pub fn split_command_line(line: &str) -> Result<Vec<Vec<u8>>, String> {
                     continue;
                 }
                 let Some(e) = chars.next() else {
-                    return Err("unbalanced quotes in the command".into());
+                    return Err(KvCommandError::UnbalancedQuotes);
                 };
                 if quote == '\'' {
                     if e != '\'' {
@@ -549,12 +563,12 @@ pub fn split_command_line(line: &str) -> Result<Vec<Vec<u8>>, String> {
 /// A key name typed in a field, read with the `redis-cli` quoting rules (the inverse of
 /// [`quote_bytes`]): one argument, bare or quoted. Bytes that are not UTF-8 are written
 /// `\xNN` inside double quotes.
-pub fn parse_key_name(text: &str) -> Result<Vec<u8>, String> {
+pub fn parse_key_name(text: &str) -> Result<Vec<u8>, KvCommandError> {
     let mut args = split_command_line(text)?;
     match args.len() {
         0 => Ok(Vec::new()),
         1 => Ok(args.remove(0)),
-        _ => Err("Put the name in double quotes when it has spaces".into()),
+        _ => Err(KvCommandError::NameNeedsQuotes),
     }
 }
 
@@ -758,7 +772,10 @@ mod tests {
             args(&["SET", "k", ""])
         );
         assert_eq!(split_command_line("   ").unwrap(), Vec::<Vec<u8>>::new());
-        assert!(split_command_line("SET \"open").is_err());
+        assert_eq!(
+            split_command_line("SET \"open").unwrap_err().to_string(),
+            "unbalanced quotes in the command"
+        );
         assert!(split_command_line("SET 'open").is_err());
         assert!(split_command_line("SET \"a\"b").is_err());
         // Multibyte text stays intact.
@@ -874,7 +891,10 @@ mod tests {
         }
         assert_eq!(parse_key_name("bare").unwrap(), b"bare");
         assert_eq!(parse_key_name("").unwrap(), b"");
-        assert!(parse_key_name("two words").is_err());
+        assert_eq!(
+            parse_key_name("two words").unwrap_err().to_string(),
+            "Put the name in double quotes when it has spaces"
+        );
         assert!(parse_key_name("\"open").is_err());
     }
 

@@ -56,7 +56,7 @@ impl Batches<'_> {
         }
         let only: Vec<DocValue> = docs.iter().map(|(_, d)| d.clone()).collect();
         let text = insert_many_text(self.doc.language(), self.target, &only)
-            .map_err(|e| DriverError::new(ErrorKind::Other, e))?;
+            .map_err(|e| DriverError::new(ErrorKind::Other, e.to_string()))?;
         match self.doc.run(self.target.database.as_deref(), &text).await {
             Ok(_) => {
                 self.written += docs.len() as u64;
@@ -140,7 +140,8 @@ impl Shared {
             match records {
                 Records::Docs(mut reader) => {
                     while let Some(docs) = reader.recv().await {
-                        let docs = docs.map_err(|e| DriverError::new(ErrorKind::Other, e))?;
+                        let docs =
+                            docs.map_err(|e| DriverError::new(ErrorKind::Other, e.to_string()))?;
                         for d in docs {
                             read += 1;
                             pending.push((read, d));
@@ -182,7 +183,8 @@ impl Shared {
                         ));
                     }
                     while let Some(rows) = reader.recv().await {
-                        let rows = rows.map_err(|e| DriverError::new(ErrorKind::Other, e))?;
+                        let rows =
+                            rows.map_err(|e| DriverError::new(ErrorKind::Other, e.to_string()))?;
                         for (line, row) in rows {
                             read += 1;
                             pending.push((line, row_to_doc(&fields, &row, typed_text)));

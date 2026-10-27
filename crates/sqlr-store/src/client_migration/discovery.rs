@@ -1,7 +1,7 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use super::{ClientFormat, ImportBatch, decode, detect};
+use super::{ClientFormat, ImportBatch, ImportError, decode, detect};
 
 const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
 
@@ -11,21 +11,19 @@ pub struct DetectedSource {
     pub path: PathBuf,
 }
 
-fn read(path: &Path) -> Result<Vec<u8>, String> {
-    let file = std::fs::File::open(path).map_err(|_| {
-        "Could not open the connection file. Check its location and permissions.".to_string()
-    })?;
+fn read(path: &Path) -> Result<Vec<u8>, ImportError> {
+    let file = std::fs::File::open(path).map_err(|_| ImportError::CannotOpenFile)?;
     let mut bytes = Vec::new();
     file.take(MAX_FILE_BYTES + 1)
         .read_to_end(&mut bytes)
-        .map_err(|_| "Could not read the connection file.".to_string())?;
+        .map_err(|_| ImportError::CannotReadFile)?;
     if bytes.len() as u64 > MAX_FILE_BYTES {
-        return Err("Connection file exceeds the 16 MiB limit.".into());
+        return Err(ImportError::FileTooLarge);
     }
     Ok(bytes)
 }
 
-pub fn read_source(path: &Path) -> Result<(ClientFormat, ImportBatch), String> {
+pub fn read_source(path: &Path) -> Result<(ClientFormat, ImportBatch), ImportError> {
     let bytes = read(path)?;
     if bytes.starts_with(b"SQLite format 3\0") {
         return Ok((

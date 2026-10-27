@@ -763,7 +763,10 @@ fn value_editor_validates_json_and_hex() {
     assert_eq!(edit.text, "0x01ab");
     assert_eq!(edit.save(&bytes), Ok(Value::Bytes(vec![1, 0xab])));
     edit.text = "0x1".into();
-    assert!(edit.save(&bytes).is_err());
+    assert_eq!(
+        edit.save(&bytes).unwrap_err().to_string(),
+        "Not hex bytes: 0x followed by pairs of hex digits"
+    );
     let _ = &json;
 }
 

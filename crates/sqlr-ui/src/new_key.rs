@@ -73,11 +73,25 @@ impl Default for NewKeyDraft {
     }
 }
 
+/// Why a new-key draft is not complete.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum NewKeyError {
+    /// The key has no name.
+    #[error("Enter a key name")]
+    NoName,
+    /// A hash or stream entry has no field name.
+    #[error("Enter a field name")]
+    NoField,
+    /// The sorted-set score is not a number.
+    #[error("The score must be a number")]
+    BadScore,
+}
+
 impl NewKeyDraft {
     /// The key name and the edit that creates it, or why the draft is not complete.
-    pub fn build(&self) -> Result<(Vec<u8>, KvEdit), String> {
+    pub fn build(&self) -> Result<(Vec<u8>, KvEdit), NewKeyError> {
         if self.name.is_empty() {
-            return Err("Enter a key name".into());
+            return Err(NewKeyError::NoName);
         }
         let first = self.first.as_bytes().to_vec();
         let second = self.second.as_bytes().to_vec();
@@ -85,7 +99,7 @@ impl NewKeyDraft {
             NewKeyType::String => KvEdit::SetString(first),
             NewKeyType::Hash => {
                 if first.is_empty() {
-                    return Err("Enter a field name".into());
+                    return Err(NewKeyError::NoField);
                 }
                 KvEdit::HashSet(first, second)
             }
@@ -99,12 +113,12 @@ impl NewKeyDraft {
                     .second
                     .trim()
                     .parse()
-                    .map_err(|_| "The score must be a number".to_string())?;
+                    .map_err(|_| NewKeyError::BadScore)?;
                 KvEdit::ZAdd(first, score)
             }
             NewKeyType::Stream => {
                 if first.is_empty() {
-                    return Err("Enter a field name".into());
+                    return Err(NewKeyError::NoField);
                 }
                 KvEdit::XAdd(vec![(first, second)])
             }
@@ -167,7 +181,7 @@ pub fn new_key_dialog(
                 if f.primary("Create", blocked) {
                     match d.build() {
                         Ok(done) => result = Some(done),
-                        Err(e) => d.error = Some(e),
+                        Err(e) => d.error = Some(e.to_string()),
                     }
                 }
                 f.cancel();
@@ -215,7 +229,10 @@ mod tests {
             Ok((b"k".to_vec(), create(KvEdit::ZAdd(b"f".to_vec(), 2.5))))
         );
         d.second = "high".into();
-        assert!(d.build().is_err());
+        assert_eq!(
+            d.build().unwrap_err().to_string(),
+            "The score must be a number"
+        );
         d.ty = NewKeyType::Stream;
         assert_eq!(
             d.build(),
@@ -225,6 +242,6 @@ mod tests {
             ))
         );
         d.name.clear();
-        assert!(d.build().is_err());
+        assert_eq!(d.build().unwrap_err().to_string(), "Enter a key name");
     }
 }

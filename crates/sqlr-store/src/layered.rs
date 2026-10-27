@@ -9,7 +9,9 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use sqlr_core::{Level, Levels, Safety, SettingDef, SettingValue, search_settings, setting_def};
+use sqlr_core::{
+    Level, Levels, Safety, SettingDef, SettingError, SettingValue, search_settings, setting_def,
+};
 
 use crate::{StoreError, write_atomic};
 
@@ -44,7 +46,7 @@ impl LayeredSettings {
         match read_toml(&dir.join(SETTINGS_FILE)) {
             Ok(Some(table)) => me.global = read_global(&table),
             Ok(None) => {}
-            Err(e) => notice.corrupt = Some(keep_corrupt(dir, SETTINGS_FILE, &e)),
+            Err(e) => notice.corrupt = Some(keep_corrupt(dir, SETTINGS_FILE, &e.to_string())),
         }
         match read_toml(&dir.join(OVERRIDES_FILE)) {
             Ok(Some(table)) => {
@@ -53,7 +55,7 @@ impl LayeredSettings {
             }
             Ok(None) => {}
             Err(e) => {
-                let message = keep_corrupt(dir, OVERRIDES_FILE, &e);
+                let message = keep_corrupt(dir, OVERRIDES_FILE, &e.to_string());
                 notice.corrupt = Some(match notice.corrupt {
                     Some(first) => format!("{first}; {message}"),
                     None => message,
@@ -182,18 +184,16 @@ impl LayeredSettings {
         id: &str,
         level: &Level,
         value: Option<SettingValue>,
-    ) -> Result<(), String> {
-        let def: &SettingDef = setting_def(id).ok_or_else(|| format!("unknown setting {id}"))?;
+    ) -> Result<(), SettingError> {
+        let def: &SettingDef =
+            setting_def(id).ok_or_else(|| SettingError::Unknown { id: id.to_string() })?;
         if *level != Level::Global && def.levels == Levels::GlobalOnly {
-            return Err(format!("{} can only be set globally", def.label));
+            return Err(SettingError::GlobalOnly { label: def.label });
         }
         if let Some(v) = &value {
             def.check(v)?;
             if def.safety == Safety::TightenOnly && *level != Level::Global && !v.as_bool() {
-                return Err(format!(
-                    "{} can only be switched on for a profile or a connection; clear the override instead",
-                    def.label
-                ));
+                return Err(SettingError::TightenOnly { label: def.label });
             }
         }
         let layer = match level {
@@ -233,14 +233,20 @@ impl LayeredSettings {
     }
 }
 
-fn read_toml(path: &Path) -> Result<Option<toml::Table>, String> {
+/// Why a settings file could not be read.
+#[derive(Debug, thiserror::Error)]
+enum ReadTomlError {
+    #[error("{0}")]
+    Parse(#[from] toml::de::Error),
+    #[error("{0}")]
+    Io(#[from] std::io::Error),
+}
+
+fn read_toml(path: &Path) -> Result<Option<toml::Table>, ReadTomlError> {
     match std::fs::read_to_string(path) {
-        Ok(text) => text
-            .parse::<toml::Table>()
-            .map(Some)
-            .map_err(|e| e.to_string()),
+        Ok(text) => Ok(Some(text.parse::<toml::Table>()?)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(e.into()),
     }
 }
 

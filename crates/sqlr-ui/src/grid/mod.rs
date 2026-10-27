@@ -28,7 +28,10 @@ use sqlr_core::{
 
 pub use clipboard::set_grid_clipboard;
 pub use doc_table::{DocTableState, doc_table};
-pub use edit::{EditBuffer, INSERTED_ROW_BASE, RowState, is_inserted_row, parse_hex, parse_input};
+pub use edit::{
+    CellEditError, EditBuffer, EditError, INSERTED_ROW_BASE, InputError, RowState, is_inserted_row,
+    parse_hex, parse_input,
+};
 use header::{Geometry, HEADER_HEIGHT, Hit};
 use selection::subtract;
 pub use selection::{CopyFormat, Selection};
@@ -449,8 +452,8 @@ impl GridState {
         row: usize,
         col: usize,
         value: Value,
-    ) -> Result<(), String> {
-        let edits = self.edits.as_mut().ok_or("The result cannot be edited")?;
+    ) -> Result<(), EditError> {
+        let edits = self.edits.as_mut().ok_or(EditError::ResultNotEditable)?;
         let before = edits.clone();
         edits.set(rows, row, col, value.clone())?;
         self.record_edits(before);
@@ -1315,7 +1318,9 @@ fn copy_selection(
             clipboard::set_grid_clipboard(ctx, Arc::new(data));
         }
         Ok(None) => {}
-        Err(error) => state.actions.push(GridAction::PasteFailed(error)),
+        Err(error) => state
+            .actions
+            .push(GridAction::PasteFailed(error.to_string())),
     }
 }
 
@@ -1418,8 +1423,8 @@ fn cell_editor(
     }
     let meta = &input.rows.columns()[col];
     let parsed = parse_input(meta, &ed.text);
-    let outcome = parsed.and_then(|value| {
-        let edits = state.edits.as_mut().ok_or("The result cannot be edited")?;
+    let outcome = parsed.map_err(CellEditError::from).and_then(|value| {
+        let edits = state.edits.as_mut().ok_or(EditError::ResultNotEditable)?;
         edits.set(input.rows, row, col, value.clone())?;
         Ok(value)
     });
@@ -1434,7 +1439,7 @@ fn cell_editor(
         }
         Err(error) => {
             if let Some(ed) = state.editor.as_mut() {
-                ed.error = Some(error);
+                ed.error = Some(error.to_string());
                 ed.focus = true;
             }
         }

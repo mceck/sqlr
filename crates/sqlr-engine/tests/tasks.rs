@@ -181,7 +181,7 @@ fn task_with_missing_connection() {
     ));
     engine.save_task(broken);
     assert!(wait_until(TIMEOUT, || engine.tasks().len() == 1));
-    let err = engine.run_task("t1").unwrap_err();
+    let err = engine.run_task("t1").unwrap_err().to_string();
     assert!(
         err.contains("gone"),
         "the message names the connection: {err}"
@@ -206,10 +206,13 @@ fn task_with_missing_connection() {
     ));
     engine.save_task(file);
     assert!(wait_until(TIMEOUT, || engine.tasks().len() == 2));
-    let err = engine.run_task("t2").unwrap_err();
+    let err = engine.run_task("t2").unwrap_err().to_string();
     assert!(err.contains("nope.csv"), "{err}");
 
-    assert!(engine.run_task("unknown").is_err());
+    assert_eq!(
+        engine.run_task("unknown").unwrap_err().to_string(),
+        "This task no longer exists"
+    );
 }
 
 #[test]

@@ -15,13 +15,21 @@ use parquet::record::Field;
 use parquet::schema::types::Type;
 use sqlr_core::{ColumnKind, Value};
 
-fn open(path: &Path) -> Result<SerializedFileReader<File>, String> {
-    let file = File::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    SerializedFileReader::new(file).map_err(|e| format!("{}: {e}", path.display()))
+use super::error::TransferFileError;
+
+fn open(path: &Path) -> Result<SerializedFileReader<File>, TransferFileError> {
+    let file = File::open(path).map_err(|source| TransferFileError::File {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    SerializedFileReader::new(file).map_err(|source| TransferFileError::Parquet {
+        path: path.to_path_buf(),
+        source,
+    })
 }
 
 /// The top-level column names of a Parquet file.
-pub(super) fn column_names(path: &Path) -> Result<Vec<String>, String> {
+pub(super) fn column_names(path: &Path) -> Result<Vec<String>, TransferFileError> {
     let reader = open(path)?;
     Ok(reader
         .metadata()
@@ -38,13 +46,16 @@ pub(super) fn column_names(path: &Path) -> Result<Vec<String>, String> {
 pub(super) fn read_rows(
     path: &Path,
     mut on_row: impl FnMut(u64, Vec<Value>) -> bool,
-) -> Result<(), String> {
+) -> Result<(), TransferFileError> {
     let reader = open(path)?;
     let rows = reader
         .get_row_iter(None)
-        .map_err(|e| format!("{}: {e}", path.display()))?;
+        .map_err(|source| TransferFileError::Parquet {
+            path: path.to_path_buf(),
+            source,
+        })?;
     for (i, row) in rows.enumerate() {
-        let row = row.map_err(|e| format!("Row {}: {e}", i + 1))?;
+        let row = row.map_err(|source| TransferFileError::ParquetRow { row: i + 1, source })?;
         let values = row.get_column_iter().map(|(_, f)| field_value(f)).collect();
         if !on_row(i as u64 + 1, values) {
             break;
@@ -116,7 +127,11 @@ pub(super) struct ParquetWriter {
 }
 
 impl ParquetWriter {
-    pub fn create(path: &Path, names: Vec<String>, kinds: Vec<Kind>) -> Result<Self, String> {
+    pub fn create(
+        path: &Path,
+        names: Vec<String>,
+        kinds: Vec<Kind>,
+    ) -> Result<Self, TransferFileError> {
         let fields = names
             .iter()
             .zip(&kinds)
@@ -133,19 +148,23 @@ impl ParquetWriter {
                     .with_logical_type(logical)
                     .build()
                     .map(Arc::new)
-                    .map_err(|e| format!("Column {name}: {e}"))
+                    .map_err(|source| TransferFileError::ParquetColumn {
+                        column: name.clone(),
+                        source,
+                    })
             })
             .collect::<Result<Vec<_>, _>>()?;
         let schema = Type::group_type_builder("schema")
             .with_fields(fields)
-            .build()
-            .map_err(|e| e.to_string())?;
+            .build()?;
         let props = WriterProperties::builder()
             .set_compression(Compression::ZSTD(ZstdLevel::default()))
             .build();
-        let file = File::create(path).map_err(|e| format!("{}: {e}", path.display()))?;
-        let writer = SerializedFileWriter::new(file, Arc::new(schema), Arc::new(props))
-            .map_err(|e| e.to_string())?;
+        let file = File::create(path).map_err(|source| TransferFileError::Create {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        let writer = SerializedFileWriter::new(file, Arc::new(schema), Arc::new(props))?;
         Ok(Self {
             writer,
             names,
@@ -154,7 +173,7 @@ impl ParquetWriter {
         })
     }
 
-    pub fn write_row(&mut self, row: Vec<Value>) -> Result<(), String> {
+    pub fn write_row(&mut self, row: Vec<Value>) -> Result<(), TransferFileError> {
         self.buffer.push(row);
         if self.buffer.len() >= ROW_GROUP {
             self.flush()?;
@@ -162,23 +181,26 @@ impl ParquetWriter {
         Ok(())
     }
 
-    fn flush(&mut self) -> Result<(), String> {
+    fn flush(&mut self) -> Result<(), TransferFileError> {
         if self.buffer.is_empty() {
             return Ok(());
         }
         let rows = std::mem::take(&mut self.buffer);
-        let mut group = self.writer.next_row_group().map_err(|e| e.to_string())?;
+        let mut group = self.writer.next_row_group()?;
         for (i, kind) in self.kinds.iter().enumerate() {
             let name = &self.names[i];
             let cell = |row: &Vec<Value>| row.get(i).unwrap_or(&Value::Null).clone();
             let mut column = group
-                .next_column()
-                .map_err(|e| e.to_string())?
-                .ok_or("The file has fewer columns than the result")?;
+                .next_column()?
+                .ok_or(TransferFileError::FewerColumns)?;
             let definition: Vec<i16> = rows.iter().map(|r| i16::from(!cell(r).is_null())).collect();
-            let bad = |v: &Value, what: &str| {
+            let bad = |v: &Value, what: &'static str| {
                 let shown: String = v.display().chars().take(40).collect();
-                format!("Column {name}: \"{shown}\" is not {what}")
+                TransferFileError::ColumnValue {
+                    column: name.clone(),
+                    shown,
+                    what,
+                }
             };
             match kind {
                 Kind::Bool => {
@@ -251,16 +273,19 @@ impl ParquetWriter {
                         .write_batch(&values, Some(&definition), None)
                 }
             }
-            .map_err(|e| format!("Column {name}: {e}"))?;
-            column.close().map_err(|e| e.to_string())?;
+            .map_err(|source| TransferFileError::ParquetColumn {
+                column: name.clone(),
+                source,
+            })?;
+            column.close()?;
         }
-        group.close().map_err(|e| e.to_string())?;
+        group.close()?;
         Ok(())
     }
 
-    pub fn finish(mut self) -> Result<(), String> {
+    pub fn finish(mut self) -> Result<(), TransferFileError> {
         self.flush()?;
-        self.writer.close().map_err(|e| e.to_string())?;
+        self.writer.close()?;
         Ok(())
     }
 }

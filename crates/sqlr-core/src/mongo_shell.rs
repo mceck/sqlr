@@ -15,8 +15,8 @@ use std::ops::Range;
 
 use crate::classify::StatementClass;
 use crate::doc::{
-    DocValue, MAX_DOC_DEPTH, base64_decode, check_decimal, decode_wrapper, int_value,
-    new_object_id, parse_iso_date, parse_object_id, parse_uuid,
+    DocParseError, DocValue, MAX_DOC_DEPTH, base64_decode, check_decimal, decode_wrapper,
+    int_value, new_object_id, parse_iso_date, parse_object_id, parse_uuid,
 };
 use crate::lang::{QueryLanguage, split_mongo_shell};
 use crate::syntax::{LexState, Token, TokenKind};
@@ -1063,7 +1063,7 @@ impl<'a> Parser<'a> {
             }
         }
         self.bump();
-        decode_wrapper(fields).map_err(|m| ShellError::new(m, open.start))
+        decode_wrapper(fields).map_err(|e| ShellError::new(e.to_string(), open.start))
     }
 
     fn word_value(&mut self, t: Token, w: &str, depth: usize) -> Result<DocValue, ShellError> {
@@ -1117,7 +1117,9 @@ impl<'a> Parser<'a> {
             [(DocValue::String(s), _)] => Some(s.clone()),
             _ => None,
         };
-        let wrap = |r: Result<DocValue, String>, at: usize| r.map_err(|m| ShellError::new(m, at));
+        let wrap = |r: Result<DocValue, DocParseError>, at: usize| {
+            r.map_err(|e| ShellError::new(e.to_string(), at))
+        };
         let first_at = args.first().map_or(args_at, |a| a.1);
         match name {
             "ObjectId" | "ObjectID" => match args.as_slice() {

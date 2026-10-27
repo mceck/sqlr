@@ -185,7 +185,22 @@ fn layered_resolution_order() {
         )
         .is_err()
     );
-    assert!(s.set("no.such", &Level::Global, Some(int(1))).is_err());
+    assert_eq!(
+        s.set("no.such", &Level::Global, Some(int(1)))
+            .unwrap_err()
+            .to_string(),
+        "unknown setting no.such"
+    );
+    assert!(
+        s.set(
+            "grid.page_size",
+            &Level::Global,
+            Some(SettingValue::Bool(true))
+        )
+        .unwrap_err()
+        .to_string()
+        .starts_with("wrong type of value for ")
+    );
 
     // The overrides survive a round trip through the files.
     let dir = tempfile::tempdir().unwrap();

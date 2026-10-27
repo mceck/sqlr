@@ -10,6 +10,7 @@
 mod clipboard;
 mod convert;
 mod encoding;
+mod error;
 mod files;
 mod parquet;
 mod pipeline;
@@ -31,6 +32,7 @@ use sqlr_core::ColumnMapping;
 pub use sqlr_core::ImportOptions;
 
 use self::convert::{apply_transform, utc_naive};
+use self::error::{ConvertError, MappingError, TransferFileError};
 use self::write_table::RejectedFile;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
@@ -257,10 +259,14 @@ fn parse_hex(text: &str) -> Option<Vec<u8>> {
 }
 
 /// `value` converted for a column of type `target`; the reason when it cannot be.
-fn convert(column: &str, value: Value, target: Target) -> Result<Value, String> {
-    let bad = |what: &str, v: &Value| {
+fn convert(column: &str, value: Value, target: Target) -> Result<Value, ConvertError> {
+    let bad = |what: &'static str, v: &Value| {
         let shown: String = v.display().chars().take(40).collect();
-        format!("column {column}: \"{shown}\" is not {what}")
+        ConvertError {
+            column: column.to_string(),
+            shown,
+            what,
+        }
     };
     Ok(match (target, value) {
         (_, Value::Null) => Value::Null,
@@ -711,7 +717,9 @@ impl Shared {
         };
         let columns = match mapped_columns(&info, mapping) {
             Ok(columns) => columns,
-            Err(e) => return JobOutcome::Failed(DriverError::new(ErrorKind::Other, e)),
+            Err(e) => {
+                return JobOutcome::Failed(DriverError::new(ErrorKind::Other, e.to_string()));
+            }
         };
         let table = dialect.qualified(&local);
         let names: Vec<String> = columns
@@ -934,7 +942,7 @@ fn cancelled_or(job: &JobControl, e: DriverError) -> JobOutcome {
 fn mapped_columns(
     info: &TableInfo,
     mapping: &[ColumnMapping],
-) -> Result<Vec<MappedColumn>, String> {
+) -> Result<Vec<MappedColumn>, MappingError> {
     let mut columns: Vec<MappedColumn> = Vec::new();
     for m in mapping {
         let Some(name) = &m.target else {
@@ -942,9 +950,14 @@ fn mapped_columns(
         };
         let column = info
             .column(name)
-            .ok_or_else(|| format!("{} has no column \"{name}\"", info.table.name))?;
+            .ok_or_else(|| MappingError::UnknownColumn {
+                table: info.table.name.clone(),
+                column: name.clone(),
+            })?;
         if columns.iter().any(|c| &c.name == name) {
-            return Err(format!("Column \"{name}\" is mapped twice"));
+            return Err(MappingError::MappedTwice {
+                column: name.clone(),
+            });
         }
         columns.push(MappedColumn {
             src: m.source,
@@ -954,7 +967,7 @@ fn mapped_columns(
         });
     }
     if columns.is_empty() {
-        return Err("No source column is mapped to a table column".into());
+        return Err(MappingError::NothingMapped);
     }
     Ok(columns)
 }
@@ -1073,7 +1086,7 @@ impl Load<'_> {
                     }
                     return JobOutcome::Cancelled;
                 }
-                let params: Result<Vec<Value>, String> = columns
+                let params: Result<Vec<Value>, ConvertError> = columns
                     .iter()
                     .map(|c| {
                         let mut value = row.get(c.src).cloned().unwrap_or(Value::Null);
@@ -1084,7 +1097,7 @@ impl Load<'_> {
                     })
                     .collect();
                 let failure = match params {
-                    Err(reason) => Some(reason),
+                    Err(reason) => Some(reason.to_string()),
                     Ok(params) => {
                         let protected = options.skip_bad_rows;
                         if protected && let Err(e) = session.run(&savepoint).await {
@@ -1245,7 +1258,7 @@ async fn save_text(path: PathBuf, text: String) -> JobOutcome {
 }
 
 /// A batch of decoded rows (with their lines), or why reading stopped.
-pub(crate) type RowBatch = Result<Vec<(u64, Vec<Value>)>, String>;
+pub(crate) type RowBatch = Result<Vec<(u64, Vec<Value>)>, TransferFileError>;
 
 /// Where an import's rows come from: a file read on a blocking thread, or a collection or
 /// Redis keys read by a transfer.
@@ -1271,7 +1284,10 @@ pub(crate) fn spawn_reader(
         let file = match encoding::open_text(&path, encoding.as_deref()) {
             Ok(file) => file,
             Err(e) => {
-                let _ = tx.blocking_send(Err(format!("{}: {e}", path.display())));
+                let _ = tx.blocking_send(Err(TransferFileError::File {
+                    path: path.clone(),
+                    source: e,
+                }));
                 return;
             }
         };
@@ -1284,7 +1300,7 @@ pub(crate) fn spawn_reader(
             let _ = tx.blocking_send(Ok(batch));
         }
         if let Err(e) = outcome {
-            let _ = tx.blocking_send(Err(e));
+            let _ = tx.blocking_send(Err(e.into()));
         }
     });
     rx
@@ -1295,8 +1311,12 @@ pub(crate) fn spawn_reader(
 async fn preview(path: &Path, format: &TextFormat, encoding: Option<String>) -> JobOutcome {
     let (path, format) = (path.to_path_buf(), format.clone());
     let read = tokio::task::spawn_blocking(move || {
-        let file = encoding::open_text(&path, encoding.as_deref())
-            .map_err(|e| format!("{}: {e}", path.display()))?;
+        let file = encoding::open_text(&path, encoding.as_deref()).map_err(|source| {
+            TransferFileError::File {
+                path: path.clone(),
+                source,
+            }
+        })?;
         let mut rows = Vec::new();
         let columns = read_rows(&format, file, |_, _, row| {
             rows.push(row);
@@ -1305,12 +1325,12 @@ async fn preview(path: &Path, format: &TextFormat, encoding: Option<String>) -> 
         for row in &mut rows {
             row.resize(columns.len(), Value::Null);
         }
-        Ok::<_, String>((columns, rows))
+        Ok::<_, TransferFileError>((columns, rows))
     })
     .await;
     match read {
         Ok(Ok((columns, rows))) => JobOutcome::Preview { columns, rows },
-        Ok(Err(e)) => JobOutcome::Failed(DriverError::new(ErrorKind::Other, e)),
+        Ok(Err(e)) => JobOutcome::Failed(DriverError::new(ErrorKind::Other, e.to_string())),
         Err(e) => JobOutcome::Failed(DriverError::new(ErrorKind::Other, e.to_string())),
     }
 }
@@ -1348,10 +1368,9 @@ mod tests {
             convert("c", t("18446744073709551615"), Target::Int),
             Ok(t("18446744073709551615"))
         );
-        assert!(
-            convert("c", t("abc"), Target::Int)
-                .unwrap_err()
-                .contains("\"abc\"")
+        assert_eq!(
+            convert("c", t("abc"), Target::Int).unwrap_err().to_string(),
+            "column c: \"abc\" is not an integer"
         );
         assert_eq!(
             convert("c", t("NaN"), Target::Float).map(|v| v.is_null()),

@@ -3,6 +3,73 @@
 
 use std::sync::LazyLock;
 
+use crate::error::DriverError;
+
+/// Why a value is refused for a setting.
+#[derive(Debug, thiserror::Error)]
+pub enum SettingError {
+    /// The setting id is not in the catalogue.
+    #[error("unknown setting {id}")]
+    Unknown {
+        /// The id looked up.
+        id: String,
+    },
+    /// The setting has no per-profile or per-connection override.
+    #[error("{label} can only be set globally")]
+    GlobalOnly {
+        /// The setting's label.
+        label: &'static str,
+    },
+    /// A safety setting cannot be loosened below the global level.
+    #[error(
+        "{label} can only be switched on for a profile or a connection; clear the override instead"
+    )]
+    TightenOnly {
+        /// The setting's label.
+        label: &'static str,
+    },
+    /// The free-form driver properties are not a JSON object of strings.
+    #[error("Expected a JSON object of property strings: {0}")]
+    PropertiesJson(serde_json::Error),
+    /// A driver property is not valid for the driver.
+    #[error("{0}")]
+    DriverProperty(#[from] DriverError),
+    /// A whole number outside the setting's range.
+    #[error("{label} must be between {min} and {max}")]
+    IntOutOfRange {
+        /// The setting's label.
+        label: &'static str,
+        /// The lowest value.
+        min: i64,
+        /// The highest value.
+        max: i64,
+    },
+    /// A decimal number outside the setting's range.
+    #[error("{label} must be between {min} and {max}")]
+    FloatOutOfRange {
+        /// The setting's label.
+        label: &'static str,
+        /// The lowest value.
+        min: f64,
+        /// The highest value.
+        max: f64,
+    },
+    /// A choice that is not one of the setting's options.
+    #[error("{value:?} is not an option of {label}")]
+    NotAnOption {
+        /// The refused choice.
+        value: String,
+        /// The setting's label.
+        label: &'static str,
+    },
+    /// A value of another type than the setting's.
+    #[error("wrong type of value for {label}")]
+    WrongType {
+        /// The setting's label.
+        label: &'static str,
+    },
+}
+
 /// A setting's value; [`SettingKind`] says which variant a key takes.
 #[derive(Clone, Debug, PartialEq)]
 pub enum SettingValue {
@@ -167,7 +234,7 @@ impl SettingDef {
 
 impl SettingDef {
     /// `value` when it is the right type and within the limits, else why not.
-    pub fn check(&self, value: &SettingValue) -> Result<(), String> {
+    pub fn check(&self, value: &SettingValue) -> Result<(), SettingError> {
         if let Some(rest) = self.id.strip_prefix("drivers.")
             && let Some((driver, key)) = rest.split_once('.')
             && let SettingValue::Text(text) = value
@@ -176,21 +243,18 @@ impl SettingDef {
             let fields = crate::driver_property_fields(driver);
             if key == "properties" && !fields.is_empty() {
                 let properties: std::collections::BTreeMap<String, String> =
-                    serde_json::from_str(text)
-                        .map_err(|e| format!("Expected a JSON object of property strings: {e}"))?;
+                    serde_json::from_str(text).map_err(SettingError::PropertiesJson)?;
                 let properties = properties
                     .into_iter()
                     .map(|(k, v)| (format!("property.{k}"), v))
                     .collect();
-                return crate::validate_driver_properties(&fields, &properties)
-                    .map_err(|e| e.to_string());
+                return Ok(crate::validate_driver_properties(&fields, &properties)?);
             }
             if !fields.is_empty() {
                 crate::validate_driver_properties(
                     &fields,
                     &[(format!("property.{key}"), text.clone())].into(),
-                )
-                .map_err(|e| e.to_string())?;
+                )?;
             }
         }
 
@@ -203,7 +267,11 @@ impl SettingDef {
                 Ok(())
             }
             (SettingKind::Int { min, max }, SettingValue::Int(_)) => {
-                Err(format!("{} must be between {min} and {max}", self.label))
+                Err(SettingError::IntOutOfRange {
+                    label: self.label,
+                    min: *min,
+                    max: *max,
+                })
             }
             (SettingKind::Float { min, max, .. }, SettingValue::Float(f))
                 if !f.is_nan() && (*min..=*max).contains(f) =>
@@ -211,17 +279,22 @@ impl SettingDef {
                 Ok(())
             }
             (SettingKind::Float { min, max, .. }, SettingValue::Float(_)) => {
-                Err(format!("{} must be between {min} and {max}", self.label))
+                Err(SettingError::FloatOutOfRange {
+                    label: self.label,
+                    min: *min,
+                    max: *max,
+                })
             }
             (SettingKind::Choice(options), SettingValue::Choice(c))
                 if options.iter().any(|(id, _)| id == c) =>
             {
                 Ok(())
             }
-            (SettingKind::Choice(_), SettingValue::Choice(c)) => {
-                Err(format!("{c:?} is not an option of {}", self.label))
-            }
-            _ => Err(format!("wrong type of value for {}", self.label)),
+            (SettingKind::Choice(_), SettingValue::Choice(c)) => Err(SettingError::NotAnOption {
+                value: c.clone(),
+                label: self.label,
+            }),
+            _ => Err(SettingError::WrongType { label: self.label }),
         }
     }
 
@@ -1088,7 +1161,7 @@ mod tests {
         let mut seen = std::collections::HashSet::new();
         for d in setting_defs() {
             assert!(seen.insert(d.id), "duplicate id {}", d.id);
-            assert_eq!(d.check(&d.default), Ok(()), "{}", d.id);
+            assert!(d.check(&d.default).is_ok(), "{}", d.id);
             assert!(SECTIONS.contains(&d.section), "{} in {}", d.id, d.section);
             assert!(!d.label.is_empty() && !d.description.is_empty(), "{}", d.id);
             if d.safety == Safety::TightenOnly {

@@ -1,11 +1,13 @@
 //! Portable client connection definitions with optional explicit credential backups.
 //! Parsing is pure; discovery and file reads belong on the store worker.
 mod discovery;
+mod error;
 mod export;
 mod import;
 mod native_clients;
 
 pub use discovery::{DetectedSource, discover, read_source};
+pub use error::{ExportError, ImportError};
 pub use export::{encode, encode_with_credentials};
 pub use import::{decode, detect};
 use sqlr_core::{AgentAccess, ConnectionConfig};
@@ -138,29 +140,27 @@ fn write_export_file(path: &std::path::Path, contents: &str) -> Result<(), std::
     Ok(())
 }
 
-pub fn save_document(path: &std::path::Path, doc: ExportDocument) -> Result<Vec<String>, String> {
+pub fn save_document(
+    path: &std::path::Path,
+    doc: ExportDocument,
+) -> Result<Vec<String>, ExportError> {
     if !doc.files.is_empty() {
         if path.exists() {
-            return Err("Choose a new folder for the Beekeeper export.".into());
+            return Err(ExportError::ChooseNewFolder);
         }
         let parent = path
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or_else(|| std::path::Path::new("."));
-        let staging = tempfile::tempdir_in(parent)
-            .map_err(|_| "Could not create the export folder.".to_string())?;
+        let staging = tempfile::tempdir_in(parent).map_err(|_| ExportError::CreateFolder)?;
         for (name, contents) in &doc.files {
             write_export_file(&staging.path().join(name), contents)
-                .map_err(|_| "Could not save the connection export.".to_string())?;
+                .map_err(|_| ExportError::SaveConnectionExport)?;
         }
-        std::fs::rename(staging.path(), path).map_err(|_| {
-            "Could not save the export folder. Choose a new destination.".to_string()
-        })?;
+        std::fs::rename(staging.path(), path).map_err(|_| ExportError::SaveFolder)?;
         return Ok(doc.warnings);
     }
-    write_export_file(path, &doc.contents).map_err(|_| {
-        "Could not save the export. Check the destination and permissions.".to_string()
-    })?;
+    write_export_file(path, &doc.contents).map_err(|_| ExportError::SaveFile)?;
     Ok(doc.warnings)
 }
 
@@ -168,7 +168,7 @@ pub fn save_export(
     path: &std::path::Path,
     format: ClientFormat,
     connections: &[ConnectionConfig],
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, ExportError> {
     save_document(path, encode(format, connections)?)
 }
 

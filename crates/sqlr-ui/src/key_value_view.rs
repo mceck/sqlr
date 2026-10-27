@@ -337,7 +337,7 @@ fn header(
                             action = Some(KvViewAction::Edit(KvEdit::Rename(new)));
                         }
                     }
-                    Err(e) => state.error = Some(e),
+                    Err(e) => state.error = Some(e.to_string()),
                 }
             }
             if ui.button("Cancel").clicked() {

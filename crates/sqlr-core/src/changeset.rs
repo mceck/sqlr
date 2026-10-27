@@ -10,6 +10,22 @@ use crate::driver::Dialect;
 use crate::table::TableRef;
 use crate::value::Value;
 
+/// Why a Changeset cannot be turned into statements.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ChangesetError {
+    /// An update or delete is pending but the Changeset has no key columns.
+    #[error("The changeset names no key columns")]
+    NoKeyColumns,
+    /// A row key has a different number of values than the Changeset has key columns.
+    #[error("A row key has {values} values for {columns} key columns")]
+    KeyLength {
+        /// The number of values in the row key.
+        values: usize,
+        /// The number of key columns.
+        columns: usize,
+    },
+}
+
 /// One pending edit. `key` holds the row's key values as read, in `key_columns` order, so
 /// an edit of a key column still finds the row by its original key.
 #[derive(Clone, Debug, PartialEq)]
@@ -124,7 +140,7 @@ impl Changeset {
     ///
     /// An error when the changeset names no key columns, or a row key whose length is not
     /// theirs.
-    pub fn statements(&self, dialect: &dyn Dialect) -> Result<Vec<DmlStatement>, String> {
+    pub fn statements(&self, dialect: &dyn Dialect) -> Result<Vec<DmlStatement>, ChangesetError> {
         self.statements_with_default_column(dialect, self.key_columns.first().map(String::as_str))
     }
 
@@ -134,7 +150,7 @@ impl Changeset {
         &self,
         dialect: &dyn Dialect,
         default_column: Option<&str>,
-    ) -> Result<Vec<DmlStatement>, String> {
+    ) -> Result<Vec<DmlStatement>, ChangesetError> {
         self.check_keys()?;
         Ok(self
             .plan()
@@ -154,7 +170,7 @@ impl Changeset {
 
     /// The statements with their values as literals, each ended by `;`, one per line. For
     /// display only.
-    pub fn preview(&self, dialect: &dyn Dialect) -> Result<String, String> {
+    pub fn preview(&self, dialect: &dyn Dialect) -> Result<String, ChangesetError> {
         self.check_keys()?;
         let mut out = String::new();
         for p in self.plan() {
@@ -171,23 +187,22 @@ impl Changeset {
     }
 
     /// Every update and delete names its row by a full key.
-    fn check_keys(&self) -> Result<(), String> {
+    fn check_keys(&self) -> Result<(), ChangesetError> {
         let keyed = self
             .changes
             .iter()
             .any(|c| !matches!(c, Change::Insert { .. }));
         if keyed && self.key_columns.is_empty() {
-            return Err("The changeset names no key columns".into());
+            return Err(ChangesetError::NoKeyColumns);
         }
         for change in &self.changes {
             if let Change::Update { key, .. } | Change::Delete { key } = change
                 && key.len() != self.key_columns.len()
             {
-                return Err(format!(
-                    "A row key has {} values for {} key columns",
-                    key.len(),
-                    self.key_columns.len()
-                ));
+                return Err(ChangesetError::KeyLength {
+                    values: key.len(),
+                    columns: self.key_columns.len(),
+                });
             }
         }
         Ok(())
@@ -545,7 +560,7 @@ mod tests {
         let mut set = changeset();
         set.key_columns.clear();
         assert_eq!(
-            set.statements(&PgLike).unwrap_err(),
+            set.statements(&PgLike).unwrap_err().to_string(),
             "The changeset names no key columns"
         );
         let mut set = changeset();
@@ -553,7 +568,7 @@ mod tests {
             key: vec![Value::Int(1), Value::Int(2)],
         });
         assert_eq!(
-            set.preview(&PgLike).unwrap_err(),
+            set.preview(&PgLike).unwrap_err().to_string(),
             "A row key has 2 values for 1 key columns"
         );
     }

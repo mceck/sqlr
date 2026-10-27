@@ -10,6 +10,33 @@ use crate::doc_tree::DocAction;
 use crate::editor::{EditorState, NoCatalog, query_editor};
 use crate::theme::{self, Spacing};
 
+/// Why the text of a document editor cannot be saved.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum DocumentTextError {
+    /// The text is not valid relaxed Extended JSON.
+    #[error("{message} (line {line}, column {column})")]
+    Syntax {
+        /// The parser's complaint.
+        message: String,
+        /// The 1-based line.
+        line: usize,
+        /// The 1-based column.
+        column: usize,
+    },
+    /// The text is valid JSON but not an object.
+    #[error("A document is an object, not {type_name}")]
+    NotAnObject {
+        /// The type of the value found.
+        type_name: &'static str,
+    },
+    /// The document holds a type sqlr cannot write.
+    #[error("The document holds {what}, which sqlr cannot write")]
+    Unwritable {
+        /// The type found.
+        what: &'static str,
+    },
+}
+
 /// What the editor holds.
 struct Edit {
     /// The document edited; `None` for a new one.
@@ -104,18 +131,22 @@ impl JsonViewState {
     }
 
     /// Checks the editor's text: the document, or why it cannot be saved.
-    fn validate(text: &str) -> Result<DocValue, String> {
+    fn validate(text: &str) -> Result<DocValue, DocumentTextError> {
         let doc = DocValue::from_relaxed_json(text).map_err(|e| {
-            let (line, col) = line_col(text, e.position);
-            format!("{} (line {line}, column {col})", e.message)
+            let (line, column) = line_col(text, e.position);
+            DocumentTextError::Syntax {
+                message: e.message,
+                line,
+                column,
+            }
         })?;
         if !matches!(doc, DocValue::Document(_)) {
-            return Err(format!("A document is an object, not {}", doc.type_name()));
+            return Err(DocumentTextError::NotAnObject {
+                type_name: doc.type_name(),
+            });
         }
         if let Some(what) = doc.unmodelled() {
-            return Err(format!(
-                "The document holds {what}, which sqlr cannot write"
-            ));
+            return Err(DocumentTextError::Unwritable { what });
         }
         Ok(doc)
     }
@@ -161,7 +192,7 @@ pub fn json_view(
                     // failed save keeps the text.
                     state.error = None;
                 }
-                Err(e) => state.error = Some(e),
+                Err(e) => state.error = Some(e.to_string()),
             }
         }
         return action;
@@ -202,8 +233,13 @@ mod tests {
     #[test]
     fn errors_name_the_line() {
         assert_eq!(line_col("ab\ncd", 4), (2, 2));
-        let e = JsonViewState::validate("{\"a\": 1,\n \"b\": }").unwrap_err();
+        let e = JsonViewState::validate("{\"a\": 1,\n \"b\": }")
+            .unwrap_err()
+            .to_string();
         assert!(e.contains("line 2"), "{e}");
-        assert!(JsonViewState::validate("[1]").is_err());
+        assert_eq!(
+            JsonViewState::validate("[1]").unwrap_err().to_string(),
+            "A document is an object, not array"
+        );
     }
 }

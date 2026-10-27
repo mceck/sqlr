@@ -31,32 +31,50 @@ pub fn approval_needed(profile: &ConnectionProfile, class: &StatementClass) -> b
     }
 }
 
+/// How a target profile is looser than the current one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum LooserProfile {
+    /// The current profile is read-only and the target is not.
+    #[error("the target profile is not read-only")]
+    NotReadOnly,
+    /// The current profile confirms writes and the target does not.
+    #[error("the target profile does not confirm writes")]
+    NoWriteConfirmation,
+    /// The current profile confirms destructive statements and the target does not.
+    #[error("the target profile does not confirm destructive statements")]
+    NoDestructiveConfirmation,
+    /// The target's idle transaction timeout is longer than the current one, or absent.
+    #[error("the target profile's idle transaction timeout is longer or absent")]
+    LongerIdleTimeout,
+    /// The target commits more eagerly.
+    #[error("the target profile commits more eagerly")]
+    EagerCommit,
+}
+
 /// Whether `target` is at least as strict as `current` on every safety field.
 pub fn profile_is_at_least_as_strict(
     current: &ConnectionProfile,
     target: &ConnectionProfile,
-) -> Result<(), String> {
+) -> Result<(), LooserProfile> {
     if current.read_only && !target.read_only {
-        return Err("the target profile is not read-only".into());
+        return Err(LooserProfile::NotReadOnly);
     }
     if current.confirm_writes && !target.confirm_writes {
-        return Err("the target profile does not confirm writes".into());
+        return Err(LooserProfile::NoWriteConfirmation);
     }
     if current.confirm_destructive && !target.confirm_destructive {
-        return Err("the target profile does not confirm destructive statements".into());
+        return Err(LooserProfile::NoDestructiveConfirmation);
     }
     if let Some(current_timeout) = current.idle_tx_timeout_min {
         match target.idle_tx_timeout_min {
             Some(target_timeout) if target_timeout <= current_timeout => {}
             _ => {
-                return Err(
-                    "the target profile's idle transaction timeout is longer or absent".into(),
-                );
+                return Err(LooserProfile::LongerIdleTimeout);
             }
         }
     }
     if commit_mode_looser(current.commit_mode, target.commit_mode) {
-        return Err("the target profile commits more eagerly".into());
+        return Err(LooserProfile::EagerCommit);
     }
     Ok(())
 }
@@ -286,7 +304,12 @@ mod tests {
         assert!(profile_is_at_least_as_strict(&loose, &profile(false, true, true)).is_ok());
         assert!(profile_is_at_least_as_strict(&loose, &profile(true, true, true)).is_ok());
         let strict = profile(true, true, true);
-        assert!(profile_is_at_least_as_strict(&strict, &loose).is_err());
+        assert_eq!(
+            profile_is_at_least_as_strict(&strict, &loose)
+                .unwrap_err()
+                .to_string(),
+            "the target profile is not read-only"
+        );
     }
 
     #[test]

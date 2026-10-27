@@ -10,6 +10,35 @@ use std::path::{Path, PathBuf};
 
 use crate::node::{Node, NodeKind};
 
+/// Why a dump or restore command cannot be built.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ToolError {
+    /// Schema only and data only are both selected.
+    #[error("Schema only and data only cannot both be selected")]
+    SchemaAndDataOnly,
+    /// The driver's databases cannot be dumped with a native tool.
+    #[error("{driver} databases cannot be dumped")]
+    DumpUnsupported {
+        /// The driver id.
+        driver: String,
+    },
+    /// The driver's databases cannot be restored with a native tool.
+    #[error("{driver} databases cannot be restored")]
+    RestoreUnsupported {
+        /// The driver id.
+        driver: String,
+    },
+    /// The SQLite connection has no file path.
+    #[error("The SQLite connection has no database file")]
+    SqliteNoFile,
+    /// SQLite's dump always includes the schema.
+    #[error("SQLite cannot dump data without the schema")]
+    SqliteDataOnly,
+    /// The archive to restore is the connection's own database file.
+    #[error("The archive is the connection's own database file")]
+    ArchiveIsDatabase,
+}
+
 /// Whether a driver's databases can be dumped and restored with native tools.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DatabaseTools {
@@ -426,16 +455,16 @@ fn pg_connection_args(conn: &ToolConnection, database: &str) -> Vec<String> {
     args
 }
 
-fn validate_exclusive(opts: &DumpOptions) -> Result<(), String> {
+fn validate_exclusive(opts: &DumpOptions) -> Result<(), ToolError> {
     if opts.schema_only && opts.data_only {
-        return Err("Schema only and data only cannot both be selected".into());
+        return Err(ToolError::SchemaAndDataOnly);
     }
     Ok(())
 }
 
-fn validate_restore_exclusive(opts: &RestoreOptions) -> Result<(), String> {
+fn validate_restore_exclusive(opts: &RestoreOptions) -> Result<(), ToolError> {
     if opts.schema_only && opts.data_only {
-        return Err("Schema only and data only cannot both be selected".into());
+        return Err(ToolError::SchemaAndDataOnly);
     }
     Ok(())
 }
@@ -453,13 +482,15 @@ pub fn dump_command(
     opts: &DumpOptions,
     out: &Path,
     temp_dir: &Path,
-) -> Result<ToolCommand, String> {
+) -> Result<ToolCommand, ToolError> {
     validate_exclusive(opts)?;
     match driver {
         "postgres" => Ok(pg_dump_command(conn, opts, out)),
         "mysql" => Ok(mysql_dump_command(conn, opts, out, temp_dir)),
         "sqlite" => sqlite_dump_command(conn, opts, out),
-        other => Err(format!("{other} databases cannot be dumped")),
+        other => Err(ToolError::DumpUnsupported {
+            driver: other.to_string(),
+        }),
     }
 }
 
@@ -470,13 +501,15 @@ pub fn restore_command(
     opts: &RestoreOptions,
     input: &Path,
     temp_dir: &Path,
-) -> Result<ToolCommand, String> {
+) -> Result<ToolCommand, ToolError> {
     validate_restore_exclusive(opts)?;
     match driver {
         "postgres" => Ok(pg_restore_command(conn, opts, input)),
         "mysql" => Ok(mysql_restore_command(conn, opts, input, temp_dir)),
         "sqlite" => sqlite_restore_command(conn, opts, input),
-        other => Err(format!("{other} databases cannot be restored")),
+        other => Err(ToolError::RestoreUnsupported {
+            driver: other.to_string(),
+        }),
     }
 }
 
@@ -799,21 +832,21 @@ fn mysql_restore_command(
     }
 }
 
-fn sqlite_path(conn: &ToolConnection) -> Result<&Path, String> {
+fn sqlite_path(conn: &ToolConnection) -> Result<&Path, ToolError> {
     conn.path
         .as_deref()
         .filter(|p| !p.as_os_str().is_empty())
-        .ok_or_else(|| "The SQLite connection has no database file".to_string())
+        .ok_or(ToolError::SqliteNoFile)
 }
 
 fn sqlite_dump_command(
     conn: &ToolConnection,
     opts: &DumpOptions,
     out: &Path,
-) -> Result<ToolCommand, String> {
+) -> Result<ToolCommand, ToolError> {
     let db = sqlite_path(conn)?;
     if opts.data_only {
-        return Err("SQLite cannot dump data without the schema".into());
+        return Err(ToolError::SqliteDataOnly);
     }
     let mut args = vec![db.display().to_string()];
     let stdout_file = match opts.format {
@@ -844,10 +877,10 @@ fn sqlite_restore_command(
     conn: &ToolConnection,
     opts: &RestoreOptions,
     input: &Path,
-) -> Result<ToolCommand, String> {
+) -> Result<ToolCommand, ToolError> {
     let db = sqlite_path(conn)?;
     if input == db {
-        return Err("The archive is the connection's own database file".into());
+        return Err(ToolError::ArchiveIsDatabase);
     }
     if is_sql_file(input) {
         return Ok(ToolCommand {
@@ -1175,15 +1208,17 @@ mod tests {
             data_only: true,
             ..Default::default()
         };
-        assert!(
-            dump_command(
-                "postgres",
-                &pg(),
-                &opts,
-                Path::new("/tmp/app.sql"),
-                Path::new("/tmp")
-            )
-            .is_err()
+        let err = dump_command(
+            "postgres",
+            &pg(),
+            &opts,
+            Path::new("/tmp/app.sql"),
+            Path::new("/tmp"),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Schema only and data only cannot both be selected"
         );
     }
 
@@ -1451,15 +1486,14 @@ mod tests {
 
     #[test]
     fn unsupported_drivers_do_not_get_a_command() {
-        assert!(
-            dump_command(
-                "redis",
-                &ToolConnection::default(),
-                &DumpOptions::default(),
-                Path::new("/tmp/x"),
-                Path::new("/tmp")
-            )
-            .is_err()
-        );
+        let err = dump_command(
+            "redis",
+            &ToolConnection::default(),
+            &DumpOptions::default(),
+            Path::new("/tmp/x"),
+            Path::new("/tmp"),
+        )
+        .unwrap_err();
+        assert_eq!(err.to_string(), "redis databases cannot be dumped");
     }
 }

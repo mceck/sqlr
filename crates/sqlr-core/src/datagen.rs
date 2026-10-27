@@ -10,6 +10,32 @@ use crate::schema::ConstraintDef;
 use crate::table::{TableColumn, TableRef};
 use crate::value::Value;
 
+/// Why test data could not be generated.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum DatagenError {
+    /// A unique column's domain has fewer values than the requested rows.
+    #[error(
+        "Could not generate {rows} distinct values for column {column}: its domain is \
+         too small for that many rows"
+    )]
+    DomainTooSmall {
+        /// The number of rows requested.
+        rows: u64,
+        /// The unique column.
+        column: String,
+    },
+    /// A foreign-key column refers to a table whose pool of values is empty.
+    #[error("Column {column} references {table}.{key}, which has no rows to pick from")]
+    EmptyForeignKeyPool {
+        /// The generated column.
+        column: String,
+        /// The referenced table.
+        table: String,
+        /// The referenced column.
+        key: String,
+    },
+}
+
 /// How the values of one generated column are produced.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Generator {
@@ -416,7 +442,7 @@ impl RowGenerator {
 
     /// The next `n` rows (fewer at the end of the spec's row count): one value per column
     /// of the spec, `Default` columns as NULL (the caller leaves them out of the write).
-    pub fn next_batch(&mut self, n: usize) -> Result<Vec<Vec<Value>>, String> {
+    pub fn next_batch(&mut self, n: usize) -> Result<Vec<Vec<Value>>, DatagenError> {
         let remaining = self.spec.rows.saturating_sub(self.made);
         let count = (n as u64).min(remaining) as usize;
         let mut rows = Vec::with_capacity(count);
@@ -426,7 +452,7 @@ impl RowGenerator {
         Ok(rows)
     }
 
-    fn row(&mut self) -> Result<Vec<Value>, String> {
+    fn row(&mut self) -> Result<Vec<Value>, DatagenError> {
         let mut first = String::new();
         let mut last = String::new();
         let mut row = Vec::with_capacity(self.spec.columns.len());
@@ -465,11 +491,10 @@ impl RowGenerator {
                     break;
                 }
                 if attempt + 1 == attempts {
-                    return Err(format!(
-                        "Could not generate {} distinct values for column {name}: its domain is \
-                         too small for that many rows",
-                        self.spec.rows
-                    ));
+                    return Err(DatagenError::DomainTooSmall {
+                        rows: self.spec.rows,
+                        column: name,
+                    });
                 }
             }
             match (&generator, &value) {
@@ -494,7 +519,7 @@ impl RowGenerator {
         first: &str,
         last: &str,
         column: &str,
-    ) -> Result<Value, String> {
+    ) -> Result<Value, DatagenError> {
         let r = &mut self.rng;
         Ok(match generator {
             Generator::Sequence { start, step } => Value::Int(start + step * self.made as i64),
@@ -584,10 +609,11 @@ impl RowGenerator {
                 match pool.filter(|p| !p.is_empty()) {
                     Some(pool) => pool[(r.next() % pool.len() as u64) as usize].clone(),
                     None => {
-                        return Err(format!(
-                            "Column {column} references {}.{key}, which has no rows to pick from",
-                            table.name
-                        ));
+                        return Err(DatagenError::EmptyForeignKeyPool {
+                            column: column.to_string(),
+                            table: table.name.clone(),
+                            key: key.clone(),
+                        });
                     }
                 }
             }
@@ -779,7 +805,11 @@ mod tests {
         )
         .next_batch(30)
         .unwrap_err();
-        assert!(err.contains("domain is too small"), "{err}");
+        assert!(err.to_string().contains("domain is too small"), "{err}");
+        assert_eq!(
+            err.to_string(),
+            "Could not generate 30 distinct values for column k: its domain is too small for that many rows"
+        );
     }
 
     #[test]
@@ -852,6 +882,6 @@ mod tests {
         let err = RowGenerator::new(&spec(columns, 5, 5), BTreeMap::new())
             .next_batch(5)
             .unwrap_err();
-        assert!(err.contains("no rows to pick from"), "{err}");
+        assert!(err.to_string().contains("no rows to pick from"), "{err}");
     }
 }

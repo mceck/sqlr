@@ -4,7 +4,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::{Value, json};
 use sqlr_core::{ConnectionConfig, Secrets};
 
-use super::{ClientFormat, ExportDocument, ImportBatch, blank, driver, portable, supports_export};
+use super::{
+    ClientFormat, ExportDocument, ExportError, ImportBatch, ImportError, blank, driver, portable,
+    supports_export,
+};
 
 type Credentials = BTreeMap<String, Secrets>;
 
@@ -35,13 +38,13 @@ fn secret(secrets: &mut Secrets, v: &Value, fields: &[(&str, &str)]) {
         }
     }
 }
-fn group_path(groups: &[Value], id: &str) -> Result<Option<String>, String> {
+fn group_path(groups: &[Value], id: &str) -> Result<Option<String>, ImportError> {
     let mut current = id.to_string();
     let mut visited = BTreeSet::new();
     let mut segments = Vec::new();
     while !current.is_empty() {
         if !visited.insert(current.clone()) {
-            return Err("Connection groups contain a cycle.".into());
+            return Err(ImportError::GroupCycle);
         }
         let Some(group) = groups.iter().find(|g| text(g, "id") == current) else {
             break;
@@ -53,19 +56,17 @@ fn group_path(groups: &[Value], id: &str) -> Result<Option<String>, String> {
     Ok((!segments.is_empty()).then(|| segments.join("/")))
 }
 
-pub(super) fn decode(format: ClientFormat, bytes: &[u8]) -> Result<ImportBatch, String> {
-    let v: Value = serde_json::from_slice(bytes).map_err(|_| "Invalid connection JSON file.")?;
+pub(super) fn decode(format: ClientFormat, bytes: &[u8]) -> Result<ImportBatch, ImportError> {
+    let v: Value = serde_json::from_slice(bytes).map_err(|_| ImportError::InvalidJson)?;
     let tab = format == ClientFormat::Tabularis;
     if tab && v.get("version").is_some_and(|v| v != 1) {
-        return Err(
-            "Unsupported or encrypted Tabularis backup. Export plaintext JSON first.".into(),
-        );
+        return Err(ImportError::UnsupportedTabularis);
     }
     let rows = if tab {
         v["connections"]
             .as_array()
             .cloned()
-            .ok_or("Invalid Tabularis connections.")?
+            .ok_or(ImportError::InvalidTabularis)?
     } else if let Some(rows) = v.as_array() {
         rows.clone()
     } else {
@@ -296,7 +297,7 @@ pub(super) fn decode(format: ClientFormat, bytes: &[u8]) -> Result<ImportBatch, 
         }
     }
     if batch.connections.is_empty() {
-        return Err("No supported connections found in the file.".into());
+        return Err(ImportError::NoSupportedConnections);
     }
     Ok(batch)
 }
@@ -305,7 +306,7 @@ pub(super) fn encode(
     format: ClientFormat,
     connections: &[ConnectionConfig],
     credentials: Option<&Credentials>,
-) -> Result<ExportDocument, String> {
+) -> Result<ExportDocument, ExportError> {
     let tab = format == ClientFormat::Tabularis;
     let mut rows = Vec::new();
     let mut files = Vec::new();
@@ -431,14 +432,13 @@ pub(super) fn encode(
         if !tab {
             files.push((
                 format!("connection-{}.json", rows.len() + 1),
-                serde_json::to_string_pretty(&row)
-                    .map_err(|_| "Could not serialize connection.")?,
+                serde_json::to_string_pretty(&row).map_err(|_| ExportError::SerializeConnection)?,
             ));
         }
         rows.push(row.take());
     }
     if rows.is_empty() {
-        return Err("None of the selected connections can be exported to this format.".into());
+        return Err(ExportError::NothingExportableHere);
     }
     let value = if tab {
         json!({"version":1,"connections":rows,"groups":groups.into_values().collect::<Vec<_>>(),"ssh_connections":ssh_profiles,"k8s_connections":[],"tags":[]})
@@ -449,7 +449,7 @@ pub(super) fn encode(
     };
     Ok(ExportDocument {
         contents: serde_json::to_string_pretty(&value)
-            .map_err(|_| "Could not serialize connections.")?,
+            .map_err(|_| ExportError::SerializeConnections)?,
         warnings,
         files,
     })
@@ -457,15 +457,15 @@ pub(super) fn encode(
 
 /// Local Beekeeper passwords are encrypted with a separate application key.
 /// Read only connection metadata; never attempt to interpret ciphertext as a password.
-pub(super) fn read_beekeeper_db(path: &std::path::Path) -> Result<ImportBatch, String> {
+pub(super) fn read_beekeeper_db(path: &std::path::Path) -> Result<ImportBatch, ImportError> {
     use rusqlite::{Connection, OpenFlags, types::ValueRef};
     let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
-        .map_err(|_| "Could not open the Beekeeper database read-only.")?;
+        .map_err(|_| ImportError::BeekeeperOpen)?;
     db.busy_timeout(std::time::Duration::from_millis(250))
-        .map_err(|_| "Could not read the Beekeeper database.")?;
+        .map_err(|_| ImportError::BeekeeperRead)?;
     let mut stmt = db
         .prepare("SELECT * FROM saved_connection WHERE workspaceId = -1 ORDER BY id")
-        .map_err(|_| "This file is not a supported Beekeeper Studio database.")?;
+        .map_err(|_| ImportError::BeekeeperUnsupported)?;
     let names: Vec<_> = stmt
         .column_names()
         .into_iter()
@@ -473,12 +473,9 @@ pub(super) fn read_beekeeper_db(path: &std::path::Path) -> Result<ImportBatch, S
         .collect();
     let mut rows = stmt
         .query([])
-        .map_err(|_| "Could not read Beekeeper connections.")?;
+        .map_err(|_| ImportError::BeekeeperConnections)?;
     let mut values = Vec::new();
-    while let Some(row) = rows
-        .next()
-        .map_err(|_| "Could not read Beekeeper connections.")?
-    {
+    while let Some(row) = rows.next().map_err(|_| ImportError::BeekeeperConnections)? {
         let mut obj = serde_json::Map::new();
         for (index, name) in names.iter().enumerate() {
             if !matches!(
@@ -506,7 +503,7 @@ pub(super) fn read_beekeeper_db(path: &std::path::Path) -> Result<ImportBatch, S
             }
             let value = match row
                 .get_ref(index)
-                .map_err(|_| "Could not read Beekeeper connection settings.")?
+                .map_err(|_| ImportError::BeekeeperSettings)?
             {
                 ValueRef::Integer(n)
                     if matches!(
@@ -524,10 +521,10 @@ pub(super) fn read_beekeeper_db(path: &std::path::Path) -> Result<ImportBatch, S
         }
         values.push(Value::Object(obj));
         if values.len() > 10_000 {
-            return Err("Too many Beekeeper connections to import.".into());
+            return Err(ImportError::BeekeeperTooMany);
         }
     }
-    let bytes = serde_json::to_vec(&values).map_err(|_| "Could not read Beekeeper connections.")?;
+    let bytes = serde_json::to_vec(&values).map_err(|_| ImportError::BeekeeperConnections)?;
     let mut batch = decode(ClientFormat::Beekeeper, &bytes)?;
     batch.warnings.push("Beekeeper app.db passwords are encrypted and are not imported. Use plaintext connection JSON to transfer credentials.".into());
     Ok(batch)

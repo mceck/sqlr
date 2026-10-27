@@ -8,7 +8,25 @@ use egui::{Id, RichText, TextEdit};
 use sqlr_core::{Cell, ColumnMeta, DisplayHint, QueryLanguage, SqlSyntax};
 
 use crate::editor::{Caret, EditorState, Marker, NoCatalog, Pos, query_editor};
+use crate::grid::InputError;
 use crate::theme;
+
+/// Why the value panel's edited text is not a valid value.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ValueEditError {
+    /// The text is not hex bytes.
+    #[error("Not hex bytes: 0x followed by pairs of hex digits")]
+    NotHex,
+    /// The text is not JSON.
+    #[error("Invalid JSON: {message}")]
+    InvalidJson {
+        /// The parser's complaint.
+        message: String,
+    },
+    /// The text is not a value of the column's kind.
+    #[error(transparent)]
+    Input(#[from] InputError),
+}
 
 /// Bytes shown in the hex dump; the rest is counted.
 pub(crate) const HEX_DUMP_MAX: usize = 64 * 1024;
@@ -163,16 +181,18 @@ impl ValueEdit {
     }
 
     /// The edited value, or why it is invalid.
-    pub fn save(&self, meta: &ColumnMeta) -> Result<sqlr_core::Value, String> {
+    pub fn save(&self, meta: &ColumnMeta) -> Result<sqlr_core::Value, ValueEditError> {
         match self.mode {
             ValueEditMode::Hex => crate::grid::parse_hex(&self.text)
                 .map(sqlr_core::Value::Bytes)
-                .ok_or_else(|| "Not hex bytes: 0x followed by pairs of hex digits".into()),
+                .ok_or(ValueEditError::NotHex),
             ValueEditMode::Json => match sqlr_core::json_error(&self.text) {
                 None => Ok(sqlr_core::Value::Text(self.text.clone())),
-                Some(err) => Err(format!("Invalid JSON: {}", err.message)),
+                Some(err) => Err(ValueEditError::InvalidJson {
+                    message: err.message,
+                }),
             },
-            ValueEditMode::Text => crate::grid::parse_input(meta, &self.text),
+            ValueEditMode::Text => Ok(crate::grid::parse_input(meta, &self.text)?),
         }
     }
 }
@@ -214,7 +234,7 @@ pub fn value_editor(
         if ui.button("Save").clicked() {
             match edit.save(meta) {
                 Ok(value) => action = Some(ValueEditAction::Save(value)),
-                Err(e) => edit.error = Some(e),
+                Err(e) => edit.error = Some(e.to_string()),
             }
         }
         let null = ui

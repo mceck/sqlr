@@ -6,9 +6,9 @@ use std::collections::BTreeMap;
 
 use egui::{DragValue, RichText};
 use sqlr_core::{
-    ColumnGen, ConstraintDef, DataGenSpec, Endpoint, Generator, ObjectDef, ObjectKind, ObjectRef,
-    RowGenerator, TableColumn, TableDef, TableRef, TransferOptions, TransferSpec, Value,
-    default_generator,
+    ColumnGen, ConstraintDef, DataGenSpec, DatagenError, Endpoint, Generator, ObjectDef,
+    ObjectKind, ObjectRef, RowGenerator, TableColumn, TableDef, TableRef, TransferOptions,
+    TransferSpec, Value, default_generator,
 };
 use sqlr_engine::{Engine, JobId, JobOutcome, JobProgress};
 use sqlr_ui::theme::{self, Spacing};
@@ -29,7 +29,7 @@ pub(crate) struct DatagenDialog {
     types: Vec<(String, String)>,
     rows: u64,
     seed: u64,
-    preview: Option<Result<Vec<Vec<Value>>, String>>,
+    preview: Option<Result<Vec<Vec<Value>>, DatagenError>>,
     run: Option<JobId>,
     progress: JobProgress,
     outcome: Option<Result<String, String>>,
@@ -186,7 +186,7 @@ impl DatagenDialog {
             d.body(|ui| {
                 let p = theme::palette(ui.ctx());
                 if let Some(e) = &self.error {
-                    ui.colored_label(p.error, e);
+                    ui.colored_label(p.error, e.to_string());
                     return;
                 }
                 if self.load.is_some() {
@@ -251,7 +251,7 @@ impl DatagenDialog {
                             });
                     }
                     Some(Err(e)) => {
-                        ui.colored_label(p.error, e);
+                        ui.colored_label(p.error, e.to_string());
                     }
                     None => {}
                 }

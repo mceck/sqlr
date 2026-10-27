@@ -12,6 +12,65 @@ use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use crate::encode::{CsvOptions, TextFormat};
 use crate::value::Value;
 
+/// Why a text file could not be read back into rows.
+#[derive(Debug, thiserror::Error)]
+pub enum ReadError {
+    /// The input is not valid UTF-8.
+    #[error("The file is not UTF-8 text")]
+    NotUtf8,
+    /// The input could not be read.
+    #[error("{0}")]
+    Io(std::io::Error),
+    /// The format is write-only.
+    #[error("This format cannot be read back")]
+    WriteOnlyFormat,
+    /// A quoted CSV field is never closed.
+    #[error("Unclosed quote starting on line {line}")]
+    UnclosedQuote {
+        /// The line the quoted field starts on.
+        line: usize,
+    },
+    /// A closing quote is followed by something other than a delimiter or line end.
+    #[error("Unexpected \"{found}\" after a closing quote on line {line}")]
+    AfterClosingQuote {
+        /// The unexpected character.
+        found: char,
+        /// The line of the record.
+        line: usize,
+    },
+    /// A record has more fields than the header names.
+    #[error("Line {line} has {found} fields, expected {expected}")]
+    TooManyFields {
+        /// The line the record starts on.
+        line: usize,
+        /// The number of fields found.
+        found: usize,
+        /// The number of columns.
+        expected: usize,
+    },
+    /// A JSON Lines line is not a JSON object.
+    #[error("Line {line}: {source}")]
+    JsonLine {
+        /// The line.
+        line: u64,
+        /// The parser's complaint.
+        source: serde_json::Error,
+    },
+    /// The input is not a JSON array of objects.
+    #[error("Expected a JSON array of objects: {0}")]
+    JsonArray(serde_json::Error),
+}
+
+impl From<std::io::Error> for ReadError {
+    fn from(e: std::io::Error) -> Self {
+        if e.kind() == std::io::ErrorKind::InvalidData {
+            Self::NotUtf8
+        } else {
+            Self::Io(e)
+        }
+    }
+}
+
 /// Reads `reader` in `format`, calling `on_row(columns, line, row)` for each row: the
 /// column names known so far, the line the row starts on (1-based; for a JSON array, the
 /// object's position in it) and its values in column order. A row of objects may be
@@ -24,24 +83,14 @@ pub fn read_rows<R: BufRead>(
     format: &TextFormat,
     mut reader: R,
     on_row: impl FnMut(&[String], u64, Vec<Value>) -> bool,
-) -> Result<Vec<String>, String> {
-    skip_bom(&mut reader).map_err(|e| io_message(&e))?;
+) -> Result<Vec<String>, ReadError> {
+    skip_bom(&mut reader)?;
     match format {
         TextFormat::Csv(o) => read_delimited(o, reader, on_row),
         TextFormat::Tsv => read_delimited(&CsvOptions::tsv(), reader, on_row),
         TextFormat::JsonLines => read_json_lines(reader, on_row),
         TextFormat::Json => read_json_array(reader, on_row),
-        TextFormat::SqlInsert { .. } | TextFormat::Markdown => {
-            Err("This format cannot be read back".into())
-        }
-    }
-}
-
-fn io_message(e: &std::io::Error) -> String {
-    if e.kind() == std::io::ErrorKind::InvalidData {
-        "The file is not UTF-8 text".into()
-    } else {
-        e.to_string()
+        TextFormat::SqlInsert { .. } | TextFormat::Markdown => Err(ReadError::WriteOnlyFormat),
     }
 }
 
@@ -58,7 +107,7 @@ struct Chars<R> {
     line: String,
     pos: usize,
     eof: bool,
-    error: Option<String>,
+    error: Option<ReadError>,
 }
 
 impl<R: BufRead> Chars<R> {
@@ -88,7 +137,7 @@ impl<R: BufRead> Chars<R> {
             }
             Ok(_) => true,
             Err(e) => {
-                self.error = Some(io_message(&e));
+                self.error = Some(e.into());
                 self.eof = true;
                 false
             }
@@ -122,7 +171,7 @@ fn next_record<R: BufRead>(
     delimiter: char,
     quote: char,
     line: &mut usize,
-) -> Result<Option<(usize, Vec<Field>)>, String> {
+) -> Result<Option<(usize, Vec<Field>)>, ReadError> {
     if chars.peek().is_none() {
         return match chars.error.take() {
             Some(e) => Err(e),
@@ -146,7 +195,7 @@ fn next_record<R: BufRead>(
                         return Err(chars
                             .error
                             .take()
-                            .unwrap_or(format!("Unclosed quote starting on line {start}")));
+                            .unwrap_or(ReadError::UnclosedQuote { line: start }));
                     }
                     Some(c) if c == quote => {
                         if chars.peek() == Some(quote) {
@@ -194,9 +243,10 @@ fn next_record<R: BufRead>(
                 return Ok(Some((start_line, record)));
             }
             Some(c) => {
-                return Err(format!(
-                    "Unexpected \"{c}\" after a closing quote on line {line}"
-                ));
+                return Err(ReadError::AfterClosingQuote {
+                    found: c,
+                    line: *line,
+                });
             }
         }
     }
@@ -206,7 +256,7 @@ fn read_delimited<R: BufRead>(
     o: &CsvOptions,
     reader: R,
     mut on_row: impl FnMut(&[String], u64, Vec<Value>) -> bool,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, ReadError> {
     let mut chars = Chars::new(reader);
     let mut line = 1;
     let mut names: Vec<String> = Vec::new();
@@ -230,10 +280,11 @@ fn read_delimited<R: BufRead>(
         }
         // A short row is padded with NULLs; a long one has fields nothing names.
         if record.len() > width {
-            return Err(format!(
-                "Line {start} has {} fields, expected {width}",
-                record.len()
-            ));
+            return Err(ReadError::TooManyFields {
+                line: start,
+                found: record.len(),
+                expected: width,
+            });
         }
         let mut row: Vec<Value> = record
             .into_iter()
@@ -332,13 +383,13 @@ impl<F: FnMut(&[String], u64, Vec<Value>) -> bool> ObjectRows<F> {
 fn read_json_lines<R: BufRead>(
     mut reader: R,
     on_row: impl FnMut(&[String], u64, Vec<Value>) -> bool,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, ReadError> {
     let mut rows = ObjectRows::new(on_row);
     let mut text = String::new();
     let mut line = 0u64;
     loop {
         text.clear();
-        if reader.read_line(&mut text).map_err(|e| io_message(&e))? == 0 {
+        if reader.read_line(&mut text)? == 0 {
             break;
         }
         line += 1;
@@ -346,7 +397,7 @@ fn read_json_lines<R: BufRead>(
             continue;
         }
         let object = serde_json::from_str::<OrderedObject>(&text)
-            .map_err(|e| format!("Line {line}: {e}"))?;
+            .map_err(|source| ReadError::JsonLine { line, source })?;
         if !rows.push(line, object) {
             break;
         }
@@ -391,7 +442,7 @@ impl<'de, F: FnMut(&[String], u64, Vec<Value>) -> bool> Visitor<'de> for ArraySe
 fn read_json_array<R: BufRead>(
     reader: R,
     on_row: impl FnMut(&[String], u64, Vec<Value>) -> bool,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, ReadError> {
     let mut rows = ObjectRows::new(on_row);
     let mut de = serde_json::Deserializer::from_reader(reader);
     let stopped = std::cell::Cell::new(false);
@@ -403,10 +454,8 @@ fn read_json_array<R: BufRead>(
     match outcome {
         // Stopping early leaves the array unfinished, which serde reports as an error.
         _ if stopped.get() => {}
-        Ok(()) => de
-            .end()
-            .map_err(|e| format!("Expected a JSON array of objects: {e}"))?,
-        Err(e) => return Err(format!("Expected a JSON array of objects: {e}")),
+        Ok(()) => de.end().map_err(ReadError::JsonArray)?,
+        Err(e) => return Err(ReadError::JsonArray(e)),
     }
     Ok(rows.names)
 }
@@ -449,7 +498,7 @@ mod tests {
             |_, _, _| true,
         )
         .unwrap_err();
-        assert!(err.contains("Line 2 has 3 fields, expected 2"), "{err}");
+        assert_eq!(err.to_string(), "Line 2 has 3 fields, expected 2");
     }
 
     #[test]
@@ -498,8 +547,11 @@ mod tests {
 
     #[test]
     fn reports_bad_input() {
-        let fail =
-            |format: &TextFormat, text: &[u8]| read_rows(format, text, |_, _, _| true).unwrap_err();
+        let fail = |format: &TextFormat, text: &[u8]| {
+            read_rows(format, text, |_, _, _| true)
+                .unwrap_err()
+                .to_string()
+        };
         let csv = TextFormat::Csv(CsvOptions::default());
         assert!(fail(&csv, b"a\n\"x").contains("Unclosed quote"));
         assert!(fail(&csv, b"a,b\n1,2,3\n").contains("Line 2 has 3 fields"));

@@ -88,7 +88,7 @@ impl Shared {
             }
             Ok(Ok(Some(_))) => JobOutcome::Cancelled,
             Ok(Ok(None)) => JobOutcome::Cancelled,
-            Ok(Err(message)) => JobOutcome::Failed(DriverError::new(ErrorKind::Other, message)),
+            Ok(Err(e)) => JobOutcome::Failed(DriverError::new(ErrorKind::Other, e.to_string())),
             Err(error) => JobOutcome::Failed(DriverError::new(ErrorKind::Other, error.to_string())),
         }
     }
@@ -154,8 +154,11 @@ impl Shared {
                         let values = (0..chunk.columns().len())
                             .map(|col| Some(Value::from_cell(chunk.cell(row, col))))
                             .collect();
-                        if let Err(message) = builder.push(values) {
-                            return JobOutcome::Failed(DriverError::new(ErrorKind::Other, message));
+                        if let Err(e) = builder.push(values) {
+                            return JobOutcome::Failed(DriverError::new(
+                                ErrorKind::Other,
+                                e.to_string(),
+                            ));
                         }
                     }
                     job.progress(JobProgress {

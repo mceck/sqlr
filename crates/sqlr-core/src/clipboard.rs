@@ -5,6 +5,20 @@ use std::ops::RangeInclusive;
 
 use crate::{Cell, ColumnMeta, Dialect, Encoder, RowBuffer, TextFormat, Value};
 
+/// Why clipboard data cannot be built.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ClipboardError {
+    /// A pushed row has another width than the clipboard's columns.
+    #[error("Clipboard row width does not match its columns")]
+    RowWidth,
+    /// The data and its text exceed [`MAX_CLIPBOARD_BYTES`].
+    #[error("The clipboard exceeds 128 MiB; export the results instead")]
+    TooLarge,
+    /// A selected column no longer exists in the result.
+    #[error("Clipboard column no longer exists")]
+    ColumnGone,
+}
+
 /// Text plus owned cell values. `None` is an unselected hole, distinct from SQL NULL.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GridClipboard {
@@ -73,9 +87,9 @@ impl<'d> ClipboardBuilder<'d> {
     }
 
     /// Appends a row, failing when its width is wrong or the clipboard exceeds `MAX_CLIPBOARD_BYTES`.
-    pub fn push(&mut self, row: Vec<Option<Value>>) -> Result<(), String> {
+    pub fn push(&mut self, row: Vec<Option<Value>>) -> Result<(), ClipboardError> {
         if row.len() != self.data.columns.len() {
-            return Err("Clipboard row width does not match its columns".into());
+            return Err(ClipboardError::RowWidth);
         }
         self.value_bytes += std::mem::size_of::<Vec<Option<Value>>>()
             + row.len() * std::mem::size_of::<Option<Value>>()
@@ -94,7 +108,7 @@ impl<'d> ClipboardBuilder<'d> {
             .collect();
         self.encoder.row(&cells, &mut self.data.text);
         if self.value_bytes.saturating_add(self.data.text.len()) > MAX_CLIPBOARD_BYTES {
-            return Err("The clipboard exceeds 128 MiB; export the results instead".into());
+            return Err(ClipboardError::TooLarge);
         }
         self.data.rows.push(row);
         Ok(())
@@ -123,7 +137,7 @@ impl ClipboardSource {
         format: TextFormat,
         dialect: Option<&dyn Dialect>,
         mut progress: impl FnMut(usize, usize) -> bool,
-    ) -> Result<Option<GridClipboard>, String> {
+    ) -> Result<Option<GridClipboard>, ClipboardError> {
         let columns = self
             .cols
             .iter()
@@ -132,7 +146,7 @@ impl ClipboardSource {
                     .columns()
                     .get(c)
                     .cloned()
-                    .ok_or_else(|| "Clipboard column no longer exists".to_string())
+                    .ok_or(ClipboardError::ColumnGone)
             })
             .collect::<Result<Vec<_>, _>>()?;
         let mut builder = ClipboardBuilder::new(columns, format, dialect);
@@ -169,6 +183,22 @@ impl ClipboardSource {
 mod tests {
     use super::*;
     use crate::{ChunkBuilder, ColumnKind, CsvOptions, DisplayHint};
+
+    #[test]
+    fn clipboard_errors_keep_their_messages() {
+        assert_eq!(
+            ClipboardError::RowWidth.to_string(),
+            "Clipboard row width does not match its columns"
+        );
+        assert_eq!(
+            ClipboardError::TooLarge.to_string(),
+            "The clipboard exceeds 128 MiB; export the results instead"
+        );
+        assert_eq!(
+            ClipboardError::ColumnGone.to_string(),
+            "Clipboard column no longer exists"
+        );
+    }
 
     #[test]
     fn selection_encoding_keeps_holes_pending_values_and_view_order() {

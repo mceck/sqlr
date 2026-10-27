@@ -459,15 +459,17 @@ fn migrate(repo: &ConnectionRepo, request: MigrationRequest) -> Result<Migration
             })
         }
         MigrationRequest::Read(path) => {
-            let (format, batch) = client_migration::read_source(&path)?;
+            let (format, batch) =
+                client_migration::read_source(&path).map_err(|e| e.to_string())?;
             Ok(MigrationResult::Loaded { format, batch })
         }
         MigrationRequest::Clipboard(text) => {
             if text.len() > 16 * 1024 * 1024 {
                 return Err("Clipboard contents exceed the 16 MiB limit.".into());
             }
-            let format = client_migration::detect(text.as_bytes())?;
-            let batch = client_migration::decode(format, text.as_bytes())?;
+            let format = client_migration::detect(text.as_bytes()).map_err(|e| e.to_string())?;
+            let batch =
+                client_migration::decode(format, text.as_bytes()).map_err(|e| e.to_string())?;
             Ok(MigrationResult::Loaded { format, batch })
         }
         MigrationRequest::Import(mut connections) => {
@@ -508,10 +510,12 @@ fn migrate(repo: &ConnectionRepo, request: MigrationRequest) -> Result<Migration
                     credentials.insert(c.id.clone(), secrets);
                 }
                 let doc =
-                    client_migration::encode_with_credentials(format, &connections, &credentials)?;
-                client_migration::save_document(&path, doc)?
+                    client_migration::encode_with_credentials(format, &connections, &credentials)
+                        .map_err(|e| e.to_string())?;
+                client_migration::save_document(&path, doc).map_err(|e| e.to_string())?
             } else {
-                client_migration::save_export(&path, format, &connections)?
+                client_migration::save_export(&path, format, &connections)
+                    .map_err(|e| e.to_string())?
             };
             Ok(MigrationResult::Exported { path, warnings })
         }

@@ -2,7 +2,7 @@
 //! same jobs the wizards start, with every run recorded.
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 
@@ -132,9 +132,44 @@ fn describe(outcome: &Option<JobOutcome>) -> (&'static str, String) {
     }
 }
 
+/// Why a saved task cannot start.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum TaskError {
+    /// The task was deleted.
+    #[error("This task no longer exists")]
+    Gone,
+    /// A connection the task uses is not connected.
+    #[error("The connection \"{id}\" is not connected, or no longer exists")]
+    NotConnected {
+        /// The connection id.
+        id: String,
+    },
+    /// An input file does not exist.
+    #[error("The file {} does not exist", path.display())]
+    FileMissing {
+        /// The missing file.
+        path: PathBuf,
+    },
+    /// The output's nearest existing ancestor is not a directory.
+    #[error("{} is not a directory", path.display())]
+    NotADirectory {
+        /// The ancestor.
+        path: PathBuf,
+    },
+    /// The output's directory is read-only.
+    #[error("The directory {} is read-only", path.display())]
+    ReadOnlyDirectory {
+        /// The directory.
+        path: PathBuf,
+    },
+    /// Script tasks are not implemented.
+    #[error("Script tasks cannot run yet")]
+    ScriptUnsupported,
+}
+
 /// Whether a file can be written at `path`: its nearest existing ancestor is a writable
 /// directory.
-fn writable_target(path: &Path) -> Result<(), String> {
+fn writable_target(path: &Path) -> Result<(), TaskError> {
     let mut dir = path.parent();
     while let Some(d) = dir {
         if d.as_os_str().is_empty() {
@@ -142,9 +177,13 @@ fn writable_target(path: &Path) -> Result<(), String> {
         }
         if let Ok(meta) = std::fs::metadata(d) {
             return if !meta.is_dir() {
-                Err(format!("{} is not a directory", d.display()))
+                Err(TaskError::NotADirectory {
+                    path: d.to_path_buf(),
+                })
             } else if meta.permissions().readonly() {
-                Err(format!("The directory {} is read-only", d.display()))
+                Err(TaskError::ReadOnlyDirectory {
+                    path: d.to_path_buf(),
+                })
             } else {
                 Ok(())
             };
@@ -172,19 +211,19 @@ impl Engine {
 
     /// Checks what a run needs before it starts: connected connections, input files and a
     /// writable place for output. The message names what is wrong.
-    fn validate_task(&self, task: &SavedTask) -> Result<(), String> {
+    fn validate_task(&self, task: &SavedTask) -> Result<(), TaskError> {
         for id in task.spec.connections() {
             if self.shared.live_io(&id).is_none() {
-                return Err(format!(
-                    "The connection \"{id}\" is not connected, or no longer exists"
-                ));
+                return Err(TaskError::NotConnected { id });
             }
         }
         let exists = |path: &Path| {
             if path.exists() {
                 Ok(())
             } else {
-                Err(format!("The file {} does not exist", path.display()))
+                Err(TaskError::FileMissing {
+                    path: path.to_path_buf(),
+                })
             }
         };
         match &task.spec {
@@ -212,13 +251,13 @@ impl Engine {
     /// Runs a saved task as the job its spec stands for, and records the run (start, end,
     /// outcome, summary and log). `Err` is the reason it could not start; nothing is
     /// recorded then.
-    pub fn run_task(&self, id: &str) -> Result<JobId, String> {
+    pub fn run_task(&self, id: &str) -> Result<JobId, TaskError> {
         let task = self
             .tasks()
             .iter()
             .find(|t| t.id == id)
             .cloned()
-            .ok_or_else(|| "This task no longer exists".to_string())?;
+            .ok_or(TaskError::Gone)?;
         self.validate_task(&task)?;
         let job = match &task.spec {
             TaskSpec::Dump {
@@ -235,7 +274,7 @@ impl Engine {
             } => self.run_restore(conn, database, options.clone(), input.clone()),
             TaskSpec::Transfer(spec) => self.transfer(spec.clone()),
             TaskSpec::Script { .. } => {
-                return Err("Script tasks cannot run yet".to_string());
+                return Err(TaskError::ScriptUnsupported);
             }
         };
         let started = now_ms();

@@ -80,7 +80,7 @@ async fn send_docs(mut stream: Box<dyn DocStream>, tx: mpsc::Sender<super::pipel
         let batch = match stream.next_chunk(EXPORT_CHUNK).await {
             Ok(Some(chunk)) => Ok(chunk.docs().collect()),
             Ok(None) => break,
-            Err(e) => Err(e.message),
+            Err(e) => Err(e.into()),
         };
         let failed = batch.is_err();
         if tx.send(batch).await.is_err() || failed {
@@ -112,7 +112,7 @@ async fn send_rows(
             None => match stream.next_chunk(EXPORT_CHUNK).await {
                 Ok(Some(chunk)) => Ok(rows_of(chunk.docs().collect())),
                 Ok(None) => break,
-                Err(e) => Err(e.message),
+                Err(e) => Err(e.into()),
             },
         };
         let failed = batch.is_err();

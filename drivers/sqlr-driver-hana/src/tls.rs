@@ -12,8 +12,23 @@ fn base64_decode(text: &str) -> Option<Vec<u8>> {
     sqlr_driver_sdk::base64_decode(&compact).ok()
 }
 
+/// Why a PEM CA bundle cannot be used.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+enum PemError {
+    #[error("an END without a BEGIN")]
+    EndWithoutBegin,
+    #[error("a certificate is not valid base64")]
+    InvalidBase64,
+    #[error("an empty certificate")]
+    EmptyCertificate,
+    #[error("a certificate has no END line")]
+    NoEnd,
+    #[error("no certificate found")]
+    NoCertificate,
+}
+
 /// Every `CERTIFICATE` block of `pem`, DER-encoded.
-fn certificates(pem: &str) -> Result<Vec<Vec<u8>>, String> {
+fn certificates(pem: &str) -> Result<Vec<Vec<u8>>, PemError> {
     let mut found = Vec::new();
     let mut body: Option<String> = None;
     for line in pem.lines() {
@@ -21,10 +36,10 @@ fn certificates(pem: &str) -> Result<Vec<Vec<u8>>, String> {
         if line == "-----BEGIN CERTIFICATE-----" {
             body = Some(String::new());
         } else if line == "-----END CERTIFICATE-----" {
-            let text = body.take().ok_or("an END without a BEGIN")?;
-            let der = base64_decode(&text).ok_or("a certificate is not valid base64")?;
+            let text = body.take().ok_or(PemError::EndWithoutBegin)?;
+            let der = base64_decode(&text).ok_or(PemError::InvalidBase64)?;
             if der.is_empty() {
-                return Err("an empty certificate".into());
+                return Err(PemError::EmptyCertificate);
             }
             found.push(der);
         } else if let Some(text) = &mut body {
@@ -32,10 +47,10 @@ fn certificates(pem: &str) -> Result<Vec<Vec<u8>>, String> {
         }
     }
     if body.is_some() {
-        return Err("a certificate has no END line".into());
+        return Err(PemError::NoEnd);
     }
     if found.is_empty() {
-        return Err("no certificate found".into());
+        return Err(PemError::NoCertificate);
     }
     Ok(found)
 }
@@ -84,6 +99,26 @@ mod tests {
         let kept = dir.path().to_path_buf();
         drop(dir);
         assert!(!kept.exists(), "the directory goes away with its owner");
+    }
+
+    #[test]
+    fn pem_errors_keep_their_messages() {
+        assert_eq!(
+            certificates("-----END CERTIFICATE-----")
+                .unwrap_err()
+                .to_string(),
+            "an END without a BEGIN"
+        );
+        assert_eq!(
+            certificates("nothing here").unwrap_err().to_string(),
+            "no certificate found"
+        );
+        assert_eq!(
+            certificates("-----BEGIN CERTIFICATE-----\nMAMC")
+                .unwrap_err()
+                .to_string(),
+            "a certificate has no END line"
+        );
     }
 
     #[test]
