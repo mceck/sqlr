@@ -14,7 +14,14 @@ struct SpillFile(File);
 
 impl SpillFile {
     fn new() -> io::Result<Self> {
-        tempfile::tempfile().map(Self)
+        let file = tempfile::tempfile()?;
+        // On Linux `O_TMPFILE` creates the file with the umask default (0644), not 0600.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        }
+        Ok(Self(file))
     }
 
     fn store(self: &Arc<Self>, chunk: &ResultChunk) -> io::Result<ResultChunk> {
