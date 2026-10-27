@@ -100,7 +100,11 @@ fn harness_with(
         editing: script.editing.clone().or(Some(default_editing)),
         objects: vec![ObjectDef::Table(orders())],
         tables_folder: Some(tables.path.clone()),
-        tree: vec![s, tables, orders_node],
+        tree: if script.tree.is_empty() {
+            vec![s, tables, orders_node]
+        } else {
+            script.tree.clone()
+        },
         default_schemas: vec!["s".into()],
         catalog: vec![sqlr_core::SchemaCatalog {
             schema: "s".into(),
@@ -991,4 +995,130 @@ fn keymap_visual_audit() {
     h.get_by_label("Keymap").click();
     h.run_steps(5);
     visual::capture(&mut h, "prefs-keymap", false);
+}
+
+fn failed_database_drop(
+    own: bool,
+) -> (
+    Harness<'static, SqlrApp>,
+    Arc<FakeDriver>,
+    tempfile::TempDir,
+) {
+    let mut support = editing(false);
+    support.drop.push(ObjectKind::Database);
+    let (mut h, driver, dir) = harness(FakeScript {
+        editing: Some(support),
+        tree: vec![node(&NodePath::root(), "busy_db", NodeKind::Database)],
+        fail_matching: Some("DROP DATABASE".into()),
+        admin: Some(sqlr_testkit::FakeAdmin {
+            support: sqlr_core::AdminSupport {
+                sessions: true,
+                ..Default::default()
+            },
+            sessions: vec![
+                sqlr_core::SessionInfo {
+                    id: if own { "1" } else { "42" }.into(),
+                    database: Some("busy_db".into()),
+                    user: "blocking_user".into(),
+                    client: Some("psql 127.0.0.1:5432".into()),
+                    state: "idle".into(),
+                    started_ms: Some(1234),
+                    ..Default::default()
+                },
+                sqlr_core::SessionInfo {
+                    id: "99".into(),
+                    database: Some("another_db".into()),
+                    user: "unrelated_user".into(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }),
+        ..Default::default()
+    });
+    h.get_by_label("Expand fake-conn").click();
+    wait_for_label(&mut h, "busy_db");
+    context_menu(&mut h, "busy_db", None, "Drop…");
+    click_in_modal(&mut h, "Drop");
+    wait_for_label(&mut h, "Database in use");
+    wait_for_label(&mut h, "blocking_user");
+    (h, driver, dir)
+}
+
+#[test]
+fn failed_database_drop_lists_only_its_sessions_and_confirms_termination() {
+    let (mut h, driver, _dir) = failed_database_drop(false);
+    h.get_by_label("42");
+    h.get_by_label("psql 127.0.0.1:5432");
+    assert!(h.query_by_label("unrelated_user").is_none());
+    click_in_modal(&mut h, "Terminate session 42");
+    assert!(
+        !driver
+            .admin_calls()
+            .iter()
+            .any(|c| c.starts_with("terminate"))
+    );
+    h.get_by_label("Terminate session 42?");
+    click_in_modal(&mut h, "Terminate");
+    step_until(&mut h, "the session termination", |_| {
+        driver
+            .admin_calls()
+            .iter()
+            .any(|c| c == "terminate 42 started 1234")
+    });
+    wait_for_label(&mut h, "Retry drop");
+    click_in_modal(&mut h, "Retry drop");
+    wait_for_label(&mut h, "Database in use");
+    assert_eq!(
+        driver
+            .executed()
+            .iter()
+            .filter(|s| s.contains("DROP DATABASE"))
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn database_drop_termination_of_sqlr_session_asks_twice_and_can_be_cancelled() {
+    let (mut h, driver, _dir) = failed_database_drop(true);
+    h.get_by_label("sqlr session");
+    click_in_modal(&mut h, "Terminate session 1");
+    click_in_modal(&mut h, "Terminate");
+    wait_for_label(&mut h, "Session 1 belongs to sqlr. Terminate it anyway?");
+    assert!(
+        !driver
+            .admin_calls()
+            .iter()
+            .any(|c| c.starts_with("terminate"))
+    );
+    click_in_modal(&mut h, "Cancel");
+    wait_for_label(&mut h, "Database in use");
+    assert!(
+        !driver
+            .admin_calls()
+            .iter()
+            .any(|c| c.starts_with("terminate"))
+    );
+    click_in_modal(&mut h, "Terminate session 1");
+    click_in_modal(&mut h, "Terminate");
+    click_in_modal(&mut h, "Terminate it anyway");
+    step_until(&mut h, "the own session termination", |_| {
+        driver
+            .admin_calls()
+            .iter()
+            .any(|c| c == "terminate 1 started 1234")
+    });
+}
+
+#[test]
+#[ignore = "writes a screenshot; needs a wgpu adapter"]
+fn database_drop_screenshot() {
+    let (mut h, _, _dir) = failed_database_drop(false);
+    sqlr_ui::theme::install_fonts(&h.ctx, &[]);
+    h.run_steps(5);
+    h.render()
+        .expect("render")
+        .save(std::env::temp_dir().join("sqlr-database-drop.png"))
+        .unwrap();
 }

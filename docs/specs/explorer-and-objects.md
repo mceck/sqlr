@@ -218,6 +218,14 @@ Roles are created in the administration panel ("Roles are created in the adminis
 - **Drop…** and **Truncate…** always ask first, in a dialog that shows the statements: "Drop <kind> <name>?" or "Delete every row of <name>?". When the Dialect writes a different statement with `CASCADE`, the dialog offers a checkbox ("Cascade: also drop the objects that depend on it" / "Cascade: also empty the tables that reference it"). After it, the profile's confirmation applies too. The result is reported as "Dropped <kind> <name>" or "Truncated <name>".
 - Explorer actions run as DDL applies on the explorer session, with the Driver's transactional DDL setting and the object's database, and reload the Node's parent.
 
+#### Recovering a failed database drop
+
+A failed database drop opens a recovery dialog when the Connection supports Server sessions. It keeps the original server error visible and loads the sessions whose database exactly matches the database being dropped. Each row shows its server id (PID on PostgreSQL), user, client, state and whether it belongs to sqlr. With sessions present the heading reads "Database in use". An empty snapshot explains that the database has no visible sessions, and an unsuccessful snapshot shows its error. **Refresh** loads a new snapshot.
+
+**Terminate session <id>** asks for confirmation and explains that active work will be interrupted and open transactions rolled back. A session belonging to sqlr asks a second time. Termination uses the session id and the start time captured when its row was selected, so a reused id is left alone. The dialog refreshes the sessions after each termination and keeps action errors visible.
+
+**Retry drop** reruns the original confirmed statements with the same database and refresh paths. The original error stays available when another blocker or a permission error still prevents the drop. Read-only and transaction checks apply to retry, and read-only checks apply to termination. Closing the dialog releases its snapshot and action Jobs.
+
 ### Administration
 
 Administration panels open from the Connection menu and from the Palette (⌘⇧P), each as a tab. A panel needs a live connection ("Connect first: administration needs a live connection"). A Driver declares what it administers, and panels it does not support stay hidden:
@@ -306,6 +314,7 @@ flowchart LR
 - **Schema change lists are derived from two definitions, never recorded.** Undoing an edit removes its change, and a partial apply leaves exactly what did not apply as pending.
 - **Only what the Driver declares is shown.** The object-editing descriptor and the administration support decide menu entries, sub-tabs and panels, so the UI never offers an action that cannot work.
 - **DDL applies follow per-statement placement.** Transactional DDL runs all-or-nothing where the database supports it; statements that cannot run inside a transaction (SQLite's foreign key pragma) run alone, and cleanup always runs, which makes the SQLite table rebuild safe.
+- **Database drop recovery reuses administration Jobs.** Server session listing and termination follow the same driver permissions and session identity checks as the Sessions and locks panel. Keeping the confirmed drop context makes retries independent of later explorer selection changes.
 - **Applies refuse to run beside an open transaction.** A transaction that wrote on another Session may hold locks the DDL would wait on forever; refusing with a clear message is better than a hang.
 - **The Catalog cache persists only the Connection's own database.** It is what autocomplete needs at startup; other databases' catalogs are cheap to reload and would otherwise grow the store without bound.
 - **Invalidate the whole Catalog after any DDL.** Working out which schemas a statement touched would need a parser per Dialect; reloading a Catalog is cheap and the stale data stays visible meanwhile.
