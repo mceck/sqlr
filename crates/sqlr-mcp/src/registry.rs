@@ -51,6 +51,17 @@ pub static TOOLS: std::sync::LazyLock<Vec<ToolSpec>> = std::sync::LazyLock::new(
             }),
         },
         ToolSpec {
+            name: "test_connection",
+            description: "Check that a connection opens, as the connection dialog's Test does, without showing it in the Explorer. Use it after creating or fixing a connection. Returns {ok:true, server_version} or {ok:false, error:{code, message}} with code auth, connection, tls or timeout; missing secret fields answer secret_required naming them. Works on exposed connections and on those this session created.",
+            schema: json!({
+                "type": "object",
+                "required": ["connection_id"],
+                "properties": {
+                    "connection_id": {"type": "string", "description": "Connection ID: an exposed one from config_list(target=connections), or one this session created with config_write."}
+                }
+            }),
+        },
+        ToolSpec {
             name: "browse",
             description: "Explore an exposed connection's database/catalog tree. Omit path or use [] for root children, then pass a returned node's full path unchanged to expand it. Returns names, kinds, paths and has_children. Use describe_object for relational columns and keys, run_query for data.",
             schema: json!({
@@ -73,6 +84,18 @@ pub static TOOLS: std::sync::LazyLock<Vec<ToolSpec>> = std::sync::LazyLock::new(
                     "database": {"type": "string", "description": "Database containing the table; use the context discovered from the catalog."},
                     "schema": {"type": "string", "description": "Schema containing the table, when the driver supports schemas."},
                     "name": {"type": "string", "description": "Table name only; pass database and schema separately."}
+                }
+            }),
+        },
+        ToolSpec {
+            name: "get_ddl",
+            description: "Read the CREATE script of a catalog object (table, view, index, routine, sequence…) exactly as sqlr's DDL viewer shows it. Pass a node path returned by browse unchanged. Read-only; relational connections only.",
+            schema: json!({
+                "type": "object",
+                "required": ["connection_id", "path"],
+                "properties": {
+                    "connection_id": {"type": "string", "description": "Exposed connection ID returned by config_list(target=connections), not its display name."},
+                    "path": {"type": "array", "items": {"type": "string"}, "description": "Full node path as returned by browse."}
                 }
             }),
         },
@@ -105,6 +128,20 @@ pub static TOOLS: std::sync::LazyLock<Vec<ToolSpec>> = std::sync::LazyLock::new(
             }),
         },
         ToolSpec {
+            name: "explain_query",
+            description: "Show the plan of one SQL statement on the agent session: execution and planning time, cost, estimated and actual rows, plain-language warnings, the operator mix and the raw plan (up to 256 KiB). analyze executes the statement: refused for a write on Read exposure, and a write waits for approval and runs in a transaction that is always rolled back. Answers busy while the agent session has an open transaction, unsupported when the driver has no plans.",
+            schema: json!({
+                "type": "object",
+                "required": ["connection_id", "query"],
+                "properties": {
+                    "connection_id": {"type": "string", "description": "Exposed connection ID returned by config_list(target=connections), not its display name."},
+                    "query": {"type": "string", "description": "Exactly one SQL statement: a query or a data change."},
+                    "database": {"type": "string", "description": "Optional database execution context discovered via browse."},
+                    "analyze": {"type": "boolean", "default": false, "description": "Execute the statement to measure actual rows and times."}
+                }
+            }),
+        },
+        ToolSpec {
             name: "get_query_result",
             description: "Poll a running run_query result or retrieve another page using its query_id. Do not rerun the statement to fetch more rows. Offset is zero-based; advance it by the number of rows/documents actually returned, since the byte budget can shorten a page. Results expire after five idle minutes or close_result.",
             schema: json!({
@@ -133,6 +170,18 @@ pub static TOOLS: std::sync::LazyLock<Vec<ToolSpec>> = std::sync::LazyLock::new(
                 "type": "object",
                 "required": ["query_id"],
                 "properties": {"query_id": {"type": "string", "description": "Opaque query_id returned by run_query; not a tab ID or a connection ID."}}
+            }),
+        },
+        ToolSpec {
+            name: "search_history",
+            description: "Search the statements run earlier (by the person or agents) on exposed connections, newest first, by case-insensitive substring of the SQL as the History panel does. Returns SQL, connection, database, start time, duration and outcome. Default limit 50, maximum 200.",
+            schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Case-insensitive substring of the SQL; omit to list the newest entries."},
+                    "connection_id": {"type": "string", "description": "Exposed connection ID returned by config_list(target=connections), not its display name."},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50, "description": "Maximum entries to return."}
+                }
             }),
         },
         ToolSpec {

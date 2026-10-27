@@ -57,19 +57,45 @@ impl Db {
 
     /// Newest first.
     pub fn search_history(&self, q: &HistoryQuery) -> Result<Vec<HistoryEntry>, StoreError> {
+        self.search_history_where(q, None)
+    }
+
+    /// Like [`Self::search_history`], over the entries of `conns` only: the filter applies
+    /// before the limit, so entries of other connections are neither returned nor counted.
+    pub fn search_history_in(
+        &self,
+        q: &HistoryQuery,
+        conns: &[String],
+    ) -> Result<Vec<HistoryEntry>, StoreError> {
+        if conns.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.search_history_where(q, Some(conns))
+    }
+
+    fn search_history_where(
+        &self,
+        q: &HistoryQuery,
+        conns: Option<&[String]>,
+    ) -> Result<Vec<HistoryEntry>, StoreError> {
         let limit = if q.limit == 0 { 200 } else { q.limit };
         let conn = self.conn.lock();
+        // The connection list is bound as one JSON array parameter.
+        let conns = conns
+            .map(|ids| serde_json::to_string(ids).map_err(db_err))
+            .transpose()?;
         let mut stmt = conn
             .prepare_cached(
                 "SELECT id, conn_id, database, sql, started_at, duration_ms, outcome, count, error \
                  FROM history \
                  WHERE sql LIKE '%' || ?1 || '%' ESCAPE '\\' AND (?2 IS NULL OR conn_id = ?2) \
+                 AND (?4 IS NULL OR conn_id IN (SELECT value FROM json_each(?4))) \
                  ORDER BY started_at DESC, id DESC LIMIT ?3",
             )
             .map_err(db_err)?;
         let rows = stmt
             .query_map(
-                params![escape_like(&q.text), q.conn_id, limit as i64],
+                params![escape_like(&q.text), q.conn_id, limit as i64, conns],
                 |r| {
                     let outcome: String = r.get(6)?;
                     let count: Option<i64> = r.get(7)?;

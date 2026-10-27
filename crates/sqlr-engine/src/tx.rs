@@ -145,7 +145,8 @@ impl TxState {
         }
     }
 
-    pub(crate) fn is_open(&self) -> bool {
+    /// Whether a transaction is open (or failed and waiting for a rollback).
+    pub fn is_open(&self) -> bool {
         self.phase != TxPhase::Idle
     }
 

@@ -9,10 +9,13 @@ use rmcp::model::CallToolResult;
 use serde_json::{Map, Value, json};
 use sqlr_core::{
     ActionId, AgentAccess, CatalogNeed, Chord, ColumnMeta, CommitMode, ConnectionConfig,
-    ConnectionProfile, DriverManifest, ErrorKind, Family, Node, NodeKind, NodePath, SettingValue,
-    Snippet, StatementClass, TableRef,
+    ConnectionProfile, ConstraintDef, DriverError, DriverManifest, ErrorKind, Family,
+    HistoryOutcome, HistoryQuery, Node, NodeKind, NodePath, ObjectDef, ObjectKind, ObjectRef,
+    PlanIssueLevel, PlanTree, SettingValue, Snippet, StatementClass, TableDef, TableRef,
 };
-use sqlr_engine::{Engine, LoadState, QueryId, QueryStatus, SessionKey, SessionStatus, Slot};
+use sqlr_engine::{
+    Engine, JobId, JobOutcome, LoadState, QueryId, QueryStatus, SessionKey, SessionStatus, Slot,
+};
 
 use crate::error::{ToolError, ToolResult};
 use crate::host::{
@@ -101,10 +104,14 @@ pub async fn call(
         "config_list" => config_list(state, &args).await,
         "config_write" => config_write(state, ctx, &args).await,
         "config_delete" => config_delete(state, ctx, &args).await,
+        "test_connection" => test_connection(state, ctx, &args).await,
         "browse" => browse(state, &args).await,
         "describe_object" => describe_object(state, &args).await,
+        "get_ddl" => get_ddl(state, &args).await,
         "search_objects" => search_objects(state, &args).await,
         "run_query" => run_query(state, ctx, &args).await,
+        "explain_query" => explain_query(state, ctx, &args).await,
+        "search_history" => search_history(state, &args).await,
         "get_query_result" => get_query_result(state, ctx, &args).await,
         "cancel_query" => cancel_query(state, ctx, &args).await,
         "close_result" => close_result(state, ctx, &args).await,
@@ -325,34 +332,34 @@ async fn browse(state: &Arc<ServerState>, args: &Args) -> ToolResult<CallToolRes
         })
         .unwrap_or_default();
     let connection = exposed_connection(state, id).await?;
-    ensure_connected(
-        state,
-        &ToolContext {
-            session_id: "catalog".into(),
-            client_name: String::new(),
-            client_version: String::new(),
-        },
-        &connection,
-    )
-    .await?;
     let path = NodePath(path);
+    let nodes = load_children(state, &connection, &path).await?;
+    let from_cache = state
+        .engine
+        .catalog(id)
+        .is_some_and(|catalog| catalog.from_cache);
+    let value = json!({
+        "connection_id": id,
+        "path": path.segments(),
+        "from_cache": from_cache,
+        "nodes": nodes.iter().map(node_json).collect::<Vec<_>>(),
+    });
+    Ok(CallToolResult::structured(value))
+}
+
+/// The explorer's children of `path`, connecting the explorer's Session when needed.
+async fn load_children(
+    state: &Arc<ServerState>,
+    connection: &crate::host::AgentConnection,
+    path: &NodePath,
+) -> ToolResult<Vec<Node>> {
+    let id = connection.config.id.as_str();
+    ensure_connected(state, &catalog_context("catalog"), connection).await?;
     state.engine.browse(id, path.clone());
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
-        match state.engine.children(id, &path) {
-            Some(LoadState::Ready(nodes)) => {
-                let from_cache = state
-                    .engine
-                    .catalog(id)
-                    .is_some_and(|catalog| catalog.from_cache);
-                let value = json!({
-                    "connection_id": id,
-                    "path": path.segments(),
-                    "from_cache": from_cache,
-                    "nodes": nodes.iter().map(node_json).collect::<Vec<_>>(),
-                });
-                return Ok(CallToolResult::structured(value));
-            }
+        match state.engine.children(id, path) {
+            Some(LoadState::Ready(nodes)) => return Ok(nodes),
             Some(LoadState::Failed(error)) => {
                 return Err(ToolError::new("catalog", redact(&error.message)));
             }
@@ -365,6 +372,91 @@ async fn browse(state: &Arc<ServerState>, args: &Args) -> ToolResult<CallToolRes
             ));
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+fn catalog_context(name: &str) -> ToolContext {
+    ToolContext {
+        session_id: name.into(),
+        client_name: String::new(),
+        client_version: String::new(),
+    }
+}
+
+/// The Node at a `browse` path: its parent's children are loaded and searched.
+pub(crate) async fn node_at(
+    state: &Arc<ServerState>,
+    connection: &crate::host::AgentConnection,
+    path: &[String],
+) -> ToolResult<Node> {
+    let Some((_, parent)) = path.split_last() else {
+        return Err(ToolError::invalid("path must name a node from browse"));
+    };
+    let children = load_children(state, connection, &NodePath(parent.to_vec())).await?;
+    children
+        .into_iter()
+        .find(|node| node.path.segments() == path)
+        .ok_or_else(|| ToolError::not_found("No node at this path; browse its parent first"))
+}
+
+/// Waits for a job's outcome, then forgets the job.
+async fn wait_job(engine: &Engine, job: JobId, timeout: Duration) -> ToolResult<JobOutcome> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(outcome) = engine.job(job).and_then(|state| state.outcome) {
+            engine.forget_job(job);
+            return Ok(outcome);
+        }
+        if Instant::now() >= deadline {
+            engine.cancel_job(job);
+            engine.forget_job(job);
+            return Err(ToolError::new(
+                "timeout",
+                "The operation did not finish in time",
+            ));
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+fn path_arg(args: &Args) -> ToolResult<Vec<String>> {
+    let path = args.string_array("path")?;
+    if path.is_empty() {
+        return Err(ToolError::invalid("path must name a node from browse"));
+    }
+    Ok(path)
+}
+
+/// A failed job's error, as the code an Agent acts on.
+fn job_error(error: &DriverError, fallback: &'static str) -> ToolError {
+    match error.kind {
+        ErrorKind::Unsupported => ToolError::unsupported(redact(&error.message)),
+        ErrorKind::Connection => ToolError::new("connection", redact(&error.message)),
+        ErrorKind::Timeout => ToolError::new("timeout", redact(&error.message)),
+        ErrorKind::Permission => ToolError::new("permission", redact(&error.message)),
+        _ => ToolError::new(fallback, redact(&error.message)),
+    }
+}
+
+async fn get_ddl(state: &Arc<ServerState>, args: &Args) -> ToolResult<CallToolResult> {
+    let id = args.str("connection_id")?;
+    let path = path_arg(args)?;
+    let connection = exposed_connection(state, id).await?;
+    if connection.manifest.family != Family::Relational {
+        return Err(ToolError::unsupported(
+            "DDL is available for relational Connections",
+        ));
+    }
+    let node = node_at(state, &connection, &path).await?;
+    let job = state.engine.load_ddl(&SessionKey::meta(id), node);
+    match wait_job(state.engine.as_ref(), job, Duration::from_secs(30)).await? {
+        JobOutcome::Ddl(ddl) => Ok(CallToolResult::structured(json!({
+            "connection_id": id,
+            "path": path,
+            "ddl": ddl,
+        }))),
+        JobOutcome::Failed(error) => Err(job_error(&error, "catalog")),
+        _ => Err(ToolError::internal("unexpected DDL outcome")),
     }
 }
 
@@ -399,6 +491,11 @@ async fn describe_object(state: &Arc<ServerState>, args: &Args) -> ToolResult<Ca
     loop {
         match state.engine.table_info(id, &table) {
             Some(LoadState::Ready(info)) => {
+                let definition = table_definition(state, id, &info.table).await;
+                let (indexes, foreign_keys) = definition
+                    .as_ref()
+                    .map(|def| (indexes_json(def), foreign_keys_json(def)))
+                    .unwrap_or_default();
                 let value = json!({
                     "connection_id": id,
                     "table": {
@@ -415,8 +512,8 @@ async fn describe_object(state: &Arc<ServerState>, args: &Args) -> ToolResult<Ca
                     })).collect::<Vec<_>>(),
                     "primary_key": info.primary_key,
                     "unique_keys": info.unique_keys,
-                    "indexes": [],
-                    "foreign_keys": [],
+                    "indexes": indexes,
+                    "foreign_keys": foreign_keys,
                 });
                 return Ok(CallToolResult::structured(value));
             }
@@ -433,6 +530,68 @@ async fn describe_object(state: &Arc<ServerState>, args: &Args) -> ToolResult<Ca
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+}
+
+/// The table's definition from the object loader; `None` when the driver cannot introspect.
+async fn table_definition(
+    state: &Arc<ServerState>,
+    id: &str,
+    table: &TableRef,
+) -> Option<TableDef> {
+    let job = state
+        .engine
+        .load_object(id, ObjectRef::relation(ObjectKind::Table, table));
+    match wait_job(state.engine.as_ref(), job, Duration::from_secs(20)).await {
+        Ok(JobOutcome::Object(ObjectDef::Table(def))) => Some(def),
+        _ => None,
+    }
+}
+
+fn indexes_json(def: &TableDef) -> Vec<Value> {
+    def.indexes
+        .iter()
+        .map(|index| {
+            json!({
+                "name": index.name,
+                "columns": index.columns.iter().map(|column| column.expr.clone()).collect::<Vec<_>>(),
+                "unique": index.unique,
+                "method": index.method,
+                "predicate": index.predicate,
+            })
+        })
+        .collect()
+}
+
+fn foreign_keys_json(def: &TableDef) -> Vec<Value> {
+    def.constraints
+        .iter()
+        .filter_map(|constraint| match constraint {
+            ConstraintDef::ForeignKey {
+                name,
+                columns,
+                target,
+                target_columns,
+                on_update,
+                on_delete,
+                ..
+            } => Some(json!({
+                "name": name,
+                "columns": columns,
+                "referenced_table": {
+                    "database": target.database,
+                    "schema": target.schema,
+                    "name": target.name,
+                },
+                "referenced_columns": target_columns,
+                "on_update": on_update.sql(),
+                "on_delete": on_delete.sql(),
+            })),
+            ConstraintDef::Raw { name, definition } if constraint.is_foreign_key() => {
+                Some(json!({"name": name, "definition": definition}))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 async fn search_objects(state: &Arc<ServerState>, args: &Args) -> ToolResult<CallToolResult> {
@@ -1003,6 +1162,292 @@ async fn close_result(
     Ok(CallToolResult::structured(
         json!({"query_id": id, "closed": true}),
     ))
+}
+
+// ----- explain, history and connection tests -----
+
+/// The raw plan an Agent receives is cut at this size.
+pub const MAX_PLAN_BYTES: usize = 256 * 1024;
+
+/// Checks the Explain rules for one statement on `connection`: one statement, `analyze`
+/// refused for a write on a read-only exposure or profile, and an Approval for a write
+/// under analyze. Returns the statement to explain.
+pub(crate) async fn explain_checks(
+    state: &Arc<ServerState>,
+    ctx: &ToolContext,
+    connection: &crate::host::AgentConnection,
+    database: Option<&str>,
+    query: &str,
+    analyze: bool,
+) -> ToolResult<String> {
+    if connection.manifest.family != Family::Relational {
+        return Err(ToolError::unsupported(
+            "Explain is available for relational Connections",
+        ));
+    }
+    let dialect = state
+        .engine
+        .drivers()
+        .get(&connection.config.driver)
+        .and_then(|driver| driver.dialect())
+        .ok_or_else(|| ToolError::unsupported("This driver has no SQL dialect"))?;
+    let syntax = dialect.syntax();
+    let statements = policy::sql_statements(&syntax, query);
+    if statements.len() > 1 {
+        return Err(ToolError::invalid(format!(
+            "Explain takes exactly one statement; {} were given",
+            statements.len()
+        )));
+    }
+    let Some(statement) = statements.into_iter().next() else {
+        return Err(ToolError::invalid("query contains no statement"));
+    };
+    if analyze {
+        let class = syntax.classify(&statement);
+        check_read_only(connection, &class)?;
+        if class.modifies() {
+            approve(state, ctx, Some(connection), database, &class, &statement).await?;
+        }
+    }
+    Ok(statement)
+}
+
+fn session_busy(state: &Arc<ServerState>, key: &SessionKey) -> bool {
+    state.engine.transaction(key).is_some_and(|tx| tx.is_open())
+}
+
+/// The plan as an Agent reads it: timings, cost, rows, warnings, operator mix and raw text.
+pub fn plan_json(plan: &PlanTree) -> Value {
+    let insights = plan.insights();
+    let mut raw = plan.raw.clone();
+    let truncated = raw.len() > MAX_PLAN_BYTES;
+    if truncated {
+        raw.truncate(raw.floor_char_boundary(MAX_PLAN_BYTES));
+    }
+    json!({
+        "execution_ms": plan.execution_ms,
+        "planning_ms": plan.planning_ms,
+        "cost": plan.root.cost.map(|(_, total)| total),
+        "rows_estimate": plan.root.rows_estimate,
+        "rows_actual": plan.root.rows_actual,
+        "warnings": insights
+            .issues
+            .iter()
+            .map(|issue| json!({
+                "level": match issue.level {
+                    PlanIssueLevel::Warning => "warning",
+                    PlanIssueLevel::Note => "note",
+                },
+                "node": issue.node,
+                "message": issue.message,
+            }))
+            .collect::<Vec<_>>(),
+        "operators": {
+            "nodes": insights.nodes,
+            "depth": insights.depth,
+            "joins": insights.joins,
+            "scans": insights.scans,
+            "sorts": insights.sorts,
+            "aggregates": insights.aggregates,
+            "timed": insights.timed,
+        },
+        "format": plan.format,
+        "raw": raw,
+        "raw_truncated": truncated,
+    })
+}
+
+async fn explain_query(
+    state: &Arc<ServerState>,
+    ctx: &ToolContext,
+    args: &Args,
+) -> ToolResult<CallToolResult> {
+    let id = args.str("connection_id")?;
+    let query = args.str("query")?;
+    let database = args.opt_str("database");
+    let analyze = match args.get("analyze") {
+        None | Some(Value::Null) => false,
+        Some(value) => value
+            .as_bool()
+            .ok_or_else(|| ToolError::invalid("analyze must be a boolean"))?,
+    };
+    let connection = exposed_connection(state, id).await?;
+    if connection.manifest.family != Family::Relational {
+        return Err(ToolError::unsupported(
+            "Explain is available for relational Connections",
+        ));
+    }
+    let key = ensure_connected(state, ctx, &connection).await?;
+    if session_busy(state, &key) {
+        return Err(ToolError::new(
+            "busy",
+            "A transaction is open on the agent session: commit or roll back first",
+        ));
+    }
+    let statement = explain_checks(state, ctx, &connection, database, query, analyze).await?;
+    let job = state.engine.explain_in(&key, database, statement, analyze);
+    match wait_job(state.engine.as_ref(), job, Duration::from_secs(120)).await? {
+        JobOutcome::Plan(plan) => {
+            let mut value = plan_json(&plan);
+            if let Some(object) = value.as_object_mut() {
+                object.insert("connection_id".into(), json!(id));
+                object.insert("analyze".into(), json!(analyze));
+            }
+            Ok(CallToolResult::structured(value))
+        }
+        JobOutcome::Failed(error) => Err(job_error(&error, "error")),
+        _ => Err(ToolError::internal("unexpected Explain outcome")),
+    }
+}
+
+fn history_outcome_json(outcome: &HistoryOutcome) -> Value {
+    match outcome {
+        HistoryOutcome::Rows(n) => json!({"status": "rows", "count": n}),
+        HistoryOutcome::Affected(n) => json!({"status": "affected", "count": n}),
+        HistoryOutcome::Failed(message) => json!({"status": "failed", "message": redact(message)}),
+        HistoryOutcome::Cancelled => json!({"status": "cancelled"}),
+    }
+}
+
+async fn search_history(state: &Arc<ServerState>, args: &Args) -> ToolResult<CallToolResult> {
+    let text = args.opt_str("query").unwrap_or_default().to_string();
+    let limit = match args.opt_u64("limit")? {
+        None => 50,
+        Some(n) if (1..=200).contains(&n) => n as usize,
+        Some(_) => return Err(ToolError::invalid("limit must be between 1 and 200")),
+    };
+    let exposed: Vec<String> = state
+        .host
+        .connections()
+        .await?
+        .into_iter()
+        .filter(|config| config.agent_access != AgentAccess::None)
+        .map(|config| config.id)
+        .collect();
+    let conns = match args.opt_str("connection_id") {
+        Some(id) if exposed.iter().any(|known| known == id) => vec![id.to_string()],
+        Some(id) => return Err(ToolError::not_exposed(id)),
+        None => exposed,
+    };
+    let query = HistoryQuery {
+        text,
+        conn_id: None,
+        limit,
+    };
+    let entries = state
+        .engine
+        .find_history(query, conns)
+        .await
+        .map_err(|_| ToolError::internal("the history search was dropped"))?
+        .map_err(|error| ToolError::internal(format!("the history search failed: {error}")))?;
+    Ok(CallToolResult::structured(json!({
+        "entries": entries
+            .iter()
+            .map(|entry| json!({
+                "connection_id": entry.conn_id,
+                "database": entry.database,
+                "sql": entry.sql,
+                "started_at_ms": entry.started_at_ms,
+                "duration_ms": entry.duration_ms,
+                "outcome": history_outcome_json(&entry.outcome),
+            }))
+            .collect::<Vec<_>>(),
+    })))
+}
+
+/// The code a failed connection test reports.
+fn test_error_code(error: &DriverError) -> &'static str {
+    let lower = error.message.to_ascii_lowercase();
+    match error.kind {
+        ErrorKind::Auth => "auth",
+        ErrorKind::Timeout => "timeout",
+        _ if ["tls", "ssl", "certificate", "handshake"]
+            .iter()
+            .any(|word| lower.contains(word)) =>
+        {
+            "tls"
+        }
+        _ => "connection",
+    }
+}
+
+async fn test_connection(
+    state: &Arc<ServerState>,
+    ctx: &ToolContext,
+    args: &Args,
+) -> ToolResult<CallToolResult> {
+    let id = args.str("connection_id")?;
+    let connection = writable_connection(state, ctx, id).await?;
+    let secret_fields: Vec<String> = connection
+        .manifest
+        .fields
+        .iter()
+        .filter(|field| field.secret)
+        .map(|field| field.key.clone())
+        .collect();
+    let secrets = state
+        .engine
+        .resolve_secrets(&connection.config, connection.secrets.clone())
+        .await;
+    let filled = |key: &String| secrets.0.get(key).is_some_and(|value| !value.is_empty());
+    let missing: Vec<String> = connection
+        .manifest
+        .fields
+        .iter()
+        .filter(|field| field.secret && field.required && !filled(&field.key))
+        .map(|field| field.key.clone())
+        .collect();
+    if !missing.is_empty() {
+        return Err(ToolError::secret_required(id, &missing));
+    }
+    // The connection dialog's temporary test Session: another id, so the Explorer and the
+    // Connection's own Sessions are untouched.
+    let test_id = format!("test:{}", new_id("agent"));
+    let mut config = connection.config.clone();
+    config.id = test_id.clone();
+    config.save_secrets = false;
+    state
+        .engine
+        .connect(config, secrets.clone(), ConnectionProfile::development());
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let outcome = loop {
+        match state.engine.session_status(&test_id) {
+            Some(SessionStatus::Connected(info)) => break Ok(info),
+            Some(SessionStatus::Failed(error)) => break Err(error),
+            Some(SessionStatus::Disconnected) => {
+                break Err(DriverError::new(
+                    ErrorKind::Connection,
+                    "the test session closed",
+                ));
+            }
+            _ => {}
+        }
+        if Instant::now() >= deadline {
+            break Err(DriverError::new(
+                ErrorKind::Timeout,
+                "connecting did not finish in time",
+            ));
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    state.engine.disconnect(&test_id);
+    let value = match outcome {
+        Ok(info) => json!({
+            "connection_id": id,
+            "ok": true,
+            "product": info.product,
+            "server_version": info.version,
+        }),
+        Err(error) if error.kind == ErrorKind::Auth && !secret_fields.iter().any(filled) => {
+            return Err(ToolError::secret_required(id, &secret_fields));
+        }
+        Err(error) => json!({
+            "connection_id": id,
+            "ok": false,
+            "error": {"code": test_error_code(&error), "message": redact(&error.message)},
+        }),
+    };
+    Ok(CallToolResult::structured(value))
 }
 
 // ----- config -----

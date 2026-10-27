@@ -35,6 +35,7 @@ struct HostState {
     deletions: Vec<(String, String)>,
     /// Connections created through `write_connection`, beside `config`.
     created: Vec<ConnectionConfig>,
+    approvals: Vec<ApprovalRequest>,
 }
 
 struct TestHost {
@@ -61,6 +62,7 @@ impl TestHost {
                 tab_runs: Vec::new(),
                 deletions: Vec::new(),
                 created: Vec::new(),
+                approvals: Vec::new(),
             }),
         }
     }
@@ -172,8 +174,10 @@ impl AgentHost for TestHost {
         self.state.lock().deletions.push((target.into(), id.into()));
         Ok(())
     }
-    async fn approve(&self, _request: ApprovalRequest) -> sqlr_mcp::error::ToolResult<()> {
-        if self.state.lock().allow {
+    async fn approve(&self, request: ApprovalRequest) -> sqlr_mcp::error::ToolResult<()> {
+        let mut state = self.state.lock();
+        state.approvals.push(request);
+        if state.allow {
             Ok(())
         } else {
             Err(sqlr_mcp::error::ToolError::denied())
@@ -1800,4 +1804,284 @@ async fn settings_values_name_only_exposed_connections() {
         .await;
     assert_eq!(listed["settings"][0]["values"]["connection:c1"], "hidden");
     server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn describe_object_ddl_and_explain_read_the_catalog() {
+    let store = Arc::new(MemoryMcpTokenStore::with_token("t"));
+    let (server, host, _dir, port, token) = setup(AgentAccess::Write, store).await;
+    let mut client = Client::new(port, &token);
+    client.initialize().await;
+    for (index, sql) in [
+        "create table customers (id integer primary key, email text not null)",
+        "create table orders (id integer primary key, customer_id integer not null \
+         references customers (id) on delete cascade, total real)",
+        "create unique index orders_customer on orders (customer_id) where total > 0",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let created = client
+            .tool(
+                10 + index as u64,
+                "run_query",
+                json!({"connection_id":"c1","query":sql}),
+            )
+            .await;
+        assert_eq!(created["status"], "ready", "{created}");
+    }
+
+    let described = client
+        .tool(
+            20,
+            "describe_object",
+            json!({"connection_id":"c1","name":"orders"}),
+        )
+        .await;
+    assert_eq!(
+        described["indexes"][0]["name"], "orders_customer",
+        "{described}"
+    );
+    assert_eq!(described["indexes"][0]["columns"], json!(["customer_id"]));
+    assert_eq!(described["indexes"][0]["unique"], true);
+    assert!(
+        described["indexes"][0]["predicate"]
+            .as_str()
+            .unwrap()
+            .contains("total"),
+        "{described}"
+    );
+    let fk = &described["foreign_keys"][0];
+    assert_eq!(fk["columns"], json!(["customer_id"]), "{described}");
+    assert_eq!(fk["referenced_table"]["name"], "customers");
+    assert_eq!(fk["referenced_columns"], json!(["id"]));
+    assert_eq!(fk["on_delete"], "CASCADE");
+    assert_eq!(fk["on_update"], "NO ACTION");
+
+    // get_ddl takes a browse path.
+    let root = client
+        .tool(30, "browse", json!({"connection_id":"c1"}))
+        .await;
+    let mut path: Option<Value> = None;
+    let mut frontier: Vec<Value> = root["nodes"].as_array().unwrap().clone();
+    let mut call = 31;
+    while path.is_none() {
+        let node = frontier.remove(0);
+        if node["name"] == "orders" && node["kind"] == "table" {
+            path = Some(node["path"].clone());
+            break;
+        }
+        if node["has_children"] == true && node["kind"] != "table" {
+            let children = client
+                .tool(
+                    call,
+                    "browse",
+                    json!({"connection_id":"c1","path":node["path"]}),
+                )
+                .await;
+            call += 1;
+            frontier.extend(children["nodes"].as_array().unwrap().iter().cloned());
+        }
+    }
+    let ddl = client
+        .tool(
+            50,
+            "get_ddl",
+            json!({"connection_id":"c1","path":path.clone().unwrap()}),
+        )
+        .await;
+    let text = ddl["ddl"].as_str().unwrap_or_else(|| panic!("{ddl}"));
+    assert!(text.to_ascii_uppercase().contains("CREATE TABLE"), "{text}");
+    assert!(text.contains("orders"), "{text}");
+    let missing = client
+        .tool(
+            51,
+            "get_ddl",
+            json!({"connection_id":"c1","path":["main","tables","nope"]}),
+        )
+        .await;
+    assert_eq!(missing["error"]["code"], "not_found", "{missing}");
+
+    // Explain: a plan with the operator mix and the raw text.
+    let plan = client
+        .tool(
+            60,
+            "explain_query",
+            json!({"connection_id":"c1","query":"select * from orders where customer_id = 1"}),
+        )
+        .await;
+    assert!(plan.get("error").is_none(), "{plan}");
+    assert!(!plan["raw"].as_str().unwrap().is_empty(), "{plan}");
+    assert!(plan["operators"]["nodes"].as_u64().unwrap() >= 1, "{plan}");
+    assert!(plan["warnings"].is_array(), "{plan}");
+    let multi = client
+        .tool(
+            61,
+            "explain_query",
+            json!({"connection_id":"c1","query":"select 1; select 2"}),
+        )
+        .await;
+    assert_eq!(multi["error"]["code"], "invalid", "{multi}");
+    // SQLite has no EXPLAIN ANALYZE.
+    let analyzed = client
+        .tool(
+            62,
+            "explain_query",
+            json!({"connection_id":"c1","query":"select * from orders","analyze":true}),
+        )
+        .await;
+    assert_eq!(analyzed["error"]["code"], "unsupported", "{analyzed}");
+    // Analyze on a write waits on an Approval first.
+    host.state.lock().allow = false;
+    let denied = client
+        .tool(
+            63,
+            "explain_query",
+            json!({"connection_id":"c1","query":"delete from orders","analyze":true}),
+        )
+        .await;
+    assert_eq!(denied["error"]["code"], "denied", "{denied}");
+    assert_eq!(host.state.lock().approvals.len(), 1);
+    host.state.lock().allow = true;
+    // A Read exposure refuses analyze on a write before any Approval.
+    host.state.lock().config.agent_access = AgentAccess::Read;
+    let mut reader = Client::new(port, &token);
+    reader.initialize().await;
+    let refused = reader
+        .tool(
+            64,
+            "explain_query",
+            json!({"connection_id":"c1","query":"delete from orders","analyze":true}),
+        )
+        .await;
+    assert_eq!(refused["error"]["code"], "read_only", "{refused}");
+    assert_eq!(host.state.lock().approvals.len(), 1);
+    // Without analyze a write's plan is only read.
+    let plain = reader
+        .tool(
+            65,
+            "explain_query",
+            json!({"connection_id":"c1","query":"delete from orders where id = 1"}),
+        )
+        .await;
+    assert!(plain.get("error").is_none(), "{plain}");
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn search_history_filters_exposed_connections_before_the_limit() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = Arc::new(sqlr_store::Db::open_in_memory().unwrap());
+    let entry = |conn: &str, sql: &str, at: i64| sqlr_core::HistoryEntry {
+        id: 0,
+        conn_id: conn.into(),
+        database: Some("main".into()),
+        sql: sql.into(),
+        started_at_ms: at,
+        duration_ms: 3,
+        outcome: sqlr_core::HistoryOutcome::Rows(1),
+    };
+    db.add_history(&entry("c1", "select 1 from visible", 1))
+        .unwrap();
+    db.add_history(&entry("c1", "select 2 from visible", 2))
+        .unwrap();
+    for at in 10..20 {
+        db.add_history(&entry("hidden", "select 3 from visible", at))
+            .unwrap();
+    }
+    let driver = SqliteDriver::new();
+    let manifest = driver.manifest().clone();
+    let mut drivers = DriverRegistry::default();
+    drivers.register(driver);
+    let engine = Arc::new(Engine::with_db(drivers, Arc::new(|| {}), db));
+    let host = Arc::new(TestHost::new(
+        sqlite_config(dir.path(), AgentAccess::Read),
+        manifest,
+    ));
+    let state = Arc::new(sqlr_mcp::state::ServerState::new(
+        engine,
+        host.clone(),
+        0,
+        "t".into(),
+    ));
+    let found = direct_tool(
+        &state,
+        "search_history",
+        json!({"query":"VISIBLE","limit":2}),
+    )
+    .await;
+    let entries = found["entries"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{found}"));
+    assert_eq!(entries.len(), 2, "{found}");
+    assert_eq!(entries[0]["sql"], "select 2 from visible");
+    assert_eq!(entries[0]["connection_id"], "c1");
+    assert_eq!(entries[0]["database"], "main");
+    assert_eq!(entries[0]["duration_ms"], 3);
+    assert_eq!(entries[0]["outcome"]["status"], "rows");
+    assert!(!found.to_string().contains("hidden"), "{found}");
+    let only = direct_tool(&state, "search_history", json!({"connection_id":"hidden"})).await;
+    assert_eq!(only["error"]["code"], "not_exposed", "{only}");
+    let too_many = direct_tool(&state, "search_history", json!({"limit":201})).await;
+    assert_eq!(too_many["error"]["code"], "invalid", "{too_many}");
+    host.state.lock().config.agent_access = AgentAccess::None;
+    let none = direct_tool(&state, "search_history", json!({})).await;
+    assert_eq!(none["entries"], json!([]), "{none}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_connection_reports_success_failures_and_missing_secrets() {
+    let store = Arc::new(MemoryMcpTokenStore::with_token("t"));
+    let (server, host, dir, port, token) = setup(AgentAccess::Read, store).await;
+    let mut client = Client::new(port, &token);
+    client.initialize().await;
+    let ok = client
+        .tool(2, "test_connection", json!({"connection_id":"c1"}))
+        .await;
+    assert_eq!(ok["ok"], true, "{ok}");
+    assert!(ok["server_version"].as_str().is_some(), "{ok}");
+    // The test session is not the explorer's.
+    assert!(server.session_count() == 1);
+
+    host.state.lock().config.values.insert(
+        "path".into(),
+        dir.path().join("missing/dir/t.db").display().to_string(),
+    );
+    host.state
+        .lock()
+        .config
+        .values
+        .insert("create_if_missing".into(), "false".into());
+    let failed = client
+        .tool(3, "test_connection", json!({"connection_id":"c1"}))
+        .await;
+    assert_eq!(failed["ok"], false, "{failed}");
+    assert_eq!(failed["error"]["code"], "connection", "{failed}");
+    assert!(failed["error"]["message"].as_str().is_some());
+
+    host.state.lock().config.agent_access = AgentAccess::None;
+    let hidden = client
+        .tool(4, "test_connection", json!({"connection_id":"c1"}))
+        .await;
+    assert_eq!(hidden["error"]["code"], "not_exposed", "{hidden}");
+    server.shutdown().await;
+
+    // A driver that needs a password names the missing secret field.
+    use sqlr_testkit::{FakeDriver, FakeScript};
+    let state = driver_state(
+        FakeDriver::new(FakeScript {
+            password: Some("pw".into()),
+            ..Default::default()
+        }),
+        AgentAccess::Read,
+    );
+    let missing = direct_tool(&state, "test_connection", json!({"connection_id":"c1"})).await;
+    assert_eq!(missing["error"]["code"], "secret_required", "{missing}");
+    assert!(
+        missing["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("password"),
+        "{missing}"
+    );
 }

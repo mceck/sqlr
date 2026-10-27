@@ -376,3 +376,35 @@ fn saved_task_tables_are_dropped_on_upgrade() {
         .unwrap();
     assert_eq!(version, 6);
 }
+
+#[test]
+fn history_search_in_connections_filters_before_the_limit() {
+    let db = Db::open_in_memory().unwrap();
+    db.add_history(&entry("a", "select a1", 1, HistoryOutcome::Rows(1)))
+        .unwrap();
+    db.add_history(&entry("b", "select b1", 2, HistoryOutcome::Rows(1)))
+        .unwrap();
+    for at in 10..20 {
+        db.add_history(&entry("c", "select c", at, HistoryOutcome::Rows(1)))
+            .unwrap();
+    }
+    let q = HistoryQuery {
+        text: "SELECT".into(),
+        conn_id: None,
+        limit: 2,
+    };
+    let found = db.search_history_in(&q, &["a".into(), "b".into()]).unwrap();
+    let sql: Vec<&str> = found.iter().map(|e| e.sql.as_str()).collect();
+    assert_eq!(sql, ["select b1", "select a1"]);
+    assert!(db.search_history_in(&q, &[]).unwrap().is_empty());
+    let only_a = HistoryQuery {
+        conn_id: Some("a".into()),
+        ..q
+    };
+    assert_eq!(
+        db.search_history_in(&only_a, &["a".into(), "b".into()])
+            .unwrap()
+            .len(),
+        1
+    );
+}

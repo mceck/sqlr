@@ -441,6 +441,17 @@ impl Engine {
         self.shared.repaint();
     }
 
+    /// The secrets a connect of `cfg` would use: `given`, then, when the connection saves
+    /// its secrets, the stored ones for every other secret field. A temporary test session
+    /// under another id connects with them (and `save_secrets` off).
+    pub async fn resolve_secrets(&self, cfg: &ConnectionConfig, given: Secrets) -> Secrets {
+        let Some(driver) = self.drivers.get(&cfg.driver) else {
+            return given;
+        };
+        let manifest = driver.manifest().clone();
+        self.shared.connect_secrets(cfg, &manifest, given).await
+    }
+
     /// Closes every session of the connection (the explorer's ends `Disconnected`), forgets
     /// what `connect` kept, and clears its explorer cache.
     pub fn disconnect(&self, conn_id: &str) {
@@ -1148,6 +1159,22 @@ impl Engine {
     /// Replaces the channel's query; its results land in [`Engine::history`].
     pub fn search_history(&self, channel: HistoryChannel, q: HistoryQuery) {
         self.shared.search_history(channel, q);
+    }
+
+    /// Searches the history once, outside the History panel's channels, over the entries of
+    /// `conns` only: the filter applies before the limit. The answer arrives on the returned
+    /// receiver, from the `sqlr.db` worker.
+    pub fn find_history(
+        &self,
+        q: HistoryQuery,
+        conns: Vec<String>,
+    ) -> tokio::sync::oneshot::Receiver<Result<Vec<sqlr_core::HistoryEntry>, sqlr_store::StoreError>>
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.shared.db.push(move |db| {
+            let _ = tx.send(db.search_history_in(&q, &conns));
+        });
+        rx
     }
 
     /// The channel's query and results; `None` until it is first searched. The results
