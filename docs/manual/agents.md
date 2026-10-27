@@ -2,7 +2,7 @@
 
 # Use an agent or the integrated terminal
 
-Connect a local MCP client to work with sqlr's database tools and open editor tabs. You can also use the integrated terminal as a shell, with agent access turned on or off.
+Connect a local agent to work with sqlr's database tools and open editor tabs, and give it the sqlr skills so it knows how. You can also use the integrated terminal as a shell, with agent access turned on or off.
 
 ## Decide which connections an agent may use
 
@@ -22,23 +22,39 @@ You can also change **Agent access** in the explorer context menu or the connect
 
 ![Agents preferences with MCP controls and connection access levels](images/agents/connection-access.png)
 
-## Connect your MCP client
+## Connect your agent
 
 1. In **Agents**, enable **Enable agent access (MCP)**.
 2. Wait for the running status. The default endpoint is `http://127.0.0.1:47821/mcp`.
-3. Choose **Copy MCP config** and paste the copied configuration into your client's MCP settings.
-4. Connect the client while sqlr remains open.
+3. Under **Agents on this computer**, find your agent and choose **Install**. The first time, sqlr asks you to confirm that it writes its token into that agent's configuration file.
+4. Restart the agent so it loads sqlr, and keep sqlr open while you use it.
 
-The configuration includes a bearer token. Keep it private. **Copy endpoint** copies only the address. The token-free `mcp.json` discovery file in the data directory also publishes the endpoint while the server runs.
+sqlr lists Claude Code, Codex CLI, Gemini CLI, Cursor, VS Code and OpenCode, each with its configuration file and state. **Install** adds only sqlr's entry and keeps the rest of the file, comments included; a copy of the original is saved beside it as `<file>.sqlr-backup` before the first change. **Remove** takes sqlr's entry out again. An agent shown as **Outdated** has an entry that no longer matches the running server: choose **Update**, then restart the agent. An agent shown as **Manual setup** has a file sqlr cannot read: choose **Copy config** and add the entry by hand.
 
-**MCP port** accepts ports 1024 through 65535. Changing it restarts the server and disconnects clients. **Rotate token** replaces the credential and disconnects all MCP sessions. Copy the configuration again afterward. Disabling MCP or quitting sqlr ends agent work and removes the discovery file.
+For any other MCP client, use **Other agent… → Copy MCP config** and paste the configuration into the client's MCP settings. It includes a bearer token. Keep it private. **Copy endpoint** copies only the address. The token-free `mcp.json` discovery file in the data directory also publishes the endpoint while the server runs.
+
+**MCP port** accepts ports 1024 through 65535. Changing it restarts the server and disconnects clients. **Rotate token** replaces the credential and disconnects all MCP sessions. sqlr rewrites the entry of every agent it installed in both cases, so restarting the agent is enough; a client set up with **Copy MCP config** needs the configuration copied again. Disabling MCP or quitting sqlr ends agent work and removes the discovery file, and keeps the installed entries for next time.
+
+## Give your agent the sqlr skills
+
+The sqlr skills teach an agent how to work with sqlr: which tools to use for a task, in what order, and which rules to follow.
+
+| Skill | Use it to |
+|---|---|
+| `sqlr-configure` | Change settings, profiles, shortcuts and connection folders |
+| `sqlr-create-connection` | Add a connection, store its credentials and test it |
+| `sqlr-edit-user-query` | Fix, run or explain the query open in your editor tab |
+| `sqlr-query-database` | Explore a schema and query a database on the agent's own session |
+| `sqlr-connect-agent` | Diagnose missing sqlr tools or a failing connection to sqlr |
+
+The integrated terminal's workspace already holds them. To add them to an agent you use elsewhere, run `npx skills add mceck/sqlr` for all of them, or `npx skills add mceck/sqlr --skill sqlr-query-database` for one.
 
 ## Understand what tools can do
 
 | Area | Available to an agent | Kept under your control |
 |---|---|---|
 | Database | Browse, describe, search and query exposed connections | Exposure level and profile protections |
-| Editor | Read and edit existing query text with a revision check; run a statement, selection or script | Creating, closing and saving editor tabs |
+| Editor | Read and edit query text with a revision check; run a statement, selection or script; open a tab with a proposed query; show objects and plans | Closing and saving editor tabs |
 | Library | Read and manage snippets and saved configuration | Approval for snippet and configuration deletion |
 | Configuration | Read permitted settings; update permitted connection settings and secrets | MCP settings, application updates and terminal shell command |
 | Operations | Inspect progress and cancel work | Integrated terminal input, output and lifecycle |
@@ -71,9 +87,9 @@ Quitting sqlr also stops the terminal process group. A shell that has exited sho
 | Paste | ⌘V | Ctrl+Shift+V |
 | Interrupt command | Ctrl+C | Ctrl+C |
 
-In **Settings… → Terminal**, an empty **Shell command** uses your login shell. An empty **Working directory** uses sqlr's configuration `terminal` folder, containing agent instructions and MCP configuration. **Font size** applies immediately; restart the shell for the remaining terminal changes.
+In **Settings… → Terminal**, an empty **Shell command** uses your login shell. An empty **Working directory** uses sqlr's configuration `terminal` folder, containing an `AGENTS.md` that is yours to edit and the sqlr skills, which sqlr keeps current. **Font size** applies immediately; restart the shell for the remaining terminal changes.
 
-Terminal output and the configured shell command are excluded from logging. MCP cannot read or control this terminal. sqlr does not start an agent automatically or put the MCP token in the shell environment. An agent you launch yourself uses the same connection access rules as any other MCP client.
+Terminal output and the configured shell command are excluded from logging. MCP cannot read or control this terminal. sqlr does not start an agent automatically or put the MCP token in the shell environment. An agent you launch there reaches sqlr through its installation from **Settings → Agents**, and uses the same connection access rules as any other MCP client.
 
 ## Fix a connection problem
 
@@ -81,7 +97,8 @@ Terminal output and the configured shell command are excluded from logging. MCP 
 |---|---|
 | **Port busy** | Choose another **MCP port**, or stop the program using it |
 | **Keychain error** | Unlock the OS keychain, then disable and enable MCP again |
-| `401 Unauthorized` | Copy the current MCP configuration; a token may have been rotated |
+| Agent has no sqlr tools | Choose **Install** for that agent in **Settings → Agents**, then restart the agent |
+| `401 Unauthorized` | Restart the agent; if it shows **Outdated**, choose **Update** first. For a client set up by hand, copy the current MCP configuration |
 | `403 Forbidden` | Use the local loopback endpoint with a local client; remote hosts and unrelated browser origins are rejected |
 | Connection absent or `not_exposed` | Set that connection's **Agent access** to **Read** or **Write** |
 | Expired result or approval | Rerun the query or request and review the new approval |

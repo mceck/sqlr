@@ -35,6 +35,23 @@ Link to [documentation](https://mceck.github.io/sqlr/manual/README.html).
   - **Elasticsearch** Kibana-console style requests, ES|QL and SQL, document editing, index management.
   - **Redis** `SCAN`-only key browser, typed value views, TTL editing, console.
 
+## Agent skills
+
+sqlr ships agent skills that teach an AI agent how to work with sqlr through its MCP server. Install all of them, or one by name:
+
+```sh
+npx skills add mceck/sqlr
+npx skills add mceck/sqlr --skill sqlr-query-database
+```
+
+- `sqlr-configure`: change settings, profiles, keyboard shortcuts and connection folders, at the right level.
+- `sqlr-create-connection`: add a connection from the driver's fields, store its secrets and test it.
+- `sqlr-edit-user-query`: read, fix and run the query open in your editor tab, and read its results.
+- `sqlr-query-database`: explore schemas and query exposed databases on the agent's own session.
+- `sqlr-connect-agent`: diagnose missing sqlr tools or a failing connection to sqlr.
+
+To connect an agent, open **Settings → Agents** in sqlr and choose **Install** next to it, then restart the agent. The integrated terminal's workspace already holds the skills.
+
 ## Supported databases
 
 | Database | Driver | Notes |
