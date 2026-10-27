@@ -11,8 +11,9 @@ use sqlr_core::{
 use sqlr_driver_sqlite::SqliteDriver;
 use sqlr_engine::{DriverRegistry, Engine};
 use sqlr_mcp::host::{
-    AgentConnection, AgentHost, ApprovalRequest, ConnectionWrite, FolderOp, KeymapEntry, RunTarget,
-    SettingEntry, SettingLevel, TabDetail, TabEdit, TabSummary,
+    AgentConnection, AgentHost, ApprovalRequest, ConnectionWrite, FolderOp, GridCell, KeymapEntry,
+    OpenTab, RunTarget, SettingEntry, SettingLevel, ShowView, Shown, TabDetail, TabEdit,
+    TabResultRef, TabSummary,
 };
 use sqlr_mcp::server::{McpServer, StartOptions};
 use sqlr_store::{McpTokenStore, MemoryMcpTokenStore, MemorySecretStore};
@@ -36,6 +37,15 @@ struct HostState {
     /// Connections created through `write_connection`, beside `config`.
     created: Vec<ConnectionConfig>,
     approvals: Vec<ApprovalRequest>,
+    /// The engine tab runs execute on, once set.
+    engine: Option<Arc<Engine>>,
+    tab_text: String,
+    tab_selection: Option<(usize, usize)>,
+    tab_last_run: Vec<u64>,
+    tab_transaction_open: bool,
+    tab_grid_selection: Vec<GridCell>,
+    opened_tabs: Vec<OpenTab>,
+    shown: Vec<ShowView>,
 }
 
 struct TestHost {
@@ -63,6 +73,14 @@ impl TestHost {
                 deletions: Vec::new(),
                 created: Vec::new(),
                 approvals: Vec::new(),
+                engine: None,
+                tab_text: "select 1".into(),
+                tab_selection: None,
+                tab_last_run: Vec::new(),
+                tab_transaction_open: false,
+                tab_grid_selection: Vec::new(),
+                opened_tabs: Vec::new(),
+                shown: Vec::new(),
             }),
         }
     }
@@ -195,20 +213,31 @@ impl AgentHost for TestHost {
         }])
     }
     async fn tab(&self, id: u64) -> sqlr_mcp::error::ToolResult<TabDetail> {
-        if id != 1 {
+        if id != 1 && !(100..200).contains(&id) {
             return Err(sqlr_mcp::error::ToolError::not_found("unknown tab"));
         }
+        let state = self.state.lock();
+        let busy = state.engine.as_ref().is_some_and(|engine| {
+            state.tab_last_run.iter().any(|q| {
+                engine
+                    .result(sqlr_engine::QueryId(*q))
+                    .is_some_and(|r| r.read().status == sqlr_engine::QueryStatus::Running)
+            })
+        });
         Ok(TabDetail {
-            id: 1,
+            id,
             title: "Query".into(),
-            connection_id: Some(self.state.lock().config.id.clone()),
+            connection_id: Some(state.config.id.clone()),
             database: None,
             dirty: false,
             revision: 1,
-            busy: false,
-            text: "select 1".into(),
+            busy,
+            text: state.tab_text.clone(),
             caret: 0,
-            selection: None,
+            selection: state.tab_selection,
+            last_run: state.tab_last_run.clone(),
+            transaction_open: state.tab_transaction_open,
+            grid_selection: state.tab_grid_selection.clone(),
         })
     }
     async fn edit_tab(
@@ -223,14 +252,91 @@ impl AgentHost for TestHost {
             .push((id, expected_revision, edit));
         self.tab(1).await
     }
+    async fn tab_statements(
+        &self,
+        _id: u64,
+        target: RunTarget,
+    ) -> sqlr_mcp::error::ToolResult<Vec<String>> {
+        let state = self.state.lock();
+        let all: Vec<String> = state
+            .tab_text
+            .split(';')
+            .map(str::trim)
+            .filter(|sql| !sql.is_empty())
+            .map(str::to_string)
+            .collect();
+        match target {
+            RunTarget::Script => Ok(all),
+            RunTarget::Statement(index) => all
+                .get(index)
+                .cloned()
+                .map(|sql| vec![sql])
+                .ok_or_else(|| sqlr_mcp::error::ToolError::invalid("no such statement")),
+            RunTarget::Selection => match state.tab_selection {
+                Some((start, end)) if start < end => Ok(vec![state.tab_text[start..end].into()]),
+                _ => Err(sqlr_mcp::error::ToolError::invalid(
+                    "The tab has no selection",
+                )),
+            },
+            RunTarget::Caret => Ok(all.into_iter().take(1).collect()),
+        }
+    }
     async fn run_tab(
         &self,
         id: u64,
         target: RunTarget,
         max_rows: usize,
-    ) -> sqlr_mcp::error::ToolResult<Value> {
-        self.state.lock().tab_runs.push((id, target, max_rows));
-        Ok(json!({"statements": []}))
+        statements: Vec<String>,
+    ) -> sqlr_mcp::error::ToolResult<Vec<u64>> {
+        if self.tab_statements(id, target).await? != statements {
+            return Err(sqlr_mcp::error::ToolError::conflict(1));
+        }
+        let mut state = self.state.lock();
+        state.tab_runs.push((id, target, max_rows));
+        let Some(engine) = state.engine.clone() else {
+            return Ok(Vec::new());
+        };
+        let conn = state.config.id.clone();
+        let ids: Vec<u64> = statements
+            .into_iter()
+            .map(|sql| {
+                engine
+                    .execute_in(&sqlr_engine::SessionKey::meta(&conn), None, sql, max_rows)
+                    .0
+            })
+            .collect();
+        state.tab_last_run = ids.clone();
+        Ok(ids)
+    }
+    async fn tab_result(&self, id: u64, query: u64) -> sqlr_mcp::error::ToolResult<TabResultRef> {
+        let state = self.state.lock();
+        if id != 1 || !state.tab_last_run.contains(&query) {
+            return Err(sqlr_mcp::error::ToolError::not_found("no such tab result"));
+        }
+        Ok(TabResultRef {
+            connection_id: Some(state.config.id.clone()),
+            query,
+        })
+    }
+    async fn open_tab(&self, open: OpenTab) -> sqlr_mcp::error::ToolResult<TabDetail> {
+        let id = {
+            let mut state = self.state.lock();
+            state.opened_tabs.push(open);
+            99 + state.opened_tabs.len() as u64
+        };
+        self.tab(id).await
+    }
+    async fn show(&self, view: ShowView) -> sqlr_mcp::error::ToolResult<Shown> {
+        let mut state = self.state.lock();
+        let opened = matches!(
+            view,
+            ShowView::Ddl { .. } | ShowView::TableData { .. } | ShowView::ErDiagram { .. }
+        );
+        state.shown.push(view);
+        Ok(Shown {
+            tab_id: opened.then_some(150 + state.shown.len() as u64),
+            opened,
+        })
     }
     async fn toast(&self, text: &str) {
         self.state.lock().toasts.push(text.to_string());
@@ -1545,7 +1651,12 @@ async fn editor_tools_validate_and_forward_ranges_and_run_targets() {
             (7, 8, "3")
         );
     }
-    for (index, target) in [json!("script"), json!("selection"), json!({"statement":2})]
+    {
+        let mut state = host.state.lock();
+        state.tab_text = "select 1; select 2".into();
+        state.tab_selection = Some((0, 8));
+    }
+    for (index, target) in [json!("script"), json!("selection"), json!({"statement":1})]
         .into_iter()
         .enumerate()
     {
@@ -1556,7 +1667,8 @@ async fn editor_tools_validate_and_forward_ranges_and_run_targets() {
                 json!({"tab_id":1,"target":target,"max_rows":12}),
             )
             .await;
-        assert_eq!(result, json!({"statements":[]}));
+        assert_eq!(result["tab_id"], 1, "{result}");
+        assert_eq!(result["query_ids"], json!([]), "{result}");
     }
     {
         let state = host.state.lock();
@@ -1564,8 +1676,22 @@ async fn editor_tools_validate_and_forward_ranges_and_run_targets() {
         assert!(matches!(state.tab_runs[1], (1, RunTarget::Selection, 12)));
         assert!(matches!(
             state.tab_runs[2],
-            (1, RunTarget::Statement(2), 12)
+            (1, RunTarget::Statement(1), 12)
         ));
+    }
+    host.state.lock().tab_selection = None;
+    for (index, target) in [json!("selection"), json!({"statement":2})]
+        .into_iter()
+        .enumerate()
+    {
+        let result = client
+            .tool(
+                250 + index as u64,
+                "run_query_tab",
+                json!({"tab_id":1,"target":target}),
+            )
+            .await;
+        assert_eq!(result["error"]["code"], "invalid", "{result}");
     }
     let invalid_edits = [
         json!({}),
@@ -2084,4 +2210,349 @@ async fn test_connection_reports_success_failures_and_missing_secrets() {
             .contains("password"),
         "{missing}"
     );
+}
+
+/// A server whose test host runs tab statements on the server's own engine.
+async fn setup_with_engine(
+    access: AgentAccess,
+) -> (McpServer, Arc<TestHost>, tempfile::TempDir, u16, String) {
+    let dir = tempfile::tempdir().unwrap();
+    let config = sqlite_config(dir.path(), access);
+    let driver = SqliteDriver::new();
+    let manifest = driver.manifest().clone();
+    let mut drivers = DriverRegistry::default();
+    drivers.register(driver);
+    let engine = Arc::new(Engine::new(drivers, Arc::new(|| {})));
+    let host = Arc::new(TestHost::new(config, manifest));
+    host.state.lock().engine = Some(engine.clone());
+    let port = free_port();
+    let server = McpServer::start(StartOptions {
+        port,
+        data_dir: dir.path().join("data"),
+        engine,
+        host: host.clone(),
+        token_store: Arc::new(MemoryMcpTokenStore::with_token("t")),
+        app_version: env!("CARGO_PKG_VERSION").into(),
+    })
+    .await
+    .unwrap();
+    (server, host, dir, port, "t".into())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tab_runs_return_result_ids_the_tab_owns() {
+    let (server, host, _dir, port, token) = setup_with_engine(AgentAccess::Write).await;
+    let mut client = Client::new(port, &token);
+    client.initialize().await;
+    host.state.lock().tab_text =
+        "create table t (id integer, name text); insert into t values (1, 'a'), (2, 'b'); \
+         select id, name from t order by id"
+            .into();
+    let run = client
+        .tool(2, "run_query_tab", json!({"tab_id":1,"target":"script"}))
+        .await;
+    assert_eq!(run["tab_id"], 1, "{run}");
+    assert_eq!(run["status"], "ready", "{run}");
+    let ids: Vec<String> = run["query_ids"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|id| id.as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(ids.len(), 3, "{run}");
+
+    // The same envelope as run_query.
+    let page = client
+        .tool(
+            3,
+            "get_query_result",
+            json!({"query_id": ids[2], "offset": 1, "limit": 5}),
+        )
+        .await;
+    assert_eq!(page["kind"], "tabular", "{page}");
+    assert_eq!(page["query_id"], ids[2]);
+    assert_eq!(page["tabular"]["rows"], json!([[2, "b"]]), "{page}");
+    let inserted = client
+        .tool(4, "get_query_result", json!({"query_id": ids[1]}))
+        .await;
+    assert_eq!(inserted["tabular"]["affected"], 2, "{inserted}");
+
+    // get_query_tab lists the last run, the transaction and the selection.
+    host.state.lock().tab_grid_selection = vec![GridCell {
+        column: "name".into(),
+        row: 1,
+        value: json!("b"),
+    }];
+    let tab = client.tool(5, "get_query_tab", json!({"tab_id":1})).await;
+    assert_eq!(tab["last_run_query_ids"], json!(ids), "{tab}");
+    assert_eq!(tab["transaction_open"], false);
+    assert_eq!(
+        tab["grid_selection"],
+        json!([{"column":"name","row":1,"value":"b"}])
+    );
+
+    // The tab owns its results.
+    let closed = client
+        .tool(6, "close_result", json!({"query_id": ids[2]}))
+        .await;
+    assert_eq!(closed["error"]["code"], "invalid", "{closed}");
+    let still = client
+        .tool(7, "get_query_result", json!({"query_id": ids[2]}))
+        .await;
+    assert_eq!(still["tabular"]["rows"][0], json!([1, "a"]), "{still}");
+
+    // A new run turns the previous ids into not_found.
+    host.state.lock().tab_text = "select 3".into();
+    let rerun = client
+        .tool(8, "run_query_tab", json!({"tab_id":1,"target":"script"}))
+        .await;
+    assert_eq!(rerun["query_ids"].as_array().unwrap().len(), 1, "{rerun}");
+    let gone = client
+        .tool(9, "get_query_result", json!({"query_id": ids[2]}))
+        .await;
+    assert_eq!(gone["error"]["code"], "not_found", "{gone}");
+
+    // Run ids, the transaction and the selection stay hidden on a non-exposed connection.
+    host.state.lock().config.agent_access = AgentAccess::None;
+    let hidden = client.tool(10, "get_query_tab", json!({"tab_id":1})).await;
+    assert_eq!(hidden["text"], "select 3");
+    for key in ["last_run_query_ids", "transaction_open", "grid_selection"] {
+        assert!(hidden.get(key).is_none(), "{key}: {hidden}");
+    }
+    let refused = client
+        .tool(
+            11,
+            "get_query_result",
+            json!({"query_id": rerun["query_ids"][0]}),
+        )
+        .await;
+    assert_eq!(refused["error"]["code"], "not_exposed", "{refused}");
+    let refused = client
+        .tool(12, "run_query_tab", json!({"tab_id":1,"target":"script"}))
+        .await;
+    assert_eq!(refused["error"]["code"], "not_exposed", "{refused}");
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn tab_runs_that_need_confirmation_wait_on_an_approval_and_run_once() {
+    let (server, host, _dir, port, token) = setup_with_engine(AgentAccess::Write).await;
+    let mut client = Client::new(port, &token);
+    client.initialize().await;
+    {
+        let mut state = host.state.lock();
+        state.profile.confirm_writes = true;
+        state.tab_text = "create table t (id integer)".into();
+        state.allow = false;
+    }
+    let denied = client
+        .tool(2, "run_query_tab", json!({"tab_id":1,"target":"script"}))
+        .await;
+    assert_eq!(denied["error"]["code"], "denied", "{denied}");
+    {
+        let state = host.state.lock();
+        assert!(state.tab_runs.is_empty(), "a denied run never starts");
+        assert_eq!(state.approvals.len(), 1);
+        assert_eq!(
+            state.approvals[0].statement.as_deref(),
+            Some("create table t (id integer)")
+        );
+    }
+    host.state.lock().allow = true;
+    let allowed = client
+        .tool(3, "run_query_tab", json!({"tab_id":1,"target":"script"}))
+        .await;
+    assert_eq!(allowed["status"], "ready", "{allowed}");
+    assert_eq!(host.state.lock().tab_runs.len(), 1, "it runs exactly once");
+    assert!(!allowed.to_string().contains("approval_required"));
+
+    // A Read exposure refuses a write before any Approval.
+    host.state.lock().config.agent_access = AgentAccess::Read;
+    let refused = client
+        .tool(4, "run_query_tab", json!({"tab_id":1,"target":"script"}))
+        .await;
+    assert_eq!(refused["error"]["code"], "read_only", "{refused}");
+    assert_eq!(host.state.lock().approvals.len(), 2);
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn open_query_tab_and_show_in_app_validate_and_share_the_tab_limit() {
+    let (server, host, _dir, port, token) = setup_with_engine(AgentAccess::Read).await;
+    let mut client = Client::new(port, &token);
+    client.initialize().await;
+    client
+        .tool(
+            2,
+            "run_query",
+            json!({"connection_id":"c1","query":"select 1"}),
+        )
+        .await;
+    for (index, args) in [
+        json!({"connection_id":"c1","view":"nowhere"}),
+        json!({"connection_id":"c1","view":"ddl"}),
+        json!({"connection_id":"c1","view":"ddl","path":[]}),
+        json!({"connection_id":"c1","view":"er_diagram","tables":[]}),
+        json!({"connection_id":"c1","view":"explain"}),
+        json!({"connection_id":"c1","view":"explain","tab_id":1,"query":"select 1"}),
+        json!({"connection_id":"c1","view":"explain","query":"select 1; select 2"}),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let result = client
+            .tool(10 + index as u64, "show_in_app", args.clone())
+            .await;
+        assert_eq!(result["error"]["code"], "invalid", "{args}: {result}");
+    }
+    let missing = client
+        .tool(
+            20,
+            "show_in_app",
+            json!({"connection_id":"c1","view":"ddl","path":["main","tables","nope"]}),
+        )
+        .await;
+    assert_eq!(missing["error"]["code"], "not_found", "{missing}");
+    let explorer = client
+        .tool(
+            21,
+            "show_in_app",
+            json!({"connection_id":"c1","view":"explorer"}),
+        )
+        .await;
+    assert!(explorer.get("tab_id").is_none(), "{explorer}");
+    assert!(matches!(
+        host.state.lock().shown.last(),
+        Some(ShowView::Explorer { path, .. }) if path.is_empty()
+    ));
+    let explained = client
+        .tool(
+            22,
+            "show_in_app",
+            json!({"connection_id":"c1","view":"explain","tab_id":1}),
+        )
+        .await;
+    assert!(explained.get("error").is_none(), "{explained}");
+    assert!(matches!(
+        host.state.lock().shown.last(),
+        Some(ShowView::Explain { tab_id: 1, statement, analyze: false }) if statement == "select 1"
+    ));
+    host.state.lock().tab_transaction_open = true;
+    let busy = client
+        .tool(
+            23,
+            "show_in_app",
+            json!({"connection_id":"c1","view":"explain","tab_id":1}),
+        )
+        .await;
+    assert_eq!(busy["error"]["code"], "busy", "{busy}");
+
+    // Five tabs per MCP session, across open_query_tab and the tab-opening views.
+    let opened = client
+        .tool(
+            30,
+            "open_query_tab",
+            json!({"connection_id":"c1","text":"select 42","title":"Proposal","database":"main"}),
+        )
+        .await;
+    assert_eq!(opened["tab_id"], 100, "{opened}");
+    assert_eq!(opened["revision"], 1);
+    {
+        let state = host.state.lock();
+        let tab = &state.opened_tabs[0];
+        assert_eq!(tab.text, "select 42");
+        assert_eq!(tab.title.as_deref(), Some("Proposal"));
+        assert_eq!(tab.database.as_deref(), Some("main"));
+    }
+    let explain_tab = client
+        .tool(
+            31,
+            "show_in_app",
+            json!({"connection_id":"c1","view":"explain","query":"select 2"}),
+        )
+        .await;
+    assert_eq!(explain_tab["tab_id"], 101, "{explain_tab}");
+    let er = client
+        .tool(
+            32,
+            "show_in_app",
+            json!({"connection_id":"c1","view":"er_diagram","tables":["a","b"]}),
+        )
+        .await;
+    assert!(er["tab_id"].is_u64(), "{er}");
+    assert!(matches!(
+        host.state.lock().shown.last(),
+        Some(ShowView::ErDiagram { schema, tables, .. }) if schema == "main" && tables.len() == 2
+    ));
+    for call in 33..35 {
+        let more = client
+            .tool(
+                call,
+                "open_query_tab",
+                json!({"connection_id":"c1","text":"select 1"}),
+            )
+            .await;
+        assert!(more["tab_id"].is_u64(), "{more}");
+    }
+    let sixth = client
+        .tool(
+            40,
+            "open_query_tab",
+            json!({"connection_id":"c1","text":"select 1"}),
+        )
+        .await;
+    assert_eq!(sixth["error"]["code"], "busy", "{sixth}");
+    assert!(
+        sixth["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("reuse")
+    );
+    let sixth = client
+        .tool(
+            41,
+            "show_in_app",
+            json!({"connection_id":"c1","view":"explain","query":"select 1"}),
+        )
+        .await;
+    assert_eq!(sixth["error"]["code"], "busy", "{sixth}");
+    // The explorer opens no tab and stays available.
+    let explorer = client
+        .tool(
+            42,
+            "show_in_app",
+            json!({"connection_id":"c1","view":"explorer"}),
+        )
+        .await;
+    assert!(explorer.get("error").is_none(), "{explorer}");
+    // Another MCP session has its own five.
+    let mut other = Client::new(port, &token);
+    other.initialize().await;
+    let fresh = other
+        .tool(
+            43,
+            "open_query_tab",
+            json!({"connection_id":"c1","text":"select 1"}),
+        )
+        .await;
+    assert!(fresh["tab_id"].is_u64(), "{fresh}");
+
+    host.state.lock().config.agent_access = AgentAccess::None;
+    let hidden = other
+        .tool(
+            44,
+            "open_query_tab",
+            json!({"connection_id":"c1","text":"select 1"}),
+        )
+        .await;
+    assert_eq!(hidden["error"]["code"], "not_exposed", "{hidden}");
+    let hidden = other
+        .tool(
+            45,
+            "show_in_app",
+            json!({"connection_id":"c1","view":"explorer"}),
+        )
+        .await;
+    assert_eq!(hidden["error"]["code"], "not_exposed", "{hidden}");
+    server.shutdown().await;
 }

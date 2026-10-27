@@ -869,6 +869,12 @@ impl Engine {
         self.shared.scripts.state(id)
     }
 
+    /// The result of every statement the script started, in statement order: one per
+    /// executed statement, whatever it returned. Empty once the script is closed.
+    pub fn script_queries(&self, id: ScriptId) -> Vec<QueryId> {
+        self.shared.scripts.queries(id)
+    }
+
     /// Cancels the running statement; the script runs no more.
     pub fn cancel_script(&self, id: ScriptId) {
         self.shared.cancel_script(id);

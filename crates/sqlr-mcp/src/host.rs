@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlr_core::{ConnectionConfig, ConnectionProfile, DriverManifest, Secrets, SettingValue};
+use sqlr_core::{ConnectionConfig, ConnectionProfile, DriverManifest, Node, Secrets, SettingValue};
 
 use crate::error::ToolResult;
 
@@ -147,6 +147,74 @@ pub struct TabDetail {
     pub text: String,
     pub caret: usize,
     pub selection: Option<(usize, usize)>,
+    /// The engine results of the tab's most recent run, whoever started it: one per
+    /// executed statement, in order. The MCP layer shows them for exposed Connections only.
+    pub last_run: Vec<u64>,
+    /// Whether the tab's Session holds an open transaction.
+    pub transaction_open: bool,
+    /// The selected cells of the result grid the tab shows, in the result value mapping,
+    /// at most [`crate::results::MAX_SELECTION_CELLS`] of them.
+    pub grid_selection: Vec<GridCell>,
+}
+
+/// One selected cell of a tab's result grid.
+#[derive(Clone, Debug, Serialize)]
+pub struct GridCell {
+    pub column: String,
+    /// The row's index in the result, as `get_query_result` offsets count it.
+    pub row: usize,
+    pub value: Value,
+}
+
+/// A tab's result, resolved for paging: the engine result the tab's grid shows.
+#[derive(Clone, Debug)]
+pub struct TabResultRef {
+    pub connection_id: Option<String>,
+    pub query: u64,
+}
+
+/// A new SQL Editor tab an Agent opens for the person.
+#[derive(Clone, Debug)]
+pub struct OpenTab {
+    pub connection_id: String,
+    pub database: Option<String>,
+    pub text: String,
+    pub title: Option<String>,
+}
+
+/// What `show_in_app` brings to the front. The MCP layer has already checked exposure,
+/// resolved the Node and obtained any Approval.
+#[derive(Clone, Debug)]
+pub enum ShowView {
+    /// Expands the Explorer to the Node at `path` and selects it.
+    Explorer {
+        connection_id: String,
+        path: Vec<String>,
+    },
+    /// Opens or focuses the Node's DDL viewer.
+    Ddl { connection_id: String, node: Node },
+    /// Opens the object's data tab with its first page.
+    TableData { connection_id: String, node: Node },
+    /// Opens an ER diagram of `tables` in `schema`.
+    ErDiagram {
+        connection_id: String,
+        database: Option<String>,
+        schema: String,
+        tables: Vec<String>,
+    },
+    /// Runs Explain of `statement` in the tab's Plan pane, on the tab's Session.
+    Explain {
+        tab_id: u64,
+        statement: String,
+        analyze: bool,
+    },
+}
+
+/// What `show_in_app` did: the tab it opened or focused, and whether it is a new tab.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Shown {
+    pub tab_id: Option<u64>,
+    pub opened: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -166,7 +234,10 @@ pub struct EditRange {
 pub enum RunTarget {
     Script,
     Statement(usize),
+    /// The current selection; `invalid` without one.
     Selection,
+    /// The selection, or the statement at the caret (what Explain uses).
+    Caret,
 }
 
 /// Everything the MCP layer needs from the running app.
@@ -207,8 +278,26 @@ pub trait AgentHost: Send + Sync {
         expected_revision: u64,
         edit: TabEdit,
     ) -> ToolResult<TabDetail>;
-    /// Runs in the tab's session and puts the results in its grid.
-    async fn run_tab(&self, id: u64, target: RunTarget, max_rows: usize) -> ToolResult<Value>;
+    /// The statements a run of `target` would execute, from the tab's current buffer.
+    async fn tab_statements(&self, id: u64, target: RunTarget) -> ToolResult<Vec<String>>;
+    /// Starts a run in the tab's Session, through the person's execution flow, and puts the
+    /// results in its grid. `statements` are the ones the caller checked and had approved:
+    /// a buffer that changed since answers `conflict` and runs nothing. The run starts
+    /// once; the answer lists the engine results started so far.
+    async fn run_tab(
+        &self,
+        id: u64,
+        target: RunTarget,
+        max_rows: usize,
+        statements: Vec<String>,
+    ) -> ToolResult<Vec<u64>>;
+    /// Resolves a result of the tab's most recent run; `not_found` once the tab ran again
+    /// or closed.
+    async fn tab_result(&self, id: u64, query: u64) -> ToolResult<TabResultRef>;
+    /// Opens a new unsaved SQL Editor tab and makes it active.
+    async fn open_tab(&self, open: OpenTab) -> ToolResult<TabDetail>;
+    /// Brings a view to the front for the person, with a toast naming it.
+    async fn show(&self, view: ShowView) -> ToolResult<Shown>;
     /// A short notice in the app; never contains a secret or a result row.
     async fn toast(&self, text: &str);
 }

@@ -18,6 +18,10 @@ pub const RESULT_TTL: Duration = Duration::from_secs(300);
 pub const MAX_PAGE_ROWS: usize = 1000;
 pub const DEFAULT_PAGE_ROWS: usize = 200;
 pub const MAX_PAGE_BYTES: usize = 256 * 1024;
+/// A grid selection reaches an Agent with at most this many cells…
+pub const MAX_SELECTION_CELLS: usize = 1000;
+/// …and at most this many bytes of encoded values.
+pub const MAX_SELECTION_BYTES: usize = 256 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResultKind {
@@ -289,9 +293,9 @@ pub fn tabular_page(
     let error = {
         let result = result.read();
         match &result.status {
-            QueryStatus::Failed(e) => {
-                Some(json!({"code": error_code(e.kind), "message": e.message}))
-            }
+            QueryStatus::Failed(e) => Some(
+                json!({"code": error_code(e.kind), "message": crate::error::redact(&e.message)}),
+            ),
             _ => None,
         }
     };
@@ -414,9 +418,9 @@ pub fn document_page(
             QueryStatus::Failed(_) => "failed",
         };
         let error = match &result.status {
-            QueryStatus::Failed(e) => {
-                Some(json!({"code": error_code(e.kind), "message": e.message}))
-            }
+            QueryStatus::Failed(e) => Some(
+                json!({"code": error_code(e.kind), "message": crate::error::redact(&e.message)}),
+            ),
             _ => None,
         };
         (

@@ -1738,16 +1738,106 @@ fn trimmed(target: RunRequest) -> Option<RunRequest> {
     })
 }
 
+impl QueryTab {
+    /// The engine results of the most recent run: one per executed statement, in order.
+    pub fn last_run_ids(&self, engine: &Engine) -> Vec<QueryId> {
+        match &self.run {
+            None => Vec::new(),
+            Some(TabRun::Single { q, .. }) => vec![*q],
+            Some(TabRun::Script { id, .. }) => engine.script_queries(*id),
+        }
+    }
+
+    /// What a run of `target` executes, from the current buffer: the whole buffer, one of
+    /// its statements, the selection (`invalid` without one), or the selection or the
+    /// statement at the caret.
+    pub(crate) fn agent_targets(
+        &mut self,
+        target: sqlr_mcp::host::RunTarget,
+    ) -> sqlr_mcp::error::ToolResult<Vec<RunRequest>> {
+        use sqlr_mcp::error::ToolError;
+        use sqlr_mcp::host::RunTarget;
+        match target {
+            RunTarget::Script => Ok(self.editor.buffer_targets()),
+            RunTarget::Statement(index) => {
+                let targets = self.editor.buffer_targets();
+                let count = targets.len();
+                targets
+                    .into_iter()
+                    .nth(index)
+                    .map(|t| vec![t])
+                    .ok_or_else(|| {
+                        ToolError::invalid(format!(
+                            "Statement {index} does not exist; the tab has {count}"
+                        ))
+                    })
+            }
+            RunTarget::Selection => {
+                if self.editor.selection_chars().is_none() {
+                    return Err(ToolError::invalid("The tab has no selection"));
+                }
+                self.editor
+                    .run_target()
+                    .map(|t| vec![t])
+                    .ok_or_else(|| ToolError::invalid("The selection is empty"))
+            }
+            RunTarget::Caret => self
+                .editor
+                .run_target()
+                .map(|t| vec![t])
+                .ok_or_else(|| ToolError::invalid("The caret is in no statement")),
+        }
+    }
+}
+
 impl SqlrApp {
+    /// The statements an agent run of `target` would execute in tab `key`.
+    pub(crate) fn agent_tab_statements(
+        &mut self,
+        key: u64,
+        target: sqlr_mcp::host::RunTarget,
+    ) -> sqlr_mcp::error::ToolResult<Vec<String>> {
+        let Some(tab) = self.agent_sql_tab(key)? else {
+            return Err(sqlr_mcp::error::ToolError::not_found("Unknown tab"));
+        };
+        Ok(tab
+            .agent_targets(target)?
+            .into_iter()
+            .map(|t| t.sql)
+            .collect())
+    }
+
+    /// The SQL Editor tab `key`; `invalid` for another kind of tab.
+    fn agent_sql_tab(&mut self, key: u64) -> sqlr_mcp::error::ToolResult<Option<&mut QueryTab>> {
+        let Some(tab) = tab_mut(&mut self.dock, key) else {
+            return Ok(None);
+        };
+        if tab.redis.is_some()
+            || tab.object.is_some()
+            || tab.doc.is_some()
+            || tab.admin.is_some()
+            || tab.ddl.is_some()
+            || tab.er.is_some()
+        {
+            return Err(sqlr_mcp::error::ToolError::invalid(
+                "Only SQL query tabs are available",
+            ));
+        }
+        Ok(Some(tab))
+    }
+
     /// Runs a tab for an MCP agent: the whole buffer as a script, one statement by index,
-    /// or the selection. Exposure and profile read-only are enforced here as a second line
-    /// of defence; a confirmation opens the normal in-app dialog and asks the agent to retry.
+    /// or the selection. The MCP layer has checked the run and obtained any Approval for
+    /// `statements`; a buffer that no longer holds them answers `conflict` and nothing
+    /// runs. Exposure and profile read-only are enforced again here. Returns the engine
+    /// results started.
     pub(crate) fn run_tab_for_agent(
         &mut self,
         key: u64,
         target: sqlr_mcp::host::RunTarget,
         max_rows: usize,
-    ) -> sqlr_mcp::error::ToolResult<serde_json::Value> {
+        statements: &[String],
+    ) -> sqlr_mcp::error::ToolResult<Vec<u64>> {
         use sqlr_mcp::error::ToolError;
         let Some((busy, conn)) = self
             .dock
@@ -1770,72 +1860,34 @@ impl SqlrApp {
             return Err(ToolError::not_exposed(&conn));
         }
         let profile = self.profile_for(&cfg);
-        let Some(tab) = self.tab(key) else {
+        let Some(tab) = self.agent_sql_tab(key)? else {
             return Err(ToolError::not_found("Unknown tab"));
         };
-        tab.page_size = max_rows.clamp(1, 1000);
         let syntax = tab.editor.syntax().clone();
-        let (kind, statements) = match target {
-            sqlr_mcp::host::RunTarget::Script => {
-                let targets: Vec<RunRequest> = tab.editor.script_targets();
-                if targets.is_empty() {
-                    return Err(ToolError::invalid("The tab is empty"));
-                }
-                let statements = targets.iter().map(|t| t.sql.clone()).collect();
-                (PendingKind::Script(targets), statements)
-            }
-            sqlr_mcp::host::RunTarget::Statement(index) => {
-                let targets = tab.editor.script_targets();
-                let Some(target) = targets.get(index).cloned() else {
-                    return Err(ToolError::invalid(format!(
-                        "Statement {index} does not exist; the tab has {}",
-                        targets.len()
-                    )));
-                };
-                let sql = target.sql.clone();
-                (PendingKind::Single(target), vec![sql])
-            }
-            sqlr_mcp::host::RunTarget::Selection => {
-                let Some(target) = tab.editor.run_target() else {
-                    return Err(ToolError::invalid("The tab has no selection"));
-                };
-                if target.sql.trim().is_empty() {
-                    return Err(ToolError::invalid("The selection is empty"));
-                }
-                let sql = target.sql.clone();
-                (PendingKind::Single(target), vec![sql])
-            }
-        };
-        if cfg.agent_access == sqlr_core::AgentAccess::Read || profile.read_only {
-            for sql in &statements {
-                if syntax.classify(sql).modifies() {
-                    return Err(ToolError::read_only("A statement in this run"));
-                }
-            }
+        let targets = tab.agent_targets(target)?;
+        if targets.iter().map(|t| &t.sql).ne(statements.iter()) {
+            return Err(ToolError::conflict(tab.editor.revision()));
         }
-        let refs: Vec<&str> = statements.iter().map(String::as_str).collect();
-        if let Some((prompt, listed)) =
-            crate::confirm::confirmation(&profile, &cfg.name, &syntax, &refs)
+        if (cfg.agent_access == sqlr_core::AgentAccess::Read || profile.read_only)
+            && targets.iter().any(|t| syntax.classify(&t.sql).modifies())
         {
-            self.confirm = Some(crate::confirm::PendingRun {
-                tab: key,
-                conn: conn.clone(),
-                kind,
-                prompt,
-                statements: listed,
-            });
-            return Err(ToolError::new(
-                "approval_required",
-                "The in-app approval dialog is open; answer it and call run_query_tab again",
-            ));
+            return Err(ToolError::read_only("A statement in this run"));
         }
-        let count = statements.len();
+        tab.page_size = max_rows.clamp(1, 1000);
+        let kind = match target {
+            sqlr_mcp::host::RunTarget::Script => PendingKind::Script(targets),
+            _ => match targets.into_iter().next() {
+                Some(target) => PendingKind::Single(target),
+                None => return Err(ToolError::invalid("The run target holds no statement")),
+            },
+        };
         self.start_kind(key, &conn, kind);
-        Ok(serde_json::json!({
-            "tab_id": key,
-            "statements": count,
-            "status": "running",
-        }))
+        Ok(self
+            .dock
+            .iter_all_tabs()
+            .find(|(_, tab)| tab.key == key)
+            .map(|(_, tab)| tab.last_run_ids(&self.engine).iter().map(|q| q.0).collect())
+            .unwrap_or_default())
     }
 }
 

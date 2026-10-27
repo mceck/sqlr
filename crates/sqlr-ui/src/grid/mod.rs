@@ -241,6 +241,29 @@ impl GridState {
             .collect()
     }
 
+    /// The selected cells as `(source row, column)`, rectangle by rectangle in view order,
+    /// at most `limit` of them; empty without a selection.
+    pub fn selection_cells(&self, limit: usize) -> Vec<(usize, usize)> {
+        let (Some(_), Some((_, view))) = (self.selected, &self.view) else {
+            return Vec::new();
+        };
+        let mut cells = Vec::new();
+        for selection in self.all_selections() {
+            for row in selection.rows() {
+                let Some(source) = view.get(row) else {
+                    continue;
+                };
+                for col in selection.cols() {
+                    if cells.len() >= limit {
+                        return cells;
+                    }
+                    cells.push((source, col));
+                }
+            }
+        }
+        cells
+    }
+
     /// The view rows with at least one selected cell, in order.
     fn selected_view_rows(&self) -> Vec<usize> {
         if self.selected.is_none() {

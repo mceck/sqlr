@@ -1106,3 +1106,13 @@ fn read_only_result_can_open_its_table() {
     h.run_steps(1);
     assert_eq!(format!("{:?}", h.state()), "Some(OpenTable)");
 }
+
+#[test]
+fn selection_cells_list_source_cells_in_view_order_up_to_a_limit() {
+    let mut h = harness_with(sequential(5), false, Some(editable()));
+    assert!(h.state().state.selection_cells(10).is_empty());
+    click(&mut h, "name 1");
+    press(&mut h, Modifiers::SHIFT, Key::ArrowDown);
+    assert_eq!(h.state().state.selection_cells(10), vec![(1, 1), (2, 1)]);
+    assert_eq!(h.state().state.selection_cells(1), vec![(1, 1)]);
+}

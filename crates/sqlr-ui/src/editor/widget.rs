@@ -428,6 +428,13 @@ impl EditorState {
     }
 
     /// The statements in the primary selection, else in the whole text.
+    /// Every statement of the whole buffer, whatever the selection.
+    pub fn buffer_targets(&mut self) -> Vec<RunRequest> {
+        let buf = self.model.buffer();
+        let ranges = self.syntax.statements(buf, 0..buf.len_chars());
+        ranges.into_iter().map(|r| self.request(r)).collect()
+    }
+
     pub fn script_targets(&mut self) -> Vec<RunRequest> {
         let buf = self.model.buffer();
         let c = self.model.primary();

@@ -98,6 +98,15 @@ impl Scripts {
         let st = self.state.lock();
         st.scripts.get(&id).map(|e| e.state.clone())
     }
+
+    /// Every query the script started, in statement order; empty once it is closed.
+    pub fn queries(&self, id: ScriptId) -> Vec<QueryId> {
+        let st = self.state.lock();
+        st.scripts
+            .get(&id)
+            .map(|e| e.queries.clone())
+            .unwrap_or_default()
+    }
 }
 
 /// How one statement ended, read from its result.

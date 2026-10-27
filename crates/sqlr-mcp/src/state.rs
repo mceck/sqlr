@@ -46,7 +46,12 @@ pub struct ServerState {
     /// The Connection ids each MCP session created: that session may keep writing them
     /// while they are not exposed.
     pub created: Mutex<HashMap<String, HashSet<String>>>,
+    /// How many tabs each MCP session opened.
+    pub tabs_opened: Mutex<HashMap<String, usize>>,
 }
+
+/// One MCP session opens at most this many tabs.
+pub const MAX_AGENT_TABS: usize = 5;
 
 impl ServerState {
     pub fn new(engine: Arc<Engine>, host: Arc<dyn AgentHost>, port: u16, token: String) -> Self {
@@ -61,6 +66,7 @@ impl ServerState {
             sessions: Mutex::new(HashMap::new()),
             inflight: Mutex::new(HashMap::new()),
             created: Mutex::new(HashMap::new()),
+            tabs_opened: Mutex::new(HashMap::new()),
         }
     }
 
@@ -115,6 +121,21 @@ impl ServerState {
         self.sessions.lock().remove(id);
         self.inflight.lock().remove(id);
         self.created.lock().remove(id);
+        self.tabs_opened.lock().remove(id);
+    }
+
+    /// Whether MCP session `session` may open another tab.
+    pub fn may_open_tab(&self, session: &str) -> bool {
+        self.tabs_opened.lock().get(session).copied().unwrap_or(0) < MAX_AGENT_TABS
+    }
+
+    /// Counts a tab MCP session `session` opened.
+    pub fn record_tab(&self, session: &str) {
+        *self
+            .tabs_opened
+            .lock()
+            .entry(session.to_string())
+            .or_default() += 1;
     }
 
     /// Records that MCP session `session` created the Connection `connection`.

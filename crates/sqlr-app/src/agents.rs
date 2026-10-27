@@ -10,8 +10,9 @@ use sqlr_core::{ConnectionProfile, DriverManifest, Level, SettingValue};
 use sqlr_engine::Engine;
 use sqlr_mcp::error::{ToolError, ToolResult};
 use sqlr_mcp::host::{
-    AgentConnection, AgentHost, ApprovalRequest, ConnectionWrite, FolderOp, KeymapEntry, Risk,
-    RunTarget, SettingEntry, SettingLevel, TabDetail, TabEdit, TabSummary,
+    AgentConnection, AgentHost, ApprovalRequest, ConnectionWrite, FolderOp, GridCell, KeymapEntry,
+    OpenTab, Risk, RunTarget, SettingEntry, SettingLevel, ShowView, Shown, TabDetail, TabEdit,
+    TabResultRef, TabSummary,
 };
 use sqlr_mcp::server::{McpServer, StartError, StartOptions, TokenError};
 use sqlr_store::McpTokenStore;
@@ -262,9 +263,33 @@ impl AgentHost for AppHostClient {
             .await
     }
 
-    async fn run_tab(&self, id: u64, target: RunTarget, max_rows: usize) -> ToolResult<Value> {
-        self.request(move |app| app.agent_run_tab(id, target, max_rows))
+    async fn tab_statements(&self, id: u64, target: RunTarget) -> ToolResult<Vec<String>> {
+        self.request(move |app| app.agent_tab_statements(id, target))
             .await
+    }
+
+    async fn run_tab(
+        &self,
+        id: u64,
+        target: RunTarget,
+        max_rows: usize,
+        statements: Vec<String>,
+    ) -> ToolResult<Vec<u64>> {
+        self.request(move |app| app.run_tab_for_agent(id, target, max_rows, &statements))
+            .await
+    }
+
+    async fn tab_result(&self, id: u64, query: u64) -> ToolResult<TabResultRef> {
+        self.request(move |app| app.agent_tab_result(id, query))
+            .await
+    }
+
+    async fn open_tab(&self, open: OpenTab) -> ToolResult<TabDetail> {
+        self.request(move |app| app.agent_open_tab(open)).await
+    }
+
+    async fn show(&self, view: ShowView) -> ToolResult<Shown> {
+        self.request(move |app| app.agent_show(view)).await
     }
 
     async fn toast(&self, text: &str) {
@@ -848,21 +873,37 @@ impl SqlrApp {
             || tab.doc.is_some()
             || tab.admin.is_some()
             || tab.ddl.is_some()
+            || tab.er.is_some()
         {
             return Err(ToolError::invalid("Only SQL query tabs are available"));
         }
-        Ok(TabDetail {
+        Ok(self.agent_tab_detail(tab))
+    }
+
+    /// A tab as the host reports it. The run, the transaction and the selection are read
+    /// from memory only; the MCP layer passes them on for exposed Connections alone.
+    fn agent_tab_detail(&self, tab: &crate::tabs::QueryTab) -> TabDetail {
+        let engine = &self.engine;
+        let transaction_open = tab.conn.as_deref().is_some_and(|conn| {
+            engine
+                .transaction(&tab.session(engine, conn))
+                .is_some_and(|tx| tx.is_open())
+        });
+        TabDetail {
             id: tab.key,
             title: tab.title.clone(),
             connection_id: tab.conn.clone(),
             database: tab.database.clone(),
             dirty: tab.dirty,
             revision: tab.editor.revision(),
-            busy: tab.is_running(&self.engine),
+            busy: tab.is_running(engine),
             text: tab.editor.text(),
             caret: tab.editor.caret_char(),
             selection: tab.editor.selection_chars(),
-        })
+            last_run: tab.last_run_ids(engine).iter().map(|q| q.0).collect(),
+            transaction_open,
+            grid_selection: grid_selection(engine, tab),
+        }
     }
 
     fn agent_edit_tab(
@@ -871,7 +912,6 @@ impl SqlrApp {
         expected_revision: u64,
         edit: TabEdit,
     ) -> ToolResult<TabDetail> {
-        let engine = &self.engine;
         let Some(tab) = crate::app::tab_mut(&mut self.dock, id) else {
             return Err(ToolError::not_found("Unknown tab"));
         };
@@ -892,23 +932,179 @@ impl SqlrApp {
         if let Some(first) = changes.first() {
             tab.editor.highlight_agent_edit(first.start_char);
         }
-        Ok(TabDetail {
-            id: tab.key,
-            title: tab.title.clone(),
+        self.agent_tab(id)
+    }
+
+    fn agent_tab_result(&self, id: u64, query: u64) -> ToolResult<TabResultRef> {
+        let tab = self
+            .dock
+            .iter_all_tabs()
+            .find(|(_, tab)| tab.key == id)
+            .map(|(_, tab)| tab)
+            .ok_or_else(|| ToolError::not_found("The tab is closed"))?;
+        if !tab.last_run_ids(&self.engine).iter().any(|q| q.0 == query) {
+            return Err(ToolError::not_found(
+                "The tab ran again or no longer shows this result",
+            ));
+        }
+        Ok(TabResultRef {
             connection_id: tab.conn.clone(),
-            database: tab.database.clone(),
-            dirty: tab.dirty,
-            revision: tab.editor.revision(),
-            busy: tab.is_running(engine),
-            text: tab.editor.text(),
-            caret: tab.editor.caret_char(),
-            selection: tab.editor.selection_chars(),
+            query,
         })
     }
 
-    fn agent_run_tab(&mut self, id: u64, target: RunTarget, max_rows: usize) -> ToolResult<Value> {
-        self.run_tab_for_agent(id, target, max_rows)
+    /// Opens a new unsaved SQL Editor tab for an agent, beside the active one.
+    fn agent_open_tab(&mut self, open: OpenTab) -> ToolResult<TabDetail> {
+        if self.connection(&open.connection_id).is_none() {
+            return Err(ToolError::not_found("Unknown connection"));
+        }
+        let key = self.new_tab(
+            open.title.clone(),
+            Some(open.connection_id.clone()),
+            &open.text,
+        );
+        let title = match crate::app::tab_mut(&mut self.dock, key) {
+            Some(tab) => {
+                tab.database = open.database;
+                tab.dirty = true;
+                tab.title.clone()
+            }
+            None => return Err(ToolError::internal("the new tab is missing")),
+        };
+        self.notify(format!("Agent opened the tab \u{201c}{title}\u{201d}"));
+        self.agent_tab(key)
     }
+
+    /// Brings a view to the front for an agent, with a toast naming it.
+    fn agent_show(&mut self, view: ShowView) -> ToolResult<Shown> {
+        let before: std::collections::HashSet<u64> =
+            self.dock.iter_all_tabs().map(|(_, tab)| tab.key).collect();
+        let notice = match view {
+            ShowView::Explorer {
+                connection_id,
+                path,
+            } => {
+                let name = self
+                    .connection(&connection_id)
+                    .map(|cfg| (cfg.name.clone(), cfg.group.clone()))
+                    .ok_or_else(|| ToolError::not_found("Unknown connection"))?;
+                self.left = crate::app::LeftPane::Connections;
+                if let Some(group) = &name.1 {
+                    self.tree.expand_folder(group);
+                }
+                for depth in 0..path.len() {
+                    self.tree.set_expanded(
+                        &connection_id,
+                        &sqlr_core::NodePath(path[..depth].to_vec()),
+                        true,
+                    );
+                }
+                self.tree.selected = Some((connection_id, sqlr_core::NodePath(path.clone())));
+                self.tree.selected_folder = None;
+                let target = path.last().cloned().unwrap_or(name.0);
+                self.notify(format!("Agent showed {target} in the Explorer"));
+                return Ok(Shown::default());
+            }
+            ShowView::Ddl {
+                connection_id,
+                node,
+            } => {
+                self.open_ddl(&connection_id, &node);
+                format!("Agent opened the DDL of {}", node.name)
+            }
+            ShowView::TableData {
+                connection_id,
+                node,
+            } => {
+                self.open_data(&connection_id, &node);
+                format!("Agent opened the data of {}", node.name)
+            }
+            ShowView::ErDiagram {
+                connection_id,
+                database,
+                schema,
+                tables,
+            } => {
+                self.open_er_diagram(&connection_id, database, schema, Some(tables));
+                "Agent opened an ER diagram".to_string()
+            }
+            ShowView::Explain {
+                tab_id,
+                statement,
+                analyze,
+            } => {
+                let engine = self.engine.clone();
+                let Some(tab) = self.agent_sql_tab_mut(tab_id)? else {
+                    return Err(ToolError::not_found("Unknown tab"));
+                };
+                let Some(conn) = tab.conn.clone() else {
+                    return Err(ToolError::invalid("The tab has no connection"));
+                };
+                // The MCP layer obtained the Approval an Analyze of a write needs.
+                tab.start_explain(&engine, &conn, statement, analyze, false);
+                let title = tab.title.clone();
+                self.focus_tab(tab_id);
+                self.notify(format!(
+                    "Agent explained a statement in \u{201c}{title}\u{201d}"
+                ));
+                return Ok(Shown {
+                    tab_id: Some(tab_id),
+                    opened: false,
+                });
+            }
+        };
+        let active = self.active_key();
+        self.notify(notice);
+        Ok(Shown {
+            tab_id: active,
+            opened: active.is_some_and(|key| !before.contains(&key)),
+        })
+    }
+
+    fn agent_sql_tab_mut(&mut self, key: u64) -> ToolResult<Option<&mut crate::tabs::QueryTab>> {
+        self.agent_tab(key)?;
+        Ok(crate::app::tab_mut(&mut self.dock, key))
+    }
+}
+
+/// The selected cells of the result grid `tab` shows, in the result value mapping, within
+/// the cell and byte caps. Reads memory only; the result's read guard is released before
+/// returning.
+fn grid_selection(engine: &Engine, tab: &crate::tabs::QueryTab) -> Vec<GridCell> {
+    use sqlr_mcp::results::{MAX_SELECTION_BYTES, MAX_SELECTION_CELLS, cell_json};
+    let Some(q) = tab.shown_query(engine) else {
+        return Vec::new();
+    };
+    let Some(grid) = tab.grids.get(&q) else {
+        return Vec::new();
+    };
+    let cells = grid.selection_cells(MAX_SELECTION_CELLS);
+    if cells.is_empty() {
+        return Vec::new();
+    }
+    let Some(result) = engine.result(q) else {
+        return Vec::new();
+    };
+    let result = result.read();
+    let columns = result.rows.columns();
+    let mut out = Vec::new();
+    let mut bytes = 0usize;
+    for (row, col) in cells {
+        let (Some(column), Some(cell)) = (columns.get(col), result.rows.cell(row, col)) else {
+            continue;
+        };
+        let value = cell_json(cell, column.hint);
+        bytes += serde_json::to_string(&value).map_or(0, |text| text.len());
+        if bytes > MAX_SELECTION_BYTES {
+            break;
+        }
+        out.push(GridCell {
+            column: column.name.clone(),
+            row,
+            value,
+        });
+    }
+    out
 }
 
 impl SqlrApp {
@@ -979,6 +1175,38 @@ impl SqlrApp {
         });
         self.approval_focus_pending = true;
         rx
+    }
+
+    /// An MCP server state on this app's engine and host, without a listener: a test calls
+    /// `sqlr_mcp::tools::call` with it and steps the app to answer the host requests.
+    #[doc(hidden)]
+    pub fn agent_server_for_tests(&self) -> Arc<sqlr_mcp::state::ServerState> {
+        let host = Arc::new(AppHostClient::new(self.host_tx.clone(), Arc::new(|| {})));
+        Arc::new(sqlr_mcp::state::ServerState::new(
+            self.engine.clone(),
+            host,
+            0,
+            "test".into(),
+        ))
+    }
+
+    /// The Explorer's selected Node, as a Connection and a path.
+    #[doc(hidden)]
+    pub fn explorer_selection_for_tests(&self) -> Option<(String, Vec<String>)> {
+        self.tree
+            .selected
+            .as_ref()
+            .map(|(conn, path)| (conn.clone(), path.segments().to_vec()))
+    }
+
+    /// The active tab's key, title, text and dirty flag.
+    #[doc(hidden)]
+    pub fn active_tab_for_tests(&mut self) -> Option<(u64, String, String, bool)> {
+        let key = self.active_key()?;
+        self.dock
+            .iter_all_tabs()
+            .find(|(_, tab)| tab.key == key)
+            .map(|(_, tab)| (tab.key, tab.title.clone(), tab.editor.text(), tab.dirty))
     }
 
     #[doc(hidden)]
@@ -1436,7 +1664,6 @@ mod tests {
             });
         }
         app.agent_delete("folder", "parent/renamed").unwrap();
-        app.agent_delete("task", "missing").unwrap();
         assert_eq!(
             app.agent_delete("connection", "missing").unwrap_err().code,
             "not_found"

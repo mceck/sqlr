@@ -352,3 +352,25 @@ fn execute_after_script_queues_behind_its_first_statement() {
         .is_some_and(|r| r.read().status != QueryStatus::Running)));
     assert_eq!(fake.executed()[0], "select 1");
 }
+
+#[test]
+fn script_queries_list_every_started_statement_in_order() {
+    let (engine, _fake) = connected(FakeScript {
+        rows: 1,
+        affected: None,
+        ..Default::default()
+    });
+    let id = engine.execute_script(
+        "c",
+        statements(&["select 1", "select 2", "select 3"]),
+        500,
+        ScriptOnError::Stop,
+    );
+    let s = finished(&engine, id);
+    let queries = engine.script_queries(id);
+    assert_eq!(queries.len(), 3);
+    let rows: Vec<QueryId> = s.results.iter().map(|(_, q)| *q).collect();
+    assert_eq!(queries, rows);
+    engine.close_script(id);
+    assert!(engine.script_queries(id).is_empty());
+}

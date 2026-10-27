@@ -83,6 +83,7 @@ sqlr-testkit = { path = "../sqlr-testkit" }
 rusqlite.workspace = true
 reqwest = { workspace = true, features = ["json"] }
 rustls.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 
 [lints]
 workspace = true

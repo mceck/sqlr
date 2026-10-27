@@ -17,10 +17,10 @@ use sqlr_engine::{
     Engine, JobId, JobOutcome, LoadState, QueryId, QueryStatus, SessionKey, SessionStatus, Slot,
 };
 
-use crate::error::{ToolError, ToolResult};
+use crate::error::{ToolError, ToolResult, redact};
 use crate::host::{
-    ApprovalRequest, ConnectionWrite, EditRange, FolderOp, MoveTarget, Risk, RunTarget,
-    SettingLevel, TabEdit,
+    ApprovalRequest, ConnectionWrite, EditRange, FolderOp, MoveTarget, OpenTab, Risk, RunTarget,
+    SettingLevel, ShowView, TabDetail, TabEdit,
 };
 use crate::policy;
 use crate::results;
@@ -117,8 +117,10 @@ pub async fn call(
         "close_result" => close_result(state, ctx, &args).await,
         "list_query_tabs" => list_query_tabs(state).await,
         "get_query_tab" => get_query_tab(state, &args).await,
+        "open_query_tab" => open_query_tab(state, ctx, &args).await,
         "edit_query_tab" => edit_query_tab(state, &args).await,
-        "run_query_tab" => run_query_tab(state, &args).await,
+        "run_query_tab" => run_query_tab(state, ctx, &args).await,
+        "show_in_app" => show_in_app(state, ctx, &args).await,
         "list_snippets" => Ok(list_snippets(state)),
         "get_snippet" => get_snippet(state, &args),
         "write_snippet" => write_snippet(state, &args).await,
@@ -212,33 +214,6 @@ fn connect_error(
             redact(&error.message),
         ),
     }
-}
-
-/// Replaces credentials in free-form error text before it reaches a log or the model.
-fn redact(text: &str) -> String {
-    let mut out = text.to_string();
-    // userinfo in URLs
-    if let Some(scheme) = out.find("://") {
-        let rest = &out[scheme + 3..];
-        if let Some(at) = rest.find('@') {
-            let authority = &rest[..at];
-            if authority.contains(':') {
-                let user = authority.split(':').next().unwrap_or_default();
-                out.replace_range(scheme + 3..scheme + 3 + at, &format!("{user}:***"));
-            }
-        }
-    }
-    for key in ["password=", "passwd=", "token=", "secret="] {
-        let lower = out.to_ascii_lowercase();
-        if let Some(mut start) = lower.find(key) {
-            start += key.len();
-            let end = out[start..]
-                .find(|c: char| c.is_whitespace() || c == '&' || c == ';' || c == ',')
-                .map_or(out.len(), |i| start + i);
-            out.replace_range(start..end, "***");
-        }
-    }
-    out
 }
 
 async fn ensure_connected(
@@ -1051,6 +1026,9 @@ async fn get_query_result(
     let id = args.str("query_id")?;
     let offset = args.opt_u64("offset")?.unwrap_or(0) as usize;
     let limit = results::default_rows(args.opt_i64("limit")?)?;
+    if let Some((tab, query)) = parse_tab_result_id(id) {
+        return tab_result_page(state, id, tab, query, offset, limit).await;
+    }
     state.results.touch(id);
     if let Some(reply) = state.results.reply(id) {
         let value = results::outcome_json(
@@ -1118,6 +1096,11 @@ async fn cancel_query(
     args: &Args,
 ) -> ToolResult<CallToolResult> {
     let id = args.str("query_id")?;
+    if parse_tab_result_id(id).is_some() {
+        return Err(ToolError::invalid(
+            "A tab's run belongs to the person: it is stopped from the tab",
+        ));
+    }
     state.results.touch(id);
     let Some((q, kind)) = state.results.get(id) else {
         return Err(ToolError::not_found("The query id is unknown"));
@@ -1150,6 +1133,11 @@ async fn close_result(
     args: &Args,
 ) -> ToolResult<CallToolResult> {
     let id = args.str("query_id")?;
+    if parse_tab_result_id(id).is_some() {
+        return Err(ToolError::invalid(
+            "A tab's result belongs to the tab and stays in its grid; it cannot be closed",
+        ));
+    }
     let Some((q, kind)) = state.results.remove(id) else {
         return Ok(CallToolResult::structured(
             json!({"query_id": id, "closed": false}),
@@ -1180,9 +1168,10 @@ pub(crate) async fn explain_checks(
     query: &str,
     analyze: bool,
 ) -> ToolResult<String> {
-    if connection.manifest.family != Family::Relational {
+    if connection.manifest.family != Family::Relational || !connection.manifest.capabilities.explain
+    {
         return Err(ToolError::unsupported(
-            "Explain is available for relational Connections",
+            "This database does not provide query plans",
         ));
     }
     let dialect = state
@@ -2263,10 +2252,71 @@ async fn list_query_tabs(state: &Arc<ServerState>) -> ToolResult<CallToolResult>
     })))
 }
 
-async fn get_query_tab(state: &Arc<ServerState>, args: &Args) -> ToolResult<CallToolResult> {
-    let id = args.u64("tab_id")?;
-    let tab = state.host.tab(id).await?;
-    Ok(CallToolResult::structured(json!({
+/// The id of a tab's result: the tab and the engine result its grid shows.
+pub fn tab_result_id(tab: u64, query: u64) -> String {
+    format!("tab-{tab}-{query}")
+}
+
+fn parse_tab_result_id(id: &str) -> Option<(u64, u64)> {
+    let (tab, query) = id.strip_prefix("tab-")?.split_once('-')?;
+    Some((tab.parse().ok()?, query.parse().ok()?))
+}
+
+/// Whether a tab's Connection is exposed to agents.
+async fn tab_exposed(state: &Arc<ServerState>, connection_id: Option<&str>) -> bool {
+    match connection_id {
+        Some(id) => state
+            .host
+            .connection(id)
+            .await
+            .is_ok_and(|c| c.config.agent_access != AgentAccess::None),
+        None => false,
+    }
+}
+
+async fn tab_result_page(
+    state: &Arc<ServerState>,
+    id: &str,
+    tab: u64,
+    query: u64,
+    offset: usize,
+    limit: usize,
+) -> ToolResult<CallToolResult> {
+    let resolved = state.host.tab_result(tab, query).await?;
+    if !tab_exposed(state, resolved.connection_id.as_deref()).await {
+        return Err(ToolError::not_exposed(
+            resolved.connection_id.as_deref().unwrap_or("none"),
+        ));
+    }
+    let (status, elapsed, error, page) = results::tabular_page(
+        state.engine.as_ref(),
+        QueryId(resolved.query),
+        offset,
+        limit,
+    )
+    .map_err(|_| ToolError::not_found("The tab no longer shows this result"))?;
+    let mut value = results::outcome_json(
+        "tabular",
+        &status,
+        Some(id),
+        elapsed,
+        page.truncated,
+        error,
+        Some(page),
+        None,
+        None,
+    );
+    if let Some(object) = value.as_object_mut() {
+        object.insert("offset".into(), json!(offset));
+        object.insert("tab_id".into(), json!(tab));
+    }
+    Ok(CallToolResult::structured(value))
+}
+
+/// A tab as `get_query_tab` shows it; the run, transaction and selection only for an
+/// exposed Connection.
+async fn tab_json(state: &Arc<ServerState>, tab: &TabDetail) -> Value {
+    let mut value = json!({
         "tab_id": tab.id,
         "title": tab.title,
         "connection_id": tab.connection_id,
@@ -2277,6 +2327,60 @@ async fn get_query_tab(state: &Arc<ServerState>, args: &Args) -> ToolResult<Call
         "text": tab.text,
         "caret": tab.caret,
         "selection": tab.selection.map(|(start, end)| json!({"start": start, "end": end})),
+    });
+    if tab_exposed(state, tab.connection_id.as_deref()).await
+        && let Some(object) = value.as_object_mut()
+    {
+        object.insert(
+            "last_run_query_ids".into(),
+            json!(
+                tab.last_run
+                    .iter()
+                    .map(|q| tab_result_id(tab.id, *q))
+                    .collect::<Vec<_>>()
+            ),
+        );
+        object.insert("transaction_open".into(), json!(tab.transaction_open));
+        object.insert("grid_selection".into(), json!(tab.grid_selection));
+    }
+    value
+}
+
+async fn get_query_tab(state: &Arc<ServerState>, args: &Args) -> ToolResult<CallToolResult> {
+    let id = args.u64("tab_id")?;
+    let tab = state.host.tab(id).await?;
+    Ok(CallToolResult::structured(tab_json(state, &tab).await))
+}
+
+async fn open_query_tab(
+    state: &Arc<ServerState>,
+    ctx: &ToolContext,
+    args: &Args,
+) -> ToolResult<CallToolResult> {
+    let connection_id = args.str("connection_id")?;
+    let text = args.str("text")?;
+    let connection = exposed_connection(state, connection_id).await?;
+    if connection.manifest.family != Family::Relational {
+        return Err(ToolError::unsupported(
+            "SQL Editor tabs are for relational Connections",
+        ));
+    }
+    if !state.may_open_tab(&ctx.session_id) {
+        return Err(ToolError::tab_limit());
+    }
+    let tab = state
+        .host
+        .open_tab(OpenTab {
+            connection_id: connection_id.to_string(),
+            database: args.opt_str("database").map(str::to_string),
+            text: text.to_string(),
+            title: args.opt_str("title").map(str::to_string),
+        })
+        .await?;
+    state.record_tab(&ctx.session_id);
+    Ok(CallToolResult::structured(json!({
+        "tab_id": tab.id,
+        "revision": tab.revision,
     })))
 }
 
@@ -2327,50 +2431,316 @@ async fn edit_query_tab(state: &Arc<ServerState>, args: &Args) -> ToolResult<Cal
     })))
 }
 
-async fn run_query_tab(state: &Arc<ServerState>, args: &Args) -> ToolResult<CallToolResult> {
-    let id = args.u64("tab_id")?;
-    let target = match args.get("target") {
-        Some(Value::String(value)) if value == "script" => RunTarget::Script,
-        Some(Value::String(value)) if value == "selection" => RunTarget::Selection,
+fn run_target(value: Option<&Value>) -> ToolResult<RunTarget> {
+    match value {
+        Some(Value::String(value)) if value == "script" => Ok(RunTarget::Script),
+        Some(Value::String(value)) if value == "selection" => Ok(RunTarget::Selection),
         Some(Value::Object(object)) => {
             let index = object
                 .get("statement")
                 .and_then(Value::as_u64)
                 .ok_or_else(|| ToolError::invalid("target.statement must be an index"))?;
-            RunTarget::Statement(index as usize)
+            Ok(RunTarget::Statement(index as usize))
         }
-        Some(Value::String(value)) => {
-            return Err(ToolError::invalid(format!(
-                "Unknown run target \"{value}\""
-            )));
-        }
-        _ => {
-            return Err(ToolError::invalid(
-                "target must be script, selection or {statement: n}",
-            ));
-        }
+        Some(Value::String(value)) => Err(ToolError::invalid(format!(
+            "Unknown run target \"{value}\""
+        ))),
+        _ => Err(ToolError::invalid(
+            "target must be script, selection or {statement: n}",
+        )),
+    }
+}
+
+/// The SQL syntax of a Connection's driver.
+fn connection_syntax(
+    state: &Arc<ServerState>,
+    connection: &crate::host::AgentConnection,
+) -> ToolResult<Arc<sqlr_core::SqlSyntax>> {
+    state
+        .engine
+        .drivers()
+        .get(&connection.config.driver)
+        .and_then(|driver| driver.dialect())
+        .map(|dialect| dialect.syntax())
+        .ok_or_else(|| ToolError::unsupported("This driver has no SQL dialect"))
+}
+
+/// The tab's exposed Connection, connected for the person's Sessions.
+async fn tab_connection(
+    state: &Arc<ServerState>,
+    tab: &TabDetail,
+) -> ToolResult<crate::host::AgentConnection> {
+    let Some(connection_id) = tab.connection_id.clone() else {
+        return Err(ToolError::invalid("The tab has no connection"));
     };
+    let connection = exposed_connection(state, &connection_id).await?;
+    ensure_connected(state, &catalog_context("catalog"), &connection).await?;
+    Ok(connection)
+}
+
+async fn run_query_tab(
+    state: &Arc<ServerState>,
+    ctx: &ToolContext,
+    args: &Args,
+) -> ToolResult<CallToolResult> {
+    let id = args.u64("tab_id")?;
+    let target = run_target(args.get("target"))?;
     let max_rows = results::default_rows(args.opt_i64("max_rows")?)?;
     let tab = state.host.tab(id).await?;
     if tab.busy {
         return Err(ToolError::busy());
     }
-    let Some(connection_id) = tab.connection_id.clone() else {
-        return Err(ToolError::invalid("The tab has no connection"));
+    let connection = tab_connection(state, &tab).await?;
+    let statements = state.host.tab_statements(id, target).await?;
+    if statements.is_empty() {
+        return Err(ToolError::invalid("The run target holds no statement"));
+    }
+    let syntax = connection_syntax(state, &connection)?;
+    let classes: Vec<StatementClass> = statements.iter().map(|sql| syntax.classify(sql)).collect();
+    for class in &classes {
+        check_read_only(&connection, class)?;
+    }
+    if let Some(class) = classes
+        .iter()
+        .filter(|class| check_approval(&connection, class))
+        .max_by_key(|class| matches!(class, StatementClass::Destructive(_)))
+    {
+        // A script shows every statement being authorised.
+        let shown = statements.join(";\n");
+        approve(
+            state,
+            ctx,
+            Some(&connection),
+            tab.database.as_deref(),
+            class,
+            &shown,
+        )
+        .await?;
+    }
+    state.host.run_tab(id, target, max_rows, statements).await?;
+    // Wait for the run like run_query does; the ids of the statements run so far answer.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let tab = loop {
+        let tab = state.host.tab(id).await?;
+        if !tab.busy || Instant::now() >= deadline {
+            break tab;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
     };
-    let connection = exposed_connection(state, &connection_id).await?;
-    let _ = ensure_connected(
-        state,
-        &ToolContext {
-            session_id: format!("tab-{id}"),
-            client_name: String::new(),
-            client_version: String::new(),
-        },
-        &connection,
-    )
-    .await?;
-    let value = state.host.run_tab(id, target, max_rows).await?;
+    Ok(CallToolResult::structured(json!({
+        "tab_id": id,
+        "status": if tab.busy { "running" } else { "ready" },
+        "query_ids": tab
+            .last_run
+            .iter()
+            .map(|q| tab_result_id(id, *q))
+            .collect::<Vec<_>>(),
+    })))
+}
+
+fn bool_arg(args: &Args, key: &str) -> ToolResult<bool> {
+    match args.get(key) {
+        None | Some(Value::Null) => Ok(false),
+        Some(value) => value
+            .as_bool()
+            .ok_or_else(|| ToolError::invalid(format!("{key} must be a boolean"))),
+    }
+}
+
+async fn show_in_app(
+    state: &Arc<ServerState>,
+    ctx: &ToolContext,
+    args: &Args,
+) -> ToolResult<CallToolResult> {
+    let connection_id = args.str("connection_id")?;
+    let view = args.str("view")?;
+    if !matches!(
+        view,
+        "explorer" | "ddl" | "table_data" | "er_diagram" | "explain"
+    ) {
+        return Err(ToolError::invalid(format!(
+            "Unknown view \"{view}\": use explorer, ddl, table_data, er_diagram or explain"
+        )));
+    }
+    let connection = exposed_connection(state, connection_id).await?;
+    let opens_tab = view != "explorer";
+    if opens_tab && !state.may_open_tab(&ctx.session_id) {
+        return Err(ToolError::tab_limit());
+    }
+    let shown = match view {
+        "explorer" => {
+            let path = match args.get("path") {
+                None | Some(Value::Null) => Vec::new(),
+                Some(_) => args.string_array("path")?,
+            };
+            if !path.is_empty() {
+                node_at(state, &connection, &path).await?;
+            } else {
+                ensure_connected(state, &catalog_context("catalog"), &connection).await?;
+            }
+            state
+                .host
+                .show(ShowView::Explorer {
+                    connection_id: connection_id.to_string(),
+                    path,
+                })
+                .await?
+        }
+        "ddl" | "table_data" => {
+            let path = path_arg(args)?;
+            if connection.manifest.family != Family::Relational {
+                return Err(ToolError::unsupported(
+                    "This view is available for relational Connections; use explorer",
+                ));
+            }
+            let node = node_at(state, &connection, &path).await?;
+            let connection_id = connection_id.to_string();
+            let view = if view == "ddl" {
+                ShowView::Ddl {
+                    connection_id,
+                    node,
+                }
+            } else {
+                if !matches!(
+                    node.kind,
+                    NodeKind::Table | NodeKind::View | NodeKind::MaterializedView
+                ) {
+                    return Err(ToolError::invalid("table_data needs a table or view node"));
+                }
+                ShowView::TableData {
+                    connection_id,
+                    node,
+                }
+            };
+            state.host.show(view).await?
+        }
+        "er_diagram" => {
+            if connection.manifest.family != Family::Relational {
+                return Err(ToolError::unsupported(
+                    "ER diagrams are available for relational Connections",
+                ));
+            }
+            let tables = args.string_array("tables")?;
+            if tables.is_empty() {
+                return Err(ToolError::invalid("tables must name at least one table"));
+            }
+            let schema = match args.opt_str("schema") {
+                Some(schema) => schema.to_string(),
+                None => state
+                    .engine
+                    .drivers()
+                    .get(&connection.config.driver)
+                    .and_then(|driver| driver.dialect())
+                    .and_then(|dialect| dialect.default_schemas().into_iter().next())
+                    .ok_or_else(|| ToolError::invalid("schema is required for this driver"))?,
+            };
+            ensure_connected(state, &catalog_context("catalog"), &connection).await?;
+            state
+                .host
+                .show(ShowView::ErDiagram {
+                    connection_id: connection_id.to_string(),
+                    database: args.opt_str("database").map(str::to_string),
+                    schema,
+                    tables,
+                })
+                .await?
+        }
+        _ => show_explain(state, ctx, args, &connection).await?,
+    };
+    if shown.opened {
+        state.record_tab(&ctx.session_id);
+    }
+    let mut value = json!({"connection_id": connection_id, "view": view});
+    if let (Some(tab), Some(object)) = (shown.tab_id, value.as_object_mut()) {
+        object.insert("tab_id".into(), json!(tab));
+    }
     Ok(CallToolResult::structured(value))
+}
+
+/// The `explain` view: an existing tab's Plan pane, or a new tab with the query.
+async fn show_explain(
+    state: &Arc<ServerState>,
+    ctx: &ToolContext,
+    args: &Args,
+    connection: &crate::host::AgentConnection,
+) -> ToolResult<crate::host::Shown> {
+    let analyze = bool_arg(args, "analyze")?;
+    if !connection.manifest.capabilities.explain {
+        return Err(ToolError::unsupported(
+            "This database does not provide query plans",
+        ));
+    }
+    let connection_id = connection.config.id.as_str();
+    match (args.opt_u64("tab_id")?, args.opt_str("query")) {
+        (Some(tab_id), None) => {
+            let tab = state.host.tab(tab_id).await?;
+            if tab.connection_id.as_deref() != Some(connection_id) {
+                return Err(ToolError::invalid("The tab is not on this connection"));
+            }
+            if tab.transaction_open {
+                return Err(ToolError::new(
+                    "busy",
+                    "The tab has an open transaction: commit or roll back first",
+                ));
+            }
+            let target = match args.opt_u64("statement")? {
+                Some(index) => RunTarget::Statement(index as usize),
+                None => RunTarget::Caret,
+            };
+            let statements = state.host.tab_statements(tab_id, target).await?;
+            let [statement] = statements.as_slice() else {
+                return Err(ToolError::invalid("Explain takes exactly one statement"));
+            };
+            ensure_connected(state, &catalog_context("catalog"), connection).await?;
+            let statement = explain_checks(
+                state,
+                ctx,
+                connection,
+                tab.database.as_deref(),
+                statement,
+                analyze,
+            )
+            .await?;
+            state
+                .host
+                .show(ShowView::Explain {
+                    tab_id,
+                    statement,
+                    analyze,
+                })
+                .await
+        }
+        (None, Some(query)) => {
+            let database = args.opt_str("database");
+            let statement =
+                explain_checks(state, ctx, connection, database, query, analyze).await?;
+            ensure_connected(state, &catalog_context("catalog"), connection).await?;
+            let tab = state
+                .host
+                .open_tab(OpenTab {
+                    connection_id: connection_id.to_string(),
+                    database: database.map(str::to_string),
+                    text: query.to_string(),
+                    title: Some("Explain".into()),
+                })
+                .await?;
+            state
+                .host
+                .show(ShowView::Explain {
+                    tab_id: tab.id,
+                    statement,
+                    analyze,
+                })
+                .await?;
+            Ok(crate::host::Shown {
+                tab_id: Some(tab.id),
+                opened: true,
+            })
+        }
+        _ => Err(ToolError::invalid(
+            "The explain view takes either tab_id or query",
+        )),
+    }
 }
 
 // ----- snippets -----

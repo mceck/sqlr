@@ -143,12 +143,12 @@ pub static TOOLS: std::sync::LazyLock<Vec<ToolSpec>> = std::sync::LazyLock::new(
         },
         ToolSpec {
             name: "get_query_result",
-            description: "Poll a running run_query result or retrieve another page using its query_id. Do not rerun the statement to fetch more rows. Offset is zero-based; advance it by the number of rows/documents actually returned, since the byte budget can shorten a page. Results expire after five idle minutes or close_result.",
+            description: "Poll a running result or retrieve another page using its query_id: one from run_query, or a tab result id from run_query_tab or get_query_tab (same envelope). Do not rerun the statement to fetch more rows. Offset is zero-based; advance it by the number of rows/documents actually returned, since the byte budget can shorten a page. run_query results expire after five idle minutes or close_result; tab results last while the tab shows them.",
             schema: json!({
                 "type": "object",
                 "required": ["query_id"],
                 "properties": {
-                    "query_id": {"type": "string", "description": "Opaque query_id returned by run_query; not a tab ID or a connection ID."},
+                    "query_id": {"type": "string", "description": "Opaque query_id returned by run_query, run_query_tab or get_query_tab; not a tab ID or a connection ID."},
                     "offset": {"type": "integer", "minimum": 0, "default": 0, "description": "Zero-based row/document offset. For the next page, add the actual returned count to the previous offset; keep the offset when polling an empty running page."},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 200, "description": "Requested page size; the 256 KiB data budget may return fewer rows/documents."}
                 }
@@ -165,7 +165,7 @@ pub static TOOLS: std::sync::LazyLock<Vec<ToolSpec>> = std::sync::LazyLock::new(
         },
         ToolSpec {
             name: "close_result",
-            description: "Release a run_query result and its retained memory when finished. Later get_query_result calls for this id return not_found. Repeated closes are safe: closed=true on the first removal, false if already absent.",
+            description: "Release a run_query result and its retained memory when finished. Later get_query_result calls for this id return not_found. Repeated closes are safe: closed=true on the first removal, false if already absent. A tab's result belongs to the tab: closing it answers invalid.",
             schema: json!({
                 "type": "object",
                 "required": ["query_id"],
@@ -191,11 +191,25 @@ pub static TOOLS: std::sync::LazyLock<Vec<ToolSpec>> = std::sync::LazyLock::new(
         },
         ToolSpec {
             name: "get_query_tab",
-            description: "Read an existing SQL editor tab's text, connection/database, revision, busy state, caret and selection. Obtain tab_id from list_query_tabs. Use the returned revision as expected_revision for edit_query_tab; positions are character offsets.",
+            description: "Read an existing SQL editor tab's text, connection/database, revision, busy state, caret and selection. For an exposed connection it adds last_run_query_ids (the tab's most recent run, whoever started it; page them with get_query_result), transaction_open and grid_selection (selected result cells as {column, row, value}). Obtain tab_id from list_query_tabs. Use the returned revision as expected_revision for edit_query_tab; positions are character offsets.",
             schema: json!({
                 "type": "object",
                 "required": ["tab_id"],
                 "properties": {"tab_id": {"type": "integer", "description": "Numeric ID of an existing SQL editor tab from list_query_tabs."}}
+            }),
+        },
+        ToolSpec {
+            name: "open_query_tab",
+            description: "Open a new unsaved SQL editor tab with text for the person, beside the active tab, and make it active. Runs nothing. Use it to propose a query instead of overwriting one of the person's tabs. Returns tab_id and revision. One session opens at most five tabs (counted with show_in_app); more answers busy.",
+            schema: json!({
+                "type": "object",
+                "required": ["connection_id", "text"],
+                "properties": {
+                    "connection_id": {"type": "string", "description": "Exposed connection ID returned by config_list(target=connections), not its display name."},
+                    "database": {"type": "string", "description": "Optional database the tab targets, discovered via browse."},
+                    "text": {"type": "string", "description": "The SQL the tab opens with."},
+                    "title": {"type": "string", "description": "Optional tab title."}
+                }
             }),
         },
         ToolSpec {
@@ -213,7 +227,7 @@ pub static TOOLS: std::sync::LazyLock<Vec<ToolSpec>> = std::sync::LazyLock::new(
         },
         ToolSpec {
             name: "run_query_tab",
-            description: "Execute SQL already in an existing editor tab using that tab's connection/database and the UI execution flow. Read get_query_tab first to verify text, selection and busy state. Choose the whole script, a zero-based statement index or the current selection. Returns the UI execution response; run_query provides directly pageable MCP results.",
+            description: "Execute SQL already in an existing editor tab using that tab's connection/database and the UI execution flow; results land in the person's grid. Read get_query_tab first to verify text, selection, busy state and transaction_open. Choose the whole script, a zero-based statement index or the current selection. Writes the profile asks to confirm wait for the person's approval; the run starts once. Returns {tab_id, status, query_ids}: one id per executed statement, pageable with get_query_result.",
             schema: json!({
                 "type": "object",
                 "required": ["tab_id", "target"],
@@ -221,6 +235,26 @@ pub static TOOLS: std::sync::LazyLock<Vec<ToolSpec>> = std::sync::LazyLock::new(
                     "tab_id": {"type": "integer", "description": "Numeric ID of an existing SQL editor tab from list_query_tabs."},
                     "target": {"type": ["string", "object"], "description": "Use \"script\" for the entire tab, \"selection\" for its current selection, or {\"statement\":0} for the first parsed statement (zero-based)."},
                     "max_rows": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 200, "description": "Initial row fetch size for the tab's execution."}
+                }
+            }),
+        },
+        ToolSpec {
+            name: "show_in_app",
+            description: "Show something to the person in sqlr instead of describing it; read-only. view=explorer expands and selects a browse path; ddl opens the DDL viewer of a path; table_data opens a table or view's data tab; er_diagram opens an ER diagram of tables; explain shows a plan in an existing tab's Plan pane (tab_id, optional statement index) or in a new tab with query. analyze follows explain_query's rules. Returns tab_id when a tab opens; tab-opening views count toward the five-tab limit.",
+            schema: json!({
+                "type": "object",
+                "required": ["connection_id", "view"],
+                "properties": {
+                    "connection_id": {"type": "string", "description": "Exposed connection ID returned by config_list(target=connections), not its display name."},
+                    "view": {"type": "string", "enum": ["explorer", "ddl", "table_data", "er_diagram", "explain"]},
+                    "path": {"type": "array", "items": {"type": "string"}, "description": "explorer, ddl, table_data: full node path as returned by browse."},
+                    "database": {"type": "string", "description": "er_diagram and explain with query: optional database."},
+                    "schema": {"type": "string", "description": "er_diagram: the schema of the tables; defaults to the driver's default schema."},
+                    "tables": {"type": "array", "items": {"type": "string"}, "description": "er_diagram: table names."},
+                    "tab_id": {"type": "integer", "description": "explain: an existing SQL editor tab on this connection."},
+                    "statement": {"type": "integer", "minimum": 0, "description": "explain with tab_id: zero-based statement index; omit for the statement at the caret."},
+                    "query": {"type": "string", "description": "explain: one statement to open in a new tab and explain."},
+                    "analyze": {"type": "boolean", "default": false, "description": "explain: execute the statement to measure it."}
                 }
             }),
         },
