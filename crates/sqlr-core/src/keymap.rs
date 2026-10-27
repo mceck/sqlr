@@ -129,8 +129,8 @@ actions! {
     ExportResult => ("export_result", "Export the result", "Results", Global),
     DeleteRows => ("delete_rows", "Delete selected rows", "Results", Grid),
     AddRow => ("add_row", "Add row", "Results", Grid),
-    DuplicateRows => ("duplicate_rows", "Duplicate selected rows", "Results", Grid),
-    SetNull => ("set_null", "Set selected cells to NULL", "Results", Grid),
+    DuplicateRows => ("duplicate_rows", "Duplicate rows", "Results", Grid),
+    SetNull => ("set_null", "Set NULL", "Results", Grid),
     RenameSelection => ("rename_selection", "Rename the selected explorer item", "Objects", Explorer),
     Apply => ("apply_changes", "Apply pending changes", "General", Global),
     Discard => ("discard_changes", "Discard pending changes", "General", Global),
@@ -143,6 +143,21 @@ actions! {
     CompareSchemas => ("compare_schemas", "Compare schemas", "General", Global),
     About => ("about", "About", "General", Global),
     Quit => ("quit", "Quit", "General", Global),
+}
+
+impl ActionId {
+    /// Whether this action's chord is active wherever `other`'s is somewhere: same scope,
+    /// either one global, or a grid action next to an editor action the grid also answers.
+    fn overlaps(self, other: ActionId) -> bool {
+        let grid_shared = |a: ActionId| matches!(a, Self::Undo | Self::Redo | Self::SelectAll);
+        match (self.scope(), other.scope()) {
+            (a, b) if a == b => true,
+            (Scope::Global, _) | (_, Scope::Global) => true,
+            (Scope::Grid, Scope::Editor) => grid_shared(other),
+            (Scope::Editor, Scope::Grid) => grid_shared(self),
+            _ => false,
+        }
+    }
 }
 
 /// The action groups, in the order they are listed.
@@ -556,13 +571,10 @@ impl Keymap {
         by_chord
             .into_iter()
             .filter(|(_, actions)| {
-                actions.iter().enumerate().any(|(i, a)| {
-                    actions[i + 1..].iter().any(|b| {
-                        a.scope() == b.scope()
-                            || a.scope() == Scope::Global
-                            || b.scope() == Scope::Global
-                    })
-                })
+                actions
+                    .iter()
+                    .enumerate()
+                    .any(|(i, a)| actions[i + 1..].iter().any(|b| a.overlaps(*b)))
             })
             .collect()
     }
@@ -815,6 +827,17 @@ mod tests {
         let found = keymap.conflicts(true);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].0, cmd_d);
+
+        // The grid answers the editor's undo, so a grid action on its chord conflicts.
+        let mut keymap = Keymap::preset("sqlr").unwrap();
+        keymap.bind(ActionId::AddRow, Chord::parse("Cmd+Z").unwrap());
+        assert_eq!(
+            keymap.conflicts(true),
+            vec![(
+                Chord::parse("Cmd+Z").unwrap(),
+                vec![ActionId::Undo, ActionId::AddRow]
+            )]
+        );
     }
 
     #[test]

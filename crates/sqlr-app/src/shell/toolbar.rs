@@ -123,12 +123,7 @@ impl SqlrApp {
                 "Toggle line comment",
                 C::Key(ActionId::ToggleComment),
             );
-            command_item(
-                ui,
-                self,
-                "Copy line down",
-                C::Key(ActionId::DuplicateLine),
-            );
+            command_item(ui, self, "Copy line down", C::Key(ActionId::DuplicateLine));
             ui.separator();
             command_item(ui, self, "Rename…", C::Key(ActionId::RenameSelection));
             command_item(

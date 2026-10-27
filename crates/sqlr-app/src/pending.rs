@@ -234,11 +234,12 @@ impl SqlrApp {
             return;
         };
         // Refresh only reads again: a statement that writes is never repeated by it.
+        let syntax = tab.editor.syntax();
         let reads = engine
             .result(q)
-            .map(|r| r.read().sql.clone())
-            .is_some_and(|sql| tab.editor.syntax().classify_script(&sql) == StatementClass::Read);
-        if !reads {
+            .is_some_and(|r| syntax.classify_script(&r.read().sql) == StatementClass::Read);
+        let applying = tab.edits.get(&q).is_some_and(|e| e.applying.is_some());
+        if !reads || applying {
             return;
         }
         let pending = tab

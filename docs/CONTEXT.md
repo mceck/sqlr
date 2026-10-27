@@ -119,7 +119,10 @@ One entry of the explorer tree, identified by its **Node path** from the Connect
 
 **Changeset**:
 The pending edits to a Result's data (modified cells, inserted rows, deleted rows) until they are applied or discarded.
-_Avoid_: pending changes, edit buffer
+_Avoid_: edit buffer; "pending changes" for a Changeset alone
+
+**Pending changes**:
+Whatever the active surface holds that is not applied yet: a Changeset, a Schema change list, an object's grants, a role's changes, an edited Redis value or a document being edited. The term names what Apply pending changes and Discard pending changes act on.
 
 **Row key**:
 The primary key or the `NOT NULL` unique key that identifies a row for editing.

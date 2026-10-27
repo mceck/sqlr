@@ -66,7 +66,7 @@ A new tab opens either blank without a Connection, or bound to the Connection an
 ### Undo and redo
 
 - Undo and redo (⌘Z, ⇧⌘Z and also ⌘Y) work in whole groups. Typing and backspacing merge into one group while they continue in the same place, within one second, with the same kind of command, and across a word boundary but not into an earlier non-whitespace character. Moving the caret, placing carets or another kind of edit closes the group.
-- A paste, an indent, a comment toggle, a format, a line command and a replace-all each undo as one group. A new edit clears the redo groups. The stack keeps up to 10,000 groups and drops the oldest. Undo and redo restore the carets from before or after their group.
+- A paste, an indent, a comment toggle, a format, a line command and a replace-all each undo as one group. A new edit clears the redo groups. The stack keeps up to 10,000 groups and drops the oldest. Undo and redo restore the carets from before or after their group, with the last one primary.
 
 ### Find and replace
 
