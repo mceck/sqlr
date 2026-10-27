@@ -31,6 +31,8 @@ For a quicker route, press ⌘P, type part of an object name and select a match.
 
 An unavailable action can mean the driver does not support it, the object has the wrong kind, or the session is read-only. Templates are starting points: review them before running.
 
+![Read-only DDL viewer for the sample orders table](images/explorer-and-objects/ddl.png)
+
 ## Edit a table or another object
 
 1. Open the object's **Edit** action.

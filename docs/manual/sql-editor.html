@@ -65,10 +65,12 @@ img{max-width:100%}
 <table><thead><tr><th>Action</th><th>Shortcut</th></tr></thead><tbody><tr><td>Find</td><td>⌘F</td></tr><tr><td>Replace</td><td>⌥⌘F</td></tr><tr><td>Next / previous match</td><td>⌘G / ⌘Shift+G</td></tr><tr><td>Comment or uncomment lines</td><td>⌘/</td></tr><tr><td>Duplicate line or selection</td><td>⌘D</td></tr><tr><td>Undo / redo</td><td>⌘Z / ⌘Shift+Z</td></tr><tr><td>Indent / outdent</td><td>Tab / Shift+Tab</td></tr><tr><td>Next / previous tab</td><td>Ctrl+Tab / Ctrl+Shift+Tab</td></tr></tbody></table>
 <p>The editor supports multiple carets, bracket pairing and automatic indentation. Set line numbers and soft wrap in <strong>Editor</strong> preferences. Soft wrap is also available through the command palette.</p>
 <p>When the server reports a syntax-error position, sqlr underlines it. Hover or read the error details to see what the database rejected.</p>
+<p><img src="images/sql-editor/commands.png" alt="Command palette showing available actions and their shortcuts"></p>
 <h2 id="reuse-history-and-snippets">Reuse history and snippets</h2>
 <p>Open <strong>History</strong> from <strong>View</strong> to search statements by their text and connection. Entries include execution time, duration and outcome. You can insert a statement into the current editor, copy it or reopen it on its original connection and database. History entries are also searchable in the command palette.</p>
 <p>Use the save-snippet command, ⌘Shift+S in the sqlr preset, for a query you want to name and keep. Snippets can be global or connection-specific, with a description and tags. Insert a snippet into an editor or open it in another tab. Saving a snippet does not run it.</p>
 <p>History records executed statements locally. The diagnostics SQL switch governs logs and reports; it does not disable query history.</p>
+<p><img src="images/sql-editor/snippet.png" alt="Save snippet dialog for naming and organizing a reusable query"></p>
 <h2 id="inspect-a-plan">Inspect a plan</h2>
 <p>Use ⌥⌘E for an explain plan on supported databases. ⌥⌘Shift+E requests explain analyze, which actually executes the statement. See <a href="schema-tools.html">Query plans</a> before using analyze on writes or expensive queries.</p>
 <h2 id="related">Related</h2>

@@ -60,9 +60,11 @@ img{max-width:100%}
 <p>You can export CSV, TSV, a JSON array, JSON Lines, SQL <code>INSERT</code> statements or a Markdown table. Delimited formats let you choose the header, delimiter, quote character, NULL text and line endings. SQL export also needs the destination table name.</p>
 <p>For a partially loaded result, choose between its loaded rows and rerunning the whole statement. The whole-statement option requires a read statement. Rerunning reads the database again, so the export can reflect changes made since the result appeared.</p>
 <p>Exports use raw values unless <strong>Use for export</strong> is enabled under <strong>Data formats</strong> in Preferences. A successful export replaces its temporary output with the finished file; cancelling or failing removes the partial output.</p>
+<p><img src="images/moving-data/export.png" alt="Export dialog with output format and file options"></p>
 <h2 id="import-a-file-into-a-table">Import a file into a table</h2>
 <ol><li>Right-click the destination table in the explorer and open its import action.</li><li>Choose a CSV, TSV, JSON array or JSON Lines file.</li><li>Check the sample rows and detected columns.</li><li>Map each file column to its destination column. Leave automatic IDs unmapped when the database should generate them.</li><li>Review the batch and error options, then start the import.</li></ol>
 <p>An unmapped destination column uses its default or nullability rules. Conversion errors identify the affected row and column. JSON Lines expects one object per line; a JSON array expects one array containing objects.</p>
+<p><img src="images/moving-data/import-preview.png" alt="CSV import preview showing sample orders and column mapping"></p>
 <h2 id="copy-between-connections">Copy between connections</h2>
 <p>Open the command palette with ⌘⇧P and choose <strong>Transfer data…</strong>. The wizard keeps your choices when you move back between steps.</p>
 <p><img src="images/moving-data/transfer.png" alt="Data transfer wizard with source and target choices"></p>
@@ -78,6 +80,7 @@ img{max-width:100%}
 <table><thead><tr><th>Database</th><th>Backup formats</th><th>Native tools</th></tr></thead><tbody><tr><td>PostgreSQL</td><td>SQL, custom archive, tar, directory</td><td><code>pg_dump</code></td></tr><tr><td>MySQL and MariaDB</td><td>SQL</td><td><code>mysqldump</code></td></tr><tr><td>SQLite</td><td>SQL or database file</td><td><code>sqlite3</code> for SQL; online backup for a database file</td></tr></tbody></table>
 <ol><li>Choose the output path and format.</li><li>Select schema-only or data-only output if needed.</li><li>Review the database-specific options and displayed command. PostgreSQL directory output supports parallel jobs; MySQL offers routines, events, triggers and a consistent snapshot.</li><li>Choose <strong>Dump</strong> and follow the log.</li></ol>
 <p>sqlr finds native tools on <code>PATH</code> and in common installation directories. If discovery fails, install the database&#x27;s client tools or set <strong>Executable</strong> in the dialog. Passwords are passed through the tool&#x27;s environment or a private temporary file, and SSH connections use the existing tunnel.</p>
+<p><img src="images/moving-data/dump.png" alt="SQLite dump dialog with output file and backup format options"></p>
 <h2 id="restore-a-backup">Restore a backup</h2>
 <ol><li>Open the restore action on the destination database.</li><li>Select the backup and its format.</li><li>Review the destination and options, including whether existing objects will be removed.</li><li>Choose <strong>Restore</strong> and answer any confirmation.</li><li>Read the outcome and refresh the explorer after completion.</li></ol>
 <p>PostgreSQL SQL scripts use <code>psql</code>; archive formats use <code>pg_restore</code>. MySQL SQL uses <code>mysql</code>. SQLite accepts a SQL script or a database-file backup.</p>

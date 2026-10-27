@@ -30,6 +30,8 @@ For a partially loaded result, choose between its loaded rows and rerunning the 
 
 Exports use raw values unless **Use for export** is enabled under **Data formats** in Preferences. A successful export replaces its temporary output with the finished file; cancelling or failing removes the partial output.
 
+![Export dialog with output format and file options](images/moving-data/export.png)
+
 ## Import a file into a table
 
 1. Right-click the destination table in the explorer and open its import action.
@@ -39,6 +41,8 @@ Exports use raw values unless **Use for export** is enabled under **Data formats
 5. Review the batch and error options, then start the import.
 
 An unmapped destination column uses its default or nullability rules. Conversion errors identify the affected row and column. JSON Lines expects one object per line; a JSON array expects one array containing objects.
+
+![CSV import preview showing sample orders and column mapping](images/moving-data/import-preview.png)
 
 ## Copy between connections
 
@@ -87,6 +91,8 @@ Start from a database node in the explorer, or SQLite's `main` schema, and choos
 4. Choose **Dump** and follow the log.
 
 sqlr finds native tools on `PATH` and in common installation directories. If discovery fails, install the database's client tools or set **Executable** in the dialog. Passwords are passed through the tool's environment or a private temporary file, and SSH connections use the existing tunnel.
+
+![SQLite dump dialog with output file and backup format options](images/moving-data/dump.png)
 
 ## Restore a backup
 

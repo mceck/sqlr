@@ -335,7 +335,7 @@ Variables (`const x = 1`), functions, arrow functions, unknown `db.` methods (`d
 - Connection form: database file (`.duckdb`, `.db`, default `:memory:` for a temporary database), read-only (opens an existing file without allowing changes). URLs: `duckdb:///absolute/path/data.duckdb`, `duckdb:relative.duckdb`, `duckdb::memory:`.
 - The sidecar process serves every connection of the driver. Sessions of one Connection share one native database, each with its own transaction; an in-memory database lives as long as its Connection. One background thread owns each native connection and its live result cursor.
 - Capabilities: `transactions`, `server_cancel`, `schemas`. Bound parameters, chunked results, schema, table and view browsing, table descriptions and autocomplete catalogs are supported.
-- Decimals and integers beyond sqlr's numeric storage are kept as text; time-zone offsets and supported timestamp fractions are preserved. `TIME_NS` result columns need `CAST(column AS VARCHAR)`: the driver reports an unsupported-type error before executing such a statement.
+- Decimals and integers beyond sqlr's numeric storage are kept as text; time-zone offsets and supported timestamp fractions are preserved. `TIME_NS` result columns are temporal text with up to nine fractional digits, preserving nanosecond precision, NULLs and chunked fetching, including DML `RETURNING` results.
 - Extension autoloading is off and nothing is installed at startup; optional extensions need an explicit `INSTALL` and `LOAD` and follow DuckDB's extension policies.
 
 #### JDBC bridge
@@ -650,6 +650,7 @@ flowchart LR
 - **Several versions on disk with an `active` pointer.** Rollback is instant and needs no download.
 - **No sandbox for Sidecar drivers.** A driver needs network and file access and receives passwords anyway; the review step and the release's provenance are the trust boundary.
 - **DuckDB and SAP HANA are sidecars.** DuckDB's engine alone would break the 75 MB size budget. HANA's `hdbconnect` has essentially one maintainer and a slow release cadence: as a sidecar it can be replaced transparently by a driver built on `SAP/go-hdb` if maintenance stalls.
+- **DuckDB results containing nanosecond times use fallible Arrow batches.** The native row decoder lacks this temporal type. Reading batches directly preserves nanoseconds and returns fetch errors, including cancellation, through the Driver interface; other results retain native row decoding.
 - **Snowflake is bundled over its SQL API.** It needs no Java, JDBC or ODBC and works over HTTPS with rustls; the price is independent auto-commit requests with no durable session.
 - **The JDBC bridge is one generic sidecar with presets.** Any database with a JDBC driver works without a native driver; Java is required only by users of the bridge, so the app itself stays JVM-free.
 - **Mongo statements are a parsed subset of the shell syntax, without a JavaScript engine.** A JS engine would cost size and attack surface; the subset covers everyday queries, and `db.runCommand` covers everything else.

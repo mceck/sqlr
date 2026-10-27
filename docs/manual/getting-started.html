@@ -54,8 +54,8 @@ img{max-width:100%}
 <p>Start with the included demo database to learn the workspace without configuring a server. sqlr runs locally on macOS, Windows and Linux; you sign in to your databases, rather than to a sqlr account.</p>
 <h2 id="install-and-open-sqlr">Install and open sqlr</h2>
 <p>Download the build for your operating system and architecture from the <a href="../download.html">download page</a>. On macOS, open the DMG and copy sqlr to Applications. On Windows, extract the ZIP and run the executable. On Linux, use the AppImage or extract the archive and run <code>sqlr</code>.</p>
-<p>The repository also provides an installer for macOS and Linux. From the repository checkout, run:</p>
-<pre><code>sh scripts/get-sqlr.sh</code></pre>
+<p>The repository also provides an installer for macOS and Linux:</p>
+<pre><code>curl -fsSL https://raw.githubusercontent.com/mceck/sqlr/main/scripts/get-sqlr.sh | sh</code></pre>
 <p>The installer checks the release checksums. Linux installs under <code>~/.local</code> by default; macOS uses <code>/Applications</code>, falling back to <code>~/Applications</code> when needed. Set <code>SQLR_VERSION</code> to choose a release or <code>SQLR_PREFIX</code> to change the Linux installation prefix.</p>
 <h2 id="open-the-demo">Open the demo</h2>
 <ol><li>Start sqlr and choose <strong>Open demo database</strong> on the welcome screen.</li><li>Wait for the <strong>Demo</strong> connection and its editor tab to appear.</li><li>Run the prefilled query with ⌘Enter:</li></ol>

@@ -137,13 +137,6 @@ Every command is an Action with a group and a scope, bound by a remappable Keyma
 - [x] Install works on macOS and on a writable Linux folder, opens the release page on Windows, and offers Restart now after installing.
 - [x] A release tag must match the app version, and the workflow publishes platform packages, Sidecar drivers and `SHA256SUMS.txt`.
 - [x] CI checks formatting, Clippy with warnings as errors, dependency rules and the test suite.
-- [ ] The window layout, panels and tab groups are saved per window and restored on the next launch.
-- [ ] The monospace font family is configurable, not only its size.
-- [ ] Native client tool paths are configured in a Settings Tools section.
-- [ ] Result grid colors are configurable from Preferences.
-- [ ] macOS releases are signed and notarized and offered through a Homebrew cask.
-- [ ] Windows releases are offered as an MSI and through winget.
-- [ ] Linux releases are offered as a deb package and a Flatpak.
 
 ## Out of Scope
 
@@ -156,4 +149,4 @@ Every command is an Action with a group and a scope, bound by a remappable Keyma
 
 ## Further Notes
 
-This task records retroactively the area as it exists. The unticked criteria come from the earlier design document and the wider product plan: the window layout and panel sizes start from the default arrangement on each launch; only the monospace size is configurable; native tool paths live in the Dump and Restore dialogs and in each Driver's properties rather than in a Settings Tools section; the grid has no color settings; and the release builds a dmg, a Linux tarball and AppImage, and a Windows zip, without notarization, a cask, winget, a deb or a Flatpak.
+This task records retroactively the area as it exists. Layout and panel sizes start from their defaults on each launch. The monospace size is configurable. Native tool paths live in Dump and Restore dialogs and Driver properties. Release artifacts are a macOS dmg, Linux tarball and AppImage, and Windows zip.

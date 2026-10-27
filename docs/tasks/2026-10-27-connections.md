@@ -86,7 +86,6 @@ sqlr keeps every Connection in a readable `connections.toml`, organised in Folde
 - [x] A Connection URL fills the form, matching parameters to fields ignoring case, `_` and `-`.
 - [x] A URL with a password is refused and only its redacted form stays in the box.
 - [x] Test connection reports the server product and version.
-- [ ] Test connection reports the server round-trip time (it reports the total connect time, SSH setup included).
 - [x] With "Save password" off, secrets are asked on connect and kept in memory until quit.
 - [x] Deleting a Connection deletes its secrets and its recent entry.
 - [x] SSH tunnels support password, key file and agent authentication and one jump host.
@@ -103,7 +102,7 @@ sqlr keeps every Connection in a readable `connections.toml`, organised in Folde
 - [x] Old per-connection keychain items and the old MCP token migrate lazily, persisting before deleting, with tombstones.
 - [x] Connection import recognises sqlr, DBeaver, DataGrip, TablePlus, pgAdmin, Beekeeper Studio and Tabularis files and discovers installed clients.
 - [x] Imports skip duplicates, keep only portable fields, use fresh ids and never grant Agent access.
-- [ ] Imported SQL Server connections use the bundled SQL Server Driver, and SQL Server Connections can be exported to DBeaver, DataGrip and TablePlus.
+- [x] Imported SQL Server connections use the bundled SQL Server Driver, and SQL Server Connections can be exported to DBeaver, DataGrip and TablePlus.
 - [x] Export with credentials is opt-in each time, warns about plaintext, and writes owner-only files.
 - [x] The UI thread performs no file, keychain or vault I/O for any of this.
 
@@ -115,4 +114,4 @@ sqlr keeps every Connection in a readable `connections.toml`, organised in Folde
 
 ## Further Notes
 
-This task records retroactively the work that built the area as it exists today. The second unticked criterion is a code inconsistency: the client migration adapters name the SQL Server Driver `mssql`, while the bundled Driver's id is `sqlserver`.
+This task records retroactively the area as it exists. SQL Server migration uses the bundled Driver id `sqlserver`, while external formats retain their own driver names and URL schemes.

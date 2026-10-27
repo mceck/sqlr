@@ -50,6 +50,8 @@ The editor supports multiple carets, bracket pairing and automatic indentation. 
 
 When the server reports a syntax-error position, sqlr underlines it. Hover or read the error details to see what the database rejected.
 
+![Command palette showing available actions and their shortcuts](images/sql-editor/commands.png)
+
 ## Reuse history and snippets
 
 Open **History** from **View** to search statements by their text and connection. Entries include execution time, duration and outcome. You can insert a statement into the current editor, copy it or reopen it on its original connection and database. History entries are also searchable in the command palette.
@@ -57,6 +59,8 @@ Open **History** from **View** to search statements by their text and connection
 Use the save-snippet command, ⌘Shift+S in the sqlr preset, for a query you want to name and keep. Snippets can be global or connection-specific, with a description and tags. Insert a snippet into an editor or open it in another tab. Saving a snippet does not run it.
 
 History records executed statements locally. The diagnostics SQL switch governs logs and reports; it does not disable query history.
+
+![Save snippet dialog for naming and organizing a reusable query](images/sql-editor/snippet.png)
 
 ## Inspect a plan
 

@@ -14,6 +14,8 @@ Use Preferences to make queries easier to read, control result sizes and choose 
 
 **Cancel** restores the settings from when you opened the window or last chose **Apply**. Connection exposure changes in **Agents** apply and save immediately, separately from these preference edits.
 
+![Appearance preferences with theme, interface scale and accent color](images/settings-and-shortcuts/appearance.png)
+
 ## Choose the right section
 
 | Section | Use it for |
@@ -61,6 +63,8 @@ The memory limits stop further loading and preserve rows already fetched. Close 
 In **Data formats**, set date and timestamp patterns, number grouping, decimal places, boolean style, binary encoding and JSON layout. Each setting includes a sample preview. Empty date patterns and decimal places of `-1` retain the value's original representation.
 
 These options change presentation. Turn on **Use these formats for export** when exported text should use the same representation; it is off by default.
+
+![Data format preferences with date, numeric and JSON display options](images/settings-and-shortcuts/data-formats.png)
 
 ## Learn and change shortcuts
 
@@ -111,6 +115,8 @@ To customize a shortcut:
 5. Resolve any conflict marked in red before saving.
 
 Commands can also be unbound or reset individually; **Reset all** restores the preset. A binding may be reused when its command scopes do not overlap.
+
+![Keymap editor with shortcut presets and grouped action bindings](images/settings-and-shortcuts/keymap.png)
 
 ## Update sqlr
 

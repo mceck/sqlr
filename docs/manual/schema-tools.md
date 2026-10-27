@@ -41,6 +41,8 @@ Open the ER diagram action from a schema in the explorer. Each table shows its c
 
 The diagram shows declared foreign keys. Relationships implied only by naming conventions do not appear.
 
+![Entity relationship diagram connecting customers and orders](images/schema-tools/er-diagram.png)
+
 ## Explain a statement
 
 1. Connect an SQL editor tab and place the caret in one statement.
@@ -53,6 +55,8 @@ An estimated plan shows the database's expected work. **Explain Analyze**, also 
 > **Warning:** Analyze executes the statement. For supported writes, sqlr asks first and rolls back the database transaction afterward; external effects from triggers or functions may still occur. Analyze is refused while a transaction is already open.
 
 The plan runs in the editor tab's session, so its temporary tables and session settings apply. Use Stop to cancel a running plan.
+
+![SQLite explain plan shown beneath the query editor](images/schema-tools/query-plan.png)
 
 ### Read the plan
 
@@ -81,6 +85,8 @@ Use a writable test database for generated data.
 Generators include sequences, number and date ranges, UUIDs, names, addresses, pattern-based text, constants and choices from a list. A foreign-key generator picks actual values from the referenced table when writing; the preview uses stand-in values.
 
 The same specification and seed reproduce the same generated values. If a uniqueness requirement cannot be satisfied, enlarge the generator's range or reduce the row count. The run reports written and rejected rows and offers **Stop** while running.
+
+![Test data generator with row count, seed and column generators](images/schema-tools/generate-data.png)
 
 ## Related
 

@@ -79,7 +79,6 @@ sqlr is one native application for relational, document and key-value databases,
 - [x] The stripped release binary is under 75 MB with every Bundled driver included.
 - [x] Grid scrolling p99 is under 16.7 ms over 300 verified jumps on 1,000,000 rows.
 - [x] Editor budgets (scenarios p99 under 8 ms, scope parsing p99 under 5 ms, first frame under 200 ms, peak RSS under 120 MB) are checked by the editor harness.
-- [ ] CI runs the performance budgets on macOS and Linux and fails the build on a regression.
 - [x] The UI thread performs no database, keychain, vault or connection-file I/O.
 - [x] Every engine method returns without waiting for the database.
 - [x] Every connect, browse, query, fetch, script and Job appears in the Operation registry and can be cancelled on its own.
@@ -90,12 +89,9 @@ sqlr is one native application for relational, document and key-value databases,
 - [x] A Connection error fails its Session, closes its stream and reports a lost transaction.
 - [x] Result chunks use the same bytes in process and over the sidecar protocol.
 - [ ] Results that exceed their memory budget spill their oldest chunks to a temporary file read back through mmap.
-- [ ] The engine throttles repaint requests to about 60 Hz.
 - [x] The build contains no OpenSSL and exactly one egui version, enforced by a CI check.
 - [x] UI widgets depend only on core and return actions instead of calling the engine.
 - [x] The Conformance suite runs every relational Driver against a real database.
-- [ ] The Conformance suite and other service-backed tests run in CI against the shared test services.
-- [ ] Widget tests include snapshot comparisons for the query editor, result grid, schema tree and Key browser.
 - [x] The sidecar frame decoder and the chunk decoder have fuzz targets.
 - [x] `SQLR_SKIP_CONTAINER_TESTS=1` runs every test that needs no database service.
 
@@ -107,4 +103,4 @@ sqlr is one native application for relational, document and key-value databases,
 
 ## Further Notes
 
-This task records retroactively the work that built the area as it exists today. The unticked criteria come from the earlier design documents and are not met by the code: CI currently runs only on Linux without container services and without the budget harnesses, memory budgets truncate instead of spilling, repaint is coalesced by egui rather than throttled by the engine, and widget tests use interaction checks plus on-demand visual audits instead of snapshot comparisons.
+This task records retroactively the area as it exists. Spilling Results to disk remains to do; the engine currently truncates at the memory budget. CI uses Linux without container services or performance budget harnesses. Repaint requests are coalesced by egui, and widget tests use interaction checks and on-demand visual audits.

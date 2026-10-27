@@ -26,6 +26,8 @@ The download comes from the GitHub release matching your sqlr version and your c
 
 Picking a database whose driver is missing opens the manager for that driver. After installation, the connection form opens. A saved connection with a missing driver shows **Install…** in the explorer.
 
+![Driver Manager listing installed, built-in and available drivers](images/drivers/manager.png)
+
 ## Install an archive from disk
 
 1. Choose **Install from file…** in the Driver Manager.

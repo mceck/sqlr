@@ -365,7 +365,7 @@ The MCP surface excludes the terminal entirely: no tool reads, writes, starts or
 
 - An Agent access segmented control in the dialog's Advanced section, with an explanation of each level and a warning that Write still follows profile confirmations.
 - The Explorer context menu offers an Agent access submenu with the three levels, using the same store path.
-- The Connection row carries its Agent access level, shown in the Connection menu as a checked entry; this version presents it there rather than as a row badge.
+- The Connection menu shows its Agent access level as a checked entry.
 
 **Approval dialog**
 

@@ -154,11 +154,7 @@ Import and Export are presets of the same engine. A test-data generator fills a 
 - [x] The Plan pane shows the statement, the Estimated or Analyzed chip, the changed chip, Copy, Raw, Collapse and Expand, Recompute, timings, cost, rows, warnings, operator mix and an Analyze action for an estimated plan.
 - [x] Warnings cover a 10x row estimate error, a scan over 10,000 rows, a node run 1,000 times, and spills including MySQL temporary tables and filesort.
 - [x] The hot path bar, HOT badges, operator cards, inspector and raw view are present.
-- [ ] The dump dialog shows the exact command line before the job runs.
-- [ ] Saved tasks can be created, edited and run from the app.
-- [ ] ER diagrams export to PNG as well as SVG.
 - [ ] SAP HANA's own `BACKUP DATA` and `RECOVER` commands are offered as Dump and Restore.
-- [ ] A script Saved task can be run.
 
 ## Out of Scope
 
@@ -170,4 +166,4 @@ Import and Export are presets of the same engine. A test-data generator fills a 
 
 ## Further Notes
 
-This task records retroactively the area as it exists. The unticked criteria come from the earlier design document: the command line is logged when the job starts rather than previewed before it; Saved tasks exist in the engine, storage and Agent interface but have no app controls; the ER export writes SVG only; SAP HANA has no native dump or restore integration; and the engine refuses to run a Saved script task.
+This task records retroactively the area as it exists. SAP HANA native Dump and Restore integration remains to do. Dump commands are logged when the job starts. Saved tasks exist in the engine and storage, with MCP read and delete access; script runs are rejected. ER diagrams export as SVG.

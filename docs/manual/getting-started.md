@@ -8,10 +8,10 @@ Start with the included demo database to learn the workspace without configuring
 
 Download the build for your operating system and architecture from the [download page](../download.html). On macOS, open the DMG and copy sqlr to Applications. On Windows, extract the ZIP and run the executable. On Linux, use the AppImage or extract the archive and run `sqlr`.
 
-The repository also provides an installer for macOS and Linux. From the repository checkout, run:
+The repository also provides an installer for macOS and Linux:
 
 ```sh
-sh scripts/get-sqlr.sh
+curl -fsSL https://raw.githubusercontent.com/mceck/sqlr/main/scripts/get-sqlr.sh | sh
 ```
 
 The installer checks the release checksums. Linux installs under `~/.local` by default; macOS uses `/Applications`, falling back to `~/Applications` when needed. Set `SQLR_VERSION` to choose a release or `SQLR_PREFIX` to change the Linux installation prefix.

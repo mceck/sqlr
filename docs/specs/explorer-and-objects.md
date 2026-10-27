@@ -93,9 +93,9 @@ Details per Driver are in [Drivers](drivers.md).
 
 Document Connections offer index administration in the same place: **New ▸ Index** on a MongoDB collection (keys and directions, unique, TTL, partial filter) or on Elasticsearch's `Indices` folder (an index with settings and mappings JSON), and **Drop…** on a MongoDB index or an Elasticsearch index. They run the Connection's own commands (`createIndex`, `PUT /<index>`, …) as Jobs; creating follows the Connection profile's confirmation and dropping always asks. A read-only explorer session offers none of them.
 
-### Agent access marks
+### Agent access
 
-Each Connection row carries its Agent access level, which the Connection menu shows as a checked entry. Who may change it, and what each level grants, is in [Agents and terminal](agents-and-terminal.md).
+The Connection menu shows its Agent access level as a checked entry. Who may change it, and what each level grants, is in [Agents and terminal](agents-and-terminal.md).
 
 ### The Catalog and the Catalog cache
 

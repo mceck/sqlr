@@ -36,9 +36,9 @@ storage integrations may require an explicit `INSTALL` and `LOAD` and are subjec
 extension policies; the driver disables extension autoloading and installs nothing at startup.
 Existing `jdbc-duckdb` connections continue to use their installed JDBC driver.
 
-`TIME_NS` result columns currently require an explicit `CAST(column AS VARCHAR)` because the
-upstream Rust row decoder cannot read that native type safely. The driver reports an
-unsupported-type error before executing such a statement.
+`TIME_NS` result columns are returned as temporal text with nanosecond precision, including
+NULL values and DML `RETURNING` results. The driver reads these results through fallible
+Arrow batches so they retain all nine fractional digits and support incremental fetching.
 
 ## Testing
 

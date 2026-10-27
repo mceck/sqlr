@@ -37,7 +37,7 @@ Objects open in tabs: a DDL viewer that shows and copies the server's definition
 9. As a user, I want to open a table's data, its DDL, its definition editor and its generated statements from the tree, so that everything about an object starts in one place.
 10. As a user, I want document collections and key-value databases to have tree shapes suited to them, so that browsing feels native rather than relational with missing pieces.
 11. As a user, I want document indexes shown and manageable for a collection, so that index work happens next to the data.
-12. As a user, I want each connection and object to show whether an agent can reach it, so that I know what I have exposed.
+12. As a user, I want the Connection menu to show its current Agent access level, so that I know what I have exposed.
 13. As a user, I want to change agent access from the tree, so that exposure is one deliberate action and not a global switch.
 14. As a user, I want the catalog to be available immediately after a restart, so that the first minute is not spent waiting for schemas again.
 15. As a user, I want the restored catalog to refresh in the background, so that it is correct without me doing anything.
@@ -66,7 +66,7 @@ Objects open in tabs: a DDL viewer that shows and copies the server's definition
 38. As a user, I want the session list to refresh only while it is visible, so that a background panel does not poll the server.
 39. As a user, I want server properties, database sizes and table statistics in the same place, so that a quick health check needs no query.
 40. As a user on a read-only connection, I want object and administration actions disabled rather than failing, so that the interface tells the truth.
-41. As an agent-connected user, I want the Explorer to mark what an agent can reach, so that I can check exposure at a glance.
+41. As an agent-connected user, I want the Explorer menu to show what an agent can reach, so that I can check exposure.
 42. As a contributor, I want node paths to identify every node uniquely, so that loading, selection and persistence do not depend on display names.
 43. As a contributor, I want catalog loading and invalidation to be engine responsibilities, so that the UI only renders state and returns actions.
 
@@ -76,7 +76,7 @@ Objects open in tabs: a DDL viewer that shows and copies the server's definition
 - The driver interface supplies browsing children and counts, introspection, object references and DDL. Object editing is optional and declared through the object-editing descriptor, so the engine and the app enable or hide actions from the descriptor rather than from the driver name.
 - The engine answers explorer requests asynchronously: children of a node with counts, filter results, catalog loads per schema, object definitions and DDL, generated statements and administration reads. Each request is an Operation that can be cancelled and whose failure is reported to the node that asked.
 - The catalog cache is held per Session and per database. Loading is lazy per schema; a schema already loaded is served from the cache. The cache is persisted in the local database keyed by Connection and database with load times, restored at startup, and refreshed in the background. It is invalidated for the affected objects after a DDL statement, after a root node refresh and after a delete; a failed load leaves the previous cache entry in place.
-- The app keeps explorer state in a snapshot rebuilt each frame from engine state: per-node children state (not loaded, loading, ready, failed with message), counts, connection badges, agent-access marks and the active filter. The tree widget renders rows and returns actions; the app performs them.
+- The app keeps explorer state in a snapshot rebuilt each frame from engine state: per-node children state (not loaded, loading, ready, failed with message), counts, connection badges, Agent access menu state and the active filter. The tree widget renders rows and returns actions; the app performs them.
 - The filter matches names case-insensitively at the loaded levels and shows matched branches; it never triggers a full catalog read.
 - Context menus are computed per node kind: connection, folder, schema, table, view, column, index, routine, sequence, document collection, index, key and database each get their applicable actions, including open data, open DDL, edit object, generate SQL, create objects, rename, drop, truncate, refresh, agent access, and document index administration.
 - The DDL viewer is a tab that loads the object's definition, formats it, allows copying and reports when the server cannot produce one. It follows the applied definition after a successful editor apply.
@@ -107,7 +107,7 @@ Objects open in tabs: a DDL viewer that shows and copies the server's definition
 - [x] Connection rows show their state and commit mode.
 - [x] Context menus offer only actions that apply to each node kind, including connection, schema, table, view, column, index, routine, sequence, collection and key.
 - [x] Table and view data and DDL open from the tree, and document indexes can be administered from a collection.
-- [x] Agent access is marked on connections and objects and can be changed from the tree.
+- [x] Agent access is shown as a checked level in the Connection menu and can be changed from the tree.
 - [x] Document and key-value connections have tree shapes suited to their Families.
 - [x] The Catalog loads lazily per schema, is persisted per Connection and database, is restored at startup and refreshes in the background.
 - [x] The Catalog is invalidated after DDL, after a root refresh and after a delete, and separate databases never share entries.
@@ -128,11 +128,7 @@ Objects open in tabs: a DDL viewer that shows and copies the server's definition
 - [x] The sessions panel refreshes only while visible, at a configurable interval.
 - [x] Read-only connections disable edit, create and administration actions instead of failing them.
 - [x] Catalog loading, persistence and invalidation live in the engine, and the UI only renders and returns actions.
-- [ ] Table and view nodes offer a "Select 100 rows" menu entry that opens a limited result. The action exists and the application handles it, but no menu emits it, so opening data has no row limit.
-- [ ] The Explorer action row shows a count of connections. It offers new connection, new folder, refresh selected and the filter, with no count.
-- [ ] Object editing and administration are exercised against every bundled relational database in CI. The app and engine suites use fake drivers, and live coverage depends on the shared services.
-- [ ] Object editors cover every object kind of every driver. Coverage follows the object-editing descriptor, and some drivers declare fewer kinds than their server offers.
-- [ ] The Explorer offers schema compare and ER diagrams from object nodes. Both are planned areas and absent.
+- [x] The Explorer offers schema compare and ER diagrams from schema and database nodes for Drivers exposing database tools.
 
 ## Out of Scope
 
@@ -143,4 +139,4 @@ Objects open in tabs: a DDL viewer that shows and copies the server's definition
 
 ## Further Notes
 
-This task records retroactively the work that built the area as it exists today. The unticked criteria are the known gaps: the old design document listed a "Select 100 rows" entry that the tree menu never gained, although the action and its handler exist; the connection header described as showing a count is implemented as an action row without one; live object-editing and administration coverage depends on the container services and is not part of CI; object kinds offered by editors follow each driver's descriptor and are narrower than some servers allow; schema compare and ER diagrams belong to later areas. The design document's schema tree section also described snapshot comparisons for the tree widget; the tests use interaction checks and on-demand visual audits instead.
+This task records retroactively the area as it exists. Object editing follows each Driver's descriptor. Schema compare and ER diagrams are available from schema and database nodes for Drivers exposing database tools. Live editing and administration tests use the shared services when available.

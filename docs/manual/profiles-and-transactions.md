@@ -18,6 +18,8 @@ Test uses amber and Production red to help you recognise the environment. None o
 
 Destructive statements include `DROP`, `TRUNCATE`, column drops and `DELETE` or `UPDATE` without `WHERE`. Review confirmations carefully; a confirmation does not make a statement reversible.
 
+![Connection profiles with commit mode and write confirmation settings](images/profiles-and-transactions/profiles.png)
+
 ## Choose how statements commit
 
 | Mode | Behaviour |

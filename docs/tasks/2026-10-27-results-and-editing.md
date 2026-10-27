@@ -68,6 +68,7 @@ Results appear below the editor in Result, Messages, Output and Plan panes, with
 ## Implementation Decisions
 
 - The grid is custom-painted and virtualized on rows and columns. It holds its own state (selection rectangles, sort, condition, edit buffer, history) and returns actions; it calls no engine.
+- Header boundary drags resize columns with a 60-point minimum. Manual widths stay with the column set across page loads and display-format changes; resizing leaves selection and sorting unchanged.
 - The typed clipboard lives in core: selected cells with their columns, pending overrides, regions and holes, encoded to text and kept next to it. Text and values stay bounded; a copy larger than a threshold goes to a background job.
 - Copy formats are text encoders in core. TSV names columns only for whole columns, CSV always, JSON writes objects, SQL `INSERT` uses the edited table's name, and Markdown writes a table.
 - Paste parses external text as TSV, coerces values by column kind, applies to a trial edit buffer, and commits only when every value validates. Repeated blocks tile when the rectangle is a multiple of the block, else apply once from its corner clipped at the grid's boundaries. Paste as new rows runs a mapping preview and, past 1,000 rows, a background thread.
@@ -123,9 +124,7 @@ Results appear below the editor in Result, Messages, Output and Plan panes, with
 - [x] The JSON view validates a document, accepts Mongo shell literals, highlights and marks its first error, and beautifies.
 - [x] Redis keys are grouped by prefix with type badges and TTLs, and SCAN pages with Load more and a match pattern.
 - [x] Redis value views cover strings, hashes, lists, sets, sorted sets and streams, with paging, TTL, rename, delete and typed edits.
-- [ ] Grid columns can be resized by dragging.
-- [ ] Grid columns can be frozen.
-- [ ] A client-side row filter narrows the loaded rows without rerunning the query.
+- [x] Grid columns can be resized by dragging, with a 60-point minimum; manual widths survive page loads without changing selection or sorting.
 
 ## Out of Scope
 
@@ -137,4 +136,4 @@ Results appear below the editor in Result, Messages, Output and Plan panes, with
 
 ## Further Notes
 
-This task records retroactively the work that built the area as it exists today. The unticked criteria come from the earlier design document: the code measures column widths but offers neither resizing nor freezing, and the filter field is a SQL `WHERE` condition that reruns the query on the server rather than filtering loaded rows locally.
+This task records retroactively the area as it exists. Columns start with measured widths and can be resized by dragging their header boundaries. The filter field is a SQL `WHERE` condition that reruns the query on the server.

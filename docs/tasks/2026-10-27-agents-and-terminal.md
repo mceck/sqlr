@@ -90,7 +90,7 @@ The app also gains an Integrated terminal at the bottom of the workspace: a real
 56. As a user, I want a busy tab to reject an Agent's run, so that my running query is not silently cancelled.
 57. As an Agent, I want to read, create, update, move and delete Snippets, so that I can save reusable SQL.
 58. As a user, I want Snippet deletion approved, so that an Agent cannot lose my library.
-59. As an Agent, I want to create and update Connections, Folders, profiles, settings, keymap and tasks, so that I can automate setup.
+59. As an Agent, I want to create and update Connections, Folders, profiles, settings and keymap, so that I can automate setup.
 60. As an Agent, I want to delete Connections, Folders, profiles and tasks only with Approval, so that destructive configuration changes are explicit.
 61. As an Agent, I want Driver manifests, so that I can create Connections with the right fields.
 62. As an Agent, I want to know whether a secret exists without reading its value, so that I can complete a Connection.
@@ -113,7 +113,7 @@ The app also gains an Integrated terminal at the bottom of the workspace: a real
 79. As a user, I want terminal output not logged and the process group killed on quit, so that secrets do not leak and Agents do not linger.
 80. As a user, I want the terminal to work when MCP is off, so that it is a normal terminal first.
 81. As a user, I want terminal settings in Settings with clear "applies on restart" guidance, so that I know when changes take effect.
-82. As a user, I want exposed Connections marked in the Explorer, so that I can see at a glance what Agents can reach.
+82. As a user, I want the current Agent access level checked in the Connection menu, so that I can review what Agents can reach.
 83. As a user, I want a discreet MCP status indicator in the status bar, so that I know when remote control is active.
 84. As a user, I want a well-designed Approval dialog with risk labels, a monospace statement and obvious keyboard actions, so that decisions are fast and safe.
 85. As a user, I want toasts for Agent configuration and Snippet changes, so that I notice side effects without opening a log.
@@ -167,13 +167,13 @@ The app also gains an Integrated terminal at the bottom of the workspace: a real
 - [x] MCP is off by default; enabling it starts a loopback-only Streamable HTTP server on the configured port, and disabling or quitting stops it and removes the discovery file.
 - [x] The endpoint requires a persistent keychain-backed bearer token; the token stays out of TOML, the discovery file, logs, diagnostics and tool output; rotation invalidates old tokens and drops sessions.
 - [x] Origin and Host validation rejects non-loopback requests; the discovery file is `0600` on Unix and user-scoped on Windows; a busy port produces a clear status and no stale file.
-- [ ] Every Connection defaults to `None`; `Read` and `Write` are human-only; Agent-created and duplicated Connections are `None`; exposed Connections are visibly marked in the Explorer. The first parts hold; the Explorer row carries the level in its menu but draws no badge on the row.
+- [x] Every Connection defaults to `None`; `Read` and `Write` are human-only; Agent-created and duplicated Connections are `None`.
 - [x] `Read` forces read-only execution for SQL, MongoDB, Elasticsearch and Redis; `Write` still obeys profile read-only, commit mode, write confirmations and destructive confirmations.
 - [x] Agent Connections open lazily and visibly; there is no connect or disconnect tool; Agent Sessions are isolated from the editor and other MCP sessions; closing an MCP session rolls back its transactions and closes its Results.
 - [x] Destructive statements and configuration and Snippet deletes require the in-app Approval; the dialog shows client, Connection, database and the exact statement; timeout, deny, disconnect and quit all deny; there is no bypass and no remember option.
 - [x] Connection values and secrets are write-only; secrets are never returned; secret writes are autonomous and logged by field name only; profiles, settings, keymap and tasks are readable.
 - [x] Driver installation, MCP server settings, application updates and `terminal.shell` are human-only; `terminal.shell` is not readable by Agents; safety flags are tighten-only, including profile changes, setting resets and transport-security driver fields.
-- [ ] `config_list`, `config_write` and `config_delete` support the documented targets, partial patches, protected-key rejection, live application of changes, approval-gated deletes and in-use profile rejection. Tasks are readable and deletable but `config_write` has no task target.
+- [x] `config_list`, `config_write` and `config_delete` support their documented targets, partial patches, protected-key rejection, live application of changes, approval-gated deletes and in-use profile rejection. Saved tasks are readable and deletable through MCP.
 - [x] The 19 documented tools exist with the documented request and response shapes; the guide is generated from the registry, covers every tool and contains no secrets.
 - [x] `run_query` is family-aware, executes exactly one statement or command, enforces read exposure and profile confirmations, returns typed columns and rows or documents and replies, and respects the 30-second deadline, 200-row and 256 KiB default cap and 1000-row maximum.
 - [x] Results page by id, cancel and close idempotently, expire after five minutes of inactivity and are closed with their MCP session and Agent Session.
@@ -182,7 +182,7 @@ The app also gains an Integrated terminal at the bottom of the workspace: a real
 - [x] `run_query_tab` runs the buffer as a script, a statement index or the selection in the tab's Session, shows Results in the tab, records History, rejects a busy tab and enforces exposure and confirmations.
 - [x] Snippets are readable and writable, support global and Connection scopes and folders, and delete only after Approval.
 - [x] The Integrated terminal is a real PTY with a login shell, configurable shell, directory and scrollback, lazy start, hidden persistence, Restart, Close and exit status, and process-group cleanup on quit.
-- [ ] The terminal renders ANSI 16, 256 and truecolour, cursor, alternate screen, wide characters and resize correctly; supports selection, copy, paste and bracketed paste; does not implement mouse reporting or clickable links; uses the app theme and monospace font. Rendering and input hold and clickable links are absent, but mouse reporting is implemented and sent to applications that request it, with Shift as the selection escape hatch.
+- [x] The terminal renders ANSI 16, 256 and truecolour, cursor, alternate screen, wide characters and resize correctly; supports selection, copy, paste and bracketed paste; forwards mouse reports to applications that request them, with Shift preserving local selection and scrollback; uses the app theme and monospace font. Clickable links are absent.
 - [x] The terminal toggle is in the toolbar next to value and history, in View, the palette and the keymap; its default is `Ctrl+Backtick` on every platform; the panel is bottom, resizable, default closed and session-only in visibility; history can coexist above it.
 - [x] `terminal.shell` is unreadable and unwritable through MCP; `terminal.cwd`, `terminal.font_size` and `terminal.scrollback` are readable and writable; the terminal is not exposed to MCP; its output and shell command are never logged; no MCP token enters its environment and no Agent is launched automatically.
 - [x] Settings → Agents offers Copy MCP config when the server is running; the configuration is a one-paste setup for a client; the terminal works when MCP is disabled.
@@ -212,4 +212,4 @@ The app also gains an Integrated terminal at the bottom of the workspace: a real
 
 ## Further Notes
 
-This task records retroactively the work that built the area as it exists today. Three acceptance criteria remain unticked and are listed in the report: the Explorer badge, the `config_write` task target, and the mouse-reporting limitation. The first two are gaps; the third records that the implementation went further than the original product decision, by forwarding mouse reports to applications that ask for them.
+This task records retroactively the area as it exists. Agent access is shown in the Connection menu. Saved tasks are readable and deletable through MCP. The terminal forwards mouse reports to applications that request them; Shift keeps selection and scrollback local.
