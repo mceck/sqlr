@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Move saved connections between clients · sqlr</title>
+<style>
+:root{--bg:#0b0e14;--bg-soft:#10151f;--panel:#141b27;--line:#243049;--text:#e8edf5;--muted:#9aa7bd;--dim:#6b7a93;--accent:#4fd1a5;--accent-soft:rgba(79,209,165,.14);--blue:#6ea8fe;--mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,monospace;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.7 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+.topbar{position:sticky;top:0;z-index:10;background:rgba(11,14,20,.88);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.topbar .in{max-width:1180px;margin:0 auto;padding:0 24px;height:56px;display:flex;align-items:center;gap:18px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;color:var(--text)}
+.brand img{width:26px;height:26px;border-radius:6px}.brand:hover{text-decoration:none}
+.topbar .back{margin-left:auto}.topbar .back,.topbar .gh{font-size:14px;color:var(--muted)}.topbar a:hover{color:var(--text)}
+.layout{max-width:1180px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:230px minmax(0,1fr);gap:48px}
+aside{position:sticky;top:56px;align-self:start;height:calc(100vh - 56px);overflow:auto;padding:28px 0;font-size:14.5px}
+aside h4{margin:18px 0 6px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+aside h4:first-child{margin-top:0}
+aside a{display:block;padding:5px 10px;border-radius:8px;color:var(--muted)}
+aside a:hover{color:var(--text);background:var(--panel);text-decoration:none}
+aside a.on{color:var(--accent);background:var(--accent-soft)}
+main{padding:36px 0 80px;max-width:780px}
+h1{font-size:36px;letter-spacing:-.02em;margin:0 0 18px;line-height:1.2}
+h2{font-size:25px;letter-spacing:-.01em;margin:44px 0 10px;padding-top:26px;border-top:1px solid var(--line)}
+h3{font-size:19px;margin:30px 0 8px}h4{font-size:16px;margin:22px 0 6px}
+p{margin:0 0 14px;color:#cfd8e6}li{color:#cfd8e6}
+ul,ol{margin:0 0 16px;padding-left:24px}li{margin:4px 0}li>ul,li>ol{margin:4px 0 0}
+code{font-family:var(--mono);font-size:.88em;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:var(--blue)}
+pre{background:var(--bg-soft);border:1px solid var(--line);border-radius:12px;padding:14px 16px;overflow-x:auto;line-height:1.55;margin:0 0 18px}
+pre code{background:none;border:0;padding:0;color:var(--text);font-size:13.5px}
+blockquote{margin:0 0 16px;padding:2px 16px;border-left:3px solid var(--accent);background:var(--panel);border-radius:0 10px 10px 0}
+table{width:100%;border-collapse:collapse;margin:0 0 20px;font-size:14.5px;display:block;overflow-x:auto}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-size:12.5px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+td{color:#cfd8e6}
+hr{border:0;border-top:1px solid var(--line);margin:30px 0}
+img{max-width:100%}
+@media(max-width:820px){.layout{grid-template-columns:1fr;gap:0}aside{position:static;height:auto;padding:18px 0 0;border-bottom:1px solid var(--line)}h1{font-size:29px}}
+</style>
+</head>
+<body>
+<div class="topbar"><div class="in">
+<a class="brand" href="../index.html"><img src="../media/icon.png" alt="">sqlr</a>
+<a class="back" href="../index.html#docs">All documentation</a>
+<a class="gh" href="https://github.com/mceck/sqlr">GitHub</a>
+</div></div>
+<div class="layout">
+<aside><h4>Using sqlr</h4><a class="" href="../manual/README.html">Start here</a><a class="" href="../manual/getting-started.html">Getting started</a><a class="" href="../manual/connections.html">Connections</a><a class="on" href="../manual/migrating-connections.html">Import and export connections</a><a class="" href="../manual/explorer-and-objects.html">Explorer and object editors</a><a class="" href="../manual/sql-editor.html">The SQL editor</a><a class="" href="../manual/results-and-editing.html">Results and data editing</a><a class="" href="../manual/profiles-and-transactions.html">Profiles and transactions</a><a class="" href="../manual/moving-data.html">Import, export, transfer</a><a class="" href="../manual/schema-tools.html">Schema tools</a><a class="" href="../manual/administration.html">Administration</a><a class="" href="../manual/nosql.html">Document and key-value</a><a class="" href="../manual/drivers.html">Drivers</a><a class="" href="../manual/settings-and-shortcuts.html">Settings and shortcuts</a><a class="" href="../manual/agents.html">Agents and terminal</a><a class="" href="../manual/glossary.html">Glossary</a><a class="" href="../manual/troubleshooting.html">Troubleshooting</a><h4>Project</h4><a href="https://github.com/mceck/sqlr">Source on GitHub</a></aside>
+<main>
+<p><a href="README.html">Manual</a> › Connections</p>
+<h1 id="move-saved-connections-between-clients">Move saved connections between clients</h1>
+<p>Import connection definitions to avoid entering the same server settings again. Export them to back up your setup or use it in another client. This moves connection settings, rather than database contents.</p>
+<h2 id="import-connections">Import connections</h2>
+<ol><li>Choose <strong>File → Import…</strong>, or <strong>Import connections…</strong> on the welcome screen.</li><li>Select a detected source, choose <strong>Choose file…</strong>, drop a file onto the dialog, or choose <strong>Paste from clipboard</strong>.</li><li>Review the recognised connections and migration notes.</li><li>Select the connections to keep, then choose the import button, labelled with the selected count.</li><li>Choose <strong>Done</strong> when saving finishes.</li></ol>
+<p>No database connection is opened during import. sqlr skips duplicate endpoints, database names, users and SSH settings, including duplicates across source clients. New connections retain supported folders and receive unique names. Agent access starts at <strong>None</strong>.</p>
+<table><thead><tr><th>Source</th><th>What you can read</th></tr></thead><tbody><tr><td>sqlr</td><td>Connection backup JSON, versions 1 and 2</td></tr><tr><td>DBeaver</td><td>A project&#x27;s <code>.dbeaver/data-sources.json</code></td></tr><tr><td>DataGrip / JetBrains</td><td><code>dataSources.xml</code>, including copied data-source XML; sibling local settings when available</td></tr><tr><td>TablePlus</td><td>XML or binary <code>Connections.plist</code>, or connection URLs</td></tr><tr><td>pgAdmin</td><td>Exported servers JSON</td></tr><tr><td>Beekeeper Studio</td><td>Connection JSON or the local <code>app.db</code> database</td></tr><tr><td>Tabularis</td><td>Plaintext export JSON or <code>connections.json</code></td></tr></tbody></table>
+<p>Files and clipboard input are limited to 16 MiB. Automatic discovery checks standard client locations. You can select another file when discovery does not find your project.</p>
+<h2 id="review-credentials-and-settings">Review credentials and settings</h2>
+<p>Imports keep supported portable fields, including applicable TLS and SSH options. They do not bring across arbitrary client preferences, startup commands, custom JDBC properties or custom profile definitions. Recognised production and staging environments map to the built-in <strong>Production</strong> and <strong>Test</strong> profiles.</p>
+<p>Credentials explicitly included in supported sources are saved in sqlr&#x27;s credential vault, and credential saving is enabled for those connections. DBeaver and DataGrip passwords remain in their own stores. Beekeeper&#x27;s encrypted database columns are not read. Connections without imported credentials ask when you connect.</p>
+<p>Read every migration note before connecting. Local certificate and key paths may need changing. Encrypted TablePlus archives are unsupported. Re-export encrypted Tabularis backups as plaintext; use a full export for linked SSH profiles. Unsupported transports and policies are reported rather than silently removed.</p>
+<h2 id="export-a-backup-or-another-clientx27s-format">Export a backup or another client&#x27;s format</h2>
+<ol><li>Choose <strong>File → Export…</strong>.</li><li>Select the destination in <strong>Export to</strong>.</li><li>Select the connections. Definitions that the format cannot represent are unavailable.</li><li>If needed and supported, enable <strong>Include credentials</strong>.</li><li>Choose the export button and a destination.</li><li>Follow the destination instructions in the completion screen.</li></ol>
+<blockquote><p><strong>Warning:</strong> <strong>Include credentials</strong> writes plaintext secrets. Keep the resulting file private. The option starts off each time and resets when you change formats.</p></blockquote>
+<table><thead><tr><th>Destination</th><th>Output and how to use it</th></tr></thead><tbody><tr><td>sqlr</td><td>JSON backup; restore with <strong>File → Import…</strong></td></tr><tr><td>DBeaver</td><td>Additional <code>data-sources-sqlr.json</code>; put it in the project&#x27;s <code>.dbeaver</code> folder without replacing <code>data-sources.json</code>, then restart DBeaver</td></tr><tr><td>DataGrip / JetBrains</td><td>XML; copy its contents and use the destination&#x27;s clipboard import</td></tr><tr><td>TablePlus</td><td>One URL per line; import each URL</td></tr><tr><td>pgAdmin</td><td>PostgreSQL servers JSON; use its server import</td></tr><tr><td>Beekeeper Studio</td><td>A new folder containing one JSON file per connection</td></tr><tr><td>Tabularis</td><td>One JSON export with groups and linked SSH profiles</td></tr></tbody></table>
+<p>Credential export is supported for sqlr, TablePlus, Beekeeper Studio and Tabularis. A sqlr backup can include every saved secret field; TablePlus URLs include the database password. The other two include supported database and SSH credentials.</p>
+<p>DataGrip and TablePlus exports exclude SSH connections. Beekeeper and Tabularis export PostgreSQL, MySQL/MariaDB and SQLite, excluding SSH jump hosts; Tabularis also excludes SSH agent authentication. Choose sqlr&#x27;s format for connections other formats cannot preserve.</p>
+<h2 id="related">Related</h2>
+<ul><li><a href="connections.html">Connections</a>: verify imported access and certificates.</li><li><a href="moving-data.html">Move database data</a>: transfer rows instead of connection settings.</li></ul>
+<hr>
+<p>← <a href="connections.html">Connections</a> · <a href="explorer-and-objects.html">Explore and change objects</a> →</p>
+</main>
+</div>
+
+</body>
+</html>

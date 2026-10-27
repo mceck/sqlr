@@ -18,7 +18,7 @@ Or get it from the [download page](https://mceck.github.io/sqlr/download.html)
 
 ## What it does
 
-Link to [documentation](https://mceck.github.io/sqlr/usage/README.html).
+Link to [documentation](https://mceck.github.io/sqlr/manual/README.html).
 
 - **Edit data in the grid**: double-click a cell, add/duplicate/delete rows, changes tinted until **Preview** (the generated SQL), **Apply** or **Discard**; concurrent changes are detected and named.
 - **AI integration**: can be used and configured with your favourite AI agent through MCP.
@@ -170,7 +170,7 @@ Editor performance budgets: `cargo run --release -p sqlr-ui --example editor_mea
 | Logs (newest fourteen daily files) | `logs/sqlr.log.<date>` in the data directory |
 | Local incidents (twenty files or thirty days) | `diagnostics/<incident-id>.json` in the data directory |
 
-MacOS: both under `~/Library/Application Support/dev.sqlr.sqlr/`. Linux: `~/.config/sqlr/` and `~/.local/share/sqlr/`. Help → Diagnostics shows local reports and a session-only log level (default `info`); `RUST_LOG` takes precedence. See [Troubleshooting](docs/usage/troubleshooting.md) for reports, bundles and SQL privacy.
+MacOS: both under `~/Library/Application Support/dev.sqlr.sqlr/`. Linux: `~/.config/sqlr/` and `~/.local/share/sqlr/`. Help → Diagnostics shows local reports and a session-only log level (default `info`); `RUST_LOG` takes precedence. See [Troubleshooting](docs/manual/troubleshooting.md) for reports, bundles and SQL privacy.
 
 ## License
 

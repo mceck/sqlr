@@ -82,7 +82,7 @@ impl SqlrApp {
                     env!("CARGO_PKG_VERSION"),
                     manifest.fields.len()
                 ),
-                homepage: "https://mceck.github.io/sqlr/usage/README.html".into(),
+                homepage: "https://mceck.github.io/sqlr/manual/README.html".into(),
                 license: String::new(),
                 download: None,
                 job: None,

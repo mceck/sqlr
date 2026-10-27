@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Use an agent or the integrated terminal · sqlr</title>
+<style>
+:root{--bg:#0b0e14;--bg-soft:#10151f;--panel:#141b27;--line:#243049;--text:#e8edf5;--muted:#9aa7bd;--dim:#6b7a93;--accent:#4fd1a5;--accent-soft:rgba(79,209,165,.14);--blue:#6ea8fe;--mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,monospace;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.7 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+.topbar{position:sticky;top:0;z-index:10;background:rgba(11,14,20,.88);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.topbar .in{max-width:1180px;margin:0 auto;padding:0 24px;height:56px;display:flex;align-items:center;gap:18px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;color:var(--text)}
+.brand img{width:26px;height:26px;border-radius:6px}.brand:hover{text-decoration:none}
+.topbar .back{margin-left:auto}.topbar .back,.topbar .gh{font-size:14px;color:var(--muted)}.topbar a:hover{color:var(--text)}
+.layout{max-width:1180px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:230px minmax(0,1fr);gap:48px}
+aside{position:sticky;top:56px;align-self:start;height:calc(100vh - 56px);overflow:auto;padding:28px 0;font-size:14.5px}
+aside h4{margin:18px 0 6px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+aside h4:first-child{margin-top:0}
+aside a{display:block;padding:5px 10px;border-radius:8px;color:var(--muted)}
+aside a:hover{color:var(--text);background:var(--panel);text-decoration:none}
+aside a.on{color:var(--accent);background:var(--accent-soft)}
+main{padding:36px 0 80px;max-width:780px}
+h1{font-size:36px;letter-spacing:-.02em;margin:0 0 18px;line-height:1.2}
+h2{font-size:25px;letter-spacing:-.01em;margin:44px 0 10px;padding-top:26px;border-top:1px solid var(--line)}
+h3{font-size:19px;margin:30px 0 8px}h4{font-size:16px;margin:22px 0 6px}
+p{margin:0 0 14px;color:#cfd8e6}li{color:#cfd8e6}
+ul,ol{margin:0 0 16px;padding-left:24px}li{margin:4px 0}li>ul,li>ol{margin:4px 0 0}
+code{font-family:var(--mono);font-size:.88em;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:var(--blue)}
+pre{background:var(--bg-soft);border:1px solid var(--line);border-radius:12px;padding:14px 16px;overflow-x:auto;line-height:1.55;margin:0 0 18px}
+pre code{background:none;border:0;padding:0;color:var(--text);font-size:13.5px}
+blockquote{margin:0 0 16px;padding:2px 16px;border-left:3px solid var(--accent);background:var(--panel);border-radius:0 10px 10px 0}
+table{width:100%;border-collapse:collapse;margin:0 0 20px;font-size:14.5px;display:block;overflow-x:auto}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-size:12.5px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+td{color:#cfd8e6}
+hr{border:0;border-top:1px solid var(--line);margin:30px 0}
+img{max-width:100%}
+@media(max-width:820px){.layout{grid-template-columns:1fr;gap:0}aside{position:static;height:auto;padding:18px 0 0;border-bottom:1px solid var(--line)}h1{font-size:29px}}
+</style>
+</head>
+<body>
+<div class="topbar"><div class="in">
+<a class="brand" href="../index.html"><img src="../media/icon.png" alt="">sqlr</a>
+<a class="back" href="../index.html#docs">All documentation</a>
+<a class="gh" href="https://github.com/mceck/sqlr">GitHub</a>
+</div></div>
+<div class="layout">
+<aside><h4>Using sqlr</h4><a class="" href="../manual/README.html">Start here</a><a class="" href="../manual/getting-started.html">Getting started</a><a class="" href="../manual/connections.html">Connections</a><a class="" href="../manual/migrating-connections.html">Import and export connections</a><a class="" href="../manual/explorer-and-objects.html">Explorer and object editors</a><a class="" href="../manual/sql-editor.html">The SQL editor</a><a class="" href="../manual/results-and-editing.html">Results and data editing</a><a class="" href="../manual/profiles-and-transactions.html">Profiles and transactions</a><a class="" href="../manual/moving-data.html">Import, export, transfer</a><a class="" href="../manual/schema-tools.html">Schema tools</a><a class="" href="../manual/administration.html">Administration</a><a class="" href="../manual/nosql.html">Document and key-value</a><a class="" href="../manual/drivers.html">Drivers</a><a class="" href="../manual/settings-and-shortcuts.html">Settings and shortcuts</a><a class="on" href="../manual/agents.html">Agents and terminal</a><a class="" href="../manual/glossary.html">Glossary</a><a class="" href="../manual/troubleshooting.html">Troubleshooting</a><h4>Project</h4><a href="https://github.com/mceck/sqlr">Source on GitHub</a></aside>
+<main>
+<p><a href="README.html">Manual</a> › Integrations</p>
+<h1 id="use-an-agent-or-the-integrated-terminal">Use an agent or the integrated terminal</h1>
+<p>Connect a local MCP client to work with sqlr&#x27;s database tools and open editor tabs. You can also use the integrated terminal as a shell, with agent access turned on or off.</p>
+<h2 id="decide-which-connections-an-agent-may-use">Decide which connections an agent may use</h2>
+<p>MCP is off by default. Turning it on does not expose your connections: each connection has a separate <strong>Agent access</strong> level.</p>
+<table><thead><tr><th>Level</th><th>Agent access</th></tr></thead><tbody><tr><td><strong>None</strong></td><td>The connection is hidden and cannot be queried</td></tr><tr><td><strong>Read</strong></td><td>Browse objects and run reads in a read-only agent session</td></tr><tr><td><strong>Write</strong></td><td>Run reads and writes, subject to the profile&#x27;s read-only setting and confirmations</td></tr></tbody></table>
+<ol><li>Open <strong>Settings…</strong> and select <strong>Agents</strong>.</li><li>Find the connection under <strong>Connection access</strong>, using <strong>Search connections</strong> or the <strong>All</strong>, <strong>Exposed</strong> and <strong>Hidden</strong> filters.</li><li>Select <strong>Read</strong> or <strong>Write</strong>. The change applies and saves immediately.</li></ol>
+<p>You can also change <strong>Agent access</strong> in the explorer context menu or the connection dialog&#x27;s <strong>Advanced</strong> section. New, imported, duplicated and agent-created connections start at <strong>None</strong>. An agent cannot change this permission. Setting it back to <strong>None</strong> closes that connection&#x27;s agent sessions.</p>
+<h2 id="connect-your-mcp-client">Connect your MCP client</h2>
+<ol><li>In <strong>Agents</strong>, enable <strong>Enable agent access (MCP)</strong>.</li><li>Wait for the running status. The default endpoint is <code>http://127.0.0.1:47821/mcp</code>.</li><li>Choose <strong>Copy MCP config</strong> and paste the copied configuration into your client&#x27;s MCP settings.</li><li>Connect the client while sqlr remains open.</li></ol>
+<p>The configuration includes a bearer token. Keep it private. <strong>Copy endpoint</strong> copies only the address. The token-free <code>mcp.json</code> discovery file in the data directory also publishes the endpoint while the server runs.</p>
+<p><strong>MCP port</strong> accepts ports 1024 through 65535. Changing it restarts the server and disconnects clients. <strong>Rotate token</strong> replaces the credential and disconnects all MCP sessions. Copy the configuration again afterward. Disabling MCP or quitting sqlr ends agent work and removes the discovery file.</p>
+<h2 id="understand-what-tools-can-do">Understand what tools can do</h2>
+<table><thead><tr><th>Area</th><th>Available to an agent</th><th>Kept under your control</th></tr></thead><tbody><tr><td>Database</td><td>Browse, describe, search and query exposed connections</td><td>Exposure level and profile protections</td></tr><tr><td>Editor</td><td>Read and edit existing query text with a revision check; run a statement, selection or script</td><td>Creating, closing and saving editor tabs</td></tr><tr><td>Library</td><td>Read and manage snippets and saved configuration</td><td>Approval for snippet and configuration deletion</td></tr><tr><td>Configuration</td><td>Read permitted settings; update permitted connection settings and secrets</td><td>MCP settings, application updates and terminal shell command</td></tr><tr><td>Operations</td><td>Inspect progress and cancel work</td><td>Integrated terminal input, output and lifecycle</td></tr><tr><td>Credentials</td><td>Write a credential when needed</td><td>Reading stored secrets</td></tr><tr><td>Drivers</td><td>Inspect declared driver fields</td><td>Installing and removing drivers</td></tr></tbody></table>
+<p>An agent session has its own database transaction, separate from your editor and other clients. Ending an MCP session rolls back its open transactions. An agent cannot loosen a safety flag or move a connection to a less protective profile.</p>
+<p>When a tool reports <code>secret_required</code>, provide the missing connection credentials through sqlr or your approved configuration workflow, then retry.</p>
+<h2 id="review-an-approval">Review an approval</h2>
+<p>When a profile requires confirmation, an agent&#x27;s request opens an approval showing the client, connection, profile, risk and exact statement. Read the statement before allowing it.</p>
+<p><strong>Deny</strong> is initially focused. Escape denies, and an unanswered approval expires after 60 seconds. Deleting configuration or a snippet also requires approval. An agent receives <code>denied</code> or <code>timeout</code> when the request is refused or expires.</p>
+<p>The server supports eight MCP sessions. Idle sessions close after 30 minutes. Result pages default to 200 rows, accept up to 1,000 rows and stay within 256 KiB. A result expires after five minutes without access; rerun it after expiry.</p>
+<h2 id="open-a-terminal">Open a terminal</h2>
+<ol><li>Choose <strong>View → Terminal</strong>, use the toolbar toggle, or press Ctrl+Backtick.</li><li>Use your shell. It starts when the terminal first opens and keeps running while the panel is hidden.</li><li>Use the header actions to <strong>Clear</strong> the display, <strong>Restart</strong> the shell or <strong>Kill</strong> its process group.</li></ol>
+<p>Quitting sqlr also stops the terminal process group. A shell that has exited shows its exit code.</p>
+<table><thead><tr><th>Action</th><th>macOS</th><th>Windows and Linux</th></tr></thead><tbody><tr><td>Copy selected text</td><td>⌘C</td><td>Ctrl+Shift+C</td></tr><tr><td>Paste</td><td>⌘V</td><td>Ctrl+Shift+V</td></tr><tr><td>Interrupt command</td><td>Ctrl+C</td><td>Ctrl+C</td></tr></tbody></table>
+<p>In <strong>Settings… → Terminal</strong>, an empty <strong>Shell command</strong> uses your login shell. An empty <strong>Working directory</strong> uses sqlr&#x27;s configuration <code>terminal</code> folder, containing agent instructions and MCP configuration. <strong>Font size</strong> applies immediately; restart the shell for the remaining terminal changes.</p>
+<p>Terminal output and the configured shell command are excluded from logging. MCP cannot read or control this terminal. sqlr does not start an agent automatically or put the MCP token in the shell environment. An agent you launch yourself uses the same connection access rules as any other MCP client.</p>
+<h2 id="fix-a-connection-problem">Fix a connection problem</h2>
+<table><thead><tr><th>Message or symptom</th><th>What to do</th></tr></thead><tbody><tr><td><strong>Port busy</strong></td><td>Choose another <strong>MCP port</strong>, or stop the program using it</td></tr><tr><td><strong>Keychain error</strong></td><td>Unlock the OS keychain, then disable and enable MCP again</td></tr><tr><td><code>401 Unauthorized</code></td><td>Copy the current MCP configuration; a token may have been rotated</td></tr><tr><td><code>403 Forbidden</code></td><td>Use the local loopback endpoint with a local client; remote hosts and unrelated browser origins are rejected</td></tr><tr><td>Connection absent or <code>not_exposed</code></td><td>Set that connection&#x27;s <strong>Agent access</strong> to <strong>Read</strong> or <strong>Write</strong></td></tr><tr><td>Expired result or approval</td><td>Rerun the query or request and review the new approval</td></tr></tbody></table>
+<h2 id="related">Related</h2>
+<ul><li><a href="connections.html">Connections</a>: save credentials and configure database access.</li><li><a href="profiles-and-transactions.html">Profiles and transactions</a>: understand write protections.</li><li><a href="troubleshooting.html">Troubleshooting</a>: review local logs and reports.</li></ul>
+<hr>
+<p>← <a href="settings-and-shortcuts.html">Settings and shortcuts</a> · <a href="glossary.html">Glossary</a> →</p>
+</main>
+</div>
+
+</body>
+</html>

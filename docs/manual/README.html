@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sqlr manual · sqlr</title>
+<style>
+:root{--bg:#0b0e14;--bg-soft:#10151f;--panel:#141b27;--line:#243049;--text:#e8edf5;--muted:#9aa7bd;--dim:#6b7a93;--accent:#4fd1a5;--accent-soft:rgba(79,209,165,.14);--blue:#6ea8fe;--mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,monospace;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.7 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+.topbar{position:sticky;top:0;z-index:10;background:rgba(11,14,20,.88);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.topbar .in{max-width:1180px;margin:0 auto;padding:0 24px;height:56px;display:flex;align-items:center;gap:18px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;color:var(--text)}
+.brand img{width:26px;height:26px;border-radius:6px}.brand:hover{text-decoration:none}
+.topbar .back{margin-left:auto}.topbar .back,.topbar .gh{font-size:14px;color:var(--muted)}.topbar a:hover{color:var(--text)}
+.layout{max-width:1180px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:230px minmax(0,1fr);gap:48px}
+aside{position:sticky;top:56px;align-self:start;height:calc(100vh - 56px);overflow:auto;padding:28px 0;font-size:14.5px}
+aside h4{margin:18px 0 6px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+aside h4:first-child{margin-top:0}
+aside a{display:block;padding:5px 10px;border-radius:8px;color:var(--muted)}
+aside a:hover{color:var(--text);background:var(--panel);text-decoration:none}
+aside a.on{color:var(--accent);background:var(--accent-soft)}
+main{padding:36px 0 80px;max-width:780px}
+h1{font-size:36px;letter-spacing:-.02em;margin:0 0 18px;line-height:1.2}
+h2{font-size:25px;letter-spacing:-.01em;margin:44px 0 10px;padding-top:26px;border-top:1px solid var(--line)}
+h3{font-size:19px;margin:30px 0 8px}h4{font-size:16px;margin:22px 0 6px}
+p{margin:0 0 14px;color:#cfd8e6}li{color:#cfd8e6}
+ul,ol{margin:0 0 16px;padding-left:24px}li{margin:4px 0}li>ul,li>ol{margin:4px 0 0}
+code{font-family:var(--mono);font-size:.88em;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:var(--blue)}
+pre{background:var(--bg-soft);border:1px solid var(--line);border-radius:12px;padding:14px 16px;overflow-x:auto;line-height:1.55;margin:0 0 18px}
+pre code{background:none;border:0;padding:0;color:var(--text);font-size:13.5px}
+blockquote{margin:0 0 16px;padding:2px 16px;border-left:3px solid var(--accent);background:var(--panel);border-radius:0 10px 10px 0}
+table{width:100%;border-collapse:collapse;margin:0 0 20px;font-size:14.5px;display:block;overflow-x:auto}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-size:12.5px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+td{color:#cfd8e6}
+hr{border:0;border-top:1px solid var(--line);margin:30px 0}
+img{max-width:100%}
+@media(max-width:820px){.layout{grid-template-columns:1fr;gap:0}aside{position:static;height:auto;padding:18px 0 0;border-bottom:1px solid var(--line)}h1{font-size:29px}}
+</style>
+</head>
+<body>
+<div class="topbar"><div class="in">
+<a class="brand" href="../index.html"><img src="../media/icon.png" alt="">sqlr</a>
+<a class="back" href="../index.html#docs">All documentation</a>
+<a class="gh" href="https://github.com/mceck/sqlr">GitHub</a>
+</div></div>
+<div class="layout">
+<aside><h4>Using sqlr</h4><a class="on" href="../manual/README.html">Start here</a><a class="" href="../manual/getting-started.html">Getting started</a><a class="" href="../manual/connections.html">Connections</a><a class="" href="../manual/migrating-connections.html">Import and export connections</a><a class="" href="../manual/explorer-and-objects.html">Explorer and object editors</a><a class="" href="../manual/sql-editor.html">The SQL editor</a><a class="" href="../manual/results-and-editing.html">Results and data editing</a><a class="" href="../manual/profiles-and-transactions.html">Profiles and transactions</a><a class="" href="../manual/moving-data.html">Import, export, transfer</a><a class="" href="../manual/schema-tools.html">Schema tools</a><a class="" href="../manual/administration.html">Administration</a><a class="" href="../manual/nosql.html">Document and key-value</a><a class="" href="../manual/drivers.html">Drivers</a><a class="" href="../manual/settings-and-shortcuts.html">Settings and shortcuts</a><a class="" href="../manual/agents.html">Agents and terminal</a><a class="" href="../manual/glossary.html">Glossary</a><a class="" href="../manual/troubleshooting.html">Troubleshooting</a><h4>Project</h4><a href="https://github.com/mceck/sqlr">Source on GitHub</a></aside>
+<main>
+<h1 id="sqlr-manual">sqlr manual</h1>
+<p>sqlr is a desktop database client for people who query databases, maintain their structure and move data between systems. You can use relational databases, MongoDB, Elasticsearch and Redis from the same window. Saved connections keep the details you need to return to your work; drivers determine which tools each database offers.</p>
+<p>This manual describes the application as shipped. Database permissions still apply to every action. An action that your driver does not support is hidden or disabled.</p>
+<h2 id="where-to-start">Where to start</h2>
+<table><thead><tr><th>Your work</th><th>Start with</th></tr></thead><tbody><tr><td>First time using sqlr</td><td><a href="getting-started.html">Get your first result</a>, using the local demo database</td></tr><tr><td>Querying and editing data</td><td><a href="sql-editor.html">Write and run SQL</a>, then <a href="results-and-editing.html">Work with results</a></td></tr><tr><td>Maintaining a database</td><td><a href="profiles-and-transactions.html">Profiles and transactions</a>, then <a href="administration.html">Administration</a></td></tr><tr><td>Moving data</td><td><a href="moving-data.html">Import, export and backup</a></td></tr><tr><td>Connecting an AI client</td><td><a href="agents.html">Agents and the terminal</a>, including connection access levels</td></tr></tbody></table>
+<h2 id="connect-and-explore">Connect and explore</h2>
+<ul><li><a href="getting-started.html">Getting started</a>: install sqlr, open the demo database and run your first query.</li><li><a href="connections.html">Connections</a>: save connection settings, configure SSH and TLS, and reconnect.</li><li><a href="migrating-connections.html">Import and export connections</a>: bring saved connections from another client or export them for another setup.</li><li><a href="explorer-and-objects.html">Explorer and object editors</a>: find objects, inspect DDL and apply structure changes.</li></ul>
+<h2 id="query-and-change-data">Query and change data</h2>
+<ul><li><a href="sql-editor.html">SQL editor</a>: run statements and scripts, use completion, and reuse history and snippets.</li><li><a href="results-and-editing.html">Results and data editing</a>: fetch, sort, copy, inspect and change rows.</li><li><a href="profiles-and-transactions.html">Profiles, transactions and safety</a>: choose commit behavior and control writes.</li></ul>
+<h2 id="move-and-maintain">Move and maintain</h2>
+<ul><li><a href="moving-data.html">Import, export, transfer and backup</a>: map columns, run transfers and use native backup tools.</li><li><a href="schema-tools.html">Schema tools</a>: compare structures, draw relationships, read query plans and generate test data.</li><li><a href="administration.html">Administration</a>: manage roles, inspect sessions and locks, and monitor operations.</li><li><a href="nosql.html">Document and key-value databases</a>: query documents and work with Redis keys.</li></ul>
+<h2 id="configure-and-get-help">Configure and get help</h2>
+<ul><li><a href="drivers.html">Drivers</a>: install sidecar drivers and manage their versions and prerequisites.</li><li><a href="settings-and-shortcuts.html">Settings and shortcuts</a>: change preferences, key bindings and storage locations.</li><li><a href="agents.html">Agents and the terminal</a>: grant MCP access, handle approvals and use the integrated shell.</li><li><a href="glossary.html">Glossary</a>: understand the terms used throughout the manual.</li><li><a href="troubleshooting.html">Troubleshooting</a>: resolve common problems and prepare a local diagnostics report.</li></ul>
+<h2 id="find-your-way-around-the-window">Find your way around the window</h2>
+<p>The <strong>Explorer</strong> on the left contains your connections and database objects. The center holds editor and object tabs. Query results appear below their editor; the value panel lets you inspect a selected value in full. The toolbar shows the active connection and execution controls. The status bar reports the active session, transaction state and result timing.</p>
+<p>Use ⌘P to find an object and ⇧⌘P to find a command. Keyboard examples use macOS notation; use Ctrl in place of ⌘ on Windows and Linux unless a page gives a platform-specific chord. You can change bindings in <strong>Preferences → Keymap</strong>.</p>
+<p>Work that takes time appears in <strong>Operations</strong>. You can cancel an operation while continuing to work in another tab. Grid edits and schema edits wait for <strong>Apply</strong>; statements you run in the editor follow the session&#x27;s commit mode instead.</p>
+<hr>
+<p><a href="getting-started.html">Start with your first query</a> →</p>
+</main>
+</div>
+
+</body>
+</html>

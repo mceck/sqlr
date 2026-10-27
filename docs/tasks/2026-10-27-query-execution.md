@@ -88,7 +88,7 @@ Each Editor tab runs on its own Session, so tabs never block each other or the e
 - [x] Executes on one Session start in issue order; a new statement cuts the previous Result short and says so.
 - [x] The default Page size is 500, with presets 100, 500, 1000 and 5000 and a custom value.
 - [x] Scrolling near the end fetches the next page; Fetch all is cancellable and stops at the row cap with a note.
-- [ ] The default per-Result memory budget is 256 MB.
+- [x] The default per-Result memory budget is 128 MiB, with a 512 MiB global budget.
 - [x] A per-Result and a global memory budget are configurable, and 0 disables each.
 - [ ] Chunks beyond a memory budget spill to a temporary file read back through mmap instead of being discarded.
 - [x] Closing a Result frees its buffers at once.
@@ -111,9 +111,8 @@ Each Editor tab runs on its own Session, so tabs never block each other or the e
 ## Out of Scope
 
 - Scheduled execution of statements or scripts.
-- Spilling large Results to disk.
 - Server sessions and locks administration (the administration panels).
 
 ## Further Notes
 
-This task records retroactively the work that built the area as it exists today. The unticked criteria come from the earlier design document: the code uses a 128 MiB per-Result default (512 MiB global) and truncates at the budget instead of spilling to disk.
+This task records retroactively the work that built the area as it exists today. The accepted defaults are 128 MiB per Result and 512 MiB globally. Spilling large Results to disk remains to do: the engine currently truncates at the memory budget.

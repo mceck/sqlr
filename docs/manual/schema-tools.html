@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compare schemas and understand query plans · sqlr</title>
+<style>
+:root{--bg:#0b0e14;--bg-soft:#10151f;--panel:#141b27;--line:#243049;--text:#e8edf5;--muted:#9aa7bd;--dim:#6b7a93;--accent:#4fd1a5;--accent-soft:rgba(79,209,165,.14);--blue:#6ea8fe;--mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,monospace;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.7 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+.topbar{position:sticky;top:0;z-index:10;background:rgba(11,14,20,.88);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.topbar .in{max-width:1180px;margin:0 auto;padding:0 24px;height:56px;display:flex;align-items:center;gap:18px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;color:var(--text)}
+.brand img{width:26px;height:26px;border-radius:6px}.brand:hover{text-decoration:none}
+.topbar .back{margin-left:auto}.topbar .back,.topbar .gh{font-size:14px;color:var(--muted)}.topbar a:hover{color:var(--text)}
+.layout{max-width:1180px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:230px minmax(0,1fr);gap:48px}
+aside{position:sticky;top:56px;align-self:start;height:calc(100vh - 56px);overflow:auto;padding:28px 0;font-size:14.5px}
+aside h4{margin:18px 0 6px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+aside h4:first-child{margin-top:0}
+aside a{display:block;padding:5px 10px;border-radius:8px;color:var(--muted)}
+aside a:hover{color:var(--text);background:var(--panel);text-decoration:none}
+aside a.on{color:var(--accent);background:var(--accent-soft)}
+main{padding:36px 0 80px;max-width:780px}
+h1{font-size:36px;letter-spacing:-.02em;margin:0 0 18px;line-height:1.2}
+h2{font-size:25px;letter-spacing:-.01em;margin:44px 0 10px;padding-top:26px;border-top:1px solid var(--line)}
+h3{font-size:19px;margin:30px 0 8px}h4{font-size:16px;margin:22px 0 6px}
+p{margin:0 0 14px;color:#cfd8e6}li{color:#cfd8e6}
+ul,ol{margin:0 0 16px;padding-left:24px}li{margin:4px 0}li>ul,li>ol{margin:4px 0 0}
+code{font-family:var(--mono);font-size:.88em;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:var(--blue)}
+pre{background:var(--bg-soft);border:1px solid var(--line);border-radius:12px;padding:14px 16px;overflow-x:auto;line-height:1.55;margin:0 0 18px}
+pre code{background:none;border:0;padding:0;color:var(--text);font-size:13.5px}
+blockquote{margin:0 0 16px;padding:2px 16px;border-left:3px solid var(--accent);background:var(--panel);border-radius:0 10px 10px 0}
+table{width:100%;border-collapse:collapse;margin:0 0 20px;font-size:14.5px;display:block;overflow-x:auto}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-size:12.5px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+td{color:#cfd8e6}
+hr{border:0;border-top:1px solid var(--line);margin:30px 0}
+img{max-width:100%}
+@media(max-width:820px){.layout{grid-template-columns:1fr;gap:0}aside{position:static;height:auto;padding:18px 0 0;border-bottom:1px solid var(--line)}h1{font-size:29px}}
+</style>
+</head>
+<body>
+<div class="topbar"><div class="in">
+<a class="brand" href="../index.html"><img src="../media/icon.png" alt="">sqlr</a>
+<a class="back" href="../index.html#docs">All documentation</a>
+<a class="gh" href="https://github.com/mceck/sqlr">GitHub</a>
+</div></div>
+<div class="layout">
+<aside><h4>Using sqlr</h4><a class="" href="../manual/README.html">Start here</a><a class="" href="../manual/getting-started.html">Getting started</a><a class="" href="../manual/connections.html">Connections</a><a class="" href="../manual/migrating-connections.html">Import and export connections</a><a class="" href="../manual/explorer-and-objects.html">Explorer and object editors</a><a class="" href="../manual/sql-editor.html">The SQL editor</a><a class="" href="../manual/results-and-editing.html">Results and data editing</a><a class="" href="../manual/profiles-and-transactions.html">Profiles and transactions</a><a class="" href="../manual/moving-data.html">Import, export, transfer</a><a class="on" href="../manual/schema-tools.html">Schema tools</a><a class="" href="../manual/administration.html">Administration</a><a class="" href="../manual/nosql.html">Document and key-value</a><a class="" href="../manual/drivers.html">Drivers</a><a class="" href="../manual/settings-and-shortcuts.html">Settings and shortcuts</a><a class="" href="../manual/agents.html">Agents and terminal</a><a class="" href="../manual/glossary.html">Glossary</a><a class="" href="../manual/troubleshooting.html">Troubleshooting</a><h4>Project</h4><a href="https://github.com/mceck/sqlr">Source on GitHub</a></aside>
+<main>
+<p><a href="README.html">Manual</a> › Data tools</p>
+<h1 id="compare-schemas-and-understand-query-plans">Compare schemas and understand query plans</h1>
+<p>Use schema tools to review structural differences, draw relationships, investigate query performance or fill a test table. Available actions depend on the connection&#x27;s driver.</p>
+<h2 id="compare-a-target-with-a-reference-schema">Compare a target with a reference schema</h2>
+<p>The <strong>Source</strong> is the reference you want to reproduce. The <strong>Target</strong> is the schema you intend to update. Both connections must use the same driver.</p>
+<ol><li>Open <strong>Compare schemas…</strong> from the command palette, or <strong>Compare with…</strong> from a schema or database in the explorer.</li><li>Set <strong>Source</strong> to the reference connection, database and schema.</li><li>Set <strong>Target</strong> to the connection, database and schema to update. Use <strong>Swap source and target</strong> if the sides are reversed.</li><li>Choose <strong>Compare</strong>. This reads metadata without changing either database.</li><li>Select a difference to inspect its definitions: target on the left, source on the right.</li><li>Uncheck objects you want to exclude, then choose <strong>Open migration script</strong>.</li><li>Review and adjust the script in its new editor tab before running it on the target.</li></ol>
+<p><img src="images/schema-tools/compare.png" alt="Schema comparison with source and target selectors"></p>
+<pre class="mermaid">flowchart LR
+    S[Source: desired structure] --&gt; C[Compare]
+    T[Target: current structure] --&gt; C
+    C --&gt; R[Review selected differences]
+    R --&gt; M[Migration script for target]
+    M --&gt; E[Review and run in an editor]</pre>
+<p>The comparison lists added, removed and changed objects. Generated statements are ordered by dependencies, including creating tables before their foreign keys. The script changes the target to match the source, and may contain operations that remove data. Opening it does not execute it.</p>
+<h2 id="draw-an-er-diagram">Draw an ER diagram</h2>
+<p>Open the ER diagram action from a schema in the explorer. Each table shows its columns and types; primary and foreign keys are marked, and relationships connect the relevant columns.</p>
+<ul><li>Drag a table to reposition it. sqlr remembers the arrangement for that connection, database, schema and set of tables.</li><li>Choose <strong>Fit</strong> to bring the diagram into view.</li><li>Choose <strong>All columns</strong>, <strong>Keys only</strong> or <strong>No columns</strong> to control detail.</li><li>Choose <strong>Relayout</strong> to replace your positions with an automatic layout.</li><li>Use <strong>Export SVG</strong> to save a vector image. The visible <strong>Export PNG</strong> button does not currently save a file.</li></ul>
+<p>The diagram shows declared foreign keys. Relationships implied only by naming conventions do not appear.</p>
+<h2 id="explain-a-statement">Explain a statement</h2>
+<ol><li>Connect an SQL editor tab and place the caret in one statement.</li><li>Choose <strong>Explain</strong> above the results, from the Query menu, or with ⌥⌘E.</li><li>Open the <strong>Plan</strong> pane and read its summary.</li><li>Select an operator card or a segment of the hot-path bar to inspect its properties.</li></ol>
+<p>An estimated plan shows the database&#x27;s expected work. <strong>Explain Analyze</strong>, also available with ⌥⇧⌘E, executes the statement to obtain actual measurements when the driver supports it. SQLite provides an estimated plan only. MySQL Analyze accepts read statements only.</p>
+<blockquote><p><strong>Warning:</strong> Analyze executes the statement. For supported writes, sqlr asks first and rolls back the database transaction afterward; external effects from triggers or functions may still occur. Analyze is refused while a transaction is already open.</p></blockquote>
+<p>The plan runs in the editor tab&#x27;s session, so its temporary tables and session settings apply. Use Stop to cancel a running plan.</p>
+<h3 id="read-the-plan">Read the plan</h3>
+<table><thead><tr><th>Area</th><th>What to look for</th></tr></thead><tbody><tr><td>Summary</td><td>Execution and planning time, cost, estimated and actual rows when available</td></tr><tr><td>Warnings</td><td>Large estimate errors, large scans, repeated operators or disk spills</td></tr><tr><td>Hot-path bar</td><td>Operators carrying most of the time, or cost for an estimated plan</td></tr><tr><td>Operator cards</td><td>Scan, join, sort and other steps; the heaviest have a <strong>HOT</strong> marker</td></tr><tr><td>Inspector</td><td>Selected operator&#x27;s filters, indexes, loops, buffers and extra properties</td></tr><tr><td>Raw plan</td><td>The database&#x27;s original output, which you can copy</td></tr></tbody></table>
+<p><strong>Collapse all</strong> reduces a large tree. Editing the statement marks the existing plan as changed; use <strong>Recompute</strong> to replace it with a current one. A plan is a snapshot, so changing data or indexes also warrants a new computation.</p>
+<h2 id="generate-sample-rows">Generate sample rows</h2>
+<p>Use a writable test database for generated data.</p>
+<ol><li>Right-click a table and choose <strong>Generate data…</strong> from its import/export actions.</li><li>Set <strong>Rows</strong> and <strong>Seed</strong>. The default is 100 rows with seed 42.</li><li>Review the proposed <strong>Column generators</strong>. Uncheck a column to let its database default fill it.</li><li>Choose generators and parameters for the included columns, including their NULL percentage.</li><li>Choose <strong>Preview</strong> to inspect 20 sample rows.</li><li>Choose <strong>Insert N rows</strong>, where N is your row count, then confirm with <strong>Insert rows</strong>.</li></ol>
+<p>Generators include sequences, number and date ranges, UUIDs, names, addresses, pattern-based text, constants and choices from a list. A foreign-key generator picks actual values from the referenced table when writing; the preview uses stand-in values.</p>
+<p>The same specification and seed reproduce the same generated values. If a uniqueness requirement cannot be satisfied, enlarge the generator&#x27;s range or reduce the row count. The run reports written and rejected rows and offers <strong>Stop</strong> while running.</p>
+<h2 id="related">Related</h2>
+<ul><li><a href="sql-editor.html">SQL editor</a>: select statements and run a reviewed migration.</li><li><a href="moving-data.html">Import, export and backup</a>: copy data after preparing the schema.</li><li><a href="explorer-and-objects.html">Explorer and objects</a>: inspect and edit individual definitions.</li></ul>
+<hr>
+<p>← <a href="moving-data.html">Import, export and backup</a> · <a href="administration.html">Administration</a> →</p>
+</main>
+</div>
+<script type="module">import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.12.0/dist/mermaid.esm.min.mjs";mermaid.initialize({startOnLoad:true,theme:"dark",securityLevel:"strict"});</script>
+</body>
+</html>

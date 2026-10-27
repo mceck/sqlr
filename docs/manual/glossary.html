@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Understand sqlr&amp;#x27;s terms · sqlr</title>
+<style>
+:root{--bg:#0b0e14;--bg-soft:#10151f;--panel:#141b27;--line:#243049;--text:#e8edf5;--muted:#9aa7bd;--dim:#6b7a93;--accent:#4fd1a5;--accent-soft:rgba(79,209,165,.14);--blue:#6ea8fe;--mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,monospace;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.7 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+.topbar{position:sticky;top:0;z-index:10;background:rgba(11,14,20,.88);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.topbar .in{max-width:1180px;margin:0 auto;padding:0 24px;height:56px;display:flex;align-items:center;gap:18px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;color:var(--text)}
+.brand img{width:26px;height:26px;border-radius:6px}.brand:hover{text-decoration:none}
+.topbar .back{margin-left:auto}.topbar .back,.topbar .gh{font-size:14px;color:var(--muted)}.topbar a:hover{color:var(--text)}
+.layout{max-width:1180px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:230px minmax(0,1fr);gap:48px}
+aside{position:sticky;top:56px;align-self:start;height:calc(100vh - 56px);overflow:auto;padding:28px 0;font-size:14.5px}
+aside h4{margin:18px 0 6px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+aside h4:first-child{margin-top:0}
+aside a{display:block;padding:5px 10px;border-radius:8px;color:var(--muted)}
+aside a:hover{color:var(--text);background:var(--panel);text-decoration:none}
+aside a.on{color:var(--accent);background:var(--accent-soft)}
+main{padding:36px 0 80px;max-width:780px}
+h1{font-size:36px;letter-spacing:-.02em;margin:0 0 18px;line-height:1.2}
+h2{font-size:25px;letter-spacing:-.01em;margin:44px 0 10px;padding-top:26px;border-top:1px solid var(--line)}
+h3{font-size:19px;margin:30px 0 8px}h4{font-size:16px;margin:22px 0 6px}
+p{margin:0 0 14px;color:#cfd8e6}li{color:#cfd8e6}
+ul,ol{margin:0 0 16px;padding-left:24px}li{margin:4px 0}li>ul,li>ol{margin:4px 0 0}
+code{font-family:var(--mono);font-size:.88em;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:var(--blue)}
+pre{background:var(--bg-soft);border:1px solid var(--line);border-radius:12px;padding:14px 16px;overflow-x:auto;line-height:1.55;margin:0 0 18px}
+pre code{background:none;border:0;padding:0;color:var(--text);font-size:13.5px}
+blockquote{margin:0 0 16px;padding:2px 16px;border-left:3px solid var(--accent);background:var(--panel);border-radius:0 10px 10px 0}
+table{width:100%;border-collapse:collapse;margin:0 0 20px;font-size:14.5px;display:block;overflow-x:auto}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-size:12.5px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+td{color:#cfd8e6}
+hr{border:0;border-top:1px solid var(--line);margin:30px 0}
+img{max-width:100%}
+@media(max-width:820px){.layout{grid-template-columns:1fr;gap:0}aside{position:static;height:auto;padding:18px 0 0;border-bottom:1px solid var(--line)}h1{font-size:29px}}
+</style>
+</head>
+<body>
+<div class="topbar"><div class="in">
+<a class="brand" href="../index.html"><img src="../media/icon.png" alt="">sqlr</a>
+<a class="back" href="../index.html#docs">All documentation</a>
+<a class="gh" href="https://github.com/mceck/sqlr">GitHub</a>
+</div></div>
+<div class="layout">
+<aside><h4>Using sqlr</h4><a class="" href="../manual/README.html">Start here</a><a class="" href="../manual/getting-started.html">Getting started</a><a class="" href="../manual/connections.html">Connections</a><a class="" href="../manual/migrating-connections.html">Import and export connections</a><a class="" href="../manual/explorer-and-objects.html">Explorer and object editors</a><a class="" href="../manual/sql-editor.html">The SQL editor</a><a class="" href="../manual/results-and-editing.html">Results and data editing</a><a class="" href="../manual/profiles-and-transactions.html">Profiles and transactions</a><a class="" href="../manual/moving-data.html">Import, export, transfer</a><a class="" href="../manual/schema-tools.html">Schema tools</a><a class="" href="../manual/administration.html">Administration</a><a class="" href="../manual/nosql.html">Document and key-value</a><a class="" href="../manual/drivers.html">Drivers</a><a class="" href="../manual/settings-and-shortcuts.html">Settings and shortcuts</a><a class="" href="../manual/agents.html">Agents and terminal</a><a class="on" href="../manual/glossary.html">Glossary</a><a class="" href="../manual/troubleshooting.html">Troubleshooting</a><h4>Project</h4><a href="https://github.com/mceck/sqlr">Source on GitHub</a></aside>
+<main>
+<p><a href="README.html">Manual</a> › Reference</p>
+<h1 id="understand-sqlrx27s-terms">Understand sqlr&#x27;s terms</h1>
+<p>Use this glossary when a label in sqlr or a procedure in the manual is unfamiliar.</p>
+<h2 id="connections-and-access">Connections and access</h2>
+<table><thead><tr><th>Term</th><th>Meaning</th></tr></thead><tbody><tr><td>Connection</td><td>Saved settings for reaching a database server or file. Passwords are stored separately</td></tr><tr><td>Folder</td><td>A group of saved connections in the explorer</td></tr><tr><td>Connection URL</td><td>An address you can paste to fill a connection form</td></tr><tr><td>Connection profile</td><td>A named set of commit rules, protections and color, such as Development or Production</td></tr><tr><td>Session</td><td>A live database connection, with its own transaction state</td></tr><tr><td>Editor session</td><td>The session used by one editor tab when separate sessions are enabled</td></tr><tr><td>Server session</td><td>A database server&#x27;s view of an active connection, shown in administration</td></tr><tr><td>Credential vault</td><td>The encrypted file holding saved passwords, SSH secrets and the MCP token; the OS keychain protects its key</td></tr><tr><td>Demo database</td><td>The sample SQLite database available from the welcome screen</td></tr></tbody></table>
+<h2 id="browse-query-and-edit">Browse, query and edit</h2>
+<table><thead><tr><th>Term</th><th>Meaning</th></tr></thead><tbody><tr><td>Explorer</td><td>The tree of connections, databases, schemas and objects on the left</td></tr><tr><td>Catalog</td><td>Information about database objects, used by browsing, autocomplete and object search</td></tr><tr><td>Catalog cache</td><td>A saved copy of that information, which may need refreshing after server changes</td></tr><tr><td>Editor tab</td><td>A query editor associated with a connection and, when applicable, a database</td></tr><tr><td>Palette</td><td>Keyboard search for objects or commands</td></tr><tr><td>Result grid</td><td>The table displaying returned rows</td></tr><tr><td>Page size</td><td>The number of rows requested with each fetch</td></tr><tr><td>Value panel</td><td>The panel showing the selected cell, document or key value in full</td></tr><tr><td>Changeset</td><td>Your unapplied cell edits, inserted rows and deleted rows</td></tr><tr><td>Row key</td><td>The primary key or non-null unique key identifying a row for editing</td></tr><tr><td>Object editor</td><td>A tab for inspecting and changing an object&#x27;s structure</td></tr><tr><td>Schema change list</td><td>Structural edits waiting for you to apply their generated DDL</td></tr><tr><td>DDL</td><td>SQL that defines or changes database objects, such as <code>CREATE TABLE</code></td></tr><tr><td>DDL viewer</td><td>A read-only tab showing an object&#x27;s definition</td></tr><tr><td>Commit mode</td><td>Auto, Manual or Smart rules for starting and committing transactions</td></tr><tr><td>Destructive statement</td><td>A statement that can remove data in bulk, such as <code>DROP</code>, <code>TRUNCATE</code> or a <code>DELETE</code> without <code>WHERE</code></td></tr><tr><td>Key browser</td><td>The Redis view of keys grouped by prefix and value type</td></tr><tr><td>Copy format</td><td>The text representation of copied cells: for example TSV, JSON or SQL <code>INSERT</code></td></tr><tr><td>Typed clipboard</td><td>Values sqlr keeps alongside copied text to preserve their types when pasted within the app</td></tr><tr><td>History</td><td>The searchable record of executed statements and their outcomes</td></tr><tr><td>Snippet</td><td>A saved query, available globally or for one connection</td></tr></tbody></table>
+<h2 id="tools-and-drivers">Tools and drivers</h2>
+<table><thead><tr><th>Term</th><th>Meaning</th></tr></thead><tbody><tr><td>Operation</td><td>A piece of work currently running or recently finished in sqlr</td></tr><tr><td>Job</td><td>A background operation with progress, such as importing rows or applying edits</td></tr><tr><td>Operations panel</td><td>The list where you inspect progress and cancel work</td></tr><tr><td>Data transfer</td><td>Moving data between a source and a destination, including import and export</td></tr><tr><td>Endpoint</td><td>A transfer&#x27;s source or destination, such as a query, table or file</td></tr><tr><td>Dump / Restore</td><td>Backing up or restoring a database with its native tools</td></tr><tr><td>Saved task</td><td>A named transfer, dump, restore or script you can run again</td></tr><tr><td>Task run</td><td>One saved task&#x27;s execution and recorded outcome</td></tr><tr><td>Schema compare</td><td>A comparison of structures with a generated migration script</td></tr><tr><td>ER diagram</td><td>A drawing of tables and their foreign-key relationships</td></tr><tr><td>Explain plan</td><td>A database&#x27;s description of how it will execute a statement</td></tr><tr><td>Driver</td><td>The component that lets sqlr communicate with a database</td></tr><tr><td>Capability</td><td>An optional feature a driver supports; unavailable features are hidden or disabled</td></tr><tr><td>Bundled driver</td><td>A driver included in the application</td></tr><tr><td>Sidecar driver</td><td>A driver running in a separate process</td></tr><tr><td>Driver archive</td><td>An installable sidecar driver package for your platform</td></tr><tr><td>Active version</td><td>The installed driver version used by new sessions</td></tr><tr><td>JDBC bridge</td><td>A sidecar driver that uses Java and a JDBC driver to reach a database</td></tr></tbody></table>
+<h2 id="settings-agents-and-reports">Settings, agents and reports</h2>
+<table><thead><tr><th>Term</th><th>Meaning</th></tr></thead><tbody><tr><td>Setting level</td><td>Global, connection profile or connection scope for a preference</td></tr><tr><td>Safety flag</td><td>A protection that a more specific setting can enable but cannot weaken</td></tr><tr><td>Keymap</td><td>The commands and keyboard shortcuts selected by your preset and customizations</td></tr><tr><td>MCP server</td><td>sqlr&#x27;s local interface for agent tools, available while the application runs</td></tr><tr><td>Agent access</td><td>A connection&#x27;s <strong>None</strong>, <strong>Read</strong> or <strong>Write</strong> permission for agents</td></tr><tr><td>Agent session</td><td>An agent&#x27;s separate database session, isolated from your editors</td></tr><tr><td>MCP token</td><td>The credential an MCP client must send to use the server</td></tr><tr><td>Discovery file</td><td>The token-free <code>mcp.json</code> describing the running MCP endpoint</td></tr><tr><td>Approval</td><td>The dialog where you allow or deny an agent&#x27;s protected request</td></tr><tr><td>Incident</td><td>A local record of an unexpected application failure</td></tr><tr><td>Diagnostics bundle</td><td>A bounded report you can review, copy, save or share</td></tr><tr><td>App session</td><td>One run of sqlr, from launch to exit</td></tr><tr><td>Startup notice</td><td>A banner reporting an earlier panic or unclean shutdown</td></tr></tbody></table>
+<h2 id="related">Related</h2>
+<ul><li><a href="getting-started.html">Getting started</a>: see these concepts in your first workflow.</li><li><a href="settings-and-shortcuts.html">Settings and shortcuts</a>: configure the workspace.</li></ul>
+<hr>
+<p>← <a href="agents.html">Agents and terminal</a> · <a href="troubleshooting.html">Troubleshooting</a> →</p>
+</main>
+</div>
+
+</body>
+</html>

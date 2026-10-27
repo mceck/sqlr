@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Run your first query · sqlr</title>
+<style>
+:root{--bg:#0b0e14;--bg-soft:#10151f;--panel:#141b27;--line:#243049;--text:#e8edf5;--muted:#9aa7bd;--dim:#6b7a93;--accent:#4fd1a5;--accent-soft:rgba(79,209,165,.14);--blue:#6ea8fe;--mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,monospace;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.7 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+.topbar{position:sticky;top:0;z-index:10;background:rgba(11,14,20,.88);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.topbar .in{max-width:1180px;margin:0 auto;padding:0 24px;height:56px;display:flex;align-items:center;gap:18px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;color:var(--text)}
+.brand img{width:26px;height:26px;border-radius:6px}.brand:hover{text-decoration:none}
+.topbar .back{margin-left:auto}.topbar .back,.topbar .gh{font-size:14px;color:var(--muted)}.topbar a:hover{color:var(--text)}
+.layout{max-width:1180px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:230px minmax(0,1fr);gap:48px}
+aside{position:sticky;top:56px;align-self:start;height:calc(100vh - 56px);overflow:auto;padding:28px 0;font-size:14.5px}
+aside h4{margin:18px 0 6px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+aside h4:first-child{margin-top:0}
+aside a{display:block;padding:5px 10px;border-radius:8px;color:var(--muted)}
+aside a:hover{color:var(--text);background:var(--panel);text-decoration:none}
+aside a.on{color:var(--accent);background:var(--accent-soft)}
+main{padding:36px 0 80px;max-width:780px}
+h1{font-size:36px;letter-spacing:-.02em;margin:0 0 18px;line-height:1.2}
+h2{font-size:25px;letter-spacing:-.01em;margin:44px 0 10px;padding-top:26px;border-top:1px solid var(--line)}
+h3{font-size:19px;margin:30px 0 8px}h4{font-size:16px;margin:22px 0 6px}
+p{margin:0 0 14px;color:#cfd8e6}li{color:#cfd8e6}
+ul,ol{margin:0 0 16px;padding-left:24px}li{margin:4px 0}li>ul,li>ol{margin:4px 0 0}
+code{font-family:var(--mono);font-size:.88em;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:var(--blue)}
+pre{background:var(--bg-soft);border:1px solid var(--line);border-radius:12px;padding:14px 16px;overflow-x:auto;line-height:1.55;margin:0 0 18px}
+pre code{background:none;border:0;padding:0;color:var(--text);font-size:13.5px}
+blockquote{margin:0 0 16px;padding:2px 16px;border-left:3px solid var(--accent);background:var(--panel);border-radius:0 10px 10px 0}
+table{width:100%;border-collapse:collapse;margin:0 0 20px;font-size:14.5px;display:block;overflow-x:auto}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-size:12.5px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+td{color:#cfd8e6}
+hr{border:0;border-top:1px solid var(--line);margin:30px 0}
+img{max-width:100%}
+@media(max-width:820px){.layout{grid-template-columns:1fr;gap:0}aside{position:static;height:auto;padding:18px 0 0;border-bottom:1px solid var(--line)}h1{font-size:29px}}
+</style>
+</head>
+<body>
+<div class="topbar"><div class="in">
+<a class="brand" href="../index.html"><img src="../media/icon.png" alt="">sqlr</a>
+<a class="back" href="../index.html#docs">All documentation</a>
+<a class="gh" href="https://github.com/mceck/sqlr">GitHub</a>
+</div></div>
+<div class="layout">
+<aside><h4>Using sqlr</h4><a class="" href="../manual/README.html">Start here</a><a class="on" href="../manual/getting-started.html">Getting started</a><a class="" href="../manual/connections.html">Connections</a><a class="" href="../manual/migrating-connections.html">Import and export connections</a><a class="" href="../manual/explorer-and-objects.html">Explorer and object editors</a><a class="" href="../manual/sql-editor.html">The SQL editor</a><a class="" href="../manual/results-and-editing.html">Results and data editing</a><a class="" href="../manual/profiles-and-transactions.html">Profiles and transactions</a><a class="" href="../manual/moving-data.html">Import, export, transfer</a><a class="" href="../manual/schema-tools.html">Schema tools</a><a class="" href="../manual/administration.html">Administration</a><a class="" href="../manual/nosql.html">Document and key-value</a><a class="" href="../manual/drivers.html">Drivers</a><a class="" href="../manual/settings-and-shortcuts.html">Settings and shortcuts</a><a class="" href="../manual/agents.html">Agents and terminal</a><a class="" href="../manual/glossary.html">Glossary</a><a class="" href="../manual/troubleshooting.html">Troubleshooting</a><h4>Project</h4><a href="https://github.com/mceck/sqlr">Source on GitHub</a></aside>
+<main>
+<p><a href="README.html">Manual</a> › First steps</p>
+<h1 id="run-your-first-query">Run your first query</h1>
+<p>Start with the included demo database to learn the workspace without configuring a server. sqlr runs locally on macOS, Windows and Linux; you sign in to your databases, rather than to a sqlr account.</p>
+<h2 id="install-and-open-sqlr">Install and open sqlr</h2>
+<p>Download the build for your operating system and architecture from the <a href="../download.html">download page</a>. On macOS, open the DMG and copy sqlr to Applications. On Windows, extract the ZIP and run the executable. On Linux, use the AppImage or extract the archive and run <code>sqlr</code>.</p>
+<p>The repository also provides an installer for macOS and Linux. From the repository checkout, run:</p>
+<pre><code>sh scripts/get-sqlr.sh</code></pre>
+<p>The installer checks the release checksums. Linux installs under <code>~/.local</code> by default; macOS uses <code>/Applications</code>, falling back to <code>~/Applications</code> when needed. Set <code>SQLR_VERSION</code> to choose a release or <code>SQLR_PREFIX</code> to change the Linux installation prefix.</p>
+<h2 id="open-the-demo">Open the demo</h2>
+<ol><li>Start sqlr and choose <strong>Open demo database</strong> on the welcome screen.</li><li>Wait for the <strong>Demo</strong> connection and its editor tab to appear.</li><li>Run the prefilled query with ⌘Enter:</li></ol>
+<pre><code>SELECT * FROM order_summary LIMIT 100;</code></pre>
+<p>The result appears below the editor. The demo contains customers, employees, products, orders and order items, all generated sample data. It is a persistent SQLite file in your data directory, so edits survive restarting the app.</p>
+<p><img src="images/getting-started/query.png" alt="A SQL query and its result grid in the sqlr workspace"></p>
+<p>Screenshots in this manual use an isolated sample connection; your demo&#x27;s connection name and rows may differ.</p>
+<h2 id="find-your-way-around">Find your way around</h2>
+<table><thead><tr><th>Area</th><th>Use it to</th></tr></thead><tbody><tr><td>Explorer, left</td><td>Expand connections, schemas and objects, or right-click for actions</td></tr><tr><td>Editor and object tabs</td><td>Write queries, inspect definitions and browse data</td></tr><tr><td>Results and <strong>Messages</strong></td><td>Read returned rows, errors, notices and timing</td></tr><tr><td>Value panel</td><td>Read a selected value in full</td></tr><tr><td>Toolbar</td><td>Choose the active connection, run or stop work, and manage transactions</td></tr><tr><td>Status bar</td><td>Check row counts, timing, transaction state and cursor position</td></tr></tbody></table>
+<p>Panels can be rearranged by dragging their dock tabs. sqlr remembers the arrangement.</p>
+<ol><li>Expand <strong>Demo</strong> in the explorer, then its schema and tables.</li><li>Open a table to inspect its columns or data.</li><li>Open the command palette with ⌘Shift+P and search for a command.</li><li>Open the object palette with ⌘P and type part of a table or view name.</li></ol>
+<p>Shortcuts in this manual use the sqlr preset on macOS. Use Ctrl instead of ⌘ on Windows and Linux; see <a href="settings-and-shortcuts.html">Settings and shortcuts</a> for the full keymap.</p>
+<h2 id="connect-your-own-database">Connect your own database</h2>
+<p>Use <strong>New connection</strong>, select your database and fill in the connection form. Choose <strong>Test connection</strong> before <strong>Save</strong>. Follow <a href="connections.html">Connect to a database</a> for credentials, TLS and SSH.</p>
+<h2 id="related">Related</h2>
+<ul><li><a href="sql-editor.html">SQL editor</a>: choose between running one statement and a script.</li><li><a href="results-and-editing.html">Results and editing</a>: browse rows and make pending edits.</li></ul>
+<hr>
+<p>← <a href="README.html">Manual</a> · <a href="connections.html">Connect to a database</a> →</p>
+</main>
+</div>
+
+</body>
+</html>

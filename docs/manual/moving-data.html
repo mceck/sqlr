@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Import, export and back up data · sqlr</title>
+<style>
+:root{--bg:#0b0e14;--bg-soft:#10151f;--panel:#141b27;--line:#243049;--text:#e8edf5;--muted:#9aa7bd;--dim:#6b7a93;--accent:#4fd1a5;--accent-soft:rgba(79,209,165,.14);--blue:#6ea8fe;--mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,monospace;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.7 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+.topbar{position:sticky;top:0;z-index:10;background:rgba(11,14,20,.88);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.topbar .in{max-width:1180px;margin:0 auto;padding:0 24px;height:56px;display:flex;align-items:center;gap:18px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;color:var(--text)}
+.brand img{width:26px;height:26px;border-radius:6px}.brand:hover{text-decoration:none}
+.topbar .back{margin-left:auto}.topbar .back,.topbar .gh{font-size:14px;color:var(--muted)}.topbar a:hover{color:var(--text)}
+.layout{max-width:1180px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:230px minmax(0,1fr);gap:48px}
+aside{position:sticky;top:56px;align-self:start;height:calc(100vh - 56px);overflow:auto;padding:28px 0;font-size:14.5px}
+aside h4{margin:18px 0 6px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+aside h4:first-child{margin-top:0}
+aside a{display:block;padding:5px 10px;border-radius:8px;color:var(--muted)}
+aside a:hover{color:var(--text);background:var(--panel);text-decoration:none}
+aside a.on{color:var(--accent);background:var(--accent-soft)}
+main{padding:36px 0 80px;max-width:780px}
+h1{font-size:36px;letter-spacing:-.02em;margin:0 0 18px;line-height:1.2}
+h2{font-size:25px;letter-spacing:-.01em;margin:44px 0 10px;padding-top:26px;border-top:1px solid var(--line)}
+h3{font-size:19px;margin:30px 0 8px}h4{font-size:16px;margin:22px 0 6px}
+p{margin:0 0 14px;color:#cfd8e6}li{color:#cfd8e6}
+ul,ol{margin:0 0 16px;padding-left:24px}li{margin:4px 0}li>ul,li>ol{margin:4px 0 0}
+code{font-family:var(--mono);font-size:.88em;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:var(--blue)}
+pre{background:var(--bg-soft);border:1px solid var(--line);border-radius:12px;padding:14px 16px;overflow-x:auto;line-height:1.55;margin:0 0 18px}
+pre code{background:none;border:0;padding:0;color:var(--text);font-size:13.5px}
+blockquote{margin:0 0 16px;padding:2px 16px;border-left:3px solid var(--accent);background:var(--panel);border-radius:0 10px 10px 0}
+table{width:100%;border-collapse:collapse;margin:0 0 20px;font-size:14.5px;display:block;overflow-x:auto}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-size:12.5px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+td{color:#cfd8e6}
+hr{border:0;border-top:1px solid var(--line);margin:30px 0}
+img{max-width:100%}
+@media(max-width:820px){.layout{grid-template-columns:1fr;gap:0}aside{position:static;height:auto;padding:18px 0 0;border-bottom:1px solid var(--line)}h1{font-size:29px}}
+</style>
+</head>
+<body>
+<div class="topbar"><div class="in">
+<a class="brand" href="../index.html"><img src="../media/icon.png" alt="">sqlr</a>
+<a class="back" href="../index.html#docs">All documentation</a>
+<a class="gh" href="https://github.com/mceck/sqlr">GitHub</a>
+</div></div>
+<div class="layout">
+<aside><h4>Using sqlr</h4><a class="" href="../manual/README.html">Start here</a><a class="" href="../manual/getting-started.html">Getting started</a><a class="" href="../manual/connections.html">Connections</a><a class="" href="../manual/migrating-connections.html">Import and export connections</a><a class="" href="../manual/explorer-and-objects.html">Explorer and object editors</a><a class="" href="../manual/sql-editor.html">The SQL editor</a><a class="" href="../manual/results-and-editing.html">Results and data editing</a><a class="" href="../manual/profiles-and-transactions.html">Profiles and transactions</a><a class="on" href="../manual/moving-data.html">Import, export, transfer</a><a class="" href="../manual/schema-tools.html">Schema tools</a><a class="" href="../manual/administration.html">Administration</a><a class="" href="../manual/nosql.html">Document and key-value</a><a class="" href="../manual/drivers.html">Drivers</a><a class="" href="../manual/settings-and-shortcuts.html">Settings and shortcuts</a><a class="" href="../manual/agents.html">Agents and terminal</a><a class="" href="../manual/glossary.html">Glossary</a><a class="" href="../manual/troubleshooting.html">Troubleshooting</a><h4>Project</h4><a href="https://github.com/mceck/sqlr">Source on GitHub</a></aside>
+<main>
+<p><a href="README.html">Manual</a> › Data tools</p>
+<h1 id="import-export-and-back-up-data">Import, export and back up data</h1>
+<p>Use an export for a file of rows, a data transfer for a mapped copy, or a dump for a database backup. You need permission to read the source and, for imports and restores, to write the destination.</p>
+<h2 id="choose-a-tool">Choose a tool</h2>
+<table><thead><tr><th>Your goal</th><th>Use</th></tr></thead><tbody><tr><td>Paste selected values into a spreadsheet</td><td>Copy from the result grid</td></tr><tr><td>Save query rows as CSV or JSON</td><td>Export result</td></tr><tr><td>Load a file into a table</td><td>Import from the table&#x27;s explorer menu</td></tr><tr><td>Copy a table to another connection</td><td><strong>Transfer data…</strong> in the command palette</td></tr><tr><td>Preserve database structure and data for recovery</td><td>Dump and restore</td></tr></tbody></table>
+<p>Copying into another grid creates a changeset: review the column mapping in <strong>Paste as new rows…</strong>, then use <strong>Apply</strong> to write the rows. See <a href="results-and-editing.html">Results and data editing</a>.</p>
+<h2 id="export-query-results">Export query results</h2>
+<ol><li>Run the query and open its result.</li><li>Open the export action from the result strip or command palette.</li><li>Choose the file format and destination.</li><li>Review the sample and format options.</li><li>Start the export and watch its progress.</li></ol>
+<p>You can export CSV, TSV, a JSON array, JSON Lines, SQL <code>INSERT</code> statements or a Markdown table. Delimited formats let you choose the header, delimiter, quote character, NULL text and line endings. SQL export also needs the destination table name.</p>
+<p>For a partially loaded result, choose between its loaded rows and rerunning the whole statement. The whole-statement option requires a read statement. Rerunning reads the database again, so the export can reflect changes made since the result appeared.</p>
+<p>Exports use raw values unless <strong>Use for export</strong> is enabled under <strong>Data formats</strong> in Preferences. A successful export replaces its temporary output with the finished file; cancelling or failing removes the partial output.</p>
+<h2 id="import-a-file-into-a-table">Import a file into a table</h2>
+<ol><li>Right-click the destination table in the explorer and open its import action.</li><li>Choose a CSV, TSV, JSON array or JSON Lines file.</li><li>Check the sample rows and detected columns.</li><li>Map each file column to its destination column. Leave automatic IDs unmapped when the database should generate them.</li><li>Review the batch and error options, then start the import.</li></ol>
+<p>An unmapped destination column uses its default or nullability rules. Conversion errors identify the affected row and column. JSON Lines expects one object per line; a JSON array expects one array containing objects.</p>
+<h2 id="copy-between-connections">Copy between connections</h2>
+<p>Open the command palette with ⌘⇧P and choose <strong>Transfer data…</strong>. The wizard keeps your choices when you move back between steps.</p>
+<p><img src="images/moving-data/transfer.png" alt="Data transfer wizard with source and target choices"></p>
+<ol><li>In <strong>Source</strong>, choose a table, read-only query or file. Check the preview before continuing. File sources include CSV, TSV, JSON, JSON Lines, Excel <code>.xlsx</code> sheets and Parquet.</li><li>In <strong>Target</strong>, choose an existing table, a new table or a file. For a new table, enter its name and review the generated column types.</li><li>In <strong>Mapping</strong>, choose the destination for each source column, or skip it. You can trim text, change case, turn blank text into NULL, supply a constant or request a type conversion. This step appears for table targets.</li><li>In <strong>Options</strong>, choose the batch size and write behavior.</li><li>In <strong>Review</strong>, check both endpoints, column mappings, warnings and any new-table DDL. Choose <strong>Run transfer</strong>.</li></ol>
+<p>Table and query sources cannot be copied into a table on the same saved connection through this wizard. Use <code>INSERT … SELECT</code> in an editor for that case. A table target needs a transaction-capable, writable session with no open transaction.</p>
+<p>New-table type conversion can lose information. For example, a timestamp with a time zone may become a UTC timestamp without its zone, and an unfamiliar type may become text. Review every warning and the editable DDL before running.</p>
+<h3 id="control-writes-and-rejected-rows">Control writes and rejected rows</h3>
+<table><thead><tr><th>Option</th><th>Effect</th></tr></thead><tbody><tr><td><strong>Rows per batch</strong></td><td>Sets the requested batch size; the engine writes at most 10,000 rows per batch</td></tr><tr><td><strong>Commit after each batch (a cancel keeps the committed batches)</strong></td><td>Keeps completed batches if you stop later; otherwise one commit covers the transfer</td></tr><tr><td><strong>Delete the target&#x27;s rows first</strong></td><td>Removes existing data before loading; requires confirmation</td></tr><tr><td><strong>Update rows that exist, by key</strong></td><td>Updates matching rows instead of inserting duplicates; choose the identifying key columns</td></tr><tr><td><strong>Switch foreign keys off during the load</strong></td><td>Temporarily relaxes foreign-key checks; requires confirmation</td></tr><tr><td><strong>Skip bad rows and report them</strong></td><td>Records rejected rows instead of failing on the first one</td></tr></tbody></table>
+<p>When skipping bad rows, choose a <strong>Rejected rows file</strong>. It contains the row position, reason and source values. The dialog shows the first 100 rejections, and the transfer stops at 1,000 rejected rows. Keep this file private if the source contains sensitive values.</p>
+<p>Use <strong>Stop transfer</strong> to cancel. Read the final counts of rows read, written and rejected before retrying, especially if you enabled per-batch commits.</p>
+<h2 id="dump-a-database">Dump a database</h2>
+<p>Start from a database node in the explorer, or SQLite&#x27;s <code>main</code> schema, and choose the dump action.</p>
+<table><thead><tr><th>Database</th><th>Backup formats</th><th>Native tools</th></tr></thead><tbody><tr><td>PostgreSQL</td><td>SQL, custom archive, tar, directory</td><td><code>pg_dump</code></td></tr><tr><td>MySQL and MariaDB</td><td>SQL</td><td><code>mysqldump</code></td></tr><tr><td>SQLite</td><td>SQL or database file</td><td><code>sqlite3</code> for SQL; online backup for a database file</td></tr></tbody></table>
+<ol><li>Choose the output path and format.</li><li>Select schema-only or data-only output if needed.</li><li>Review the database-specific options and displayed command. PostgreSQL directory output supports parallel jobs; MySQL offers routines, events, triggers and a consistent snapshot.</li><li>Choose <strong>Dump</strong> and follow the log.</li></ol>
+<p>sqlr finds native tools on <code>PATH</code> and in common installation directories. If discovery fails, install the database&#x27;s client tools or set <strong>Executable</strong> in the dialog. Passwords are passed through the tool&#x27;s environment or a private temporary file, and SSH connections use the existing tunnel.</p>
+<h2 id="restore-a-backup">Restore a backup</h2>
+<ol><li>Open the restore action on the destination database.</li><li>Select the backup and its format.</li><li>Review the destination and options, including whether existing objects will be removed.</li><li>Choose <strong>Restore</strong> and answer any confirmation.</li><li>Read the outcome and refresh the explorer after completion.</li></ol>
+<p>PostgreSQL SQL scripts use <code>psql</code>; archive formats use <code>pg_restore</code>. MySQL SQL uses <code>mysql</code>. SQLite accepts a SQL script or a database-file backup.</p>
+<blockquote><p><strong>Warning:</strong> Restoring a SQLite database file replaces the destination&#x27;s contents. Cancelling a restore stops the tool but may leave changes it already wrote. Check the destination before retrying.</p></blockquote>
+<p>These dialogs configure a single run. They do not currently offer a Tasks panel or a <strong>Save as task</strong> action.</p>
+<h2 id="related">Related</h2>
+<ul><li><a href="results-and-editing.html">Results and data editing</a>: copy rows and apply pasted changesets.</li><li><a href="profiles-and-transactions.html">Profiles and transactions</a>: understand write protection and commit modes.</li><li><a href="schema-tools.html">Schema tools</a>: compare structures or generate sample data.</li></ul>
+<hr>
+<p>← <a href="profiles-and-transactions.html">Profiles and transactions</a> · <a href="schema-tools.html">Schema tools</a> →</p>
+</main>
+</div>
+
+</body>
+</html>

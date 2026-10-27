@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manage database access and server activity · sqlr</title>
+<style>
+:root{--bg:#0b0e14;--bg-soft:#10151f;--panel:#141b27;--line:#243049;--text:#e8edf5;--muted:#9aa7bd;--dim:#6b7a93;--accent:#4fd1a5;--accent-soft:rgba(79,209,165,.14);--blue:#6ea8fe;--mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,monospace;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.7 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+.topbar{position:sticky;top:0;z-index:10;background:rgba(11,14,20,.88);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.topbar .in{max-width:1180px;margin:0 auto;padding:0 24px;height:56px;display:flex;align-items:center;gap:18px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;color:var(--text)}
+.brand img{width:26px;height:26px;border-radius:6px}.brand:hover{text-decoration:none}
+.topbar .back{margin-left:auto}.topbar .back,.topbar .gh{font-size:14px;color:var(--muted)}.topbar a:hover{color:var(--text)}
+.layout{max-width:1180px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:230px minmax(0,1fr);gap:48px}
+aside{position:sticky;top:56px;align-self:start;height:calc(100vh - 56px);overflow:auto;padding:28px 0;font-size:14.5px}
+aside h4{margin:18px 0 6px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+aside h4:first-child{margin-top:0}
+aside a{display:block;padding:5px 10px;border-radius:8px;color:var(--muted)}
+aside a:hover{color:var(--text);background:var(--panel);text-decoration:none}
+aside a.on{color:var(--accent);background:var(--accent-soft)}
+main{padding:36px 0 80px;max-width:780px}
+h1{font-size:36px;letter-spacing:-.02em;margin:0 0 18px;line-height:1.2}
+h2{font-size:25px;letter-spacing:-.01em;margin:44px 0 10px;padding-top:26px;border-top:1px solid var(--line)}
+h3{font-size:19px;margin:30px 0 8px}h4{font-size:16px;margin:22px 0 6px}
+p{margin:0 0 14px;color:#cfd8e6}li{color:#cfd8e6}
+ul,ol{margin:0 0 16px;padding-left:24px}li{margin:4px 0}li>ul,li>ol{margin:4px 0 0}
+code{font-family:var(--mono);font-size:.88em;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:var(--blue)}
+pre{background:var(--bg-soft);border:1px solid var(--line);border-radius:12px;padding:14px 16px;overflow-x:auto;line-height:1.55;margin:0 0 18px}
+pre code{background:none;border:0;padding:0;color:var(--text);font-size:13.5px}
+blockquote{margin:0 0 16px;padding:2px 16px;border-left:3px solid var(--accent);background:var(--panel);border-radius:0 10px 10px 0}
+table{width:100%;border-collapse:collapse;margin:0 0 20px;font-size:14.5px;display:block;overflow-x:auto}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-size:12.5px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+td{color:#cfd8e6}
+hr{border:0;border-top:1px solid var(--line);margin:30px 0}
+img{max-width:100%}
+@media(max-width:820px){.layout{grid-template-columns:1fr;gap:0}aside{position:static;height:auto;padding:18px 0 0;border-bottom:1px solid var(--line)}h1{font-size:29px}}
+</style>
+</head>
+<body>
+<div class="topbar"><div class="in">
+<a class="brand" href="../index.html"><img src="../media/icon.png" alt="">sqlr</a>
+<a class="back" href="../index.html#docs">All documentation</a>
+<a class="gh" href="https://github.com/mceck/sqlr">GitHub</a>
+</div></div>
+<div class="layout">
+<aside><h4>Using sqlr</h4><a class="" href="../manual/README.html">Start here</a><a class="" href="../manual/getting-started.html">Getting started</a><a class="" href="../manual/connections.html">Connections</a><a class="" href="../manual/migrating-connections.html">Import and export connections</a><a class="" href="../manual/explorer-and-objects.html">Explorer and object editors</a><a class="" href="../manual/sql-editor.html">The SQL editor</a><a class="" href="../manual/results-and-editing.html">Results and data editing</a><a class="" href="../manual/profiles-and-transactions.html">Profiles and transactions</a><a class="" href="../manual/moving-data.html">Import, export, transfer</a><a class="" href="../manual/schema-tools.html">Schema tools</a><a class="on" href="../manual/administration.html">Administration</a><a class="" href="../manual/nosql.html">Document and key-value</a><a class="" href="../manual/drivers.html">Drivers</a><a class="" href="../manual/settings-and-shortcuts.html">Settings and shortcuts</a><a class="" href="../manual/agents.html">Agents and terminal</a><a class="" href="../manual/glossary.html">Glossary</a><a class="" href="../manual/troubleshooting.html">Troubleshooting</a><h4>Project</h4><a href="https://github.com/mceck/sqlr">Source on GitHub</a></aside>
+<main>
+<p><a href="README.html">Manual</a> › Administration</p>
+<h1 id="manage-database-access-and-server-activity">Manage database access and server activity</h1>
+<p>Open administration tabs from a connected database&#x27;s explorer menu. The driver decides which panels appear; your database account still needs the server permissions required by each action.</p>
+<h2 id="manage-users-and-roles">Manage users and roles</h2>
+<ol><li>Open <strong>Users and roles</strong> from the connection&#x27;s administration actions.</li><li>Select an existing role, or choose <strong>New role</strong>.</li><li>Review its name, attributes, membership and database-specific fields. MySQL accounts also have a host.</li><li>Select the relevant schema and object kind under <strong>Privileges</strong>, then change the grant checkboxes.</li><li>Choose <strong>Preview</strong> to inspect the SQL.</li><li>Choose <strong>Apply</strong> to write the changes, or <strong>Revert</strong> to discard them.</li></ol>
+<p>The panel keeps edits pending until Apply. A new password is hidden in SQL previews and diagnostic output. Password fields do not reveal a role&#x27;s current password.</p>
+<p>For MySQL, the privilege grid does not list global grants on <code>*.*</code>. Manage those with explicit <code>GRANT</code> or <code>REVOKE</code> SQL in an editor.</p>
+<p>To remove a role, select it and choose <strong>Drop role…</strong>. Check the confirmation carefully, particularly when removing the account you are using. The database may reject removal while objects or memberships depend on it.</p>
+<p>Administrative writes require a writable session. If a transaction is open on the connection used by the panel, commit or roll it back before applying administrative changes.</p>
+<h2 id="inspect-sessions-and-blocking-locks">Inspect sessions and blocking locks</h2>
+<p>Open <strong>Sessions and locks</strong> to see server-side sessions, including their user, database, client, state, wait reason, running time and current query when the server provides them.</p>
+<ol><li>Use <strong>Refresh</strong> for a current snapshot, or leave automatic updates running while the panel is visible.</li><li>Enable <strong>Hide idle</strong> to focus on active work.</li><li>Select a session to inspect its details and locks.</li><li>Follow the <strong>Blocking</strong> tree to identify the session other work is waiting for.</li></ol>
+<table><thead><tr><th>Action</th><th>Result</th></tr></thead><tbody><tr><td><strong>Cancel query</strong></td><td>Asks the server to stop the current statement and keep the session connected</td></tr><tr><td><strong>Terminate</strong></td><td>Closes the server session, interrupting its work</td></tr></tbody></table>
+<p>Confirmations follow your connection profile, with extra care for your own session. Terminating the session sqlr is using can disconnect the corresponding connection. A database account without sufficient privileges receives a server error rather than elevated access.</p>
+<h2 id="inspect-server-properties-and-sizes">Inspect server properties and sizes</h2>
+<p>Open <strong>Server properties</strong> and choose a pane:</p>
+<table><thead><tr><th>Pane</th><th>Contents</th></tr></thead><tbody><tr><td><strong>Properties</strong></td><td>Server version and configuration values, with search</td></tr><tr><td><strong>Database sizes</strong></td><td>Storage sizes reported by the server</td></tr><tr><td><strong>Table statistics</strong></td><td>Table estimates, sizes and other supported statistics</td></tr></tbody></table>
+<p>Use <strong>Refresh</strong> after making changes elsewhere. Statistics can be estimates and may depend on when the server last collected them. The schema selector limits table statistics where supported.</p>
+<h2 id="monitor-sqlr-operations">Monitor sqlr operations</h2>
+<p>The Operations panel tracks client work, including connecting, catalog reads, statements, fetches and data tools. It is separate from the database&#x27;s server-session list.</p>
+<ol><li>Open Operations through the activity indicator, command palette or ⌘⇧O.</li><li>Find the operation by connection and description.</li><li>Check elapsed time, state and progress.</li><li>Cancel the individual operation, or use <strong>Cancel all</strong> and confirm once.</li></ol>
+<p>Cancellation of a connection attempt stops the wait without waiting for its timeout. For statements, sqlr requests server cancellation when the driver supports it. For imports and restores, read the final summary because previously committed work can remain.</p>
+<h2 id="related">Related</h2>
+<ul><li><a href="profiles-and-transactions.html">Profiles and transactions</a>: configure confirmations and read-only access.</li><li><a href="moving-data.html">Import, export and backup</a>: understand cancellation during writes.</li><li><a href="troubleshooting.html">Troubleshooting</a>: investigate a failed operation.</li></ul>
+<hr>
+<p>← <a href="schema-tools.html">Schema tools</a> · <a href="nosql.html">Document and key-value databases</a> →</p>
+</main>
+</div>
+
+</body>
+</html>

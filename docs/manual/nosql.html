@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Work with documents and Redis keys · sqlr</title>
+<style>
+:root{--bg:#0b0e14;--bg-soft:#10151f;--panel:#141b27;--line:#243049;--text:#e8edf5;--muted:#9aa7bd;--dim:#6b7a93;--accent:#4fd1a5;--accent-soft:rgba(79,209,165,.14);--blue:#6ea8fe;--mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,monospace;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.7 var(--sans);-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+.topbar{position:sticky;top:0;z-index:10;background:rgba(11,14,20,.88);backdrop-filter:blur(12px);border-bottom:1px solid var(--line)}
+.topbar .in{max-width:1180px;margin:0 auto;padding:0 24px;height:56px;display:flex;align-items:center;gap:18px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;color:var(--text)}
+.brand img{width:26px;height:26px;border-radius:6px}.brand:hover{text-decoration:none}
+.topbar .back{margin-left:auto}.topbar .back,.topbar .gh{font-size:14px;color:var(--muted)}.topbar a:hover{color:var(--text)}
+.layout{max-width:1180px;margin:0 auto;padding:0 24px;display:grid;grid-template-columns:230px minmax(0,1fr);gap:48px}
+aside{position:sticky;top:56px;align-self:start;height:calc(100vh - 56px);overflow:auto;padding:28px 0;font-size:14.5px}
+aside h4{margin:18px 0 6px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+aside h4:first-child{margin-top:0}
+aside a{display:block;padding:5px 10px;border-radius:8px;color:var(--muted)}
+aside a:hover{color:var(--text);background:var(--panel);text-decoration:none}
+aside a.on{color:var(--accent);background:var(--accent-soft)}
+main{padding:36px 0 80px;max-width:780px}
+h1{font-size:36px;letter-spacing:-.02em;margin:0 0 18px;line-height:1.2}
+h2{font-size:25px;letter-spacing:-.01em;margin:44px 0 10px;padding-top:26px;border-top:1px solid var(--line)}
+h3{font-size:19px;margin:30px 0 8px}h4{font-size:16px;margin:22px 0 6px}
+p{margin:0 0 14px;color:#cfd8e6}li{color:#cfd8e6}
+ul,ol{margin:0 0 16px;padding-left:24px}li{margin:4px 0}li>ul,li>ol{margin:4px 0 0}
+code{font-family:var(--mono);font-size:.88em;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:var(--blue)}
+pre{background:var(--bg-soft);border:1px solid var(--line);border-radius:12px;padding:14px 16px;overflow-x:auto;line-height:1.55;margin:0 0 18px}
+pre code{background:none;border:0;padding:0;color:var(--text);font-size:13.5px}
+blockquote{margin:0 0 16px;padding:2px 16px;border-left:3px solid var(--accent);background:var(--panel);border-radius:0 10px 10px 0}
+table{width:100%;border-collapse:collapse;margin:0 0 20px;font-size:14.5px;display:block;overflow-x:auto}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-size:12.5px;text-transform:uppercase;letter-spacing:.05em;white-space:nowrap}
+td{color:#cfd8e6}
+hr{border:0;border-top:1px solid var(--line);margin:30px 0}
+img{max-width:100%}
+@media(max-width:820px){.layout{grid-template-columns:1fr;gap:0}aside{position:static;height:auto;padding:18px 0 0;border-bottom:1px solid var(--line)}h1{font-size:29px}}
+</style>
+</head>
+<body>
+<div class="topbar"><div class="in">
+<a class="brand" href="../index.html"><img src="../media/icon.png" alt="">sqlr</a>
+<a class="back" href="../index.html#docs">All documentation</a>
+<a class="gh" href="https://github.com/mceck/sqlr">GitHub</a>
+</div></div>
+<div class="layout">
+<aside><h4>Using sqlr</h4><a class="" href="../manual/README.html">Start here</a><a class="" href="../manual/getting-started.html">Getting started</a><a class="" href="../manual/connections.html">Connections</a><a class="" href="../manual/migrating-connections.html">Import and export connections</a><a class="" href="../manual/explorer-and-objects.html">Explorer and object editors</a><a class="" href="../manual/sql-editor.html">The SQL editor</a><a class="" href="../manual/results-and-editing.html">Results and data editing</a><a class="" href="../manual/profiles-and-transactions.html">Profiles and transactions</a><a class="" href="../manual/moving-data.html">Import, export, transfer</a><a class="" href="../manual/schema-tools.html">Schema tools</a><a class="" href="../manual/administration.html">Administration</a><a class="on" href="../manual/nosql.html">Document and key-value</a><a class="" href="../manual/drivers.html">Drivers</a><a class="" href="../manual/settings-and-shortcuts.html">Settings and shortcuts</a><a class="" href="../manual/agents.html">Agents and terminal</a><a class="" href="../manual/glossary.html">Glossary</a><a class="" href="../manual/troubleshooting.html">Troubleshooting</a><h4>Project</h4><a href="https://github.com/mceck/sqlr">Source on GitHub</a></aside>
+<main>
+<p><a href="README.html">Manual</a> › Database families</p>
+<h1 id="work-with-documents-and-redis-keys">Work with documents and Redis keys</h1>
+<p>MongoDB and Elasticsearch use document results. Redis uses a key browser and command console. Your connection&#x27;s read-only policy and confirmation settings also apply to these databases.</p>
+<h2 id="query-mongodb">Query MongoDB</h2>
+<p>Open an editor on a MongoDB connection. Write Mongo shell syntax, then run the current statement with ⌘↵ or the script with ⌘⇧↵.</p>
+<p>sqlr parses a subset of shell syntax without running JavaScript. You can use collection reads such as <code>find</code>, <code>findOne</code>, <code>aggregate</code>, <code>countDocuments</code>, <code>estimatedDocumentCount</code> and <code>distinct</code>; writes such as <code>insertOne</code>, <code>insertMany</code>, <code>updateOne</code>, <code>updateMany</code>, <code>replaceOne</code>, <code>findOneAndUpdate</code>, <code>deleteOne</code> and <code>deleteMany</code>; and index operations such as <code>createIndex</code>, <code>dropIndex</code> and <code>getIndexes</code>.</p>
+<p>Use <code>show dbs</code>, <code>show collections</code>, <code>use &lt;database&gt;</code> and <code>db.getCollectionNames()</code> to explore. Use <code>db.getCollection(&quot;name&quot;)</code> for names that do not fit dotted notation. <code>db.runCommand</code> sends a command document when the shell subset does not have a dedicated method.</p>
+<p>The parser accepts unquoted object keys, single-quoted strings, comments and trailing commas. It understands MongoDB literals including <code>ObjectId</code>, <code>ISODate</code>, <code>NumberLong</code>, <code>NumberDecimal</code>, <code>UUID</code> and regular expressions. JavaScript variables, loops and arbitrary functions are unavailable; rewrite these as a supported query or command document.</p>
+<h2 id="read-and-edit-document-results">Read and edit document results</h2>
+<p>Choose a result view above the documents:</p>
+<table><thead><tr><th>View</th><th>Use it for</th></tr></thead><tbody><tr><td><strong>Table</strong></td><td>Comparing top-level fields across documents</td></tr><tr><td><strong>Tree</strong></td><td>Expanding nested objects and arrays</td></tr><tr><td><strong>JSON</strong></td><td>Reading or editing a complete document</td></tr></tbody></table>
+<p>Table columns come from the top-level keys found in the first page. Choose <strong>Fetch more</strong> for the next page or <strong>Fetch all</strong> to continue loading within your configured limits.</p>
+<ol><li>Select the document you want to change.</li><li>Open its edit action. The JSON editor shows the full document.</li><li>Change the fields while preserving the identity and typed values.</li><li>Choose <strong>Save</strong> and answer any confirmation.</li><li>Check the outcome. sqlr rereads the result after successful changes.</li></ol>
+<p>MongoDB uses <code>_id</code> to identify a document. Extended JSON preserves values such as dates, <code>ObjectId</code>, <code>Int64</code> and <code>Decimal128</code> when edited and saved. A read-only reason appears when the result cannot be edited.</p>
+<p>Use <strong>Insert document</strong> for a new document, and the document&#x27;s delete action to remove existing ones. MongoDB index actions are available from the collection&#x27;s explorer menu. Index creation offers key directions, a name, uniqueness, expiry in seconds and a partial filter when applicable.</p>
+<h2 id="query-elasticsearch">Query Elasticsearch</h2>
+<p>The editor accepts console requests consisting of an HTTP method, a path and an optional JSON body, in the style of the Elasticsearch console. Choose the target index in the path and use its query DSL for searches.</p>
+<p>Search results use the same <strong>Table</strong>, <strong>Tree</strong> and <strong>JSON</strong> views as MongoDB. <strong>ES|QL</strong> and Elasticsearch <strong>SQL</strong> queries return tabular results in the normal grid. Supported Elasticsearch versions are 7.17 and 8.x.</p>
+<p>Document changes use their index and ID. Refresh a document before editing when another user may have changed it. Index creation and deletion are available in the explorer, with settings and mappings in JSON.</p>
+<p>Large search results page using a point in time and <code>search_after</code>. If the result expires or paging fails, rerun the query to start a new result.</p>
+<h2 id="browse-redis-keys">Browse Redis keys</h2>
+<ol><li>Open a Redis database from the explorer.</li><li>Enter a key pattern, for example <code>customer:*</code>, and choose <strong>Scan</strong>.</li><li>Expand prefix groups to find a key. The default grouping separator is <code>:</code>.</li><li>Select a key to open the value view.</li><li>Choose <strong>Load more</strong> to continue scanning, or <strong>Refresh</strong> to restart.</li></ol>
+<p>Scanning uses <code>SCAN</code>, so the browser does not issue a blocking <code>KEYS</code> request. A scan is incremental: keys can change while you browse. A group action such as <strong>Delete loaded keys…</strong> affects the keys already loaded into that group, so check the confirmation count.</p>
+<p>The selected key shows its type and a matching view for strings, hashes, lists, sets, sorted sets or streams. Large collections load in pages. Use the value editor&#x27;s <strong>Save</strong> or member actions to write changes.</p>
+<h2 id="create-rename-or-expire-a-key">Create, rename or expire a key</h2>
+<ul><li>Choose <strong>New key</strong>, select its type and enter the initial value or members.</li><li>Choose <strong>Rename</strong>, enter <strong>New name</strong>, then choose <strong>Rename to</strong>.</li><li>Enter a positive duration in <strong>TTL</strong>, then choose <strong>Set TTL</strong>. Accepted examples include <code>90</code> for seconds, <code>500ms</code>, <code>5m</code>, <code>2h</code> and <code>1d</code>. Choose <strong>Persist</strong> to remove expiry.</li><li>Choose <strong>Delete key</strong> to remove the key after confirmation.</li></ul>
+<p>TTL means time to live. Expiry removes the key on the server, so refreshing can legitimately show that a previously selected key no longer exists.</p>
+<p>The Redis console accepts native commands and keeps command history. Destructive commands, including <code>FLUSHDB</code> and <code>FLUSHALL</code>, follow the connection&#x27;s confirmation policy. Redis Cluster is not supported; connect to a standalone server. TLS, ACL users and SSH tunnels are supported through the connection form.</p>
+<h2 id="related">Related</h2>
+<ul><li><a href="connections.html">Connections</a>: configure authentication, TLS and tunnels.</li><li><a href="profiles-and-transactions.html">Profiles and transactions</a>: control writes and confirmations.</li><li><a href="results-and-editing.html">Results and data editing</a>: use tabular Elasticsearch results.</li></ul>
+<hr>
+<p>← <a href="administration.html">Administration</a> · <a href="drivers.html">Drivers</a> →</p>
+</main>
+</div>
+
+</body>
+</html>

@@ -3,38 +3,43 @@
 
 Usage: python3 scripts/build-docs.py
 
-Every .md file listed in USAGE gets a sibling .html file. Links between the pages are
+Every .md file listed in MANUAL gets a sibling .html file. Links between the pages are
 rewritten from .md to .html. Only the standard library is used; the converter covers the
 Markdown the docs use: headings, paragraphs, nested lists, tables, fenced code, block
-quotes, rules, links, images, code spans, bold and italics.
+quotes, rules, links, images, code spans, bold and italics. Mermaid diagrams load a
+pinned browser module from jsDelivr. Local links, headings, index coverage and image
+usage are checked before any output is written.
 """
 
 import html
 import re
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 GITHUB = "https://github.com/mceck/sqlr"
 DOCS = Path(__file__).resolve().parent.parent / "docs"
 
-# (path relative to docs/, title in the side navigation, group)
-USAGE = [
-    ("usage/README.md", "Start here"),
-    ("usage/getting-started.md", "Getting started"),
-    ("usage/connections.md", "Connections"),
-    ("usage/migrating-connections.md", "Import and export connections"),
-    ("usage/explorer-and-objects.md", "Explorer and object editors"),
-    ("usage/sql-editor.md", "The SQL editor"),
-    ("usage/results-and-editing.md", "Results and data editing"),
-    ("usage/profiles-and-transactions.md", "Profiles and transactions"),
-    ("usage/moving-data.md", "Import, export, transfer"),
-    ("usage/schema-tools.md", "Schema tools"),
-    ("usage/administration.md", "Administration"),
-    ("usage/nosql.md", "Document and key-value"),
-    ("usage/drivers.md", "Drivers"),
-    ("usage/settings-and-shortcuts.md", "Settings and shortcuts"),
-    ("usage/troubleshooting.md", "Troubleshooting"),
+# Pages in reading order: path relative to docs/ and side navigation title.
+MANUAL = [
+    ("manual/README.md", "Start here"),
+    ("manual/getting-started.md", "Getting started"),
+    ("manual/connections.md", "Connections"),
+    ("manual/migrating-connections.md", "Import and export connections"),
+    ("manual/explorer-and-objects.md", "Explorer and object editors"),
+    ("manual/sql-editor.md", "The SQL editor"),
+    ("manual/results-and-editing.md", "Results and data editing"),
+    ("manual/profiles-and-transactions.md", "Profiles and transactions"),
+    ("manual/moving-data.md", "Import, export, transfer"),
+    ("manual/schema-tools.md", "Schema tools"),
+    ("manual/administration.md", "Administration"),
+    ("manual/nosql.md", "Document and key-value"),
+    ("manual/drivers.md", "Drivers"),
+    ("manual/settings-and-shortcuts.md", "Settings and shortcuts"),
+    ("manual/agents.md", "Agents and terminal"),
+    ("manual/glossary.md", "Glossary"),
+    ("manual/troubleshooting.md", "Troubleshooting"),
 ]
-PAGES = {path for path, _ in USAGE}
+PAGES = {path for path, _ in MANUAL}
 
 CSS = """
 :root{--bg:#0b0e14;--bg-soft:#10151f;--panel:#141b27;--line:#243049;--text:#e8edf5;--muted:#9aa7bd;--dim:#6b7a93;--accent:#4fd1a5;--accent-soft:rgba(79,209,165,.14);--blue:#6ea8fe;--mono:"SF Mono",ui-monospace,"JetBrains Mono",Menlo,monospace;--sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif}
@@ -92,6 +97,7 @@ PAGE = """<!DOCTYPE html>
 {body}
 </main>
 </div>
+{diagrams}
 </body>
 </html>
 """
@@ -106,7 +112,7 @@ def inline(text, here):
         return f"\x00{len(codes) - 1}\x00"
 
     text = re.sub(r"`([^`]+)`", stash, text)
-    text = html.escape(text, quote=False)
+    text = html.escape(text, quote=True)
     text = re.sub(
         r"!\[([^\]]*)\]\(([^)\s]+)\)", lambda m: f'<img src="{m.group(2)}" alt="{m.group(1)}">', text
     )
@@ -157,7 +163,19 @@ def render(md, here):
         items = [f"<{tag}>"]
         while i < len(lines):
             m = marker.match(lines[i])
+            if not lines[i].strip():
+                j = i + 1
+                while j < len(lines) and not lines[j].strip():
+                    j += 1
+                next_item = marker.match(lines[j]) if j < len(lines) else None
+                if next_item and len(next_item.group(1)) == indent:
+                    i = j
+                    m = next_item
+                else:
+                    break
             if not m or len(m.group(1)) != indent:
+                break
+            if ("ol" if m.group(2)[0].isdigit() else "ul") != tag:
                 break
             text = [m.group(3)]
             i += 1
@@ -168,6 +186,8 @@ def render(md, here):
                     html_sub, i = list_block(i, len(m2.group(1)))
                     sub += html_sub
                 elif m2:
+                    break
+                elif len(lines[i]) - len(lines[i].lstrip()) <= indent:
                     break
                 else:
                     text.append(lines[i].strip())
@@ -180,14 +200,26 @@ def render(md, here):
         line = lines[i]
         if not line.strip():
             i += 1
+        elif line.lstrip().startswith("<!--"):
+            comment = [line]
+            i += 1
+            while "-->" not in comment[-1] and i < len(lines):
+                comment.append(lines[i])
+                i += 1
+            out.append("\n".join(comment))
         elif line.startswith("```"):
+            language = line[3:].strip()
             i += 1
             code = []
             while i < len(lines) and not lines[i].startswith("```"):
                 code.append(lines[i])
                 i += 1
             i += 1
-            out.append(f"<pre><code>{html.escape(chr(10).join(code))}</code></pre>")
+            escaped = html.escape(chr(10).join(code))
+            if language == "mermaid":
+                out.append(f'<pre class="mermaid">{escaped}</pre>')
+            else:
+                out.append(f"<pre><code>{escaped}</code></pre>")
         elif m := re.match(r"^(#{1,4})\s+(.*)", line):
             level, text = len(m.group(1)), m.group(2)
             rendered = inline(text, here)
@@ -240,16 +272,60 @@ def nav(current, root):
         )
         return f"<h4>{name}</h4>{links}"
 
-    return group("Using sqlr", USAGE) + f'<h4>Project</h4><a href="{GITHUB}">Source on GitHub</a>'
+    return group("Using sqlr", MANUAL) + f'<h4>Project</h4><a href="{GITHUB}">Source on GitHub</a>'
+
+
+def validate_manual():
+    """Fail before writing HTML when the index, local links or images are incomplete."""
+    errors = []
+    index = (DOCS / "manual/README.md").read_text(encoding="utf-8")
+    used_images = set()
+    for path in sorted(PAGES):
+        source = DOCS / path
+        if not source.is_file():
+            errors.append(f"Missing page: {path}")
+            continue
+        if source.name != "README.md" and f"({source.name})" not in index:
+            errors.append(f"Page missing from index: {path}")
+        # Ignore examples inside fenced code blocks.
+        text = re.sub(r"```[^\n]*\n.*?```", "", source.read_text(encoding="utf-8"), flags=re.S)
+        for match in re.finditer(r"(!?)\[[^\]]*\]\(([^)\s]+)\)", text):
+            image, href = match.groups()
+            url = urlsplit(html.unescape(href))
+            if url.scheme or url.netloc:
+                continue
+            target = (source.parent / unquote(url.path)).resolve() if url.path else source
+            if not target.is_file():
+                errors.append(f"{path}: missing link target {href}")
+            elif image:
+                used_images.add(target)
+            elif url.fragment and target.suffix == ".md":
+                headings = re.findall(r"^#{1,4}\s+(.+)$", target.read_text(encoding="utf-8"), re.M)
+                anchors = {slug(inline(heading, target)) for heading in headings}
+                if unquote(url.fragment) not in anchors:
+                    errors.append(f"{path}: missing heading {href}")
+    for image in (DOCS / "manual/images").rglob("*"):
+        if image.is_file() and image.resolve() not in used_images:
+            errors.append(f"Unused image: {image.relative_to(DOCS)}")
+    if errors:
+        raise SystemExit("\n".join(errors))
 
 
 def main():
+    actual = {p.relative_to(DOCS).as_posix() for p in (DOCS / "manual").rglob("*.md")}
+    if actual != PAGES:
+        raise SystemExit(f"Manual navigation differs from files: {sorted(actual ^ PAGES)}")
+    validate_manual()
     for path in sorted(PAGES):
         src = DOCS / path
-        body, title = render(src.read_text(), src)
+        body, title = render(src.read_text(encoding="utf-8"), src)
         root = "../" * path.count("/")
-        page = PAGE.format(title=html.escape(title), css=CSS, root=root, github=GITHUB, nav=nav(path, root), body=body)
-        src.with_suffix(".html").write_text(page)
+        page = PAGE.format(title=html.escape(title), css=CSS, root=root, github=GITHUB, nav=nav(path, root), body=body, diagrams=(
+            '<script type="module">import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.12.0/dist/mermaid.esm.min.mjs";'
+            'mermaid.initialize({startOnLoad:true,theme:"dark",securityLevel:"strict"});</script>'
+            if 'class="mermaid"' in body else ""
+        ))
+        src.with_suffix(".html").write_text(page, encoding="utf-8")
         print(f"docs/{path[:-3]}.html")
 
 
