@@ -297,6 +297,8 @@ pub struct SqlrApp {
     pub(crate) terminal: sqlr_terminal::TerminalPanel,
     /// Persistent terminal directory and background MCP configuration writer.
     pub(crate) terminal_workspace: crate::terminal_workspace::TerminalWorkspace,
+    /// Agent installations: the background worker and the endpoint they were last synced to.
+    pub(crate) agent_installs: crate::agent_install::AgentInstallUi,
     /// The context of the current frame, for work queued outside `ui` (settings saves).
     pub(crate) ui_ctx: Option<egui::Context>,
     /// The update prompt's state (spec §12); `Idle` when there is nothing to offer.
@@ -437,6 +439,7 @@ impl SqlrApp {
             pending_connection_writes: HashMap::new(),
             terminal: Default::default(),
             terminal_workspace: Default::default(),
+            agent_installs: Default::default(),
             ui_ctx: None,
             update: crate::updates::UpdateFlow::Idle,
             update_rx: None,

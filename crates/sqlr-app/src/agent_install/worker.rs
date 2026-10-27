@@ -47,7 +47,6 @@ struct Shared {
 pub struct AgentInstaller {
     tx: mpsc::Sender<InstallCommand>,
     shared: Arc<Mutex<Shared>>,
-    installations: Installations,
 }
 
 impl AgentInstaller {
@@ -55,27 +54,18 @@ impl AgentInstaller {
         let (tx, rx) = mpsc::channel::<InstallCommand>();
         let shared = Arc::new(Mutex::new(Shared::default()));
         let worker_shared = shared.clone();
-        let worker = installations.clone();
         let spawned = std::thread::Builder::new()
             .name("sqlr-agent-install".into())
             .spawn(move || {
                 while let Ok(command) = rx.recv() {
-                    run(&worker, command, &worker_shared);
+                    run(&installations, command, &worker_shared);
                     repaint();
                 }
             });
         if let Err(error) = spawned {
             tracing::error!(error = %error, "the agent installation worker could not start");
         }
-        Self {
-            tx,
-            shared,
-            installations,
-        }
-    }
-
-    pub fn installations(&self) -> &Installations {
-        &self.installations
+        Self { tx, shared }
     }
 
     pub fn send(&self, command: InstallCommand) {

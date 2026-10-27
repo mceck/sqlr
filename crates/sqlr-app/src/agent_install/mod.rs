@@ -9,6 +9,7 @@
 //! The installation registry (`agent-installations.json` in the data directory) records
 //! each Agent installation by agent and file and never holds the token.
 
+mod app;
 mod edit;
 mod files;
 mod worker;
@@ -20,6 +21,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+pub(crate) use app::{AgentInstallUi, AgentRequest, AgentsView};
 use edit::Entry;
 pub use worker::{AgentInstaller, InstallCommand, InstallOutcome, InstallSnapshot};
 
@@ -307,6 +309,8 @@ impl AgentState {
 pub struct AgentRow {
     pub kind: AgentKind,
     pub file: PathBuf,
+    /// The file as Settings shows it, with the home as `~`.
+    pub display_file: String,
     pub state: AgentState,
     /// sqlr has written this file before (it is in the registry), so a write needs no
     /// new confirmation.
@@ -360,10 +364,6 @@ impl Installations {
         }
     }
 
-    pub fn environment(&self) -> &AgentEnvironment {
-        &self.env
-    }
-
     /// Every supported agent with its state against `endpoint`.
     pub fn rows(&self, endpoint: &Endpoint) -> Vec<AgentRow> {
         let records = self.records();
@@ -375,9 +375,14 @@ impl Installations {
                 let recorded = records
                     .iter()
                     .any(|record| record.agent == kind && record.file == file);
+                let display_file = match file.strip_prefix(&self.env.home) {
+                    Ok(relative) => Path::new("~").join(relative).display().to_string(),
+                    Err(_) => file.display().to_string(),
+                };
                 AgentRow {
                     kind,
                     file,
+                    display_file,
                     state,
                     recorded,
                 }

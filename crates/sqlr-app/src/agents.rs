@@ -1074,6 +1074,7 @@ impl SqlrApp {
             repaint,
         );
         self.terminal_workspace.sync(self.mcp.client_config());
+        self.agent_installs_tick();
         if self.settings.agents_enabled || self.terminal.is_open() {
             ctx.request_repaint_after(Duration::from_millis(250));
         }
