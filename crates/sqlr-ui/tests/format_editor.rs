@@ -30,9 +30,9 @@ fn tab_and_newline_follow_indentation() {
 }
 
 #[test]
-fn duplicate_line_is_undoable() {
+fn copy_line_down_is_undoable() {
     let mut editor = EditorState::new("select 1", SqlSyntax::ansi());
-    editor.apply_edit(sqlr_ui::EditCommand::DuplicateLine);
+    editor.apply_edit(sqlr_ui::EditCommand::CopyLineDown);
     assert_eq!(editor.text(), "select 1\nselect 1");
     editor.apply_edit(sqlr_ui::EditCommand::Undo);
     assert_eq!(editor.text(), "select 1");

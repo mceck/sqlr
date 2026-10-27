@@ -21,10 +21,14 @@ pub(crate) enum Action {
     Paste,
     /// Closes the popup, else the find bar, else the extra carets.
     Escape,
+    /// The occurrence commands, which take the find bar's options.
+    AddNextOccurrence,
+    SelectAllOccurrences,
 }
 
-/// The action for `key` pressed with `m`; `None` when the editor leaves the key alone (the
-/// app owns ⌘↵, ⌘P, ⌘⇧P and ⌘T). `page` is the number of lines a page moves.
+/// The built-in action for `key` pressed with `m`, for keys the keymap does not bind;
+/// `None` when the editor leaves the key alone (the app owns ⌘↵, ⌘P, ⌘⇧P and ⌘T). `page`
+/// is the number of lines a page moves.
 pub(crate) fn key_action(key: Key, m: Modifiers, mac: bool, page: usize) -> Option<Action> {
     use EditCommand as C;
     let word = if mac { m.alt } else { m.ctrl };
@@ -46,8 +50,6 @@ pub(crate) fn key_action(key: Key, m: Modifiers, mac: bool, page: usize) -> Opti
         Key::ArrowRight if word => mv(Motion::WordRight),
         Key::ArrowLeft => mv(Motion::Left),
         Key::ArrowRight => mv(Motion::Right),
-        Key::ArrowUp if m.command && m.alt => Some(Action::Edit(C::AddCaretAbove)),
-        Key::ArrowDown if m.command && m.alt => Some(Action::Edit(C::AddCaretBelow)),
         Key::ArrowUp if mac && m.command => mv(Motion::DocStart),
         Key::ArrowDown if mac && m.command => mv(Motion::DocEnd),
         Key::ArrowUp => mv(Motion::Up),
@@ -71,7 +73,20 @@ pub(crate) fn mapped_action(action: Option<sqlr_core::ActionId>) -> Option<Actio
         A::Copy => Action::Copy,
         A::Cut => Action::Cut,
         A::Paste => Action::Paste,
-        A::DuplicateLine => Action::Edit(EditCommand::DuplicateLine),
+        A::AddNextOccurrence => Action::AddNextOccurrence,
+        A::SelectAllOccurrences => Action::SelectAllOccurrences,
+        A::UndoCursor => Action::Edit(EditCommand::UndoCursor),
+        A::AddCursorAbove => Action::Edit(EditCommand::AddCaretAbove),
+        A::AddCursorBelow => Action::Edit(EditCommand::AddCaretBelow),
+        A::AddCursorsToLineEnds => Action::Edit(EditCommand::AddCaretsToLineEnds),
+        A::MoveLineUp => Action::Edit(EditCommand::MoveLineUp),
+        A::MoveLineDown => Action::Edit(EditCommand::MoveLineDown),
+        A::CopyLineUp => Action::Edit(EditCommand::CopyLineUp),
+        A::DuplicateLine => Action::Edit(EditCommand::CopyLineDown),
+        A::DeleteLine => Action::Edit(EditCommand::DeleteLine),
+        A::SelectLine => Action::Edit(EditCommand::SelectLine),
+        A::IndentLine => Action::Edit(EditCommand::IndentLine),
+        A::OutdentLine => Action::Edit(EditCommand::OutdentLine),
         A::FormatSql => Action::FormatSql,
         A::Undo => Action::Edit(EditCommand::Undo),
         A::Redo => Action::Edit(EditCommand::Redo),
@@ -149,6 +164,33 @@ mod tests {
             None
         );
         assert_eq!(act(Key::Q, Modifiers::NONE, true), None);
+    }
+
+    #[test]
+    fn keymap_chords_win_over_built_in_keys() {
+        for mac in [true, false] {
+            assert_eq!(
+                act(Key::ArrowUp, Modifiers::ALT, mac),
+                Some(Action::Edit(EditCommand::MoveLineUp))
+            );
+            assert_eq!(
+                act(Key::ArrowDown, Modifiers::ALT | Modifiers::SHIFT, mac),
+                Some(Action::Edit(EditCommand::CopyLineDown))
+            );
+            assert_eq!(
+                act(Key::D, Modifiers::COMMAND, mac),
+                Some(Action::AddNextOccurrence)
+            );
+            assert_eq!(
+                act(Key::ArrowDown, Modifiers::COMMAND | Modifiers::ALT, mac),
+                Some(Action::Edit(EditCommand::AddCaretBelow))
+            );
+        }
+        // Adding a caret is no built-in key: unbound, ⌥⌘↑ falls back to ⌘↑.
+        assert_eq!(
+            key_action(Key::ArrowUp, Modifiers::COMMAND | Modifiers::ALT, true, 10),
+            Some(mv(Motion::DocStart, false))
+        );
     }
 
     #[test]

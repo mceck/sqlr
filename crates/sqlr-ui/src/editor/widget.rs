@@ -181,6 +181,10 @@ pub struct EditorState {
     wrap: WrapIndex,
     /// Edits since the last frame, for the wrap index to splice in.
     wrap_changes: Vec<Change>,
+    /// The last key press ran a keymap chord with ⌥ and no ⌘ or Ctrl: the text it also
+    /// produces (macOS sends "ˆ" for ⇧⌥I) is dropped if it comes before the next key press,
+    /// in this frame or a later one.
+    skip_chord_text: bool,
 }
 
 impl EditorState {
@@ -224,6 +228,7 @@ impl EditorState {
             tint: None,
             wrap: WrapIndex::default(),
             wrap_changes: Vec::new(),
+            skip_chord_text: false,
         }
     }
 
@@ -1362,6 +1367,7 @@ fn handle_focused(
     typed: &mut String,
 ) -> bool {
     match event {
+        Event::Text(_) if std::mem::take(&mut state.skip_chord_text) => false,
         Event::Text(t) if !t.is_empty() => {
             typed.push_str(t);
             state.edit(EditCommand::Type(t.clone()), now)
@@ -1414,6 +1420,8 @@ fn handle_key(
     now: f64,
 ) -> bool {
     state.completion_pending = None;
+    // Typed text always follows its own key press, so a new press ends the skip.
+    state.skip_chord_text = false;
     if state.popup.is_open() && !m.command && !m.alt {
         match key {
             Key::ArrowUp => return popup_move(state, -1),
@@ -1439,10 +1447,10 @@ fn handle_key(
     {
         return false;
     }
-    let Some(action) =
-        crate::editor::input::mapped_action(crate::keymap::ui_keymap(ctx).lookup(key, m))
-            .or_else(|| key_action(key, m, mac, page))
-    else {
+    // Keymap chords win over the built-in keys (⌥↑ moves the line, not the caret).
+    let mapped = crate::editor::input::mapped_action(crate::keymap::ui_keymap(ctx).lookup(key, m));
+    state.skip_chord_text = mapped.is_some() && m.alt && !m.command && !m.ctrl;
+    let Some(action) = mapped.or_else(|| key_action(key, m, mac, page)) else {
         return false;
     };
     match action {
@@ -1492,6 +1500,14 @@ fn handle_key(
             state.find.open(replace, &selection);
             state.popup.close();
             false
+        }
+        Action::AddNextOccurrence => {
+            state.popup.close();
+            state.edit(EditCommand::AddNextOccurrence(state.find.opts), now)
+        }
+        Action::SelectAllOccurrences => {
+            state.popup.close();
+            state.edit(EditCommand::SelectAllOccurrences(state.find.opts), now)
         }
         Action::FindNext => state.run_find(FindAction::Next, now),
         Action::FindPrevious => state.run_find(FindAction::Previous, now),

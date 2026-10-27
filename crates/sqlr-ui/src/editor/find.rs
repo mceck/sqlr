@@ -61,6 +61,30 @@ impl EditorModel {
         None
     }
 
+    /// The first `limit` matches (char ranges, non-overlapping) in document order.
+    pub(crate) fn find_all(
+        &self,
+        needle: &str,
+        opts: FindOptions,
+        limit: usize,
+    ) -> Vec<Range<usize>> {
+        let mut found = Vec::new();
+        if needle.is_empty() || needle.contains('\n') {
+            return found;
+        }
+        let buf = self.buffer();
+        for l in 0..buf.len_lines() {
+            let line = buf.line(l);
+            for (s, e) in matches_in_line(&line, needle, opts, 0, false) {
+                if found.len() == limit {
+                    return found;
+                }
+                found.push(char_range(buf, l, &line, s, e));
+            }
+        }
+        found
+    }
+
     /// Replaces every match with `with` as one undo group; returns the match count.
     pub fn replace_all(
         &mut self,
@@ -69,17 +93,7 @@ impl EditorModel {
         with: &str,
         now: f64,
     ) -> (usize, Vec<Change>) {
-        if needle.is_empty() || needle.contains('\n') {
-            return (0, Vec::new());
-        }
-        let buf = self.buffer();
-        let mut found = Vec::new();
-        for l in 0..buf.len_lines() {
-            let line = buf.line(l);
-            for (s, e) in matches_in_line(&line, needle, opts, 0, false) {
-                found.push(char_range(buf, l, &line, s, e));
-            }
-        }
+        let found = self.find_all(needle, opts, usize::MAX);
         if found.is_empty() {
             return (0, Vec::new());
         }

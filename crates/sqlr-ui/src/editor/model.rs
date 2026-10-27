@@ -5,10 +5,15 @@
 use std::ops::Range;
 
 use crate::editor::buffer::{Change, Pos, TextBuffer};
+use crate::editor::find::FindOptions;
 use crate::editor::undo::{GroupKind, Record, UndoEdit, UndoStack};
 
 /// The indent unit.
 pub const INDENT: &str = "    ";
+/// Select all occurrences stops at this many carets.
+pub const MAX_OCCURRENCE_CARETS: usize = 10_000;
+/// The caret history keeps this many caret sets; the oldest are dropped.
+pub const CARET_HISTORY_LIMIT: usize = 100;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Caret {
@@ -57,22 +62,49 @@ pub enum EditCommand {
     Backspace,
     Delete,
     DeleteWordBack,
-    Move { motion: Motion, select: bool },
+    Move {
+        motion: Motion,
+        select: bool,
+    },
     SelectAll,
     AddCaret(Pos),
     AddCaretAbove,
     AddCaretBelow,
     CollapseCarets,
+    /// Selects the word around an empty primary caret, else adds the next match of the
+    /// primary selection (found with these options) as the new primary selection.
+    AddNextOccurrence(FindOptions),
+    /// Selects every match of the word or selection, as [`Self::AddNextOccurrence`] finds them.
+    SelectAllOccurrences(FindOptions),
+    /// Restores the carets from before the latest caret-adding command.
+    UndoCursor,
+    AddCaretsToLineEnds,
     Undo,
     Redo,
     ToggleComment,
-    DuplicateLine,
+    MoveLineUp,
+    MoveLineDown,
+    CopyLineUp,
+    CopyLineDown,
+    DeleteLine,
+    SelectLine,
+    IndentLine,
+    OutdentLine,
 }
 
 pub struct EditorModel {
     buffer: TextBuffer,
-    /// Sorted, non-overlapping, at least one; the primary caret is the last.
+    /// Sorted, non-overlapping, at least one.
     carets: Vec<Caret>,
+    /// Index in `carets` of the primary caret: the last caret given to `set_carets`, or the
+    /// one a caret-adding command made primary (a next occurrence may wrap above the
+    /// others). Edits and motions keep it on the same caret.
+    primary: usize,
+    /// Caret sets (with their primary) replaced by caret-adding commands, newest last.
+    caret_history: Vec<(Vec<Caret>, usize)>,
+    /// The word the last occurrence command started from: while it is still the primary
+    /// selection, further occurrences match it as a whole word with the same case.
+    occurrence_word: Option<String>,
     /// Per caret (in `carets` order), the column Up, Down, PageUp and PageDown aim for: set
     /// by the first vertical move, kept by the next ones. Empty after any other motion, edit
     /// or caret placement.
@@ -147,6 +179,9 @@ impl EditorModel {
         Self {
             buffer: TextBuffer::from_str(text),
             carets: vec![Caret::at(Pos::default())],
+            primary: 0,
+            caret_history: Vec::new(),
+            occurrence_word: None,
             goals: Vec::new(),
             undo: UndoStack::default(),
             line_comment: "--".to_string(),
@@ -167,14 +202,20 @@ impl EditorModel {
     }
 
     pub fn primary(&self) -> Caret {
-        *self.carets.last().expect("at least one caret")
+        self.carets[self.primary]
     }
 
-    /// Replaces the carets (clamped, sorted, merged); closes the undo group.
+    /// Replaces the carets (clamped, sorted, merged), the last one given primary; closes the
+    /// undo group. Placing a single caret starts the caret history again.
     pub fn set_carets(&mut self, carets: Vec<Caret>) {
+        self.primary = carets.len().saturating_sub(1);
         self.carets = carets;
         self.normalize();
         self.undo.close();
+        self.occurrence_word = None;
+        if self.carets.len() == 1 {
+            self.caret_history.clear();
+        }
     }
 
     pub fn set_line_comment(&mut self, token: &str) {
@@ -202,6 +243,12 @@ impl EditorModel {
     /// they were made.
     pub fn apply(&mut self, cmd: EditCommand, now: f64) -> Vec<Change> {
         use EditCommand as C;
+        if !matches!(
+            cmd,
+            C::AddNextOccurrence(_) | C::SelectAllOccurrences(_) | C::UndoCursor
+        ) {
+            self.occurrence_word = None;
+        }
         match cmd {
             C::Type(text) => {
                 let single = single_char(&text);
@@ -254,22 +301,59 @@ impl EditorModel {
             C::AddCaret(p) => {
                 let mut carets = self.carets.clone();
                 carets.push(Caret::at(p));
-                self.set_carets(carets);
+                self.add_carets(carets, self.primary);
                 Vec::new()
             }
             C::AddCaretAbove | C::AddCaretBelow => {
-                // Keep growing from the outermost caret, at the primary's column.
+                // Keep growing from the outermost caret, at the primary's column. A caret
+                // added below becomes primary.
                 let col = self.primary().head.col;
-                let line = if cmd == C::AddCaretAbove {
-                    self.carets[0].head.line.checked_sub(1)
-                } else {
-                    Some(self.primary().head.line + 1).filter(|&l| l < self.buffer.len_lines())
-                };
                 let mut carets = self.carets.clone();
-                if let Some(line) = line {
-                    carets.push(Caret::at(Pos { line, col }));
+                let mut primary = self.primary;
+                if cmd == C::AddCaretAbove {
+                    if let Some(line) = carets[0].head.line.checked_sub(1) {
+                        carets.push(Caret::at(Pos { line, col }));
+                    }
+                } else {
+                    let line = carets[carets.len() - 1].head.line + 1;
+                    if line < self.buffer.len_lines() {
+                        primary = carets.len();
+                        carets.push(Caret::at(Pos { line, col }));
+                    }
                 }
-                self.set_carets(carets);
+                self.add_carets(carets, primary);
+                Vec::new()
+            }
+            C::AddNextOccurrence(opts) => {
+                self.add_next_occurrence(opts);
+                Vec::new()
+            }
+            C::SelectAllOccurrences(opts) => {
+                self.select_all_occurrences(opts);
+                Vec::new()
+            }
+            C::UndoCursor => {
+                if let Some((carets, primary)) = self.caret_history.pop() {
+                    self.carets = carets;
+                    self.primary = primary;
+                    self.normalize();
+                }
+                self.undo.close();
+                Vec::new()
+            }
+            C::AddCaretsToLineEnds => {
+                let carets: Vec<Caret> = self
+                    .touched_lines()
+                    .into_iter()
+                    .map(|line| {
+                        Caret::at(Pos {
+                            line,
+                            col: self.buffer.line_len_chars(line),
+                        })
+                    })
+                    .collect();
+                let primary = carets.len() - 1;
+                self.add_carets(carets, primary);
                 Vec::new()
             }
             C::CollapseCarets => {
@@ -285,22 +369,24 @@ impl EditorModel {
                 let Some((changes, carets)) = done else {
                     return Vec::new();
                 };
+                self.primary = carets.len().saturating_sub(1);
                 self.carets = carets;
                 self.normalize();
+                self.caret_history.clear();
                 changes
             }
-            C::DuplicateLine => self.run(GroupKind::Other, now, None, |buf, caret| {
-                let range = char_range(buf, caret);
-                if range.is_empty() {
-                    let line = caret.head.line;
-                    let end = buf.rope().line_to_char(line) + buf.line_len_chars(line);
-                    Plan::put(end..end, format!("\n{}", buf.line(line)))
-                } else {
-                    let text = buf.rope().slice(range.clone()).to_string();
-                    Plan::put(range.end..range.end, text)
-                }
-            }),
             C::ToggleComment => self.toggle_comment(now),
+            C::MoveLineUp => self.move_lines(true, now),
+            C::MoveLineDown => self.move_lines(false, now),
+            C::CopyLineUp => self.copy_lines(true, now),
+            C::CopyLineDown => self.copy_lines(false, now),
+            C::DeleteLine => self.delete_lines(now),
+            C::SelectLine => {
+                self.select_lines();
+                Vec::new()
+            }
+            C::IndentLine => self.indent_lines(now),
+            C::OutdentLine => self.back_tab(now),
         }
     }
 
@@ -313,6 +399,7 @@ impl EditorModel {
         let applied = self.replace_many(&[(a..b, text)]);
         let end = applied.new_starts[0] + text.chars().count();
         self.carets = vec![Caret::at(self.buffer.pos_of_char(end))];
+        self.primary = 0;
         self.goals.clear();
         self.record(GroupKind::Other, before, applied.edits, now, None);
         applied.changes
@@ -342,6 +429,7 @@ impl EditorModel {
             .max()
             .unwrap_or(0);
         self.carets = vec![Caret::at(self.buffer.pos_of_char(end))];
+        self.primary = 0;
         self.goals.clear();
         self.record(GroupKind::Other, before, applied.edits, now, None);
         applied.changes
@@ -434,6 +522,10 @@ impl EditorModel {
             }),
             _ => (None, None),
         };
+        if !edits.is_empty() {
+            self.caret_history.clear();
+            self.occurrence_word = None;
+        }
         self.undo.record(Record {
             kind,
             edits,
@@ -496,23 +588,31 @@ impl EditorModel {
     }
 
     /// Like [`Self::normalize`], with `goals` (one per caret, in `carets` order) kept for the
-    /// carets they belong to; a merged caret keeps the first one's.
+    /// carets they belong to; a merged caret keeps the first one's. `primary` indexes the
+    /// unsorted carets and follows its caret, or the caret it merges into.
     fn normalize_with_goals(&mut self, goals: Vec<Option<usize>>) {
         let buf = &self.buffer;
-        let mut carets: Vec<(Caret, Option<usize>)> = self
+        let primary = self.primary.min(self.carets.len().saturating_sub(1));
+        let mut carets: Vec<(Caret, Option<usize>, bool)> = self
             .carets
             .drain(..)
             .zip(goals.into_iter().chain(std::iter::repeat(None)))
-            .map(|(mut c, goal)| {
+            .enumerate()
+            .map(|(i, (mut c, goal))| {
                 c.head = buf.clamp(c.head);
                 c.anchor = buf.clamp(c.anchor);
-                (c, goal)
+                (c, goal, i == primary)
             })
             .collect();
-        carets.sort_by_key(|(c, _)| c.range());
+        carets.sort_by_key(|(c, _, _)| c.range());
         let mut out: Vec<Caret> = Vec::with_capacity(carets.len());
         let mut out_goals: Vec<Option<usize>> = Vec::with_capacity(carets.len());
-        for (c, goal) in carets {
+        self.primary = 0;
+        for (c, goal, is_primary) in carets {
+            if is_primary {
+                // Merged into the last kept caret, or pushed right after it.
+                self.primary = out.len().saturating_sub(1);
+            }
             if let Some(last) = out.last_mut() {
                 let ((ls, le), (s, e)) = (last.range(), c.range());
                 if s < le || (s == le && (ls == le || s == e)) {
@@ -531,11 +631,15 @@ impl EditorModel {
                     continue;
                 }
             }
+            if is_primary {
+                self.primary = out.len();
+            }
             out.push(c);
             out_goals.push(goal);
         }
         if out.is_empty() {
             out.push(Caret::at(Pos::default()));
+            self.primary = 0;
         }
         self.carets = out;
         self.goals = if out_goals.iter().any(Option::is_some) {
@@ -620,19 +724,11 @@ impl EditorModel {
     }
 
     fn tab(&mut self, now: f64) -> Vec<Change> {
+        if self.carets.iter().any(|c| c.head.line != c.anchor.line) {
+            return self.indent_lines(now);
+        }
         let indent = self.indent.clone();
         let cols = indent.len().max(1);
-        if self.carets.iter().any(|c| c.head.line != c.anchor.line) {
-            let reps: Vec<(Range<usize>, &str)> = self
-                .touched_lines()
-                .into_iter()
-                .map(|l| {
-                    let s = self.line_start(l);
-                    (s..s, indent.as_str())
-                })
-                .collect();
-            return self.replace_mapped(&reps, now);
-        }
         self.run(GroupKind::Other, now, None, |b, c| {
             let col = c.range().0.col;
             Plan::put(
@@ -644,6 +740,366 @@ impl EditorModel {
                 },
             )
         })
+    }
+
+    /// Inserts one indent unit at the start of every touched line.
+    fn indent_lines(&mut self, now: f64) -> Vec<Change> {
+        let indent = self.indent.clone();
+        let reps: Vec<(Range<usize>, &str)> = self
+            .touched_lines()
+            .into_iter()
+            .map(|l| {
+                let s = self.line_start(l);
+                (s..s, indent.as_str())
+            })
+            .collect();
+        self.replace_mapped(&reps, now)
+    }
+
+    /// Replaces the carets with `carets` (`primary` indexes them); when that changes them,
+    /// the replaced set goes onto the caret history.
+    fn add_carets(&mut self, carets: Vec<Caret>, primary: usize) {
+        let before = (self.carets.clone(), self.primary);
+        self.carets = carets;
+        self.primary = primary;
+        self.normalize();
+        self.undo.close();
+        if self.carets != before.0 || self.primary != before.1 {
+            if self.caret_history.len() == CARET_HISTORY_LIMIT {
+                self.caret_history.remove(0);
+            }
+            self.caret_history.push(before);
+        }
+    }
+
+    /// The word (word chars only) around `p`, selected from its start to its end.
+    fn word_at(&self, p: Pos) -> Option<Caret> {
+        let buf = &self.buffer;
+        let at = buf.char_index(p);
+        let mut left = buf.rope().chars_at(at);
+        let mut start = p.col;
+        while start > 0 && left.prev().is_some_and(is_word_char) {
+            start -= 1;
+        }
+        let mut right = buf.rope().chars_at(at);
+        let len = buf.line_len_chars(p.line);
+        let mut end = p.col;
+        while end < len && right.next().is_some_and(is_word_char) {
+            end += 1;
+        }
+        (start < end).then_some(Caret {
+            anchor: Pos { col: start, ..p },
+            head: Pos { col: end, ..p },
+        })
+    }
+
+    fn text_of(&self, c: &Caret) -> String {
+        self.buffer.rope().slice(self.char_range(c)).to_string()
+    }
+
+    /// What the occurrence commands look for: the primary selection, or with an empty
+    /// primary the word around it (`None` on no word). A word is matched whole with the same
+    /// case, and so is a selection that is still the word an occurrence command started
+    /// from; any other selection follows the find bar's `opts`.
+    fn occurrence_query(&mut self, opts: FindOptions) -> Option<(Caret, String, FindOptions)> {
+        let word_opts = FindOptions {
+            case_sensitive: true,
+            whole_word: true,
+        };
+        let primary = self.primary();
+        if primary.is_empty() {
+            let word = self.word_at(primary.head)?;
+            let needle = self.text_of(&word);
+            self.occurrence_word = Some(needle.clone());
+            return Some((word, needle, word_opts));
+        }
+        let needle = self.text_of(&primary);
+        let opts = if self.occurrence_word.as_deref() == Some(needle.as_str()) {
+            word_opts
+        } else {
+            opts
+        };
+        Some((primary, needle, opts))
+    }
+
+    fn add_next_occurrence(&mut self, opts: FindOptions) {
+        self.undo.close();
+        let primary = self.primary();
+        let Some((held, needle, opts)) = self.occurrence_query(opts) else {
+            return;
+        };
+        if primary.is_empty() {
+            // The first press only selects the word.
+            let mut carets = self.carets.clone();
+            carets[self.primary] = held;
+            self.add_carets(carets, self.primary);
+            return;
+        }
+        let selected: Vec<Range<usize>> = self
+            .carets
+            .iter()
+            .filter(|c| !c.is_empty())
+            .map(|c| self.char_range(c))
+            .collect();
+        let mut from = self.char_range(&primary).end;
+        let mut seen = std::collections::HashSet::new();
+        // Find wraps around, so the search ends when a match comes back.
+        while let Some(r) = self.find(&needle, opts, from, false) {
+            if !seen.insert(r.start) {
+                return;
+            }
+            if selected.iter().any(|s| s.start < r.end && r.start < s.end) {
+                from = r.start + 1;
+                continue;
+            }
+            let buf = &self.buffer;
+            let mut carets = self.carets.clone();
+            carets.push(Caret {
+                anchor: buf.pos_of_char(r.start),
+                head: buf.pos_of_char(r.end),
+            });
+            let primary = carets.len() - 1;
+            self.add_carets(carets, primary);
+            return;
+        }
+    }
+
+    fn select_all_occurrences(&mut self, opts: FindOptions) {
+        self.undo.close();
+        let Some((held, needle, opts)) = self.occurrence_query(opts) else {
+            return;
+        };
+        let range = self.char_range(&held);
+        let found = self.find_all(&needle, opts, MAX_OCCURRENCE_CARETS);
+        if found.is_empty() {
+            return;
+        }
+        let primary = found
+            .iter()
+            .position(|r| r.start <= range.start && range.end <= r.end)
+            .unwrap_or(found.len() - 1);
+        let buf = &self.buffer;
+        let carets = found
+            .into_iter()
+            .map(|r| Caret {
+                anchor: buf.pos_of_char(r.start),
+                head: buf.pos_of_char(r.end),
+            })
+            .collect();
+        self.add_carets(carets, primary);
+    }
+
+    /// The touched lines as runs of consecutive lines `(first, last)`, ascending.
+    fn line_blocks(&self) -> Vec<(usize, usize)> {
+        let mut blocks: Vec<(usize, usize)> = Vec::new();
+        for l in self.touched_lines() {
+            match blocks.last_mut() {
+                Some((_, last)) if *last + 1 == l => *last = l,
+                _ => blocks.push((l, l)),
+            }
+        }
+        blocks
+    }
+
+    /// The document's line break: the first line's terminator, "\n" without one.
+    fn line_break(&self) -> &'static str {
+        let buf = &self.buffer;
+        if buf.len_lines() > 1 && self.line_start(1) - buf.line_len_chars(0) == 2 {
+            "\r\n"
+        } else {
+            "\n"
+        }
+    }
+
+    /// Char index of the end of `line`'s text, before its terminator.
+    fn line_end(&self, line: usize) -> usize {
+        self.line_start(line) + self.buffer.line_len_chars(line)
+    }
+
+    /// Lines `first..=last` joined with `eol`, without a final terminator.
+    fn lines_text(&self, first: usize, last: usize, eol: &str) -> String {
+        let lines: Vec<_> = (first..=last).map(|l| self.buffer.line(l)).collect();
+        lines.join(eol)
+    }
+
+    /// Applies `reps` (old chars, disjoint) as one undo group, then places `carets`, given
+    /// in `self.carets` order in new positions so the primary stays the same caret.
+    fn line_edit(
+        &mut self,
+        reps: &[(Range<usize>, String)],
+        carets: Vec<Caret>,
+        now: f64,
+    ) -> Vec<Change> {
+        let before = self.carets.clone();
+        let reps: Vec<(Range<usize>, &str)> = reps
+            .iter()
+            .map(|(range, text)| (range.clone(), text.as_str()))
+            .collect();
+        let applied = self.replace_many(&reps);
+        self.carets = carets;
+        self.normalize();
+        self.record(GroupKind::Other, before, applied.edits, now, None);
+        applied.changes
+    }
+
+    /// Each caret with the index of the line block holding its start.
+    fn caret_blocks(&self, blocks: &[(usize, usize)]) -> Vec<(Caret, usize)> {
+        self.carets
+            .iter()
+            .map(|c| {
+                let line = c.range().0.line;
+                (*c, blocks.partition_point(|&(_, last)| last < line))
+            })
+            .collect()
+    }
+
+    /// Swaps every line block with the line above or below it; nothing at the document edge.
+    fn move_lines(&mut self, up: bool, now: f64) -> Vec<Change> {
+        let blocks = self.line_blocks();
+        let last_line = self.buffer.len_lines() - 1;
+        let at_edge = if up {
+            blocks.first().is_some_and(|&(first, _)| first == 0)
+        } else {
+            blocks.last().is_some_and(|&(_, last)| last == last_line)
+        };
+        if at_edge {
+            self.undo.close();
+            return Vec::new();
+        }
+        let eol = self.line_break();
+        let reps: Vec<(Range<usize>, String)> = blocks
+            .iter()
+            .map(|&(a, b)| {
+                let block = self.lines_text(a, b, eol);
+                if up {
+                    let above = self.buffer.line(a - 1);
+                    (
+                        self.line_start(a - 1)..self.line_end(b),
+                        format!("{block}{eol}{above}"),
+                    )
+                } else {
+                    let below = self.buffer.line(b + 1);
+                    (
+                        self.line_start(a)..self.line_end(b + 1),
+                        format!("{below}{eol}{block}"),
+                    )
+                }
+            })
+            .collect();
+        let carets = self
+            .carets
+            .iter()
+            .map(|c| shift_lines(c, if up { -1 } else { 1 }))
+            .collect();
+        self.line_edit(&reps, carets, now)
+    }
+
+    /// Copies every line block above or below itself; the selections go to the lower copy
+    /// when copying down and stay on the upper one when copying up.
+    fn copy_lines(&mut self, up: bool, now: f64) -> Vec<Change> {
+        let blocks = self.line_blocks();
+        let eol = self.line_break();
+        let mut reps = Vec::with_capacity(blocks.len());
+        // Per block, the lines copies insert above it.
+        let mut inserted_above = Vec::with_capacity(blocks.len());
+        let mut inserted = 0;
+        for &(a, b) in &blocks {
+            inserted_above.push(inserted);
+            let block = self.lines_text(a, b, eol);
+            reps.push(if up {
+                let s = self.line_start(a);
+                (s..s, format!("{block}{eol}"))
+            } else {
+                let e = self.line_end(b);
+                (e..e, format!("{eol}{block}"))
+            });
+            inserted += b - a + 1;
+        }
+        let carets = self
+            .caret_blocks(&blocks)
+            .into_iter()
+            .map(|(c, k)| {
+                let (a, b) = blocks[k];
+                let own = if up { 0 } else { b - a + 1 };
+                shift_lines(&c, (inserted_above[k] + own) as isize)
+            })
+            .collect();
+        self.line_edit(&reps, carets, now)
+    }
+
+    /// Removes every touched line with its line break; each caret lands at its column on
+    /// the following line, or on the previous one past the end.
+    fn delete_lines(&mut self, now: f64) -> Vec<Change> {
+        let blocks = self.line_blocks();
+        let (n, len) = (self.buffer.len_lines(), self.buffer.len_chars());
+        let mut reps = Vec::with_capacity(blocks.len());
+        let mut landing = Vec::with_capacity(blocks.len());
+        let mut removed = 0;
+        for &(a, b) in &blocks {
+            let (range, line) = if b + 1 < n {
+                (self.line_start(a)..self.line_start(b + 1), a - removed)
+            } else if a > 0 {
+                (self.line_end(a - 1)..len, a - 1 - removed)
+            } else {
+                (0..len, 0)
+            };
+            reps.push((range, String::new()));
+            landing.push(line);
+            removed += b - a + 1;
+        }
+        let carets = self
+            .caret_blocks(&blocks)
+            .into_iter()
+            .map(|(c, k)| {
+                Caret::at(Pos {
+                    line: landing[k],
+                    col: c.head.col,
+                })
+            })
+            .collect();
+        self.line_edit(&reps, carets, now)
+    }
+
+    /// Selects every caret's touched lines whole; a selection of whole lines grows by one.
+    fn select_lines(&mut self) {
+        let n = self.buffer.len_lines();
+        let line_start = |line: usize| {
+            if line < n {
+                Pos { line, col: 0 }
+            } else {
+                Pos {
+                    line: n - 1,
+                    col: self.buffer.line_len_chars(n - 1),
+                }
+            }
+        };
+        let carets: Vec<Caret> = self
+            .carets
+            .iter()
+            .map(|c| {
+                let (s, e) = c.range();
+                let last = if e.line > s.line && e.col == 0 {
+                    e.line - 1
+                } else {
+                    e.line
+                };
+                let start = Pos {
+                    line: s.line,
+                    col: 0,
+                };
+                let mut end = line_start(last + 1);
+                if (s, e) == (start, end) {
+                    end = line_start(last + 2);
+                }
+                Caret {
+                    anchor: start,
+                    head: end,
+                }
+            })
+            .collect();
+        self.carets = carets;
+        self.normalize();
+        self.undo.close();
     }
 
     fn back_tab(&mut self, now: f64) -> Vec<Change> {
@@ -709,6 +1165,18 @@ impl EditorModel {
                 .collect()
         };
         self.replace_mapped(&reps, now)
+    }
+}
+
+/// `c` moved `by` lines, columns unchanged.
+fn shift_lines(c: &Caret, by: isize) -> Caret {
+    let shift = |p: Pos| Pos {
+        line: p.line.saturating_add_signed(by),
+        ..p
+    };
+    Caret {
+        head: shift(c.head),
+        anchor: shift(c.anchor),
     }
 }
 
@@ -1260,5 +1728,432 @@ mod tests {
         assert!(m.revision() > before);
         m.apply(EditCommand::Undo, 0.0);
         assert_eq!(text(&m), "select from");
+    }
+
+    fn next(opts: FindOptions) -> EditCommand {
+        EditCommand::AddNextOccurrence(opts)
+    }
+
+    fn all(opts: FindOptions) -> EditCommand {
+        EditCommand::SelectAllOccurrences(opts)
+    }
+
+    fn model_with(t: &str, carets: Vec<Caret>) -> EditorModel {
+        let mut m = EditorModel::new(t);
+        m.set_carets(carets);
+        m
+    }
+
+    /// Applies `cmd`, checks the text and carets it leaves, then that one undo restores both.
+    fn check_line_command(
+        t: &str,
+        carets: &[Caret],
+        cmd: EditCommand,
+        want_text: &str,
+        want_carets: &[Caret],
+    ) {
+        let label = format!("{cmd:?} on {t:?}");
+        let mut m = model_with(t, carets.to_vec());
+        m.apply(cmd, 0.0);
+        assert_eq!(text(&m), want_text, "{label}");
+        assert_eq!(m.carets(), want_carets, "{label}");
+        m.apply(EditCommand::Undo, 1.0);
+        assert_eq!(text(&m), t, "undo of {label}");
+        assert_eq!(m.carets(), carets, "undo of {label}");
+    }
+
+    #[test]
+    fn next_occurrence_starts_from_the_word_then_matches_whole_words_with_case() {
+        let t = "id, orders_id, ID, id\nid";
+        let mut m = model_at(t, p(0, 1));
+        m.apply(next(FindOptions::default()), 0.0);
+        assert_eq!(
+            m.carets(),
+            [sel(p(0, 0), p(0, 2))],
+            "the word, no new caret"
+        );
+        m.apply(next(FindOptions::default()), 0.0);
+        assert_eq!(m.carets(), [sel(p(0, 0), p(0, 2)), sel(p(0, 19), p(0, 21))]);
+        assert_eq!(m.primary(), sel(p(0, 19), p(0, 21)));
+        m.apply(next(FindOptions::default()), 0.0);
+        assert_eq!(m.primary(), sel(p(1, 0), p(1, 2)));
+        assert_eq!(m.carets().len(), 3);
+        // Every occurrence is selected: nothing changes.
+        let before = m.carets().to_vec();
+        m.apply(next(FindOptions::default()), 0.0);
+        assert_eq!(m.carets(), before);
+        assert_eq!(m.primary(), sel(p(1, 0), p(1, 2)));
+        assert_eq!(text(&m), t);
+
+        // A caret right after a word picks that word; a caret on no word does nothing.
+        let mut m = model_at("a + bc", p(0, 6));
+        m.apply(next(FindOptions::default()), 0.0);
+        assert_eq!(m.carets(), [sel(p(0, 4), p(0, 6))]);
+        let mut m = model_at("a + bc", p(0, 2));
+        m.apply(next(FindOptions::default()), 0.0);
+        assert_eq!(m.carets(), [Caret::at(p(0, 2))]);
+    }
+
+    #[test]
+    fn next_occurrence_wraps_and_makes_the_match_primary() {
+        let mut m = model_at("id x\nid\nid", p(1, 1));
+        m.apply(next(FindOptions::default()), 0.0);
+        m.apply(next(FindOptions::default()), 0.0);
+        assert_eq!(m.primary(), sel(p(2, 0), p(2, 2)));
+        m.apply(next(FindOptions::default()), 0.0);
+        // Wrapped to the top: primary although it is first in document order.
+        assert_eq!(m.primary(), sel(p(0, 0), p(0, 2)));
+        assert_eq!(m.carets().len(), 3);
+        // The primary survives an edit on every caret.
+        m.apply(ty("k"), 1.0);
+        assert_eq!(text(&m), "k x\nk\nk");
+        assert_eq!(m.primary(), Caret::at(p(0, 1)));
+    }
+
+    #[test]
+    fn next_occurrence_from_a_selection_follows_the_find_options() {
+        let t = "Abc abc xabc";
+        let mut m = model_with(t, vec![sel(p(0, 4), p(0, 7))]);
+        m.apply(next(FindOptions::default()), 0.0);
+        assert_eq!(m.primary(), sel(p(0, 9), p(0, 12)));
+        m.apply(next(FindOptions::default()), 0.0);
+        assert_eq!(m.primary(), sel(p(0, 0), p(0, 3)));
+        assert_eq!(m.carets().len(), 3);
+
+        let strict = FindOptions {
+            case_sensitive: true,
+            whole_word: true,
+        };
+        let mut m = model_with(t, vec![sel(p(0, 4), p(0, 7))]);
+        m.apply(next(strict), 0.0);
+        assert_eq!(m.carets(), [sel(p(0, 4), p(0, 7))]);
+
+        // Case-insensitive but whole word: "Abc", not "xabc".
+        let ww = FindOptions {
+            whole_word: true,
+            ..FindOptions::default()
+        };
+        let mut m = model_with(t, vec![sel(p(0, 4), p(0, 7))]);
+        m.apply(next(ww), 0.0);
+        assert_eq!(m.primary(), sel(p(0, 0), p(0, 3)));
+    }
+
+    #[test]
+    fn next_occurrence_of_a_multi_line_selection_does_nothing() {
+        let mut m = model_with("ab\nab\nab\nab", vec![sel(p(0, 0), p(1, 2))]);
+        m.apply(next(FindOptions::default()), 0.0);
+        assert_eq!(m.carets(), [sel(p(0, 0), p(1, 2))]);
+        m.apply(all(FindOptions::default()), 0.0);
+        assert_eq!(m.carets(), [sel(p(0, 0), p(1, 2))]);
+    }
+
+    #[test]
+    fn select_all_occurrences_keeps_the_primary_match() {
+        let t = "id x id\nID id orders_id";
+        let mut m = model_at(t, p(0, 6));
+        m.apply(all(FindOptions::default()), 0.0);
+        assert_eq!(
+            m.carets(),
+            [
+                sel(p(0, 0), p(0, 2)),
+                sel(p(0, 5), p(0, 7)),
+                sel(p(1, 3), p(1, 5)),
+            ]
+        );
+        assert_eq!(m.primary(), sel(p(0, 5), p(0, 7)));
+        assert_eq!(text(&m), t);
+        m.apply(EditCommand::UndoCursor, 0.0);
+        assert_eq!(m.carets(), [Caret::at(p(0, 6))]);
+
+        // From a selection, with the find options: case-insensitive, substrings too.
+        let mut m = model_with(t, vec![sel(p(1, 0), p(1, 2))]);
+        m.apply(all(FindOptions::default()), 0.0);
+        assert_eq!(m.carets().len(), 5);
+        assert_eq!(m.primary(), sel(p(1, 0), p(1, 2)));
+    }
+
+    #[test]
+    fn select_all_occurrences_stops_at_the_cap() {
+        let t = "a\n".repeat(MAX_OCCURRENCE_CARETS + 50);
+        let mut m = model_at(&t, p(0, 0));
+        m.apply(all(FindOptions::default()), 0.0);
+        assert_eq!(m.carets().len(), MAX_OCCURRENCE_CARETS);
+        assert_eq!(m.primary(), sel(p(0, 0), p(0, 1)));
+    }
+
+    #[test]
+    fn undo_cursor_restores_caret_sets_and_leaves_the_text_alone() {
+        let mut m = model_at("abc\nabc\nabc", p(0, 1));
+        m.apply(ty("x"), 0.0);
+        m.apply(EditCommand::AddCaretBelow, 0.0);
+        m.apply(EditCommand::AddCaretBelow, 0.0);
+        assert_eq!(m.carets().len(), 3);
+        m.apply(EditCommand::UndoCursor, 0.0);
+        assert_eq!(m.carets(), [Caret::at(p(0, 2)), Caret::at(p(1, 2))]);
+        m.apply(EditCommand::UndoCursor, 0.0);
+        assert_eq!(m.carets(), [Caret::at(p(0, 2))]);
+        // The history is empty: nothing happens, and the typed text stays.
+        m.apply(EditCommand::UndoCursor, 0.0);
+        assert_eq!(m.carets(), [Caret::at(p(0, 2))]);
+        assert_eq!(text(&m), "axbc\nabc\nabc");
+        // The text undo stack was not touched.
+        m.apply(EditCommand::Undo, 1.0);
+        assert_eq!(text(&m), "abc\nabc\nabc");
+
+        // A text edit starts the history again.
+        let mut m = model_at("ab\nab", p(0, 0));
+        m.apply(EditCommand::AddCaret(p(1, 0)), 0.0);
+        m.apply(ty("z"), 0.0);
+        m.apply(EditCommand::UndoCursor, 0.0);
+        assert_eq!(m.carets(), [Caret::at(p(0, 1)), Caret::at(p(1, 1))]);
+
+        // So does placing a single caret.
+        let mut m = model_at("ab\nab", p(0, 0));
+        m.apply(EditCommand::AddCaret(p(1, 0)), 0.0);
+        m.set_carets(vec![Caret::at(p(1, 1))]);
+        m.apply(EditCommand::UndoCursor, 0.0);
+        assert_eq!(m.carets(), [Caret::at(p(1, 1))]);
+
+        // Next occurrence and line ends push too; ⌘U restores the primary as well.
+        let mut m = model_at("id\nid\nid", p(2, 1));
+        m.apply(next(FindOptions::default()), 0.0);
+        m.apply(next(FindOptions::default()), 0.0);
+        m.apply(EditCommand::AddCaretsToLineEnds, 0.0);
+        assert_eq!(m.carets().len(), 2);
+        m.apply(EditCommand::UndoCursor, 0.0);
+        assert_eq!(m.primary(), sel(p(0, 0), p(0, 2)));
+        m.apply(EditCommand::UndoCursor, 0.0);
+        assert_eq!(m.carets(), [sel(p(2, 0), p(2, 2))]);
+        m.apply(EditCommand::UndoCursor, 0.0);
+        assert_eq!(m.carets(), [Caret::at(p(2, 1))]);
+    }
+
+    #[test]
+    fn caret_history_keeps_the_latest_hundred() {
+        let t = "x\n".repeat(200);
+        let mut m = model_at(&t, p(0, 0));
+        for _ in 0..150 {
+            m.apply(EditCommand::AddCaretBelow, 0.0);
+        }
+        assert_eq!(m.carets().len(), 151);
+        for _ in 0..120 {
+            m.apply(EditCommand::UndoCursor, 0.0);
+        }
+        assert_eq!(m.carets().len(), 51);
+    }
+
+    #[test]
+    fn move_line_up_and_down() {
+        check_line_command(
+            "a\nb\nc",
+            &[Caret::at(p(1, 1))],
+            EditCommand::MoveLineUp,
+            "b\na\nc",
+            &[Caret::at(p(0, 1))],
+        );
+        check_line_command(
+            "a\nb\nc",
+            &[Caret::at(p(1, 1))],
+            EditCommand::MoveLineDown,
+            "a\nc\nb",
+            &[Caret::at(p(2, 1))],
+        );
+        // A selection ending at column 0 leaves that line out, and stays on the moved text.
+        check_line_command(
+            "a\nb\nc\nd",
+            &[sel(p(0, 0), p(2, 0))],
+            EditCommand::MoveLineDown,
+            "c\na\nb\nd",
+            &[sel(p(1, 0), p(3, 0))],
+        );
+        // Several carets each move their block.
+        check_line_command(
+            "1\n2\n3\n4\n5",
+            &[Caret::at(p(0, 1)), Caret::at(p(2, 0))],
+            EditCommand::MoveLineDown,
+            "2\n1\n4\n3\n5",
+            &[Caret::at(p(1, 1)), Caret::at(p(3, 0))],
+        );
+        // CRLF documents keep their line breaks.
+        check_line_command(
+            "a\r\nb\r\nc",
+            &[Caret::at(p(2, 1))],
+            EditCommand::MoveLineUp,
+            "a\r\nc\r\nb",
+            &[Caret::at(p(1, 1))],
+        );
+        // At the edges nothing happens, and no undo group is recorded.
+        for (cmd, at) in [
+            (EditCommand::MoveLineUp, p(0, 0)),
+            (EditCommand::MoveLineDown, p(2, 0)),
+        ] {
+            let mut m = model_at("a\nb\nc", p(1, 0));
+            m.apply(ty("x"), 0.0);
+            m.set_carets(vec![Caret::at(at)]);
+            m.apply(cmd, 1.0);
+            assert_eq!(text(&m), "a\nxb\nc");
+            m.apply(EditCommand::Undo, 2.0);
+            assert_eq!(text(&m), "a\nb\nc");
+        }
+    }
+
+    #[test]
+    fn copy_line_down_and_up() {
+        check_line_command(
+            "x\ny",
+            &[sel(p(0, 0), p(0, 1))],
+            EditCommand::CopyLineDown,
+            "x\nx\ny",
+            &[sel(p(1, 0), p(1, 1))],
+        );
+        check_line_command(
+            "x\ny",
+            &[sel(p(0, 0), p(0, 1))],
+            EditCommand::CopyLineUp,
+            "x\nx\ny",
+            &[sel(p(0, 0), p(0, 1))],
+        );
+        check_line_command(
+            "a\nb\nc",
+            &[Caret::at(p(0, 0)), Caret::at(p(2, 1))],
+            EditCommand::CopyLineDown,
+            "a\na\nb\nc\nc",
+            &[Caret::at(p(1, 0)), Caret::at(p(4, 1))],
+        );
+        check_line_command(
+            "a\nb\nc\nd",
+            &[sel(p(0, 1), p(1, 1)), Caret::at(p(3, 1))],
+            EditCommand::CopyLineUp,
+            "a\nb\na\nb\nc\nd\nd",
+            &[sel(p(0, 1), p(1, 1)), Caret::at(p(5, 1))],
+        );
+        // Adjacent lines of two carets copy as one block.
+        check_line_command(
+            "a\nb",
+            &[Caret::at(p(0, 0)), Caret::at(p(1, 1))],
+            EditCommand::CopyLineDown,
+            "a\nb\na\nb",
+            &[Caret::at(p(2, 0)), Caret::at(p(3, 1))],
+        );
+        // The last line of a CRLF document gets a CRLF break.
+        check_line_command(
+            "a\r\nb",
+            &[Caret::at(p(1, 0))],
+            EditCommand::CopyLineDown,
+            "a\r\nb\r\nb",
+            &[Caret::at(p(2, 0))],
+        );
+        check_line_command(
+            "a\r\nb",
+            &[Caret::at(p(0, 1))],
+            EditCommand::CopyLineUp,
+            "a\r\na\r\nb",
+            &[Caret::at(p(0, 1))],
+        );
+    }
+
+    #[test]
+    fn delete_line() {
+        check_line_command(
+            "a\nbcd\ne",
+            &[Caret::at(p(1, 3))],
+            EditCommand::DeleteLine,
+            "a\ne",
+            &[Caret::at(p(1, 1))],
+        );
+        // The last line: the caret lands on the line before.
+        check_line_command(
+            "a\nb",
+            &[Caret::at(p(1, 1))],
+            EditCommand::DeleteLine,
+            "a",
+            &[Caret::at(p(0, 1))],
+        );
+        check_line_command(
+            "only",
+            &[Caret::at(p(0, 2))],
+            EditCommand::DeleteLine,
+            "",
+            &[Caret::at(p(0, 0))],
+        );
+        check_line_command(
+            "a\r\nb\r\nc\r\nd",
+            &[Caret::at(p(0, 1)), Caret::at(p(2, 0))],
+            EditCommand::DeleteLine,
+            "b\r\nd",
+            &[Caret::at(p(0, 1)), Caret::at(p(1, 0))],
+        );
+        // A selection ending at column 0 keeps that line.
+        check_line_command(
+            "a\nb\nc",
+            &[sel(p(0, 1), p(1, 0))],
+            EditCommand::DeleteLine,
+            "b\nc",
+            &[Caret::at(p(0, 0))],
+        );
+    }
+
+    #[test]
+    fn select_line_extends_whole_line_selections() {
+        let mut m = model_at("ab\ncd\nef", p(0, 1));
+        let mut steps = Vec::new();
+        for _ in 0..4 {
+            m.apply(EditCommand::SelectLine, 0.0);
+            steps.push(m.primary());
+        }
+        assert_eq!(
+            steps,
+            [
+                sel(p(0, 0), p(1, 0)),
+                sel(p(0, 0), p(2, 0)),
+                sel(p(0, 0), p(2, 2)),
+                sel(p(0, 0), p(2, 2)),
+            ]
+        );
+        let mut m = model_with("ab\ncd\nef", vec![sel(p(0, 1), p(1, 1))]);
+        m.apply(EditCommand::SelectLine, 0.0);
+        assert_eq!(m.carets(), [sel(p(0, 0), p(2, 0))]);
+        let mut m = model_with("ab\ncd", vec![Caret::at(p(0, 0)), Caret::at(p(1, 1))]);
+        m.apply(EditCommand::SelectLine, 0.0);
+        assert_eq!(m.carets(), [sel(p(0, 0), p(1, 0)), sel(p(1, 0), p(1, 2))]);
+    }
+
+    #[test]
+    fn indent_and_outdent_line_whatever_the_selection() {
+        check_line_command(
+            "a\nb",
+            &[Caret::at(p(0, 1))],
+            EditCommand::IndentLine,
+            "    a\nb",
+            &[Caret::at(p(0, 5))],
+        );
+        check_line_command(
+            "a\nb\nc",
+            &[Caret::at(p(0, 0)), sel(p(2, 0), p(2, 1))],
+            EditCommand::IndentLine,
+            "    a\nb\n    c",
+            &[Caret::at(p(0, 4)), sel(p(2, 4), p(2, 5))],
+        );
+        check_line_command(
+            "    a\n  b",
+            &[Caret::at(p(0, 5)), Caret::at(p(1, 1))],
+            EditCommand::OutdentLine,
+            "a\nb",
+            &[Caret::at(p(0, 1)), Caret::at(p(1, 0))],
+        );
+    }
+
+    #[test]
+    fn add_carets_to_line_ends() {
+        let mut m = model_with("ab\ncde\nf", vec![sel(p(0, 1), p(2, 0))]);
+        m.apply(EditCommand::AddCaretsToLineEnds, 0.0);
+        assert_eq!(m.carets(), [Caret::at(p(0, 2)), Caret::at(p(1, 3))]);
+        assert_eq!(m.primary(), Caret::at(p(1, 3)));
+        m.apply(EditCommand::UndoCursor, 0.0);
+        assert_eq!(m.carets(), [sel(p(0, 1), p(2, 0))]);
+
+        let mut m = model_with("ab\ncde", vec![sel(p(1, 0), p(1, 1))]);
+        m.apply(EditCommand::AddCaretsToLineEnds, 0.0);
+        assert_eq!(m.carets(), [Caret::at(p(1, 3))]);
     }
 }

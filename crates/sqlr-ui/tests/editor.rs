@@ -838,3 +838,99 @@ fn autocomplete_options_respected() {
     key(&mut h, Modifiers::NONE, Key::Enter);
     assert_eq!(h.state().0.text(), "select");
 }
+
+fn sel(anchor: Pos, head: Pos) -> Caret {
+    Caret { anchor, head }
+}
+
+fn carets(h: &H) -> Vec<Caret> {
+    h.state().0.model().carets().to_vec()
+}
+
+#[test]
+fn cmd_d_adds_next_occurrences_and_cmd_u_takes_one_back() {
+    let mut h = harness("id x id\nID id");
+    click_pos(&mut h, p(0, 1), Modifiers::NONE);
+    key(&mut h, Modifiers::COMMAND, Key::D);
+    assert_eq!(carets(&h), [sel(p(0, 0), p(0, 2))]);
+    key(&mut h, Modifiers::COMMAND, Key::D);
+    key(&mut h, Modifiers::COMMAND, Key::D);
+    assert_eq!(
+        carets(&h),
+        [
+            sel(p(0, 0), p(0, 2)),
+            sel(p(0, 5), p(0, 7)),
+            sel(p(1, 3), p(1, 5)),
+        ]
+    );
+    key(&mut h, Modifiers::COMMAND, Key::U);
+    assert_eq!(carets(&h).len(), 2);
+    type_text(&mut h, "k");
+    assert_eq!(text(&h), "k x k\nID id");
+    key(&mut h, Modifiers::COMMAND, Key::Z);
+    assert_eq!(text(&h), "id x id\nID id");
+}
+
+#[test]
+fn cmd_shift_l_selects_every_occurrence() {
+    let mut h = harness("id x id\nID id");
+    click_pos(&mut h, p(1, 4), Modifiers::NONE);
+    key(&mut h, Modifiers::COMMAND | Modifiers::SHIFT, Key::L);
+    assert_eq!(carets(&h).len(), 3);
+    assert_eq!(primary(&h), sel(p(1, 3), p(1, 5)));
+    type_text(&mut h, "n");
+    assert_eq!(text(&h), "n x n\nID n");
+}
+
+#[test]
+fn alt_arrows_move_lines_and_shift_cmd_k_deletes_them() {
+    let mut h = harness("a\nb\nc");
+    click_pos(&mut h, p(0, 1), Modifiers::NONE);
+    key(&mut h, Modifiers::ALT, Key::ArrowDown);
+    assert_eq!(text(&h), "b\na\nc");
+    assert_eq!(primary(&h), Caret::at(p(1, 1)));
+    key(&mut h, Modifiers::ALT | Modifiers::SHIFT, Key::ArrowDown);
+    assert_eq!(text(&h), "b\na\na\nc");
+    assert_eq!(primary(&h), Caret::at(p(2, 1)));
+    key(&mut h, Modifiers::COMMAND | Modifiers::SHIFT, Key::K);
+    assert_eq!(text(&h), "b\na\nc");
+    key(&mut h, Modifiers::COMMAND, Key::Z);
+    assert_eq!(text(&h), "b\na\na\nc");
+}
+
+#[test]
+fn a_rebound_chord_runs_the_editor_command() {
+    let mut h = harness("a\nb");
+    let mut keymap = sqlr_core::Keymap::preset("sqlr").unwrap();
+    keymap.set_chords(
+        sqlr_core::ActionId::DeleteLine,
+        vec![sqlr_core::Chord::parse("Cmd+E").unwrap()],
+    );
+    sqlr_ui::keymap::set_ui_keymap(&h.ctx, keymap);
+    click_pos(&mut h, p(0, 0), Modifiers::NONE);
+    key(&mut h, Modifiers::COMMAND | Modifiers::SHIFT, Key::K);
+    assert_eq!(text(&h), "a\nb", "the old chord is unbound");
+    key(&mut h, Modifiers::COMMAND, Key::E);
+    assert_eq!(text(&h), "b");
+}
+
+#[test]
+fn an_alt_chord_does_not_type_its_character() {
+    // On macOS ⇧⌥I also sends the text "ˆ"; the command must not type it.
+    let mut h = harness("ab\ncd");
+    click_pos(&mut h, p(0, 1), Modifiers::NONE);
+    key(&mut h, Modifiers::SHIFT, Key::ArrowDown);
+    h.event(Event::Key {
+        key: Key::I,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::ALT | Modifiers::SHIFT,
+    });
+    h.event(Event::Text("ˆ".into()));
+    h.run_steps(2);
+    assert_eq!(text(&h), "ab\ncd");
+    assert_eq!(carets(&h), [Caret::at(p(0, 2)), Caret::at(p(1, 2))]);
+    type_text(&mut h, ";");
+    assert_eq!(text(&h), "ab;\ncd;");
+}
