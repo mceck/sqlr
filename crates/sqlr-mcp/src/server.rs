@@ -42,16 +42,6 @@ use crate::token::generate_token;
 
 pub const MAX_SESSIONS: usize = 8;
 pub const IDLE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
-pub const INSTRUCTIONS: &str = "Before calling any other tool in each new MCP session, you must call \
-get_guide with {} and read its overview. Use get_guide(topic=tools) for argument and configuration \
-payload reference, or topic=recipes for JSON examples. Start database work with \
-config_list(target=connections), then browse returned IDs and paths; sqlr connects automatically. \
-Only connections the person exposed as Read or Write are reachable, and writes still follow \
-profile restrictions and approvals. Use run_query for one statement/native command and directly \
-pageable MCP data; use run_query_tab for SQL already in an editor tab. Poll/page run_query results \
-by query_id instead of rerunning statements, and close_result when done. Connection values and \
-credentials are write-only. The integrated terminal is human-only and has no MCP tool.";
-
 pub struct StartOptions {
     pub port: u16,
     pub data_dir: PathBuf,
@@ -201,7 +191,7 @@ impl ServerHandler for McpService {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("sqlr", env!("CARGO_PKG_VERSION")))
-            .with_instructions(INSTRUCTIONS)
+            .with_instructions(crate::instructions::instructions())
     }
 
     async fn initialize(
@@ -212,7 +202,7 @@ impl ServerHandler for McpService {
         context.peer.set_peer_info(request.clone());
         Ok(self
             .negotiate_initialize(&request)?
-            .with_instructions(INSTRUCTIONS))
+            .with_instructions(crate::instructions::instructions()))
     }
 
     async fn list_tools(

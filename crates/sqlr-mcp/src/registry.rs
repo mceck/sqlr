@@ -1,5 +1,5 @@
-//! The single source of truth for the tool names, descriptions and input schemas. The
-//! guide and `tools/list` are both generated from this list.
+//! The single source of truth for the tool names, descriptions and input schemas.
+//! `tools/list` is generated from this list, and the sqlr skills are checked against it.
 
 use std::sync::Arc;
 
@@ -10,23 +10,10 @@ pub struct ToolSpec {
     pub name: &'static str,
     pub description: &'static str,
     pub schema: Value,
-    /// A compact argument list for the guide.
-    pub arguments: &'static str,
 }
 
 pub static TOOLS: std::sync::LazyLock<Vec<ToolSpec>> = std::sync::LazyLock::new(|| {
     vec![
-        ToolSpec {
-            name: "get_guide",
-            description: "Required first call in every new MCP session: call get_guide with {} and read the overview before calling any other tool. Returns Markdown with the discovery workflow, tool selection, result paging, errors and access rules. Request a topic for detailed reference.",
-            schema: json!({
-                "type": "object",
-                "properties": {
-                    "topic": {"type": "string", "enum": ["overview", "security", "tools", "recipes", "terminal"], "default": "overview", "description": "Omit for the required first-call overview. tools covers arguments and configuration payloads; recipes provides JSON call sequences; security covers permissions; terminal covers human setup."}
-                }
-            }),
-            arguments: "optional topic",
-        },
         ToolSpec {
             name: "config_list",
             description: "Discover application configuration. Start database work with target=connections to get exposed connection IDs, drivers and read/write access. Connection values and secrets are never returned. Use target=drivers for driver fields before writing connection configuration.",
@@ -38,24 +25,22 @@ pub static TOOLS: std::sync::LazyLock<Vec<ToolSpec>> = std::sync::LazyLock::new(
                     "driver_id": {"type": "string", "description": "Optional manifest ID filter, used only with target=drivers; obtain IDs from connections or the unfiltered driver list."}
                 }
             }),
-            arguments: "target; optional driver_id",
         },
         ToolSpec {
             name: "config_write",
-            description: "Create or update application configuration, not database data. Read the matching config_list collection and get_guide(topic=tools) for payload shapes first. Connection values/secrets are write-only; new connections remain unexposed. Exposure is human-only and safety settings can only be tightened.",
+            description: "Create or update application configuration, not database data. Read the matching config_list collection first. Connection values/secrets are write-only; a new connection starts unexposed, and an existing one must be exposed or created by this session. Exposure is human-only and safety settings can only be tightened.",
             schema: json!({
                 "type": "object",
                 "required": ["target", "payload"],
                 "properties": {
                     "target": {"type": "string", "enum": ["connection", "folder", "profile", "setting", "keymap"], "description": "Singular configuration kind to write; each kind has a different payload."},
-                    "payload": {"type": "object", "description": "Target-specific fields; see get_guide(topic=tools). Connection creation needs name and driver; updates use id. Driver fields go in values, credentials in secrets. Do not include agent_access."}
+                    "payload": {"type": "object", "description": "connection: create with name, driver and optional values, secrets, group, profile, color, save_secrets; update with id plus fields to patch, remove_values and remove_secrets; driver cannot change and agent_access is rejected. folder: {action:\"create\", name}, {action:\"rename\", from, to} or {action:\"move\", name, target:{at:\"end\"|\"before\"|\"after\"|\"into\", id}}. profile: create with name, update with id; optional color, commit_mode (auto/smart/manual), confirm_writes, confirm_destructive, read_only, idle_tx_timeout_min. setting: id, level {name:\"global\"} or {name:\"profile\"|\"connection\", id}, and value or reset:true. keymap: action plus chords:[\"Cmd+Shift+P\"] or reset:true."}
                 }
             }),
-            arguments: "target, payload",
         },
         ToolSpec {
             name: "config_delete",
-            description: "Delete saved application configuration, not database objects. Obtain the id from config_list (use the folder path for folders). Always waits for human approval in sqlr; denial or timeout returns an error. Read the guide for consequences before deleting.",
+            description: "Delete saved application configuration, not database objects. Obtain the id from config_list (use the folder path for folders). Always waits for human approval in sqlr; denial or timeout returns an error. A connection must be exposed or created by this session; a folder's connections and subfolders move to its parent; a profile in use is refused.",
             schema: json!({
                 "type": "object",
                 "required": ["target", "id"],
@@ -64,7 +49,6 @@ pub static TOOLS: std::sync::LazyLock<Vec<ToolSpec>> = std::sync::LazyLock::new(
                     "id": {"type": "string"}
                 }
             }),
-            arguments: "target, id",
         },
         ToolSpec {
             name: "browse",
@@ -77,7 +61,6 @@ pub static TOOLS: std::sync::LazyLock<Vec<ToolSpec>> = std::sync::LazyLock::new(
                     "path": {"type": "array", "items": {"type": "string"}, "default": [], "description": "Full catalog path as returned by browse; omit or use [] for the root. Do not guess segments or concatenate a dotted SQL name."}
                 }
             }),
-            arguments: "connection_id; optional path",
         },
         ToolSpec {
             name: "describe_object",
@@ -92,7 +75,6 @@ pub static TOOLS: std::sync::LazyLock<Vec<ToolSpec>> = std::sync::LazyLock::new(
                     "name": {"type": "string", "description": "Table name only; pass database and schema separately."}
                 }
             }),
-            arguments: "connection_id, name; optional database, schema",
         },
         ToolSpec {
             name: "search_objects",
@@ -106,7 +88,6 @@ pub static TOOLS: std::sync::LazyLock<Vec<ToolSpec>> = std::sync::LazyLock::new(
                     "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50, "description": "Maximum object matches to return."}
                 }
             }),
-            arguments: "query; optional connection_id, limit",
         },
         ToolSpec {
             name: "run_query",
@@ -122,7 +103,6 @@ pub static TOOLS: std::sync::LazyLock<Vec<ToolSpec>> = std::sync::LazyLock::new(
                     "timeout_s": {"type": "integer", "minimum": 1, "maximum": 120, "default": 30, "description": "Time to wait for execution. A running SQL/document result includes query_id for polling/cancellation. Key-value commands may return running without an ID; inspect sqlr and do not resubmit a command with an uncertain outcome."}
                 }
             }),
-            arguments: "connection_id, query; optional database, max_rows, timeout_s",
         },
         ToolSpec {
             name: "get_query_result",
@@ -136,7 +116,6 @@ pub static TOOLS: std::sync::LazyLock<Vec<ToolSpec>> = std::sync::LazyLock::new(
                     "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 200, "description": "Requested page size; the 256 KiB data budget may return fewer rows/documents."}
                 }
             }),
-            arguments: "query_id; optional offset, limit",
         },
         ToolSpec {
             name: "cancel_query",
@@ -146,7 +125,6 @@ pub static TOOLS: std::sync::LazyLock<Vec<ToolSpec>> = std::sync::LazyLock::new(
                 "required": ["query_id"],
                 "properties": {"query_id": {"type": "string", "description": "Opaque query_id returned by run_query; not a tab ID or a connection ID."}}
             }),
-            arguments: "query_id",
         },
         ToolSpec {
             name: "close_result",
@@ -156,13 +134,11 @@ pub static TOOLS: std::sync::LazyLock<Vec<ToolSpec>> = std::sync::LazyLock::new(
                 "required": ["query_id"],
                 "properties": {"query_id": {"type": "string", "description": "Opaque query_id returned by run_query; not a tab ID or a connection ID."}}
             }),
-            arguments: "query_id",
         },
         ToolSpec {
             name: "list_query_tabs",
             description: "Discover existing SQL editor tabs and their numeric tab IDs. Use get_query_tab to read text and the current revision before editing or choosing what to run. This tool does not create tabs or list retained run_query results.",
             schema: json!({"type": "object", "properties": {}}),
-            arguments: "none",
         },
         ToolSpec {
             name: "get_query_tab",
@@ -172,7 +148,6 @@ pub static TOOLS: std::sync::LazyLock<Vec<ToolSpec>> = std::sync::LazyLock::new(
                 "required": ["tab_id"],
                 "properties": {"tab_id": {"type": "integer", "description": "Numeric ID of an existing SQL editor tab from list_query_tabs."}}
             }),
-            arguments: "tab_id",
         },
         ToolSpec {
             name: "edit_query_tab",
@@ -186,7 +161,6 @@ pub static TOOLS: std::sync::LazyLock<Vec<ToolSpec>> = std::sync::LazyLock::new(
                     "edit": {"type": "object", "description": "Use {\"replace\":\"new SQL\"} or {\"edits\":[{\"start\":0,\"end\":6,\"text\":\"SELECT\"}]}. Ranges use zero-based character offsets with an exclusive end, not byte offsets."}
                 }
             }),
-            arguments: "tab_id, expected_revision, edit",
         },
         ToolSpec {
             name: "run_query_tab",
@@ -200,13 +174,11 @@ pub static TOOLS: std::sync::LazyLock<Vec<ToolSpec>> = std::sync::LazyLock::new(
                     "max_rows": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 200, "description": "Initial row fetch size for the tab's execution."}
                 }
             }),
-            arguments: "tab_id, target; optional max_rows",
         },
         ToolSpec {
             name: "list_snippets",
             description: "Discover saved snippet IDs, names, folders and connection scopes. SQL text is omitted; use get_snippet to read it before editing or executing. Saving a snippet does not execute it.",
             schema: json!({"type": "object", "properties": {}}),
-            arguments: "none",
         },
         ToolSpec {
             name: "get_snippet",
@@ -216,7 +188,6 @@ pub static TOOLS: std::sync::LazyLock<Vec<ToolSpec>> = std::sync::LazyLock::new(
                 "required": ["id"],
                 "properties": {"id": {"type": "string"}}
             }),
-            arguments: "id",
         },
         ToolSpec {
             name: "write_snippet",
@@ -232,7 +203,6 @@ pub static TOOLS: std::sync::LazyLock<Vec<ToolSpec>> = std::sync::LazyLock::new(
                     "sql": {"type": "string", "description": "Full SQL text to save; required on both creation and update. It is not executed."}
                 }
             }),
-            arguments: "name, sql; optional id, folder, conn_id",
         },
         ToolSpec {
             name: "delete_snippet",
@@ -242,7 +212,6 @@ pub static TOOLS: std::sync::LazyLock<Vec<ToolSpec>> = std::sync::LazyLock::new(
                 "required": ["id"],
                 "properties": {"id": {"type": "string"}}
             }),
-            arguments: "id",
         },
     ]
 });
@@ -266,8 +235,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn exactly_nineteen_tools_with_unique_names() {
-        assert_eq!(TOOLS.len(), 19);
+    fn tools_have_unique_names_and_object_schemas() {
         let mut names = std::collections::HashSet::new();
         for tool in TOOLS.iter() {
             assert!(names.insert(tool.name), "duplicate {}", tool.name);

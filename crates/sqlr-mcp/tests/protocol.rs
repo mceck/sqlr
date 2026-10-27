@@ -274,7 +274,7 @@ impl Client {
         (status, text, session)
     }
 
-    async fn initialize(&mut self) {
+    async fn initialize(&mut self) -> Value {
         let (status, text, session) = self
             .post(
                 json!({
@@ -290,7 +290,7 @@ impl Client {
             .await;
         assert_eq!(status, StatusCode::OK, "{text}");
         self.session = session.or(self.session.take());
-        let _ = event_json(&text);
+        event_json(&text)
     }
 
     async fn rpc(&mut self, id: u64, method: &str, params: Value) -> Value {
@@ -393,7 +393,7 @@ async fn setup(
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn auth_headers_capabilities_and_guide() {
+async fn auth_headers_capabilities_and_instructions() {
     let store = Arc::new(MemoryMcpTokenStore::with_token("secret-token"));
     let (server, _host, _dir, port, token) = setup(AgentAccess::Read, store).await;
     assert_eq!(server.session_count(), 0);
@@ -411,8 +411,24 @@ async fn auth_headers_capabilities_and_guide() {
         .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
-    client.initialize().await;
+    let initialized = client.initialize().await;
     assert_eq!(server.session_count(), 1);
+    let instructions = initialized["result"]["instructions"].as_str().unwrap();
+    for required in [
+        "only while the app",
+        "exposed",
+        "Approval",
+        "tighten",
+        "write-only",
+        "npx skills add mceck/sqlr",
+        "Integrated terminal",
+    ] {
+        assert!(
+            instructions.contains(required),
+            "missing {required}: {instructions}"
+        );
+    }
+    assert!(!instructions.contains("get_guide"), "{instructions}");
     let tools = client.rpc(2, "tools/list", json!({})).await;
     let names: Vec<String> = tools["result"]["tools"]
         .as_array()
@@ -420,17 +436,14 @@ async fn auth_headers_capabilities_and_guide() {
         .iter()
         .map(|tool| tool["name"].as_str().unwrap().to_string())
         .collect();
-    assert_eq!(names.len(), 19);
-    assert!(names.contains(&"get_guide".to_string()));
+    let expected: Vec<&str> = sqlr_mcp::registry::TOOLS.iter().map(|t| t.name).collect();
+    assert_eq!(names, expected);
+    assert!(!names.contains(&"get_guide".to_string()));
     assert!(names.contains(&"run_query".to_string()));
-
-    let text = client
+    let unknown = client
         .rpc(4, "tools/call", json!({"name":"get_guide","arguments":{}}))
         .await;
-    let text = text["result"]["content"][0]["text"].as_str().unwrap();
-    for name in &names {
-        assert!(text.contains(name), "{name} missing from the guide");
-    }
+    assert!(unknown.get("error").is_some(), "{unknown}");
 
     // Discovery is private and has no token.
     let path = server.discovery_path().to_path_buf();
@@ -536,9 +549,6 @@ async fn describe_object_connects_without_an_agent_query_session() {
     host.state.lock().config.agent_access = AgentAccess::Read;
     let mut reader = Client::new(port, &token);
     reader.initialize().await;
-    reader
-        .rpc(2, "tools/call", json!({"name":"get_guide","arguments":{}}))
-        .await;
     for call_id in [3, 4] {
         let described = reader
             .tool(

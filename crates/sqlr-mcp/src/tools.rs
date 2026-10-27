@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use rmcp::model::{CallToolResult, ContentBlock};
+use rmcp::model::CallToolResult;
 use serde_json::{Map, Value, json};
 use sqlr_core::{
     ActionId, AgentAccess, CatalogNeed, Chord, ColumnMeta, CommitMode, ConnectionConfig,
@@ -15,7 +15,6 @@ use sqlr_core::{
 use sqlr_engine::{Engine, LoadState, QueryId, QueryStatus, SessionKey, SessionStatus, Slot};
 
 use crate::error::{ToolError, ToolResult};
-use crate::guide;
 use crate::host::{
     ApprovalRequest, ConnectionWrite, EditRange, FolderOp, MoveTarget, Risk, RunTarget,
     SettingLevel, TabEdit,
@@ -99,7 +98,6 @@ pub async fn call(
 ) -> Result<CallToolResult, rmcp::ErrorData> {
     let args = Args::new(arguments);
     let outcome = match name {
-        "get_guide" => Ok(get_guide(&args)),
         "config_list" => config_list(state, &args).await,
         "config_write" => config_write(state, ctx, &args).await,
         "config_delete" => config_delete(state, ctx, &args).await,
@@ -130,14 +128,6 @@ pub async fn call(
         Ok(value) => value,
         Err(error) => error.to_result(),
     })
-}
-
-fn guide_result(topic: Option<&str>) -> CallToolResult {
-    CallToolResult::success(vec![ContentBlock::text(guide::guide(topic))])
-}
-
-fn get_guide(args: &Args) -> CallToolResult {
-    guide_result(args.opt_str("topic"))
 }
 
 // ----- connections and catalog -----

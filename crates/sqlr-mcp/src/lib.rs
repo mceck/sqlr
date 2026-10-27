@@ -4,8 +4,8 @@
 
 pub mod discovery;
 pub mod error;
-pub mod guide;
 pub mod host;
+pub mod instructions;
 pub mod policy;
 pub mod registry;
 pub mod results;
