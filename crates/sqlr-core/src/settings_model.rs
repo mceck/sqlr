@@ -413,6 +413,16 @@ fn build_defs() -> Vec<SettingDef> {
     let choice = |s: &str| V::Choice(s.to_string());
     vec![
         def(
+            "explorer.show_empty_folders",
+            "General",
+            "Show empty folders in the explorer",
+            "Keep the folders with no objects (views, materialized views, functions, sequences…) in the tree instead of hiding them.",
+            &["explorer", "tree", "empty", "folder", "hide"],
+            K::Bool,
+            V::Bool(false),
+            GlobalOnly,
+        ),
+        def(
             "general.stop_script_on_error",
             "General",
             "Stop a script at its first error",

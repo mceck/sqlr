@@ -142,6 +142,8 @@ pub fn kind_label(kind: ObjectKind) -> &'static str {
 
 #[derive(Default)]
 pub struct TreeState {
+    /// Folder nodes whose loaded children are none stay in the tree (else they are hidden).
+    pub show_empty_folders: bool,
     /// Case-insensitive substring filter over loaded node names.
     pub filter: String,
     pub selected: Option<(String, NodePath)>,
@@ -592,6 +594,12 @@ impl<'a> Flattener<'a, '_> {
                     rows.push(Row::Empty { depth });
                 }
                 for node in nodes {
+                    if !self.state.show_empty_folders
+                        && node.kind == NodeKind::Folder
+                        && self.source.child_count(conn, &node.path) == Some(0)
+                    {
+                        continue;
+                    }
                     let below = !self.filter.is_empty() && self.descendant_matches(conn, node);
                     if !(self.filter.is_empty() || below || self.name_matches(&node.name)) {
                         continue;
