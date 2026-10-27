@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 ---
 
 # Agent skills and MCP install
@@ -239,28 +239,28 @@ Configuration writes respect exposure, `run_query_tab` goes through the Agent Ap
 
 ## Acceptance Criteria
 
-- [ ] Settings → Agents lists the six supported agents with their state, and Install, Remove, Update and Copy config behave as described.
-- [ ] Install writes a working `sqlr` entry in each format and preserves every other byte of meaning, including comments in JSONC and formatting in TOML.
-- [ ] A `.sqlr-backup` is written before the first change to an agent file and never overwritten.
-- [ ] Token rotation and port change rewrite every recorded installation; a failure shows Outdated.
-- [ ] Copy MCP config stays available as "Other agent…".
-- [ ] The repository has `skills/sqlr-configure`, `skills/sqlr-create-connection`, `skills/sqlr-edit-user-query`, `skills/sqlr-query-database` and `skills/sqlr-connect-agent`, each with a valid `SKILL.md` carrying `metadata.sqlr-version`.
-- [ ] The README documents `npx skills add mceck/sqlr`.
-- [ ] The Terminal workspace holds the five skills under `.agents/skills` with per-skill links in `.claude/skills`, rewritten on change and pruned when stale, with no lock file.
-- [ ] The Terminal workspace no longer writes `.mcp.json`, and deletes the generated one.
-- [ ] The new `AGENTS.md` template is used when the file is missing.
-- [ ] `get_guide` is gone, and the initialize instructions carry the overview and the skills command.
-- [ ] The tool surface has 24 tools, including `open_query_tab`, `show_in_app`, `test_connection`, `get_ddl`, `explain_query` and `search_history` with the contracts above.
-- [ ] `run_query_tab` returns `query_ids`; `get_query_tab` returns `last_run_query_ids`, `transaction_open` and `grid_selection` for exposed Connections only; `get_query_result` pages tab results; and `close_result` does not close them.
-- [ ] `describe_object` returns indexes and foreign keys for relational Connections.
-- [ ] `config_write` and `config_delete` refuse non-exposed Connections not created by the session, with `not_exposed`.
-- [ ] Settings values carry no non-exposed Connection id.
-- [ ] `run_query_tab` uses the Agent Approval dialog, runs at most once, and no longer returns `approval_required`.
-- [ ] An Agent session cannot open more than five tabs.
-- [ ] Saved tasks are gone from code, store, MCP, specs and glossary, and the store migration drops their tables.
-- [ ] The skill consistency test passes, and fails when a tool is added without a skill mentioning it.
-- [ ] The affected specs describe the new behaviour.
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings` and the full test suite pass.
+- [x] Settings → Agents lists the six supported agents with their state, and Install, Remove, Update and Copy config behave as described.
+- [x] Install writes a working `sqlr` entry in each format and preserves every other byte of meaning, including comments in JSONC and formatting in TOML.
+- [x] A `.sqlr-backup` is written before the first change to an agent file and never overwritten.
+- [x] Token rotation and port change rewrite every recorded installation; a failure shows Outdated.
+- [x] Copy MCP config stays available as "Other agent…".
+- [x] The repository has `skills/sqlr-configure`, `skills/sqlr-create-connection`, `skills/sqlr-edit-user-query`, `skills/sqlr-query-database` and `skills/sqlr-connect-agent`, each with a valid `SKILL.md` carrying `metadata.sqlr-version`.
+- [x] The README documents `npx skills add mceck/sqlr`.
+- [x] The Terminal workspace holds the five skills under `.agents/skills` with per-skill links in `.claude/skills`, rewritten on change and pruned when stale, with no lock file.
+- [x] The Terminal workspace no longer writes `.mcp.json`, and deletes the generated one.
+- [x] The new `AGENTS.md` template is used when the file is missing.
+- [x] `get_guide` is gone, and the initialize instructions carry the overview and the skills command.
+- [x] The tool surface has 24 tools, including `open_query_tab`, `show_in_app`, `test_connection`, `get_ddl`, `explain_query` and `search_history` with the contracts above.
+- [x] `run_query_tab` returns `query_ids`; `get_query_tab` returns `last_run_query_ids`, `transaction_open` and `grid_selection` for exposed Connections only; `get_query_result` pages tab results; and `close_result` does not close them.
+- [x] `describe_object` returns indexes and foreign keys for relational Connections.
+- [x] `config_write` and `config_delete` refuse non-exposed Connections not created by the session, with `not_exposed`.
+- [x] Settings values carry no non-exposed Connection id.
+- [x] `run_query_tab` uses the Agent Approval dialog, runs at most once, and no longer returns `approval_required`.
+- [x] An Agent session cannot open more than five tabs.
+- [x] Saved tasks are gone from code, store, MCP, specs and glossary, and the store migration drops their tables.
+- [x] The skill consistency test passes, and fails when a tool is added without a skill mentioning it.
+- [x] The affected specs describe the new behaviour.
+- [x] `cargo clippy --workspace --all-targets -- -D warnings` and the full test suite pass.
 
 ## Out of Scope
 
