@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 ---
 
 # Keyboard shortcuts: pending changes, refresh, tabs, grid rows and VS Code editor commands
@@ -258,30 +258,30 @@ Every new action appears in the Shortcuts dialog and the Keymap editor and can b
 
 ## Acceptance Criteria
 
-- [ ] ⌘S applies the shown Result's Changeset in an Editor tab, through the review dialog when Confirm writes is on.
-- [ ] ⌘S commits an open inline cell editor first; an invalid value blocks the apply and keeps the editor open.
-- [ ] ⌘S applies the Data page Changeset, the grants, or the Schema change list, depending on the Object editor's page.
-- [ ] ⌘S applies the Users and roles editor, saves a Redis string value or inline element, and saves a document JSON edit.
-- [ ] ⌘S does nothing with nothing pending, while an apply runs, or while a modal dialog is open.
-- [ ] A stored `apply_object` binding keeps working; the action is saved as `apply_changes`.
-- [ ] Discard pending changes exists with no default chord and drops the active surface's pending edits like its button.
-- [ ] F5 and ⌘R refresh the active tab per the rules above and ask before dropping a pending Changeset.
-- [ ] ⌘1…⌘8 focus tabs 1–8 in Next tab order, and ⌘9 focuses the last tab.
-- [ ] ⇧⌘T reopens the most recently closed tabs of the session, of every tab kind, without running anything. The stack holds 20 entries.
-- [ ] A recipe whose Connection was deleted shows the Toast and is dropped.
-- [ ] ⌘I, ⌘D and ⌥⌘N add, duplicate and set NULL in a focused editable grid, and do nothing on a read-only one.
-- [ ] The context menu shows those chords.
-- [ ] The new actions are listed in the Shortcuts dialog and the Keymap editor. Apply, Discard, Refresh and Reopen closed tab are in the Palette.
-- [ ] ⌘D selects the word, then adds the next occurrences with wrap, skipping selected ones, under the case and whole-word rules above.
-- [ ] ⇧⌘L selects every occurrence, up to 10,000.
-- [ ] ⌘U undoes the last caret operation and leaves the text alone.
-- [ ] ⌥⌘↑/↓ come from the Keymap and can be rebound.
-- [ ] ⇧⌥I, ⌥↑/↓, ⇧⌥↑/↓, ⇧⌘K, ⌘L, ⌘] and ⌘[ behave as described, on every caret, one undo group each.
-- [ ] Duplicate line is now Copy line down on ⇧⌥↓, and old `duplicate_line` bindings still load.
-- [ ] The commands work in the SQL, Mongo shell, Elasticsearch console and JSON editors.
-- [ ] Both presets are conflict-free on macOS and elsewhere, with ⌘D in both the Editor and Grid scopes.
+- [x] ⌘S applies the shown Result's Changeset in an Editor tab, through the review dialog when Confirm writes is on.
+- [x] ⌘S commits an open inline cell editor first; an invalid value blocks the apply and keeps the editor open.
+- [x] ⌘S applies the Data page Changeset, the grants, or the Schema change list, depending on the Object editor's page.
+- [x] ⌘S applies the Users and roles editor, saves a Redis string value or inline element, and saves a document JSON edit.
+- [x] ⌘S does nothing with nothing pending, while an apply runs, or while a modal dialog is open.
+- [x] A stored `apply_object` binding keeps working; the action is saved as `apply_changes`.
+- [x] Discard pending changes exists with no default chord and drops the active surface's pending edits like its button.
+- [x] F5 and ⌘R refresh the active tab per the rules above and ask before dropping a pending Changeset.
+- [x] ⌘1…⌘8 focus tabs 1–8 in Next tab order, and ⌘9 focuses the last tab.
+- [x] ⇧⌘T reopens the most recently closed tabs of the session, of every tab kind, without running anything. The stack holds 20 entries.
+- [x] A recipe whose Connection was deleted shows the Toast and is dropped.
+- [x] ⌘I, ⌘D and ⌥⌘N add, duplicate and set NULL in a focused editable grid, and do nothing on a read-only one.
+- [x] The context menu shows those chords.
+- [x] The new actions are listed in the Shortcuts dialog and the Keymap editor. Apply, Discard, Refresh and Reopen closed tab are in the Palette.
+- [x] ⌘D selects the word, then adds the next occurrences with wrap, skipping selected ones, under the case and whole-word rules above.
+- [x] ⇧⌘L selects every occurrence, up to 10,000.
+- [x] ⌘U undoes the last caret operation and leaves the text alone.
+- [x] ⌥⌘↑/↓ come from the Keymap and can be rebound.
+- [x] ⇧⌥I, ⌥↑/↓, ⇧⌥↑/↓, ⇧⌘K, ⌘L, ⌘] and ⌘[ behave as described, on every caret, one undo group each.
+- [x] Duplicate line is now Copy line down on ⇧⌥↓, and old `duplicate_line` bindings still load.
+- [x] The commands work in the SQL, Mongo shell, Elasticsearch console and JSON editors.
+- [x] Both presets are conflict-free on macOS and elsewhere, with ⌘D in both the Editor and Grid scopes.
 - [ ] The specs are updated, and the manual's shortcuts page lists the new chords.
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings` and the focused tests pass.
+- [x] `cargo clippy --workspace --all-targets -- -D warnings` and the focused tests pass.
 
 ## Out of Scope
 
