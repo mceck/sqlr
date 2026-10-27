@@ -370,6 +370,8 @@ pub struct McpPrefs {
     pub sessions: usize,
     pub error: Option<String>,
     pub token_present: bool,
+    /// A token rotation is in progress.
+    pub rotating: bool,
 }
 
 /// One connection in Settings → Agents' access list.
@@ -386,11 +388,18 @@ pub struct AgentAccessRow {
 
 type StartResult = Result<RunningMcp, (McpStatus, String)>;
 
+/// A token rotation in progress: the server is with the rotation thread until it answers.
+struct Rotation {
+    result: mpsc::Receiver<(RunningMcp, Result<(), TokenError>)>,
+    url: String,
+}
+
 pub struct AgentsUi {
     pub status: McpStatus,
     pub running: Option<RunningMcp>,
     pub last_error: Option<String>,
     start: Option<mpsc::Receiver<StartResult>>,
+    rotation: Option<Rotation>,
     seen_enabled: bool,
     seen_port: u16,
     failed_port: Option<u16>,
@@ -403,6 +412,7 @@ impl Default for AgentsUi {
             running: None,
             last_error: None,
             start: None,
+            rotation: None,
             seen_enabled: false,
             seen_port: 0,
             failed_port: None,
@@ -412,7 +422,16 @@ impl Default for AgentsUi {
 
 impl AgentsUi {
     pub fn url(&self) -> Option<String> {
-        self.running.as_ref().map(|r| r.server.url().to_string())
+        match (&self.running, &self.rotation) {
+            (Some(running), _) => Some(running.server.url().to_string()),
+            (None, Some(rotation)) => Some(rotation.url.clone()),
+            (None, None) => None,
+        }
+    }
+
+    /// Whether a token rotation is in progress.
+    pub fn rotating(&self) -> bool {
+        self.rotation.is_some()
     }
 
     pub fn sessions(&self) -> usize {
@@ -480,10 +499,15 @@ impl AgentsUi {
         if !enabled {
             self.running = None;
             self.start = None;
+            self.rotation = None;
             self.status = McpStatus::Stopped;
             self.seen_enabled = false;
             self.seen_port = port;
             self.failed_port = None;
+            return;
+        }
+        // The server is with the rotation thread: it comes back before anything changes.
+        if self.rotation.is_some() {
             return;
         }
         let port_changed = self.seen_port != 0 && self.seen_port != port;
@@ -545,13 +569,21 @@ impl AgentsUi {
     pub fn stop(&mut self) {
         self.running = None;
         self.start = None;
+        self.rotation = None;
         self.status = McpStatus::Stopped;
     }
 
-    pub fn rotate(&mut self) -> Result<(), RotateError> {
+    /// Starts a token rotation on a background thread: the keychain write and the session
+    /// drop never block the UI. [`Self::poll_rotation`] hands the server back with the
+    /// outcome; `repaint` wakes the UI when it is ready.
+    pub fn rotate(&mut self, repaint: Arc<dyn Fn() + Send + Sync>) -> Result<(), RotateError> {
+        if self.rotation.is_some() {
+            return Err(RotateError::InProgress);
+        }
         let Some(mut running) = self.running.take() else {
             return Err(RotateError::NotRunning);
         };
+        let url = running.server.url().to_string();
         let (tx, rx) = mpsc::channel();
         std::thread::Builder::new()
             .name("sqlr-mcp-rotate".into())
@@ -562,11 +594,27 @@ impl AgentsUi {
                     .expect("a running runtime")
                     .block_on(running.server.rotate_token());
                 let _ = tx.send((running, result));
+                repaint();
             })
             .map_err(RotateError::Spawn)?;
-        let (running, result) = rx.recv()?;
-        self.running = Some(running);
-        Ok(result?)
+        self.rotation = Some(Rotation { result: rx, url });
+        Ok(())
+    }
+
+    /// The outcome of the rotation in progress once it finished, with the server running
+    /// again; `None` while it runs or when none was started.
+    pub fn poll_rotation(&mut self) -> Option<Result<(), RotateError>> {
+        let rotation = self.rotation.as_ref()?;
+        let outcome = match rotation.result.try_recv() {
+            Ok((running, result)) => {
+                self.running = Some(running);
+                result.map_err(RotateError::from)
+            }
+            Err(mpsc::TryRecvError::Empty) => return None,
+            Err(mpsc::TryRecvError::Disconnected) => Err(RotateError::Stopped),
+        };
+        self.rotation = None;
+        Some(outcome)
     }
 }
 
@@ -576,12 +624,15 @@ pub enum RotateError {
     /// There is no running server to rotate for.
     #[error("The MCP server is not running")]
     NotRunning,
+    /// A rotation is already in progress.
+    #[error("The token is already being rotated")]
+    InProgress,
     /// The rotation thread could not start.
     #[error("{0}")]
     Spawn(#[source] std::io::Error),
     /// The rotation thread ended without an answer.
-    #[error("{0}")]
-    Stopped(#[from] mpsc::RecvError),
+    #[error("The rotation stopped without an answer")]
+    Stopped,
     /// The server could not replace the keychain token.
     #[error(transparent)]
     Token(#[from] TokenError),
@@ -1293,6 +1344,14 @@ impl SqlrApp {
                 pending.answer(Err(ToolError::denied()));
             }
         }
+        match self.mcp.poll_rotation() {
+            Some(Ok(())) => self.notify("MCP token rotated; active agents were disconnected"),
+            Some(Err(error)) => self.notify(format!("Could not rotate the token: {error}")),
+            None if self.mcp.rotating() => {
+                ctx.request_repaint_after(Duration::from_millis(50));
+            }
+            None => {}
+        }
         let repaint: Arc<dyn Fn() + Send + Sync> = {
             let ctx = ctx.clone();
             Arc::new(move || ctx.request_repaint())
@@ -1809,7 +1868,7 @@ mod rotate_error_tests {
     fn rotating_without_a_server_says_so() {
         let mut host = AgentsUi::default();
         assert_eq!(
-            host.rotate().unwrap_err().to_string(),
+            host.rotate(Arc::new(|| {})).unwrap_err().to_string(),
             "The MCP server is not running"
         );
     }

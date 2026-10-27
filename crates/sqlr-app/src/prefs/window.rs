@@ -138,6 +138,12 @@ impl PrefsWindow {
         }
     }
 
+    /// Whether Settings → Agents is on screen: its section is selected and no search
+    /// replaces it.
+    pub fn agents_section_shown(&self) -> bool {
+        self.section == "Agents" && self.query.trim().is_empty()
+    }
+
     /// Returns `false` once the window should close. Apply and Save write the files; Save and
     /// Cancel close, and Cancel restores what the window opened with.
     pub fn show(
@@ -152,7 +158,7 @@ impl PrefsWindow {
         if self.keymap.is_none() {
             self.keymap = Some(keymap.clone());
         }
-        let agents_open = self.section == "Agents" && self.query.trim().is_empty();
+        let agents_open = self.agents_section_shown();
         if agents_open && !self.agents_shown {
             self.agent_requests.push(AgentRequest::Refresh);
         }
@@ -465,7 +471,7 @@ impl PrefsWindow {
             ui.horizontal(|ui| {
                 if ui
                     .add_enabled(
-                        self.mcp.status.is_running(),
+                        self.mcp.status.is_running() && !self.mcp.rotating,
                         egui::Button::new("Rotate token"),
                     )
                     .on_hover_text(
@@ -536,8 +542,7 @@ impl PrefsWindow {
                     theme::hint(ui, "Looking for agents…");
                 });
             }
-            let rows = self.agents.rows.clone();
-            for row in &rows {
+            for row in &self.agents.rows {
                 ui.add_space(Spacing::XS);
                 let action = ui
                     .push_id(("agent-install", row.kind), |ui| {
@@ -591,11 +596,8 @@ impl PrefsWindow {
             return;
         };
         let name = confirm.kind.name();
-        let title = format!(
-            "{} sqlr in {name}",
-            if confirm.update { "Update" } else { "Install" }
-        );
         let action = if confirm.update { "Update" } else { "Install" };
+        let title = format!("{action} sqlr in {name}");
         let file = confirm.file.display().to_string();
         let spec = crate::confirm::ConfirmSpec::new(
             Id::new("agent_install_confirm"),

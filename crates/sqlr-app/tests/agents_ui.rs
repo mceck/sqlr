@@ -5,7 +5,7 @@ use egui_kittest::kittest::Queryable;
 use sqlr_app::{AppDeps, SqlrApp};
 use sqlr_core::{AgentAccess, ConnectionConfig, Secrets};
 use sqlr_engine::{DriverRegistry, Engine};
-use sqlr_store::{ConnectionRepo, MemorySecretStore, Settings};
+use sqlr_store::{ConnectionRepo, McpTokenStore as _, MemorySecretStore, Settings};
 use sqlr_testkit::FakeDriver;
 
 fn app(dir: &std::path::Path) -> SqlrApp {
@@ -750,6 +750,100 @@ fn show_in_app_explains_in_an_open_tab_without_opening_one() {
         &mut harness,
         "Agent explained a statement in \u{201c}Plan me\u{201d}",
     );
+}
+
+/// A token store whose writes wait until the test lets them through, like a slow keychain.
+struct GatedTokenStore {
+    token: parking_lot::Mutex<String>,
+    gate: parking_lot::Mutex<std::sync::mpsc::Receiver<()>>,
+}
+
+impl sqlr_store::McpTokenStore for GatedTokenStore {
+    fn get(&self) -> Result<Option<String>, sqlr_store::StoreError> {
+        Ok(Some(self.token.lock().clone()))
+    }
+    fn set(&self, token: &str) -> Result<(), sqlr_store::StoreError> {
+        let _ = self
+            .gate
+            .lock()
+            .recv_timeout(std::time::Duration::from_secs(10));
+        *self.token.lock() = token.to_string();
+        Ok(())
+    }
+    fn delete(&self) -> Result<(), sqlr_store::StoreError> {
+        Ok(())
+    }
+}
+
+#[test]
+fn rotating_the_token_keeps_the_ui_responsive_while_the_keychain_is_written() {
+    let dir = tempfile::tempdir().unwrap();
+    let port = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port()
+    };
+    let mut drivers = DriverRegistry::default();
+    drivers.register(FakeDriver::new(Default::default()));
+    let engine = Engine::new(drivers, Arc::new(|| {}));
+    let secrets = Arc::new(MemorySecretStore::default());
+    engine.set_secret_store(secrets.clone());
+    let repo = ConnectionRepo::open(dir.path(), Box::new(secrets)).unwrap();
+    let (release, gate) = std::sync::mpsc::channel();
+    let store = Arc::new(GatedTokenStore {
+        token: parking_lot::Mutex::new("ui-test-token".into()),
+        gate: parking_lot::Mutex::new(gate),
+    });
+    let app = SqlrApp::new(
+        AppDeps {
+            check_updates: false,
+            engine,
+            repo,
+            settings: Settings {
+                agents_enabled: true,
+                agents_port: port,
+                ..Settings::default()
+            },
+            config_dir: dir.path().to_path_buf(),
+            data_dir: Some(dir.path().to_path_buf()),
+            startup_notice: None,
+            storage_warning: None,
+            mcp_token_store: Some(store.clone()),
+            diagnostics: None,
+            diagnostics_warning: None,
+        },
+        &egui::Context::default(),
+    );
+    let mut harness = Harness::builder()
+        .with_size((1200.0, 820.0))
+        .with_step_dt(0.01)
+        .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !harness.state().mcp_running_for_tests() {
+        harness.step();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        assert!(std::time::Instant::now() < deadline, "MCP did not start");
+    }
+    harness.state_mut().open_agents_settings_for_tests();
+    harness.run_steps(3);
+    harness.get_by_label("Rotate token").click();
+
+    // The keychain write is held: frames keep coming.
+    let started = std::time::Instant::now();
+    harness.run_steps(5);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(5),
+        "a frame waited for the keychain"
+    );
+    assert_eq!(store.get().unwrap().as_deref(), Some("ui-test-token"));
+
+    release.send(()).unwrap();
+    step_until_label(
+        &mut harness,
+        "MCP token rotated; active agents were disconnected",
+    );
+    assert!(harness.state().mcp_running_for_tests());
+    let rotated = store.get().unwrap().unwrap();
+    assert_ne!(rotated, "ui-test-token");
 }
 
 #[test]

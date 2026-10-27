@@ -957,19 +957,31 @@ impl SqlrApp {
         }
         self.profiles_ui(ctx);
         self.secret_prompt_ui(ctx);
-        let agent_rows = self.agent_access_rows();
-        let agents_view = self.agents_view();
+        // The agent lists are built only while Settings → Agents shows them.
+        let agents_shown = self
+            .prefs
+            .as_ref()
+            .is_some_and(crate::prefs::PrefsWindow::agents_section_shown);
+        let agent_rows = if agents_shown {
+            self.agent_access_rows()
+        } else {
+            Vec::new()
+        };
+        let agents_view = agents_shown.then(|| self.agents_view());
         let mut access_changes = Vec::new();
         let mut agent_requests = Vec::new();
         if let Some(window) = &mut self.prefs {
-            window.agents = agents_view;
+            if let Some(view) = agents_view {
+                window.agents = view;
+            }
             let scopes = Scopes::new(&self.profiles, &self.connections);
             window.mcp = crate::agents::McpPrefs {
                 status: self.mcp.status.clone(),
                 url: self.mcp.url(),
                 sessions: self.mcp.sessions(),
                 error: self.mcp.last_error.clone(),
-                token_present: self.mcp.token().is_some(),
+                token_present: self.mcp.token().is_some() || self.mcp.rotating(),
+                rotating: self.mcp.rotating(),
             };
             let keep = window.show(
                 ctx,
@@ -1002,9 +1014,13 @@ impl SqlrApp {
                 self.notify("MCP client configuration copied (it contains the token)");
             }
             if rotate {
-                match self.mcp.rotate() {
-                    Ok(()) => self.notify("MCP token rotated; active agents were disconnected"),
-                    Err(error) => self.notify(format!("Could not rotate the token: {error}")),
+                // The outcome arrives in a later frame (`agents_tick`).
+                let repaint: std::sync::Arc<dyn Fn() + Send + Sync> = {
+                    let ctx = ctx.clone();
+                    std::sync::Arc::new(move || ctx.request_repaint())
+                };
+                if let Err(error) = self.mcp.rotate(repaint) {
+                    self.notify(format!("Could not rotate the token: {error}"));
                 }
             }
             if open_terminal {
