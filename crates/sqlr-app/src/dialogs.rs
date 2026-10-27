@@ -958,8 +958,11 @@ impl SqlrApp {
         self.profiles_ui(ctx);
         self.secret_prompt_ui(ctx);
         let agent_rows = self.agent_access_rows();
+        let agents_view = self.agents_view();
         let mut access_changes = Vec::new();
+        let mut agent_requests = Vec::new();
         if let Some(window) = &mut self.prefs {
+            window.agents = agents_view;
             let scopes = Scopes::new(&self.profiles, &self.connections);
             window.mcp = crate::agents::McpPrefs {
                 status: self.mcp.status.clone(),
@@ -977,6 +980,7 @@ impl SqlrApp {
                 &mut self.keymap,
             );
             access_changes = std::mem::take(&mut window.access_changes);
+            agent_requests = std::mem::take(&mut window.agent_requests);
             let open_drivers = std::mem::take(&mut window.open_drivers);
             let open_databases = std::mem::take(&mut window.open_databases);
             let open_folder = std::mem::take(&mut window.open_settings_folder);
@@ -1019,6 +1023,7 @@ impl SqlrApp {
         for (id, access) in access_changes {
             self.set_agent_access(&id, access);
         }
+        self.agent_requests(agent_requests, ctx);
         if let Some(target) = self.clear_history_pending.clone() {
             let (prompt, detail) = match &target {
                 Some(id) => {

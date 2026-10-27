@@ -3,6 +3,7 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 mod actions;
+pub mod agent_install;
 mod agents;
 pub use actions::dispatch_actions;
 mod admin;

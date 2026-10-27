@@ -2,7 +2,7 @@
 //! the level (global, profile or connection) the values are edited at. Changes apply live;
 //! Cancel puts everything back.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use egui::{
     Align, Color32, ComboBox, CornerRadius, Frame, Id, Layout, Margin, Stroke, WidgetInfo,
@@ -14,6 +14,7 @@ use sqlr_ui::theme::{self, Spacing, icons};
 
 use super::resolve::Scopes;
 use super::sections::Editing;
+use crate::agent_install::{AgentKind, AgentRequest, AgentState, AgentsView};
 use crate::agents::AgentAccessRow;
 use crate::dialogs::nav_item;
 
@@ -71,6 +72,14 @@ pub struct PrefsWindow {
     pub mcp: crate::agents::McpPrefs,
     pub copy_mcp_config: bool,
     pub rotate_token: bool,
+    /// Settings → Agents' agent list, set by the app before showing.
+    pub agents: AgentsView,
+    /// Agent list actions, carried out by the app after the frame.
+    pub agent_requests: Vec<AgentRequest>,
+    /// An Install or Update waiting for the one-time confirmation of a first write.
+    agent_confirm: Option<AgentConfirm>,
+    /// Whether the Agents section was on screen last frame: opening it recomputes states.
+    agents_shown: bool,
     pub open_terminal: bool,
     /// "Check for updates now" was clicked; the app starts the check.
     pub check_updates: bool,
@@ -120,6 +129,10 @@ impl PrefsWindow {
             mcp: Default::default(),
             copy_mcp_config: false,
             rotate_token: false,
+            agents: AgentsView::default(),
+            agent_requests: Vec::new(),
+            agent_confirm: None,
+            agents_shown: false,
             open_terminal: false,
             check_updates: false,
         }
@@ -139,6 +152,11 @@ impl PrefsWindow {
         if self.keymap.is_none() {
             self.keymap = Some(keymap.clone());
         }
+        let agents_open = self.section == "Agents" && self.query.trim().is_empty();
+        if agents_open && !self.agents_shown {
+            self.agent_requests.push(AgentRequest::Refresh);
+        }
+        self.agents_shown = agents_open;
         if let Some(pending) = &self.saving {
             ctx.request_repaint_after(std::time::Duration::from_millis(20));
             if ctx.cumulative_frame_nr() > pending.frame {
@@ -280,6 +298,7 @@ impl PrefsWindow {
                     }
                 });
             });
+        self.agent_confirm_ui(ctx);
         if response.closed && self.saving.is_none() {
             *live = self.original.clone();
             if let Some(original) = &self.keymap {
@@ -356,11 +375,18 @@ impl PrefsWindow {
                 };
                 editing.rows(ui, &defs);
                 self.agents_actions(ui);
+                self.agents_list(ui);
                 ui.add_space(Spacing::XL);
                 theme::hairline(ui);
                 ui.add_space(Spacing::L);
             }
             self.agents_access(ui, agent_rows);
+            ui.add_space(Spacing::L);
+            ui.horizontal_wrapped(|ui| {
+                theme::hint(ui, "Agents learn to work with sqlr from the");
+                ui.hyperlink_to("sqlr skills", SKILLS_URL)
+                    .on_hover_text("npx skills add mceck/sqlr");
+            });
             return;
         }
         let mut editing = Editing {
@@ -440,22 +466,11 @@ impl PrefsWindow {
                 if ui
                     .add_enabled(
                         self.mcp.status.is_running(),
-                        egui::Button::new("Copy MCP config"),
-                    )
-                    .on_hover_text("Contains the bearer token; paste it into the agent")
-                    .on_disabled_hover_text(
-                        "Enable the local agent server and wait until it is running",
-                    )
-                    .clicked()
-                {
-                    self.copy_mcp_config = true;
-                }
-                if ui
-                    .add_enabled(
-                        self.mcp.status.is_running(),
                         egui::Button::new("Rotate token"),
                     )
-                    .on_hover_text("Revokes the old token and disconnects active agents")
+                    .on_hover_text(
+                        "Revokes the old token and disconnects active agents; installed agents receive the new token",
+                    )
                     .on_disabled_hover_text(
                         "Enable the local agent server before rotating its token",
                     )
@@ -486,6 +501,132 @@ impl PrefsWindow {
                 ui,
                 "Changes apply on Restart. The shell command is never shown to agents or logged; do not embed credentials in it. Terminal output is never logged.",
             );
+        }
+    }
+
+    /// Settings → Agents' agent list: each supported agent with its file, state and action,
+    /// then "Other agent…" with the generic client configuration.
+    fn agents_list(&mut self, ui: &mut egui::Ui) {
+        let running = self.mcp.status.is_running();
+        let width = (ui.available_width() - Spacing::XL).max(240.0);
+        ui.add_space(Spacing::L);
+        ui.vertical(|ui| {
+            ui.set_width(width);
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Agents on this computer").strong().size(14.0));
+                if self.agents.busy {
+                    ui.spinner();
+                }
+            });
+            ui.add_space(Spacing::XS);
+            theme::hint(
+                ui,
+                "Install writes sqlr's server entry into the agent's own configuration; the rest of the file stays as it is.",
+            );
+            if self.agents.unavailable {
+                ui.add_space(Spacing::XS);
+                theme::hint(
+                    ui,
+                    "The home directory is unknown, so agents cannot be installed. Use Copy MCP config below.",
+                );
+            } else if self.agents.rows.is_empty() {
+                ui.add_space(Spacing::XS);
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    theme::hint(ui, "Looking for agents…");
+                });
+            }
+            let rows = self.agents.rows.clone();
+            for row in &rows {
+                ui.add_space(Spacing::XS);
+                let action = ui
+                    .push_id(("agent-install", row.kind), |ui| {
+                        agent_install_row(ui, row, running, self.agents.busy)
+                    })
+                    .inner;
+                match action {
+                    Some(AgentAction::Install) if !row.recorded => {
+                        self.agent_confirm = Some(AgentConfirm {
+                            kind: row.kind,
+                            file: row.file.clone(),
+                            update: row.state == AgentState::Outdated,
+                        });
+                    }
+                    Some(AgentAction::Install) => {
+                        self.agent_requests.push(AgentRequest::Install(row.kind));
+                    }
+                    Some(AgentAction::Remove) => {
+                        self.agent_requests.push(AgentRequest::Remove(row.kind));
+                    }
+                    Some(AgentAction::CopyConfig) => {
+                        self.agent_requests.push(AgentRequest::CopyConfig(row.kind));
+                    }
+                    None => {}
+                }
+            }
+            ui.add_space(Spacing::M);
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Other agent…").strong());
+                if ui
+                    .add_enabled(running, egui::Button::new("Copy MCP config"))
+                    .on_hover_text("Contains the bearer token; paste it into the agent")
+                    .on_disabled_hover_text(
+                        "Enable the local agent server and wait until it is running",
+                    )
+                    .clicked()
+                {
+                    self.copy_mcp_config = true;
+                }
+            });
+            theme::hint(
+                ui,
+                "For any other MCP client. The copy contains the token: paste it only into the agent's configuration.",
+            );
+        });
+    }
+
+    /// The one-time confirmation before sqlr first writes an agent's file.
+    fn agent_confirm_ui(&mut self, ctx: &egui::Context) {
+        let Some(confirm) = &self.agent_confirm else {
+            return;
+        };
+        let name = confirm.kind.name();
+        let title = format!(
+            "{} sqlr in {name}",
+            if confirm.update { "Update" } else { "Install" }
+        );
+        let action = if confirm.update { "Update" } else { "Install" };
+        let file = confirm.file.display().to_string();
+        let spec = crate::confirm::ConfirmSpec::new(
+            Id::new("agent_install_confirm"),
+            icons::VIEW,
+            &title,
+            action,
+        )
+        .width(520.0);
+        let answer = crate::confirm::confirm_modal(
+            ctx,
+            spec,
+            |ui| {
+                ui.label(format!(
+                    "sqlr will write its server entry into {file}. The file will hold the sqlr MCP token, which lets {name} use the connections you expose to agents."
+                ));
+                ui.add_space(Spacing::XS);
+                theme::hint(
+                    ui,
+                    "Only sqlr's entry changes. A copy of the file is saved beside it as .sqlr-backup before the first change.",
+                );
+            },
+            |_| {},
+        );
+        match answer {
+            Some(true) => {
+                self.agent_requests
+                    .push(AgentRequest::Install(confirm.kind));
+                self.agent_confirm = None;
+            }
+            Some(false) => self.agent_confirm = None,
+            None => {}
         }
     }
 
@@ -712,6 +853,129 @@ impl PrefsWindow {
             repaint.request_repaint();
         });
     }
+}
+
+/// Where the sqlr skills live (`npx skills add mceck/sqlr`).
+const SKILLS_URL: &str = "https://github.com/mceck/sqlr/tree/main/skills";
+
+/// An Install or Update waiting for the person's consent to write the token.
+struct AgentConfirm {
+    kind: AgentKind,
+    file: PathBuf,
+    update: bool,
+}
+
+/// The action a row's button asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AgentAction {
+    /// Install or Update: the same write.
+    Install,
+    Remove,
+    CopyConfig,
+}
+
+/// One agent: name, file and state at the left, its action at the right. The state and the
+/// button are named after the agent so screen readers and UI tests can tell rows apart.
+fn agent_install_row(
+    ui: &mut egui::Ui,
+    row: &crate::agent_install::AgentRow,
+    running: bool,
+    busy: bool,
+) -> Option<AgentAction> {
+    const ACTION_WIDTH: f32 = 220.0;
+    let p = theme::palette(ui.ctx());
+    let name = row.kind.name();
+    let mut picked = None;
+    Frame::new()
+        .fill(p.bg_subtle)
+        .stroke(Stroke::new(1.0, p.border))
+        .corner_radius(CornerRadius::same(Spacing::RADIUS_S))
+        .inner_margin(Margin::symmetric(10, 6))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                let text_width = (ui.available_width() - ACTION_WIDTH - Spacing::M).max(120.0);
+                ui.allocate_ui_with_layout(
+                    vec2(text_width, 34.0),
+                    Layout::top_down(Align::LEFT),
+                    |ui| {
+                        ui.set_width(text_width);
+                        ui.label(egui::RichText::new(name).size(12.5).strong().color(p.text));
+                        let file = &row.display_file;
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(file)
+                                    .monospace()
+                                    .size(10.5)
+                                    .color(p.text_muted),
+                            )
+                            .truncate(),
+                        )
+                        .on_hover_text(row.file.display().to_string());
+                        if let AgentState::ManualSetup(reason) = &row.state {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(reason).size(10.5).color(p.error),
+                                )
+                                .truncate(),
+                            )
+                            .on_hover_text(reason);
+                        }
+                    },
+                );
+                ui.allocate_ui_with_layout(
+                    vec2(ui.available_width(), 24.0),
+                    Layout::right_to_left(Align::Center),
+                    |ui| {
+                        ui.set_width(ui.available_width());
+                        let action = match row.state {
+                            AgentState::NotDetected => None,
+                            AgentState::NotInstalled => Some((AgentAction::Install, "Install")),
+                            AgentState::Installed => Some((AgentAction::Remove, "Remove")),
+                            AgentState::Outdated => Some((AgentAction::Install, "Update")),
+                            AgentState::ManualSetup(_) => {
+                                Some((AgentAction::CopyConfig, "Copy config"))
+                            }
+                        };
+                        if let Some((action, label)) = action {
+                            // Remove needs no token; the others write or copy the running one.
+                            let enabled = !busy && (running || action == AgentAction::Remove);
+                            let response = ui
+                                .add_enabled(enabled, egui::Button::new(label))
+                                .on_disabled_hover_text(if busy {
+                                    "Wait for the current change to finish"
+                                } else {
+                                    "Enable the local agent server and wait until it is running"
+                                });
+                            response.widget_info(|| {
+                                WidgetInfo::labeled(
+                                    WidgetType::Button,
+                                    enabled,
+                                    format!("{name}: {label}"),
+                                )
+                            });
+                            if response.clicked() {
+                                picked = Some(action);
+                            }
+                        }
+                        ui.add_space(Spacing::S);
+                        let color = match row.state {
+                            AgentState::NotDetected => p.text_disabled,
+                            AgentState::NotInstalled => p.text_muted,
+                            AgentState::Installed => p.success,
+                            AgentState::Outdated => p.warning,
+                            AgentState::ManualSetup(_) => p.error,
+                        };
+                        let label = row.state.label();
+                        let response = ui.label(egui::RichText::new(label).size(11.5).color(color));
+                        response.widget_info(|| {
+                            WidgetInfo::labeled(WidgetType::Label, true, format!("{name}: {label}"))
+                        });
+                    },
+                );
+            });
+        });
+    picked
 }
 
 /// The color that tells a connection's exposure apart at a glance.

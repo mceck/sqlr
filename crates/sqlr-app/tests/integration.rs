@@ -1,6 +1,7 @@
 //! One executable for the integration tests, to share compilation and linking.
 
 mod admin;
+mod agent_installs_ui;
 mod agents_ui;
 #[path = "main.rs"]
 mod cli;
