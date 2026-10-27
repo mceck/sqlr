@@ -46,7 +46,7 @@ Link to [documentation](https://mceck.github.io/sqlr/usage/README.html).
 | SQLite 3 | `rusqlite` (bundled) | files, read-only open |
 | DuckDB | sidecar with the bundled `duckdb` engine (downloaded in the Driver Manager) | files and in-memory databases, read-only open, no Java or system library, [docs/drivers/duckdb.md](docs/drivers/duckdb.md) |
 | Snowflake | SQL API via `reqwest` (rustls) | HTTPS, OAuth/PAT/JWT tokens, [connection notes](docs/drivers/snowflake.md) |
-| MongoDB | `mongodb` (rustls) | [Mongo shell subset](docs/tech/mongo-shell-subset.md), TLS, SSH tunnel |
+| MongoDB | `mongodb` (rustls) | [Mongo shell subset](docs/specs/drivers.md), TLS, SSH tunnel |
 | Elasticsearch 7.17 / 8.x | `reqwest` (rustls) | Kibana-console requests, ES\|QL and SQL, SSH tunnel |
 | Redis (standalone) | `redis` (rustls) | key browser, console, TLS, SSH tunnel |
 | Db2, ClickHouse, H2, any JDBC | JDBC bridge sidecar (downloaded in the Driver Manager, Java 17+) | [docs/drivers/jdbc.md](docs/drivers/jdbc.md) |
@@ -62,7 +62,7 @@ Drivers run as separate processes against a fixed protocol a crash takes down on
 3. Check it with the conformance suite in `crates/sqlr-driver-tests`.
 4. Package it with `scripts/package-driver.sh` and install it through **Settings → Drivers… → Install from file…**. The Driver Manager keeps every version, so rollback and removal need no restart. Drivers published with a sqlr release (HANA, DuckDB, the JDBC bridge) download from the release instead.
 
-Start with [docs/tech/writing-a-driver.md](docs/tech/writing-a-driver.md) and [docs/tech/driver-protocol.md](docs/tech/driver-protocol.md).
+Start with [docs/specs/drivers.md](docs/specs/drivers.md).
 
 ## Architecture
 
@@ -176,4 +176,4 @@ MacOS: both under `~/Library/Application Support/dev.sqlr.sqlr/`. Linux: `~/.con
 
 MIT, see [LICENSE.md](LICENSE.md).
 
-CI runs formatting, clippy, dependency constraints and full tests on Linux and macOS; startup time, release size, million-row grid scrolling and editor budgets are enforced on both platforms. See [docs/tech/performance-budgets.md](docs/tech/performance-budgets.md).
+CI runs formatting, clippy, dependency constraints and full tests on Linux and macOS; startup time, release size, million-row grid scrolling and editor budgets are enforced on both platforms. See [docs/specs/architecture.md](docs/specs/architecture.md).

@@ -2,7 +2,7 @@
 
 sqlr is a lightweight, universal database client in native Rust + egui. No webview. Open source, MIT.
 
-- Product design: `docs/spec/sqlr-design.md`
+- Product design: `docs/specs/`
 
 ## Workspace (`crates/`)
 
@@ -57,6 +57,14 @@ To run `cargo test` or `cargo nextest` directly, start the services first with
 - **Diagnostics:** `tracing::error!` means an incident: reserve it for unexpected failures. Expected server errors use `info` or `warn`; cancellation uses `debug`. Diagnostics are local only and never make network requests; opening a reviewed report on GitHub is an explicit browser hand-off, and the app itself never performs the request. SQL in logs and reports follows the single global `diagnostics.include_sql` setting. Never log arguments, result rows or parameter values.
 - **Catalog SQL:** always parameterized. Identifiers in generated SQL go through `Dialect::quote_ident`.
 - **TDD:** write a failing test first. UI tests use `egui_kittest` 0.36 (`build_ui` / `build_ui_state`; it has no `allow_missing_glyphs()`).
+
+## Workflow
+
+This project is developed spec-first with the `write-spec`, `write-task`, `grill-with-task` and `implement` skills.
+
+- `docs/specs/`: living specs, one per area of the system, describing in detail what it does and the architectural decisions behind it. Every change to behaviour or architecture updates the affected specs in the same change, using the `write-spec` skill.
+- `docs/tasks/`: one file per unit of work. Keep the `status` in its frontmatter (`to-do`, `in-progress`, `done`) current while working on it.
+- `docs/CONTEXT.md`: the domain glossary. Use its terms in code, specs and tasks.
 
 ## Conventions
 

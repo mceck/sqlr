@@ -61,4 +61,4 @@ Statements through the bridge run in auto-commit mode. More in [the JDBC notes](
 
 ## Writing your own
 
-If your database is not on the list, you can write a driver in Rust with `sqlr-driver-sdk`, or in any language that can speak the sidecar protocol. Start with [Writing a driver](https://github.com/mceck/sqlr/blob/main/docs/tech/writing-a-driver.md).
+If your database is not on the list, you can write a driver in Rust with `sqlr-driver-sdk`, or in any language that can speak the sidecar protocol. Start with [Writing a driver](https://github.com/mceck/sqlr/blob/main/docs/specs/drivers.md).

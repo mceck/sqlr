@@ -1,4 +1,4 @@
-//! Native JSON adapters. Schemas are documented in docs/tech/connection-migration.md.
+//! Native JSON adapters. Schemas are documented in docs/specs/connections.md.
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Value, json};
