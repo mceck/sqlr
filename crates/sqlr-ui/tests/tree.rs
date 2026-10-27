@@ -1134,6 +1134,16 @@ fn tree_hides_loaded_empty_folders_unless_asked() {
     h.get_by_label("views");
     h.get_by_label("0");
 
+    // `tables` shows even when it is loaded and empty.
+    let mut source = StubSource::new();
+    let public = NodePath::root().child("public");
+    source
+        .prod_public
+        .push(node(&public, "tables", NodeKind::Folder, true));
+    let mut h = harness(source);
+    open_prod(&mut h);
+    h.get_by_label("tables");
+
     // A folder that is not loaded yet stays: nothing says it is empty.
     let mut source = StubSource::with_views();
     source.views = None;

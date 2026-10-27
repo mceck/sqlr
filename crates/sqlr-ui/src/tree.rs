@@ -595,7 +595,7 @@ impl<'a> Flattener<'a, '_> {
                 }
                 for node in nodes {
                     if !self.state.show_empty_folders
-                        && node.kind == NodeKind::Folder
+                        && node.hides_when_empty()
                         && self.source.child_count(conn, &node.path) == Some(0)
                     {
                         continue;

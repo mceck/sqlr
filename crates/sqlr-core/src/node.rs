@@ -73,6 +73,14 @@ pub struct Node {
     pub detail: Option<String>,
 }
 
+impl Node {
+    /// A folder the explorer hides while it holds no objects: every folder but `tables`,
+    /// which always shows (and is never loaded ahead of its opening).
+    pub fn hides_when_empty(&self) -> bool {
+        self.kind == NodeKind::Folder && !self.name.eq_ignore_ascii_case("tables")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

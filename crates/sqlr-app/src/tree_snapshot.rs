@@ -97,7 +97,7 @@ impl<'a> TreeSnapshot<'a> {
                                 && matches!(kind, Some(NodeKind::Schema | NodeKind::Database))
                             {
                                 for n in nodes.iter().filter(|n| {
-                                    n.kind == NodeKind::Folder
+                                    n.hides_when_empty()
                                         && n.has_children
                                         && !tree.is_expanded(&cfg.id, &n.path)
                                 }) {
