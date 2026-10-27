@@ -153,6 +153,25 @@ async fn exposed_connection(
     Ok(connection)
 }
 
+/// A Connection a configuration write may reach: exposed, or created by this MCP session.
+/// Any other id, unknown ones included, answers `not_exposed`.
+async fn writable_connection(
+    state: &Arc<ServerState>,
+    ctx: &ToolContext,
+    id: &str,
+) -> ToolResult<crate::host::AgentConnection> {
+    let connection = state
+        .host
+        .connection(id)
+        .await
+        .map_err(|_| ToolError::not_exposed(id))?;
+    if connection.config.agent_access == AgentAccess::None && !state.created_by(&ctx.session_id, id)
+    {
+        return Err(ToolError::not_exposed(id));
+    }
+    Ok(connection)
+}
+
 fn missing_secrets(connection: &crate::host::AgentConnection) -> Vec<String> {
     connection
         .manifest
@@ -1022,7 +1041,25 @@ async fn config_list(state: &Arc<ServerState>, args: &Args) -> ToolResult<CallTo
         }
         "folders" => json!({"target": "folders", "folders": state.host.folders().await?}),
         "profiles" => json!({"target": "profiles", "profiles": state.host.profiles().await?}),
-        "settings" => json!({"target": "settings", "settings": state.host.settings().await?}),
+        "settings" => {
+            let exposed: std::collections::HashSet<String> = state
+                .host
+                .connections()
+                .await?
+                .into_iter()
+                .filter(|config| config.agent_access != AgentAccess::None)
+                .map(|config| config.id)
+                .collect();
+            let mut settings = state.host.settings().await?;
+            for entry in &mut settings {
+                entry.values.retain(|level, _| {
+                    level
+                        .strip_prefix("connection:")
+                        .is_none_or(|id| exposed.contains(id))
+                });
+            }
+            json!({"target": "settings", "settings": settings})
+        }
         "keymap" => json!({"target": "keymap", "actions": state.host.keymap().await?}),
         "drivers" => {
             let only = args.opt_str("driver_id");
@@ -1054,10 +1091,10 @@ async fn config_write(
     let payload = args.object("payload")?;
     let payload = Args(payload.clone());
     let value = match target {
-        "connection" => write_connection(state, &payload).await?,
+        "connection" => write_connection(state, ctx, &payload).await?,
         "folder" => write_folder(state, &payload).await?,
         "profile" => write_profile(state, &payload).await?,
-        "setting" => write_setting(state, &payload).await?,
+        "setting" => write_setting(state, ctx, &payload).await?,
         "keymap" => write_keymap(state, &payload).await?,
         other => {
             return Err(ToolError::invalid(format!(
@@ -1065,11 +1102,14 @@ async fn config_write(
             )));
         }
     };
-    let _ = ctx;
     Ok(CallToolResult::structured(value))
 }
 
-async fn write_connection(state: &Arc<ServerState>, payload: &Args) -> ToolResult<Value> {
+async fn write_connection(
+    state: &Arc<ServerState>,
+    ctx: &ToolContext,
+    payload: &Args,
+) -> ToolResult<Value> {
     if payload.get("agent_access").is_some() {
         return Err(ToolError::invalid(
             "agent_access is human-only and cannot be written by an agent",
@@ -1077,7 +1117,7 @@ async fn write_connection(state: &Arc<ServerState>, payload: &Args) -> ToolResul
     }
     let drivers = state.host.drivers().await?;
     let existing = match payload.opt_str("id") {
-        Some(id) => Some(state.host.connection(id).await?),
+        Some(id) => Some(writable_connection(state, ctx, id).await?),
         None => None,
     };
     let driver_id = payload
@@ -1259,6 +1299,9 @@ async fn write_connection(state: &Arc<ServerState>, payload: &Args) -> ToolResul
             save_secrets: payload.get("save_secrets").and_then(Value::as_bool),
         })
         .await?;
+    if created {
+        state.record_created(&ctx.session_id, &id);
+    }
     Ok(json!({
         "id": id,
         "created": created,
@@ -1498,13 +1541,20 @@ fn parse_level(value: &Value) -> ToolResult<(SettingLevel, Option<String>)> {
     }
 }
 
-async fn write_setting(state: &Arc<ServerState>, payload: &Args) -> ToolResult<Value> {
+async fn write_setting(
+    state: &Arc<ServerState>,
+    ctx: &ToolContext,
+    payload: &Args,
+) -> ToolResult<Value> {
     let id = payload.str("id")?;
     let (level, level_id) = parse_level(
         payload
             .get("level")
             .ok_or_else(|| ToolError::invalid("missing level"))?,
     )?;
+    if level == SettingLevel::Connection {
+        writable_connection(state, ctx, level_id.as_deref().unwrap_or_default()).await?;
+    }
     let settings = state.host.settings().await?;
     let entry = settings
         .iter()
@@ -1691,10 +1741,7 @@ async fn config_delete(
     let connections = state.host.connections().await?;
     let (target_label, consequences) = match target {
         "connection" => {
-            let config = connections
-                .iter()
-                .find(|config| config.id == id)
-                .ok_or_else(|| ToolError::not_found("Unknown connection"))?;
+            let config = writable_connection(state, ctx, id).await?.config;
             (
                 format!("Connection \"{}\"", config.name),
                 "The connection is disconnected and its saved secrets are removed.".to_string(),
@@ -1762,6 +1809,9 @@ async fn config_delete(
         })
         .await?;
     state.host.delete(target, id).await?;
+    if target == "connection" {
+        state.forget_created(id);
+    }
     Ok(CallToolResult::structured(json!({
         "target": target,
         "id": id,

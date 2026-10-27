@@ -1,6 +1,6 @@
 //! Shared state of one running MCP server.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -43,6 +43,9 @@ pub struct ServerState {
     pub token: RwLock<String>,
     pub sessions: Mutex<HashMap<String, SessionInfo>>,
     pub inflight: Mutex<HashMap<String, usize>>,
+    /// The Connection ids each MCP session created: that session may keep writing them
+    /// while they are not exposed.
+    pub created: Mutex<HashMap<String, HashSet<String>>>,
 }
 
 impl ServerState {
@@ -57,6 +60,7 @@ impl ServerState {
             token: RwLock::new(token),
             sessions: Mutex::new(HashMap::new()),
             inflight: Mutex::new(HashMap::new()),
+            created: Mutex::new(HashMap::new()),
         }
     }
 
@@ -110,6 +114,30 @@ impl ServerState {
     pub fn remove_session(&self, id: &str) {
         self.sessions.lock().remove(id);
         self.inflight.lock().remove(id);
+        self.created.lock().remove(id);
+    }
+
+    /// Records that MCP session `session` created the Connection `connection`.
+    pub fn record_created(&self, session: &str, connection: &str) {
+        self.created
+            .lock()
+            .entry(session.to_string())
+            .or_default()
+            .insert(connection.to_string());
+    }
+
+    /// Whether MCP session `session` created the Connection `connection`.
+    pub fn created_by(&self, session: &str, connection: &str) -> bool {
+        self.created
+            .lock()
+            .get(session)
+            .is_some_and(|ids| ids.contains(connection))
+    }
+
+    pub fn forget_created(&self, connection: &str) {
+        for ids in self.created.lock().values_mut() {
+            ids.remove(connection);
+        }
     }
 
     /// Sessions idle for 30 minutes with no in-flight call and no result used recently.

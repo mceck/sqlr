@@ -33,6 +33,8 @@ struct HostState {
     tab_edits: Vec<(u64, u64, TabEdit)>,
     tab_runs: Vec<(u64, RunTarget, usize)>,
     deletions: Vec<(String, String)>,
+    /// Connections created through `write_connection`, beside `config`.
+    created: Vec<ConnectionConfig>,
 }
 
 struct TestHost {
@@ -58,6 +60,7 @@ impl TestHost {
                 tab_edits: Vec::new(),
                 tab_runs: Vec::new(),
                 deletions: Vec::new(),
+                created: Vec::new(),
             }),
         }
     }
@@ -67,11 +70,18 @@ impl TestHost {
 impl AgentHost for TestHost {
     async fn connection(&self, id: &str) -> sqlr_mcp::error::ToolResult<AgentConnection> {
         let state = self.state.lock();
-        if state.config.id != id {
-            return Err(sqlr_mcp::error::ToolError::not_found("unknown connection"));
-        }
+        let config = if state.config.id == id {
+            state.config.clone()
+        } else {
+            state
+                .created
+                .iter()
+                .find(|config| config.id == id)
+                .cloned()
+                .ok_or_else(|| sqlr_mcp::error::ToolError::not_found("unknown connection"))?
+        };
         Ok(AgentConnection {
-            config: state.config.clone(),
+            config,
             secrets: state.secrets.clone(),
             profile: state.profile.clone(),
             manifest: state.manifest.clone(),
@@ -79,7 +89,10 @@ impl AgentHost for TestHost {
     }
 
     async fn connections(&self) -> sqlr_mcp::error::ToolResult<Vec<ConnectionConfig>> {
-        Ok(vec![self.state.lock().config.clone()])
+        let state = self.state.lock();
+        let mut all = vec![state.config.clone()];
+        all.extend(state.created.iter().cloned());
+        Ok(all)
     }
     async fn folders(&self) -> sqlr_mcp::error::ToolResult<Vec<String>> {
         Ok(Vec::new())
@@ -143,6 +156,10 @@ impl AgentHost for TestHost {
             return Err(sqlr_mcp::error::ToolError::invalid(
                 "exposure is human-only",
             ));
+        }
+        if write.config.id != state.config.id {
+            state.created.retain(|config| config.id != write.config.id);
+            state.created.push(write.config.clone());
         }
         state.writes.push(write);
         Ok(())
@@ -1629,7 +1646,7 @@ async fn configuration_deletion_requires_approval_and_protects_used_profiles() {
             json!({"target":"connection","id":"missing"}),
         )
         .await;
-    assert_eq!(result["error"]["code"], "not_found");
+    assert_eq!(result["error"]["code"], "not_exposed");
     for (index, (target, key)) in [
         ("folders", "folders"),
         ("settings", "settings"),
@@ -1660,5 +1677,117 @@ async fn configuration_deletion_requires_approval_and_protects_used_profiles() {
         .tool(502, "config_delete", json!({"target":"task","id":"t1"}))
         .await;
     assert_eq!(result["error"]["code"], "invalid");
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn configuration_writes_reach_only_exposed_or_session_created_connections() {
+    let store = Arc::new(MemoryMcpTokenStore::with_token("t"));
+    let (server, host, _dir, port, token) = setup(AgentAccess::None, store).await;
+    let mut client = Client::new(port, &token);
+    client.initialize().await;
+
+    // A non-exposed connection answers like an unknown one, and nothing reaches the host.
+    for (index, id) in ["c1", "missing"].into_iter().enumerate() {
+        let result = client
+            .tool(
+                100 + index as u64,
+                "config_write",
+                json!({"target":"connection","payload":{"id":id,"values":{"path":"/tmp/evil.db"}}}),
+            )
+            .await;
+        assert_eq!(result["error"]["code"], "not_exposed", "{id}: {result}");
+        let result = client
+            .tool(
+                110 + index as u64,
+                "config_delete",
+                json!({"target":"connection","id":id}),
+            )
+            .await;
+        assert_eq!(result["error"]["code"], "not_exposed", "{id}: {result}");
+        let result = client
+            .tool(
+                120 + index as u64,
+                "config_write",
+                json!({"target":"setting","payload":{
+                    "id":"text","level":{"name":"connection","id":id},"value":"x"
+                }}),
+            )
+            .await;
+        assert_eq!(result["error"]["code"], "not_exposed", "{id}: {result}");
+    }
+    {
+        let state = host.state.lock();
+        assert!(state.writes.is_empty());
+        assert!(state.deletions.is_empty());
+        assert!(state.setting_writes.is_empty());
+    }
+
+    // The session that created a connection may finish it; another session may not.
+    let created = client
+        .tool(
+            200,
+            "config_write",
+            json!({"target":"connection","payload":{"driver":"sqlite","name":"New"}}),
+        )
+        .await;
+    let id = created["id"].as_str().unwrap().to_string();
+    let patched = client
+        .tool(
+            201,
+            "config_write",
+            json!({"target":"connection","payload":{"id":id,"values":{"path":"/tmp/new.db"}}}),
+        )
+        .await;
+    assert_eq!(patched["created"], false, "{patched}");
+    let mut other = Client::new(port, &token);
+    other.initialize().await;
+    let refused = other
+        .tool(
+            202,
+            "config_write",
+            json!({"target":"connection","payload":{"id":id,"name":"Taken"}}),
+        )
+        .await;
+    assert_eq!(refused["error"]["code"], "not_exposed", "{refused}");
+    let refused = other
+        .tool(203, "config_delete", json!({"target":"connection","id":id}))
+        .await;
+    assert_eq!(refused["error"]["code"], "not_exposed", "{refused}");
+    let deleted = client
+        .tool(204, "config_delete", json!({"target":"connection","id":id}))
+        .await;
+    assert_eq!(deleted["deleted"], true, "{deleted}");
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn settings_values_name_only_exposed_connections() {
+    let store = Arc::new(MemoryMcpTokenStore::with_token("t"));
+    let (server, host, _dir, port, token) = setup(AgentAccess::None, store).await;
+    {
+        let mut state = host.state.lock();
+        let mut entry = setting_entry("text", json!({"type":"text"}));
+        entry.values.insert("global".into(), json!("g"));
+        entry.values.insert("profile:production".into(), json!("p"));
+        entry.values.insert("connection:c1".into(), json!("hidden"));
+        state.setting_entries.push(entry);
+    }
+    let mut client = Client::new(port, &token);
+    client.initialize().await;
+    let listed = client
+        .tool(2, "config_list", json!({"target":"settings"}))
+        .await;
+    assert_eq!(
+        listed["settings"][0]["values"],
+        json!({"global":"g","profile:production":"p"})
+    );
+    assert!(!listed.to_string().contains("c1"), "{listed}");
+
+    host.state.lock().config.agent_access = AgentAccess::Read;
+    let listed = client
+        .tool(3, "config_list", json!({"target":"settings"}))
+        .await;
+    assert_eq!(listed["settings"][0]["values"]["connection:c1"], "hidden");
     server.shutdown().await;
 }
