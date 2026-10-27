@@ -460,6 +460,47 @@ impl GridState {
         true
     }
 
+    /// An inline cell editor is open.
+    pub fn editing(&self) -> bool {
+        self.editor.is_some()
+    }
+
+    /// Commits the open inline cell editor as Enter does. `false` when its value is
+    /// invalid: the editor stays open with its message and nothing is staged. `true` when
+    /// the value was staged or no editor is open.
+    pub fn commit_editor(&mut self, rows: &RowBuffer) -> bool {
+        let Some(ed) = &self.editor else {
+            return true;
+        };
+        let (row, col) = (ed.row, ed.col);
+        let Some(meta) = rows.columns().get(col) else {
+            self.editor = None;
+            return true;
+        };
+        let outcome = parse_input(meta, &ed.text)
+            .map_err(CellEditError::from)
+            .and_then(|value| {
+                let edits = self.edits.as_mut().ok_or(EditError::ResultNotEditable)?;
+                edits.set(rows, row, col, value.clone())?;
+                Ok(value)
+            });
+        match outcome {
+            Ok(value) => {
+                self.actions.push(GridAction::SetCell { row, col, value });
+                self.editor = None;
+                self.refocus = true;
+                true
+            }
+            Err(error) => {
+                if let Some(ed) = self.editor.as_mut() {
+                    ed.error = Some(error.to_string());
+                    ed.focus = true;
+                }
+                false
+            }
+        }
+    }
+
     /// Appends a row of defaults and reveals it (the result bar's "Add row").
     pub fn add_row(&mut self) {
         let Some(edits) = &mut self.edits else {
@@ -1291,6 +1332,23 @@ fn keyboard(
     if redo {
         state.redo();
     }
+    // The row chords of the context menu; each is a no-op on a read-only grid.
+    let (add, duplicate, null) = ui.input_mut(|i| {
+        (
+            keymap.consume(i, sqlr_core::ActionId::AddRow),
+            keymap.consume(i, sqlr_core::ActionId::DuplicateRows),
+            keymap.consume(i, sqlr_core::ActionId::SetNull),
+        )
+    });
+    if add {
+        state.add_row();
+    }
+    if duplicate {
+        state.duplicate_selected(input.rows);
+    }
+    if null && state.can_set_null() {
+        state.set_selected_null(input.rows);
+    }
     let mut changed = false;
     if all && rows > 0 {
         changed |= state.select(Selection {
@@ -1478,34 +1536,14 @@ fn cell_editor(
         return;
     }
     let (escape, tab) = ui.input(|i| (i.key_pressed(Key::Escape), i.key_pressed(Key::Tab)));
-    let (row, col) = (ed.row, ed.col);
+    let col = ed.col;
     if escape {
         state.editor = None;
         state.refocus = true;
         return;
     }
-    let meta = &input.rows.columns()[col];
-    let parsed = parse_input(meta, &ed.text);
-    let outcome = parsed.map_err(CellEditError::from).and_then(|value| {
-        let edits = state.edits.as_mut().ok_or(EditError::ResultNotEditable)?;
-        edits.set(input.rows, row, col, value.clone())?;
-        Ok(value)
-    });
-    match outcome {
-        Ok(value) => {
-            state.actions.push(GridAction::SetCell { row, col, value });
-            state.editor = None;
-            state.refocus = true;
-            if tab && col + 1 < geo.columns() {
-                state.select(Selection::cell(view_row, col + 1));
-            }
-        }
-        Err(error) => {
-            if let Some(ed) = state.editor.as_mut() {
-                ed.error = Some(error.to_string());
-                ed.focus = true;
-            }
-        }
+    if state.commit_editor(input.rows) && tab && col + 1 < geo.columns() {
+        state.select(Selection::cell(view_row, col + 1));
     }
 }
 
@@ -1762,14 +1800,11 @@ fn context_menu(ui: &mut egui::Ui, state: &GridState, allow_copy_all: bool) -> O
         if menu_item(ui, writable, icons::EDIT, "Edit cell") {
             choice = Some(MenuChoice::Edit);
         }
-        let can_null = state.edits.as_ref().is_some_and(|e| {
-            state.selected.is_some()
-                && state
-                    .selected_cols()
-                    .iter()
-                    .all(|&c| e.writable(c) && !e.not_null(c))
-        });
-        let set_null = icons::menu_item_enabled(ui, can_null, icons::NULL, "Set NULL")
+        let set_null = MenuItem::new("Set NULL")
+            .icon(icons::NULL)
+            .enabled(state.can_set_null())
+            .shortcut(crate::keymap::ui_keymap(ui.ctx()).label(ActionId::SetNull))
+            .ui(ui)
             .on_disabled_hover_text(if not_null {
                 "The column is NOT NULL"
             } else {
@@ -1779,15 +1814,16 @@ fn context_menu(ui: &mut egui::Ui, state: &GridState, allow_copy_all: bool) -> O
             choice = Some(MenuChoice::SetNull);
             ui.close();
         }
-        if menu_item(
+        if menu_entry(
             ui,
             editable && !rows.is_empty(),
             icons::DUPLICATE,
             &format!("Duplicate row{plural}"),
+            Some(ActionId::DuplicateRows),
         ) {
             choice = Some(MenuChoice::Duplicate);
         }
-        if menu_item(ui, editable, icons::ADD, "Add row") {
+        if menu_entry(ui, editable, icons::ADD, "Add row", Some(ActionId::AddRow)) {
             choice = Some(MenuChoice::AddRow);
         }
         if menu_item(
@@ -1877,18 +1913,7 @@ fn apply_menu(ui: &egui::Ui, state: &mut GridState, input: &GridInput<'_>, choic
         }
         MenuChoice::SetNull => state.set_selected_null(rows),
         MenuChoice::RevertCells => state.revert_selected_cells(),
-        MenuChoice::Duplicate => {
-            if let Some(edits) = &mut state.edits {
-                let before = edits.clone();
-                for &source in &selected {
-                    edits.duplicate(rows, source);
-                }
-                state.record_edits(before);
-                state
-                    .actions
-                    .extend(selected.into_iter().map(GridAction::DuplicateRow));
-            }
-        }
+        MenuChoice::Duplicate => state.duplicate_selected(rows),
         MenuChoice::Delete => state.delete_selected(),
         MenuChoice::Revert => {
             if let Some(edits) = &mut state.edits {

@@ -74,6 +74,35 @@ impl GridState {
         self.actions.push(GridAction::EditsChanged);
     }
 
+    /// Whether "Set NULL" applies: every selected column is writable and nullable.
+    pub(super) fn can_set_null(&self) -> bool {
+        self.edits.as_ref().is_some_and(|e| {
+            self.selected.is_some()
+                && self
+                    .selected_cols()
+                    .iter()
+                    .all(|&c| e.writable(c) && !e.not_null(c))
+        })
+    }
+
+    /// Appends a copy of every selected row, as one undo step ("Duplicate row", ⌘D).
+    pub(super) fn duplicate_selected(&mut self, rows: &RowBuffer) {
+        let selected = self.selected_rows();
+        if selected.is_empty() {
+            return;
+        }
+        let Some(edits) = &mut self.edits else {
+            return;
+        };
+        let before = edits.clone();
+        for &source in &selected {
+            edits.duplicate(rows, source);
+        }
+        self.record_edits(before);
+        self.actions
+            .extend(selected.into_iter().map(GridAction::DuplicateRow));
+    }
+
     pub(super) fn set_selected_null(&mut self, rows: &RowBuffer) {
         let Some(mut trial) = self.edits.clone() else {
             return;
