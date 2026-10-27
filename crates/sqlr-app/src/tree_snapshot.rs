@@ -3,7 +3,8 @@
 use std::collections::{HashMap, HashSet};
 
 use sqlr_core::{
-    ConnectionConfig, DatabaseTools, DriverManifest, Node, NodePath, ObjectEditing, ObjectKind,
+    ConnectionConfig, DatabaseTools, DriverManifest, Node, NodeKind, NodePath, ObjectEditing,
+    ObjectKind,
 };
 use sqlr_engine::{Engine, LoadState, SessionStatus};
 use sqlr_ui::{Children, ConnBadge, NodeMenu, SchemaSource, TreeConn, TreeState};
@@ -52,6 +53,7 @@ impl<'a> TreeSnapshot<'a> {
         tree: &TreeState,
         tints: &HashMap<String, [u8; 3]>,
         editing: &'a HashMap<String, ObjectEditing>,
+        show_empty_folders: bool,
     ) -> Self {
         let open: HashSet<String> = engine
             .open_transactions()
@@ -76,8 +78,8 @@ impl<'a> TreeSnapshot<'a> {
                 let live = matches!(badge, ConnBadge::Connecting | ConnBadge::Connected);
                 if tree.is_expanded(&cfg.id, &root) {
                     let mut loaded = HashMap::new();
-                    let mut stack = vec![root.clone()];
-                    while let Some(path) = stack.pop() {
+                    let mut stack = vec![(root.clone(), None)];
+                    while let Some((path, kind)) = stack.pop() {
                         let mut state = engine.children(&cfg.id, &path);
                         if state.is_none() && live && tree.is_expanded(&cfg.id, &path) {
                             // Returns at once; the children show as loading from now on.
@@ -88,6 +90,22 @@ impl<'a> TreeSnapshot<'a> {
                             continue;
                         };
                         if let LoadState::Ready(nodes) = &state {
+                            // Unless empty folders show, the folders of an open schema or
+                            // database load at once, so the empty ones can disappear.
+                            if !show_empty_folders
+                                && live
+                                && matches!(kind, Some(NodeKind::Schema | NodeKind::Database))
+                            {
+                                for n in nodes.iter().filter(|n| {
+                                    n.hides_when_empty()
+                                        && n.has_children
+                                        && !tree.is_expanded(&cfg.id, &n.path)
+                                }) {
+                                    if engine.children(&cfg.id, &n.path).is_none() {
+                                        engine.browse(&cfg.id, n.path.clone());
+                                    }
+                                }
+                            }
                             stack.extend(
                                 nodes
                                     .iter()
@@ -95,7 +113,7 @@ impl<'a> TreeSnapshot<'a> {
                                         n.has_children
                                             && (filtering || tree.is_expanded(&cfg.id, &n.path))
                                     })
-                                    .map(|n| n.path.clone()),
+                                    .map(|n| (n.path.clone(), Some(n.kind))),
                             );
                         }
                         loaded.insert(path, state);

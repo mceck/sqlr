@@ -59,6 +59,8 @@ pub struct Settings {
     pub terminal_font_size: f32,
     /// Failed SQL is recorded, as typed, in logs, incidents and diagnostics bundles.
     pub include_sql_in_diagnostics: bool,
+    /// The explorer keeps the folders that hold no objects (else it hides them).
+    pub show_empty_folders: bool,
 }
 
 /// The terminal font sizes the settings accept, in points.
@@ -92,6 +94,7 @@ impl Default for Settings {
             terminal_scrollback: 2000,
             terminal_font_size: DEFAULT_TERMINAL_FONT_SIZE,
             include_sql_in_diagnostics: true,
+            show_empty_folders: false,
         }
     }
 }
@@ -127,6 +130,7 @@ impl Settings {
                 .clamp(*TERMINAL_SCROLLBACK.start(), *TERMINAL_SCROLLBACK.end()),
             terminal_font_size: get("terminal.font_size").as_f64() as f32,
             include_sql_in_diagnostics: get("diagnostics.include_sql").as_bool(),
+            show_empty_folders: get("explorer.show_empty_folders").as_bool(),
         }
     }
 
@@ -199,6 +203,10 @@ impl Settings {
             (
                 "diagnostics.include_sql",
                 SettingValue::Bool(self.include_sql_in_diagnostics),
+            ),
+            (
+                "explorer.show_empty_folders",
+                SettingValue::Bool(self.show_empty_folders),
             ),
         ];
         for (id, value) in values {

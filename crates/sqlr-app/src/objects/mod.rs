@@ -2,6 +2,7 @@
 //! actions (open, New ▸, Generate SQL ▸, Copy DDL, rename, truncate, drop), the create,
 //! drop and preview dialogs, and the confirmations the connection profile asks for.
 
+mod blocked_database;
 pub(crate) mod create;
 pub(crate) mod menus;
 pub(crate) mod tab;
@@ -20,6 +21,7 @@ use sqlr_ui::{ObjectEditorAction, TreeAction, kind_label, sql_view, template_lab
 
 use crate::app::{SqlrApp, tab_mut};
 use crate::confirm::{ConfirmSpec, confirm_modal, confirmation, prompt_lines};
+use blocked_database::{DatabaseDrop, DatabaseDropDialog};
 use create::CreateDialog;
 
 /// Where an apply's outcome goes.
@@ -29,6 +31,8 @@ pub(crate) enum AfterApply {
     Tab(u64),
     /// The status bar says this once it succeeded.
     Explorer(String),
+    /// A database drop retains its target so a failure can show its server sessions.
+    DropDatabase { database: String, what: String },
     /// The users and roles tab with this key follows it.
     Admin(u64),
     /// The object tab with this key follows it as a change of the object's grants.
@@ -50,6 +54,7 @@ enum ExplorerJob {
     Applied {
         what: String,
     },
+    DropDatabase(DatabaseDrop),
 }
 
 /// DDL waiting for the profile's confirmation.
@@ -77,6 +82,7 @@ struct DestructiveDialog {
     cascade_label: &'static str,
     /// The confirming button's label.
     verb: &'static str,
+    drop_database: Option<String>,
 }
 
 /// The texts of a drop or truncate confirmation.
@@ -96,6 +102,7 @@ pub(crate) struct ObjectsUi {
     /// The object tab whose pending DDL is previewed, and the statements.
     preview: Option<(u64, Result<Vec<String>, ObjectTabError>)>,
     jobs: Vec<(JobId, ExplorerJob)>,
+    blocked_database: Option<DatabaseDropDialog>,
     /// An object or users tab whose pending edits would be lost, and what then happens.
     pub(crate) discard: Option<(u64, Discard)>,
 }
@@ -405,6 +412,8 @@ impl SqlrApp {
             options: self.explorer_options(conn, object, node),
             done: dialog.done,
             verb: dialog.verb,
+            drop_database: (dialog.verb == "Drop" && object.kind == ObjectKind::Database)
+                .then(|| object.name.clone()),
         });
     }
 
@@ -490,6 +499,19 @@ impl SqlrApp {
                     .engine
                     .apply_ddl(&SessionKey::meta(conn), statements, options);
                 self.objects.jobs.push((id, ExplorerJob::Applied { what }));
+            }
+            AfterApply::DropDatabase { database, what } => {
+                let request = DatabaseDrop {
+                    conn: conn.to_string(),
+                    database,
+                    statements,
+                    options,
+                    what,
+                };
+                let id = request.start(&self.engine);
+                self.objects
+                    .jobs
+                    .push((id, ExplorerJob::DropDatabase(request)));
             }
             AfterApply::Admin(key) => self.start_admin_apply(key, statements, options),
             AfterApply::Grants(key) => {
@@ -643,6 +665,7 @@ impl SqlrApp {
     /// Follows explorer jobs and draws the object dialogs (every frame).
     pub(crate) fn objects_ui(&mut self, ctx: &egui::Context) {
         self.poll_object_jobs(ctx);
+        self.blocked_database_ui(ctx);
         self.create_ui(ctx);
         self.destructive_ui(ctx);
         self.confirm_ddl_ui(ctx);
@@ -785,6 +808,16 @@ impl SqlrApp {
                         self.notify(report.summary());
                     }
                 }
+                (Some(JobOutcome::DdlApplied(report)), ExplorerJob::DropDatabase(request)) => {
+                    if report.ok() {
+                        self.notify_as(ToastKind::Success, request.what);
+                    } else {
+                        self.database_drop_failed(request, report.summary());
+                    }
+                }
+                (Some(JobOutcome::Failed(e)), ExplorerJob::DropDatabase(request)) => {
+                    self.database_drop_failed(request, e.message);
+                }
                 (Some(JobOutcome::Failed(e)), _) => self.notify(e.message),
                 _ => {}
             }
@@ -873,12 +906,14 @@ impl SqlrApp {
                 Some((cascade, true)) => cascade,
                 _ => dialog.statements,
             };
-            self.start_ddl(
-                &dialog.conn,
-                statements,
-                dialog.options,
-                AfterApply::Explorer(dialog.done),
-            );
+            let then = match dialog.drop_database {
+                Some(database) => AfterApply::DropDatabase {
+                    database,
+                    what: dialog.done,
+                },
+                None => AfterApply::Explorer(dialog.done),
+            };
+            self.start_ddl(&dialog.conn, statements, dialog.options, then);
         }
     }
 

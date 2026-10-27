@@ -147,6 +147,9 @@ pub struct EditorState {
     worker: Option<ScopeWorker>,
     focus_requested: bool,
     focused: bool,
+    /// The (revision, carets) last seen and when they last changed, to restart the blink.
+    blink_key: (u64, Vec<Caret>),
+    blink_start: f64,
     geom: Geometry,
     max_width: f32,
     dragging: bool,
@@ -198,6 +201,8 @@ impl EditorState {
             worker: None,
             focus_requested: false,
             focused: false,
+            blink_key: (0, Vec::new()),
+            blink_start: 0.0,
             geom: Geometry::default(),
             max_width: 0.0,
             dragging: false,
@@ -1221,7 +1226,26 @@ pub fn query_editor(
                 painter.galley(pos2(x, y), g.galley.clone(), state.colors.plain);
             }
             stats.painted_markers = paint_markers(state, ui, &painter, id);
-            let caret_rect = paint_carets(state, &ctx, &painter, &font, focused);
+            let key = (state.model.revision(), state.model.carets().to_vec());
+            if key != state.blink_key {
+                state.blink_key = key;
+                state.blink_start = now;
+            }
+            let blink = ui.style().visuals.text_cursor.clone();
+            let lit = if focused && blink.blink {
+                let (on, off) = (blink.on_duration as f64, blink.off_duration as f64);
+                let phase = (now - state.blink_start) % (on + off);
+                let next = if phase < on {
+                    on - phase
+                } else {
+                    on + off - phase
+                };
+                ctx.request_repaint_after(std::time::Duration::from_secs_f64(next.max(0.01)));
+                phase < on
+            } else {
+                true
+            };
+            let caret_rect = paint_carets(state, &ctx, &painter, &font, focused, lit);
             if state.scroll_to_caret
                 && focused
                 && let Some(r) = caret_rect
@@ -1791,6 +1815,7 @@ fn paint_carets(
     painter: &egui::Painter,
     font: &FontId,
     focused: bool,
+    lit: bool,
 ) -> Option<Rect> {
     let rh = state.geom.row_height;
     let primary = state.model.primary();
@@ -1805,7 +1830,7 @@ fn paint_carets(
             continue;
         }
         let (x, y) = (caret.min.x, caret.min.y);
-        if focused {
+        if focused && lit {
             painter.rect_filled(caret, 0.0, state.colors.caret);
         }
         if focused && *c == primary && !state.preedit.is_empty() {
