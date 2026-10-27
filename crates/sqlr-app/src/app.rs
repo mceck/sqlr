@@ -1004,6 +1004,7 @@ impl SqlrApp {
                     &self.tree,
                     &tints,
                     &editing,
+                    self.settings.show_empty_folders,
                 );
                 self.tree.show_empty_folders = self.settings.show_empty_folders;
                 let actions = schema_tree(ui, &mut self.tree, &snapshot);

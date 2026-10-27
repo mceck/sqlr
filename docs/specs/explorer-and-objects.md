@@ -38,7 +38,7 @@ The Explorer is the left-hand tree where the user finds every Connection and, be
 
 **Counts.** A folder Node shows how many children it holds once they are loaded, open or closed; showing the count never starts a load.
 
-**Empty folders.** A folder Node whose children are loaded and none (a schema's `views`, `materialized views`, `functions` or `sequences` with no objects) is hidden, so the tree lists only what exists. A folder that is not loaded yet stays, since nothing says it is empty. The setting `explorer.show_empty_folders` (General, off by default) keeps empty folders in the tree.
+**Empty folders.** A folder Node whose children are loaded and none (a schema's `views`, `materialized views`, `functions` or `sequences` with no objects) is hidden, so the tree lists only what exists. Opening a schema or database loads its folders at once (one browse each, unless the setting below is on), so the empty ones disappear without being opened. A folder still loading stays until its count is known. The setting `explorer.show_empty_folders` (General, off by default) keeps empty folders in the tree.
 
 **Filter.** The filter is a case-insensitive substring match over the names of loaded Nodes. A Node is shown when its name matches or when any loaded descendant matches; Nodes with matching descendants open automatically while the filter is set. Only loaded Nodes are searched: the filter never triggers a load.
 
