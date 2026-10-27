@@ -11,6 +11,9 @@ pub enum Scope {
     Global,
     /// While a text editor has the keyboard.
     Editor,
+    /// While a result grid has the keyboard. The grid also answers the editor's undo, redo,
+    /// select all and copy.
+    Grid,
     /// While the explorer tree has the keyboard.
     Explorer,
 }
@@ -45,9 +48,14 @@ macro_rules! actions {
                 match self { $(ActionId::$variant => Scope::$scope),+ }
             }
 
-            /// The action with the `keymap.toml` id `id`, if any.
+            /// The action with the `keymap.toml` id `id`, if any. Former ids of renamed
+            /// actions still resolve, so a stored binding survives the rename.
             pub fn from_id(id: &str) -> Option<ActionId> {
-                match id { $($id => Some(ActionId::$variant),)+ _ => None }
+                match id {
+                    $($id => Some(ActionId::$variant),)+
+                    "apply_object" => Some(ActionId::Apply),
+                    _ => None,
+                }
             }
         }
     };
@@ -66,7 +74,21 @@ actions! {
     SaveSnippet => ("save_snippet", "Save as snippet", "Query", Global),
     FormatSql => ("format_sql", "Format SQL", "Editor", Editor),
     ToggleComment => ("toggle_comment", "Toggle line comment", "Editor", Editor),
-    DuplicateLine => ("duplicate_line", "Duplicate line or selection", "Editor", Editor),
+    AddNextOccurrence => ("add_next_occurrence", "Add selection to next occurrence", "Editor", Editor),
+    SelectAllOccurrences => ("select_all_occurrences", "Select all occurrences", "Editor", Editor),
+    UndoCursor => ("undo_cursor", "Undo last cursor operation", "Editor", Editor),
+    AddCursorAbove => ("add_cursor_above", "Add cursor above", "Editor", Editor),
+    AddCursorBelow => ("add_cursor_below", "Add cursor below", "Editor", Editor),
+    AddCursorsToLineEnds => ("add_cursors_to_line_ends", "Add cursors to line ends", "Editor", Editor),
+    MoveLineUp => ("move_line_up", "Move line up", "Editor", Editor),
+    MoveLineDown => ("move_line_down", "Move line down", "Editor", Editor),
+    CopyLineUp => ("copy_line_up", "Copy line up", "Editor", Editor),
+    // Keeps the id it had as "Duplicate line", so stored bindings carry over.
+    DuplicateLine => ("duplicate_line", "Copy line down", "Editor", Editor),
+    DeleteLine => ("delete_line", "Delete line", "Editor", Editor),
+    SelectLine => ("select_line", "Select line", "Editor", Editor),
+    IndentLine => ("indent_line", "Indent line", "Editor", Editor),
+    OutdentLine => ("outdent_line", "Outdent line", "Editor", Editor),
     Find => ("find", "Find", "Editor", Editor),
     Replace => ("replace", "Find and replace", "Editor", Editor),
     FindNext => ("find_next", "Find next", "Editor", Editor),
@@ -89,14 +111,29 @@ actions! {
     CloseTab => ("close_tab", "Close tab", "Navigation", Global),
     NextTab => ("next_tab", "Next tab", "Navigation", Global),
     PreviousTab => ("previous_tab", "Previous tab", "Navigation", Global),
+    GoToTab1 => ("go_to_tab_1", "Go to tab 1", "Navigation", Global),
+    GoToTab2 => ("go_to_tab_2", "Go to tab 2", "Navigation", Global),
+    GoToTab3 => ("go_to_tab_3", "Go to tab 3", "Navigation", Global),
+    GoToTab4 => ("go_to_tab_4", "Go to tab 4", "Navigation", Global),
+    GoToTab5 => ("go_to_tab_5", "Go to tab 5", "Navigation", Global),
+    GoToTab6 => ("go_to_tab_6", "Go to tab 6", "Navigation", Global),
+    GoToTab7 => ("go_to_tab_7", "Go to tab 7", "Navigation", Global),
+    GoToTab8 => ("go_to_tab_8", "Go to tab 8", "Navigation", Global),
+    GoToLastTab => ("go_to_last_tab", "Go to the last tab", "Navigation", Global),
+    ReopenClosedTab => ("reopen_closed_tab", "Reopen closed tab", "Navigation", Global),
     ToggleHistory => ("toggle_history", "Show or hide query history", "View", Global),
     ToggleValuePanel => ("toggle_value_panel", "Show or hide the value panel", "View", Global),
     ToggleTerminal => ("toggle_terminal", "Show or hide the terminal", "View", Global),
     ShowOperations => ("show_operations", "Show operations", "View", Global),
+    Refresh => ("refresh", "Refresh", "View", Global),
     ExportResult => ("export_result", "Export the result", "Results", Global),
-    DeleteRows => ("delete_rows", "Delete selected rows", "Results", Editor),
+    DeleteRows => ("delete_rows", "Delete selected rows", "Results", Grid),
+    AddRow => ("add_row", "Add row", "Results", Grid),
+    DuplicateRows => ("duplicate_rows", "Duplicate selected rows", "Results", Grid),
+    SetNull => ("set_null", "Set selected cells to NULL", "Results", Grid),
     RenameSelection => ("rename_selection", "Rename the selected explorer item", "Objects", Explorer),
-    ApplyObject => ("apply_object", "Apply the object editor's changes", "Objects", Global),
+    Apply => ("apply_changes", "Apply pending changes", "General", Global),
+    Discard => ("discard_changes", "Discard pending changes", "General", Global),
     NewConnection => ("new_connection", "New connection", "General", Global),
     Settings => ("settings", "Preferences", "General", Global),
     Shortcuts => ("shortcuts", "Keyboard shortcuts", "General", Global),
@@ -359,7 +396,18 @@ const SQLR: Table = &[
     (A::CloseTab, &["Cmd+W"]),
     (A::NextTab, &["Ctrl+Tab"]),
     (A::PreviousTab, &["Ctrl+Shift+Tab"]),
-    (A::ApplyObject, &["Cmd+S"]),
+    (A::Apply, &["Cmd+S"]),
+    (A::Refresh, &["F5", "Cmd+R"]),
+    (A::GoToTab1, &["Cmd+1"]),
+    (A::GoToTab2, &["Cmd+2"]),
+    (A::GoToTab3, &["Cmd+3"]),
+    (A::GoToTab4, &["Cmd+4"]),
+    (A::GoToTab5, &["Cmd+5"]),
+    (A::GoToTab6, &["Cmd+6"]),
+    (A::GoToTab7, &["Cmd+7"]),
+    (A::GoToTab8, &["Cmd+8"]),
+    (A::GoToLastTab, &["Cmd+9"]),
+    (A::ReopenClosedTab, &["Cmd+Shift+T"]),
     (A::SaveSnippet, &["Cmd+Shift+S"]),
     (A::OpenObject, &["Cmd+P"]),
     (A::Commands, &["Cmd+Shift+P"]),
@@ -368,7 +416,21 @@ const SQLR: Table = &[
     (A::ShowOperations, &["Cmd+Shift+O"]),
     (A::FormatSql, &["Cmd+Alt+L"]),
     (A::ToggleComment, &["Cmd+Slash"]),
-    (A::DuplicateLine, &["Cmd+D"]),
+    // The editor's multi-caret and line commands follow VS Code on macOS.
+    (A::AddNextOccurrence, &["Cmd+D"]),
+    (A::SelectAllOccurrences, &["Cmd+Shift+L"]),
+    (A::UndoCursor, &["Cmd+U"]),
+    (A::AddCursorAbove, &["Cmd+Alt+ArrowUp"]),
+    (A::AddCursorBelow, &["Cmd+Alt+ArrowDown"]),
+    (A::AddCursorsToLineEnds, &["Alt+Shift+I"]),
+    (A::MoveLineUp, &["Alt+ArrowUp"]),
+    (A::MoveLineDown, &["Alt+ArrowDown"]),
+    (A::CopyLineUp, &["Alt+Shift+ArrowUp"]),
+    (A::DuplicateLine, &["Alt+Shift+ArrowDown"]),
+    (A::DeleteLine, &["Cmd+Shift+K"]),
+    (A::SelectLine, &["Cmd+L"]),
+    (A::IndentLine, &["Cmd+CloseBracket"]),
+    (A::OutdentLine, &["Cmd+OpenBracket"]),
     (A::Find, &["Cmd+F"]),
     (A::Replace, &["Cmd+Alt+F"]),
     (A::FindNext, &["Cmd+G"]),
@@ -381,13 +443,15 @@ const SQLR: Table = &[
     (A::Redo, &["Cmd+Shift+Z", "Cmd+Y"]),
     (A::SelectAll, &["Cmd+A"]),
     (A::DeleteRows, &["Cmd+Backspace", "Cmd+Delete"]),
+    (A::AddRow, &["Cmd+I"]),
+    (A::DuplicateRows, &["Cmd+D"]),
+    (A::SetNull, &["Cmd+Alt+N"]),
 ];
 
 const VSCODE: Table = &[
     (A::FormatSql, &["Alt+Shift+F"]),
     (A::OpenObject, &["Cmd+P"]),
     (A::Commands, &["Cmd+Shift+P"]),
-    (A::DuplicateLine, &["Alt+Shift+ArrowDown"]),
     (A::ToggleComment, &["Cmd+Slash"]),
     (A::ShowOperations, &["Cmd+Shift+U"]),
     (A::Complete, &["Ctrl+Space"]),
@@ -593,7 +657,7 @@ mod tests {
 
         // Shifted and unshifted chords are different chords.
         let mut keymap = Keymap::preset("sqlr").unwrap();
-        keymap.bind(ActionId::Commit, Chord::parse("Cmd+Shift+K").unwrap());
+        keymap.bind(ActionId::Commit, Chord::parse("Cmd+Shift+J").unwrap());
         assert_eq!(keymap.conflicts(true), vec![]);
 
         // Labels follow the platform.
@@ -737,6 +801,92 @@ mod tests {
         assert_eq!(
             vscode.label(ActionId::FormatSql, true).as_deref(),
             Some("⌥⇧F")
+        );
+    }
+
+    #[test]
+    fn grid_and_editor_chords_coexist_but_global_ones_do_not() {
+        let cmd_d = Chord::parse("Cmd+D").unwrap();
+        let mut keymap = Keymap::default();
+        keymap.bind(ActionId::AddNextOccurrence, cmd_d.clone());
+        keymap.bind(ActionId::DuplicateRows, cmd_d.clone());
+        assert_eq!(keymap.conflicts(true), vec![]);
+        keymap.bind(ActionId::Refresh, cmd_d.clone());
+        let found = keymap.conflicts(true);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].0, cmd_d);
+    }
+
+    #[test]
+    fn renamed_actions_still_load_from_their_former_ids() {
+        assert_eq!(ActionId::Apply.id(), "apply_changes");
+        assert_eq!(ActionId::from_id("apply_object"), Some(ActionId::Apply));
+        let (keymap, _) = Keymap::from_parts(
+            "sqlr",
+            [
+                ("apply_object".to_string(), vec!["Cmd+Alt+S".to_string()]),
+                (
+                    "duplicate_line".to_string(),
+                    vec!["Cmd+Shift+D".to_string()],
+                ),
+            ],
+        );
+        assert_eq!(keymap.chord_for(ActionId::Apply), Chord::parse("Cmd+Alt+S"));
+        assert_eq!(
+            keymap.chord_for(ActionId::DuplicateLine),
+            Chord::parse("Cmd+Shift+D")
+        );
+    }
+
+    #[test]
+    fn sqlr_preset_binds_workspace_and_vscode_editor_chords() {
+        let keymap = Keymap::preset("sqlr").unwrap();
+        let chords = |action| -> Vec<String> {
+            keymap
+                .bindings()
+                .iter()
+                .filter(|(a, _)| *a == action)
+                .map(|(_, c)| c.to_text())
+                .collect()
+        };
+        use ActionId as A;
+        for (action, want) in [
+            (A::Apply, vec!["Cmd+S"]),
+            (A::Discard, vec![]),
+            (A::Refresh, vec!["F5", "Cmd+R"]),
+            (A::GoToTab1, vec!["Cmd+1"]),
+            (A::GoToTab8, vec!["Cmd+8"]),
+            (A::GoToLastTab, vec!["Cmd+9"]),
+            (A::ReopenClosedTab, vec!["Cmd+Shift+T"]),
+            (A::AddRow, vec!["Cmd+I"]),
+            (A::DuplicateRows, vec!["Cmd+D"]),
+            (A::SetNull, vec!["Cmd+Alt+N"]),
+            (A::AddNextOccurrence, vec!["Cmd+D"]),
+            (A::SelectAllOccurrences, vec!["Cmd+Shift+L"]),
+            (A::UndoCursor, vec!["Cmd+U"]),
+            (A::AddCursorAbove, vec!["Cmd+Alt+ArrowUp"]),
+            (A::AddCursorBelow, vec!["Cmd+Alt+ArrowDown"]),
+            (A::AddCursorsToLineEnds, vec!["Alt+Shift+I"]),
+            (A::MoveLineUp, vec!["Alt+ArrowUp"]),
+            (A::MoveLineDown, vec!["Alt+ArrowDown"]),
+            (A::CopyLineUp, vec!["Alt+Shift+ArrowUp"]),
+            (A::DuplicateLine, vec!["Alt+Shift+ArrowDown"]),
+            (A::DeleteLine, vec!["Cmd+Shift+K"]),
+            (A::SelectLine, vec!["Cmd+L"]),
+            (A::IndentLine, vec!["Cmd+CloseBracket"]),
+            (A::OutdentLine, vec!["Cmd+OpenBracket"]),
+        ] {
+            assert_eq!(chords(action), want, "{action:?}");
+        }
+        assert_eq!(A::DeleteRows.scope(), Scope::Grid);
+        assert_eq!(A::DuplicateRows.scope(), Scope::Grid);
+        assert_eq!(A::AddNextOccurrence.scope(), Scope::Editor);
+        assert_eq!(A::DuplicateLine.label(), "Copy line down");
+        assert_eq!(
+            Keymap::preset("vscode")
+                .unwrap()
+                .chord_for(A::DuplicateLine),
+            Chord::parse("Alt+Shift+ArrowDown")
         );
     }
 

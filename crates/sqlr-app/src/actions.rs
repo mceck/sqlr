@@ -83,7 +83,7 @@ impl SqlrApp {
                 self.open_palette(sqlr_ui::PaletteMode::Commands);
                 return;
             }
-            A::ApplyObject => {
+            A::Apply => {
                 if self.active_is_object()
                     && let Some(key) = self.active_key()
                 {

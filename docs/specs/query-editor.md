@@ -55,15 +55,18 @@ A new tab opens either blank without a Connection, or bound to the Connection an
 
 ### Multi-cursor
 
-- ⌥-click adds a caret; ⌥⌘↑ and ⌥⌘↓ add one above or below at the primary caret's column. Esc closes the completion popup first, then the find bar, then collapses the extra carets, then clears the selection. Clicking elsewhere with no modifier places one caret.
+- ⌥-click adds a caret; ⌥⌘↑ and ⌥⌘↓ add one above or below at the primary caret's column; ⇧⌥I replaces the carets with one at the end of every line the selections touch. Esc closes the completion popup first, then the find bar, then collapses the extra carets, then clears the selection. Clicking elsewhere with no modifier places one caret.
 - Carets stay sorted, non-overlapping and at least one; overlapping ones merge. The primary caret is the last and drives the completion popup, the statement tint and the error reveal.
 - Typing, deleting, pasting, indentation and newline edits apply once per caret as one command. Vertical moves keep a per-caret goal column, so moving through blank or short lines and back returns the caret to its column; any other motion, edit or caret placement resets the goal.
 - Copying several non-empty selections joins their text with line breaks.
+- **Add selection to next occurrence** (⌘D). With an empty primary selection, the first press selects the word around the primary caret; that word is then matched as a whole word with the same case. With a non-empty primary selection, its text is matched with the find bar's Match case and Whole word options. Each press searches after the most recently added selection, wraps around the text, skips ranges already selected, and adds the match as the new primary selection, scrolled into view. When every occurrence is selected the press changes nothing. A selection that spans a line break has no next occurrence, as find never matches across lines.
+- **Select all occurrences** (⇧⌘L) applies the same matching rules and selects every match, up to 10,000 carets. The match that holds the previous primary caret stays primary.
+- **Undo last cursor operation** (⌘U) restores the carets from before the latest caret-adding command: a caret added by ⌥-click, above or below, at line ends, or by a next or all occurrences command. Up to 100 caret sets are kept; a text edit or a plain click starts the history again. It changes no text and leaves the undo stack alone.
 
 ### Undo and redo
 
 - Undo and redo (⌘Z, ⇧⌘Z and also ⌘Y) work in whole groups. Typing and backspacing merge into one group while they continue in the same place, within one second, with the same kind of command, and across a word boundary but not into an earlier non-whitespace character. Moving the caret, placing carets or another kind of edit closes the group.
-- A paste, an indent, a comment toggle, a format, a duplicate and a replace-all each undo as one group. A new edit clears the redo groups. The stack keeps up to 10,000 groups and drops the oldest. Undo and redo restore the carets from before or after their group.
+- A paste, an indent, a comment toggle, a format, a line command and a replace-all each undo as one group. A new edit clears the redo groups. The stack keeps up to 10,000 groups and drops the oldest. Undo and redo restore the carets from before or after their group.
 
 ### Find and replace
 
@@ -77,7 +80,13 @@ A new tab opens either blank without a Connection, or bound to the Connection an
 - **Auto-indent.** A newline keeps the current line's leading spaces or tabs and adds one indent unit after an opening `(`; pressing Enter on a line that ends with `)` puts the closing parenthesis on its own line at the original indent.
 - **Bracket and quote pairing.** Typing `(`, `[`, `'` or `"` inserts the closing character and leaves the caret inside, unless the next character is a word character or a matching quote. Typing a closing character that already follows the caret moves over it instead of inserting. Typing an opening character over a selection wraps the selection. Backspace between an empty pair removes both characters.
 - **Indent.** Tab inserts spaces to the next indent stop (four spaces by default, or a tab when so configured); Shift+Tab outdents. With a multi-line selection both shift every touched line.
-- **Duplicate line** (⌘D) copies the current line below, or copies the selection after itself.
+- **Line commands** work on every line touched by a selection; a selection that ends at the start of a line leaves that line out. Each press is one undo group across all carets.
+  - **Move line up and down** (⌥↑, ⌥↓) move the lines by one and keep the selections on them; at the first or last line the press changes nothing.
+  - **Copy line down** (⇧⌥↓) inserts a copy below and moves the selections onto it; **copy line up** (⇧⌥↑) inserts the copy above and keeps the selections on the upper copy.
+  - **Delete line** (⇧⌘K) removes the lines with their line breaks; each caret lands on the following line at its column, clamped to the line's length.
+  - **Select line** (⌘L) selects from the line start to the start of the next line; pressed again on whole-line selections, it extends them by one line.
+  - **Indent and outdent line** (⌘], ⌘[) shift the lines as Tab and Shift+Tab do on a multi-line selection, whatever the selection.
+  - Copied and moved lines keep the document's line break style.
 - **Format SQL** (⌥⌘L) formats the selection, or the whole text, with the editor's format options as one undo group; it is a SQL formatting aid and leaves the Query language unchanged.
 - Word motions use ⌥ on macOS and Ctrl elsewhere; ⌘← and ⌘→ go to the line start and end, and Home and End follow the platform's conventions.
 
@@ -165,6 +174,8 @@ flowchart LR
 ## Decisions
 
 - **A dedicated editor widget instead of the framework's text field.** The framework's text field re-lays out the whole text on every frame and has no multi-cursor, completion popup or serious undo, so it cannot handle large files. A purpose-built widget keeps the work proportional to what is visible and edited.
+- **VS Code's editor chords in the default preset.** Most people writing SQL today also use VS Code, and the editor already supports several carets; adopting ⌘D, ⇧⌘L, ⌥↑/↓ and the other line chords spares them relearning. Duplicate line moves to ⇧⌥↓ (VS Code's copy line down) so ⌘D can select occurrences.
+- **A caret history separate from the undo stack.** Undoing one ⌘D too many should not undo text, and undoing text should not drop carets the user just built, so caret operations keep their own short history.
 - **A resumable per-line lexer instead of parsing the document.** Highlighting must stay smooth while typing in a large file. A lexer that carries its state line to line, with checkpoints inside long lines, re-lexes only from an edit until the state converges, and avoids a full parse per keystroke.
 - **tree-sitter only around the caret, off the UI thread above 64 KiB.** Structure is needed for autocomplete context, not for highlighting. Parsing the statement around the caret keeps the work small; pushing a large statement to a worker with a window around the caret keeps a frame from stalling, at the cost that a window may miss relations outside it, which only narrows the candidates.
 - **A rope with a per-line layout cache.** Edits in the middle of a large text stay cheap and unchanged lines are never re-laid out. A char-addressable buffer with hidden `\r\n` terminators keeps positions simple and multibyte text safe.

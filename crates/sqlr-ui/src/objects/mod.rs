@@ -710,7 +710,7 @@ fn object_editor_body(
             .on_hover_text(crate::keymap::tooltip(
                 ui.ctx(),
                 "Apply the pending changes",
-                sqlr_core::ActionId::ApplyObject,
+                sqlr_core::ActionId::Apply,
             ));
         let apply = match ctx.apply_blocked {
             Some(reason) => apply.on_disabled_hover_text(reason),

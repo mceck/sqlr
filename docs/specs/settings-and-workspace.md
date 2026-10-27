@@ -209,28 +209,64 @@ Read-only, Confirm writes and Confirm destructive statements are Safety flags. T
 
 ### Keymap
 
-Every command that carries a shortcut has an Action identifier, a group and a scope. Groups are Query, Editor, Navigation, View, Results, Objects and General. Scopes are Global, Editor and Explorer. The global scope runs for the whole window, the editor scope only while an Editor tab has focus, and the Explorer scope only in the Explorer.
+Every command that carries a shortcut has an Action identifier, a group and a scope. Groups are Query, Editor, Navigation, View, Results, Objects and General. Scopes are Global, Editor, Grid and Explorer. The global scope runs for the whole window, the editor scope only while an Editor tab's text has focus, the grid scope only while a Result grid has focus, and the Explorer scope only in the Explorer. The grid also answers the editor's undo, redo, select all and copy actions.
 
-Commands include run, run script, stop, explain and explain analyze, commit and rollback, save snippet, format, comment, duplicate line, find, replace, find next and previous, complete, undo, redo, copy, cut, paste, select all, newline, indent, outdent, soft wrap, open object, commands, new tab, new tab on a Connection, close tab, next and previous tab, history, value panel, terminal, operations, export result, delete rows, rename, apply, new Connection, Preferences, shortcuts, profiles, Driver Manager, transfer data, compare schemas, about and quit.
+Commands include run, run script, stop, explain and explain analyze, commit and rollback, save snippet, format, comment, add selection to next occurrence, select all occurrences, undo last cursor operation, add cursor above and below, add cursors to line ends, move line up and down, copy line up and down, delete line, select line, indent and outdent line, find, replace, find next and previous, complete, undo, redo, copy, cut, paste, select all, newline, indent, outdent, soft wrap, open object, commands, new tab, new tab on a Connection, close tab, next and previous tab, go to tab 1 to 8, go to the last tab, reopen closed tab, history, value panel, terminal, operations, export result, delete rows, add row, set NULL, rename, apply pending changes, discard pending changes, refresh, new Connection, Preferences, shortcuts, profiles, Driver Manager, transfer data, compare schemas, about and quit.
 
 The sqlr preset binds, among others:
 
 - Run `⌘↵`, run script `⇧⌘↵`, stop `Esc`.
 - Explain `⌥⌘E`, explain analyze `⌥⇧⌘E`.
 - Commit `⌥⌘↵`, rollback `⌥⌘Z`.
-- New tab `⌘T`, new tab on a Connection `⌘N`, close tab `⌘W`.
-- Next and previous tab `Ctrl+Tab` and `Ctrl+Shift+Tab`.
-- Apply `⌘S`, save snippet `⇧⌘S`.
+- New tab `⌘T`, new tab on a Connection `⌘N`, close tab `⌘W`, reopen closed tab `⇧⌘T`.
+- Next and previous tab `Ctrl+Tab` and `Ctrl+Shift+Tab`; go to tab 1 to 8 `⌘1` to `⌘8`, go to the last tab `⌘9`.
+- Apply pending changes `⌘S`, refresh `F5` and `⌘R`, save snippet `⇧⌘S`. Discard pending changes has no chord in either preset; it runs from the Palette or from a chord the user assigns.
 - Open object `⌘P`, commands `⇧⌘P`, Preferences `⌘,`, terminal `⌃\``.
-- Operations `⇧⌘O`, format `⌥⌘L`, comment `⌘/`, duplicate line `⌘D`.
+- Operations `⇧⌘O`, format `⌥⌘L`, comment `⌘/`.
+- In the editor, VS Code's chords: next occurrence `⌘D`, all occurrences `⇧⌘L`, undo last cursor operation `⌘U`, cursor above and below `⌥⌘↑` and `⌥⌘↓`, cursors at line ends `⇧⌥I`, move line `⌥↑` and `⌥↓`, copy line `⇧⌥↑` and `⇧⌥↓`, delete line `⇧⌘K`, select line `⌘L`, indent and outdent line `⌘]` and `⌘[`.
 - Find `⌘F`, replace `⌥⌘F`, next `⌘G`, previous `⇧⌘G`, complete `⌃Space`.
-- Rename `F2`, delete rows `⌘⌫` or `⌘⌦`.
+- Rename `F2`.
+- In the Result grid: delete rows `⌘⌫` or `⌘⌦`, add row `⌘I`, duplicate rows `⌘D`, set NULL `⌥⌘N`.
 
-The VS Code preset differs where VS Code does, for example its format, duplicate-line and operations chords.
+On other platforms `⌘` is Ctrl, so the chords read Ctrl+S, Ctrl+R, Ctrl+1 and so on. While the Integrated terminal has focus, global chords reach the shell instead.
+
+The VS Code preset differs where VS Code does, for example its format and operations chords.
 
 The Keymap editor lists the actions grouped, with a search over action names and shortcuts, a preset picker (sqlr or VS Code), a Reset all action and a recording control. Recording an action captures the next chord; Escape cancels the recording and Enter does not take the focus. A chord is shown with the platform's symbols on macOS in the order Control, Option, Shift, Command, and with names elsewhere. Each action can remove its binding or reset it to the preset. Two bindings conflict only when their scopes overlap; conflicting actions are listed in a banner, marked in red, and block saving.
 
-The Keymap is stored as the preset plus the differences from it. A missing Keymap uses the sqlr preset. A corrupt Keymap is kept aside and the preset is used.
+The Keymap is stored as the preset plus the differences from it. Each action is stored under a stable identifier; an action whose identifier changed keeps reading its former identifier, so the apply action, once specific to the Object editor and now general, still loads a binding saved under its old name. A relabelled action keeps its identifier: Copy line down is stored as the former Duplicate line. A missing Keymap uses the sqlr preset. A corrupt Keymap is kept aside and the preset is used.
+
+### Pending changes, refresh and tabs from the keyboard
+
+**Apply pending changes** applies the pending edits of what the active tab shows, through the same path as that surface's Apply or Save button, so the Connection profile's confirmation and every refusal stay the same. With nothing pending, or while an apply for it runs, it does nothing.
+
+| Active surface | Apply | Discard | Refresh |
+|---|---|---|---|
+| Editor tab Result | The shown Result's Changeset | Discards that Changeset | Runs the shown Result's statement again with its server sort and filter; asks first when the Changeset is not empty |
+| Object editor, Data page | The page's Changeset | Discards it | Loads the object again, asking first when edits are pending |
+| Object editor, Permissions page | The grants | Reverts the grants | Same as above |
+| Object editor, other pages | The Schema change list | Reverts it | Same as above |
+| Users and roles editor | The role changes | Reverts them | Reloads, asking first when edits are pending |
+| Sessions and Server panels | Nothing to apply | Nothing to discard | Loads a new snapshot or the active pane |
+| Redis tab | Saves the open inline element editor, or the edited string value | Cancels the element editor, or restores the string value | Scans the key list again and reloads the open value when it holds no unsaved edit |
+| Document tab | Saves the JSON view's edit or insert, after its validation | Cancels the JSON view's edit | Runs the tab's last statements again while the JSON view is not editing |
+| DDL viewer | Nothing to apply | Nothing to discard | Loads the DDL again |
+
+Refresh does nothing while the tab's query runs. In an Editor tab it reruns the shown Result and leaves the editor text alone; with no Result shown it does nothing. Apply, Discard, Refresh and Reopen closed tab act only while no modal dialog is open, so a chord pressed under a prompt never reaches the tab behind it.
+
+**Go to tab** focuses a tab by its position in the order Next tab cycles through: every tab group in turn, each group's tabs left to right. A position past the last tab does nothing; Go to the last tab always lands on the last one.
+
+**Reopen closed tab** reopens the most recently closed tab of this session, and each further press the one closed before it. sqlr remembers up to 20 closed tabs in memory for the session. A reopened tab gets back what identifies it:
+
+- an Editor tab, its title, Connection, database and text;
+- an Object editor, its Connection, object and page;
+- a DDL viewer, its Connection and object;
+- a Redis tab, its Connection, database and selected key;
+- a document tab, its title, Connection, database and text;
+- an administration panel, its Connection and panel;
+- an ER diagram, its Connection, database, schema and tables.
+
+Results, pending edits and transactions belong to the closed tab and end with it. A reopened tab runs nothing on its own and connects the way opening that tab normally does. When the Connection was deleted in the meantime, a Toast says "The connection of the closed tab no longer exists" and that entry is dropped.
 
 ### Themes and fonts
 
@@ -325,7 +361,10 @@ Updates are a background state machine in the app: idle, checking, offering, dow
 - **Safety flags that only tighten.** Protection must survive a lower level, an imported overrides file or an agent writing a setting, so a false value for a Safety flag is ignored when read.
 - **Overrides as a separate file from the global settings.** The global file stays small and portable, and clearing a Connection's overrides is deleting one group.
 - **The Keymap stored as a difference from a preset.** A preset update should reach every user who did not customise a given chord, and the file stays readable.
-- **Conflicts only when scopes overlap.** The same chord can legitimately mean different things in the Editor and in the Explorer, so conflict detection compares scopes rather than the whole window.
+- **One apply chord for every kind of pending edit.** Users press ⌘S out of habit wherever they changed something. Routing it to the active surface's own Apply or Save keeps one rule to learn and reuses that surface's confirmations, instead of giving each editor its own chord.
+- **Discard has no default chord.** Discarding throws work away and cannot be undone, so it stays a Palette command until the user binds it.
+- **Closed tabs are remembered for the session only, without their data.** Reopening a mistake should be instant, but keeping Results or pending edits alive after a close would hold memory and sessions the user asked to release; the recipe to open the tab again is enough.
+- **Conflicts only when scopes overlap.** The same chord can legitimately mean different things in the Editor, the Result grid and the Explorer (⌘D selects the next occurrence in the editor and duplicates rows in the grid), so conflict detection compares scopes rather than the whole window.
 - **A custom accent with contrast correction.** Users want their own color, and an unreadable button is worse than a slightly adjusted brand color.
 - **Bundled fonts with lazy system fallbacks.** A consistent interface does not depend on what is installed, and CJK or emoji text still renders without loading megabytes of fallback fonts at startup.
 - **The Palette over a separate command menu.** Keyboard users reach objects and commands without navigating menus, and fuzzy matching across all Connections is faster than expanding a tree.
