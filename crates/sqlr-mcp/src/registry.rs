@@ -318,6 +318,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_surface_has_twenty_four_tools() {
+        let names: Vec<&str> = TOOLS.iter().map(|tool| tool.name).collect();
+        assert_eq!(
+            names,
+            [
+                "config_list",
+                "config_write",
+                "config_delete",
+                "test_connection",
+                "browse",
+                "describe_object",
+                "get_ddl",
+                "search_objects",
+                "run_query",
+                "explain_query",
+                "get_query_result",
+                "cancel_query",
+                "close_result",
+                "search_history",
+                "list_query_tabs",
+                "get_query_tab",
+                "open_query_tab",
+                "edit_query_tab",
+                "run_query_tab",
+                "show_in_app",
+                "list_snippets",
+                "get_snippet",
+                "write_snippet",
+                "delete_snippet",
+            ]
+        );
+    }
+
+    #[test]
     fn tools_have_unique_names_and_object_schemas() {
         let mut names = std::collections::HashSet::new();
         for tool in TOOLS.iter() {
