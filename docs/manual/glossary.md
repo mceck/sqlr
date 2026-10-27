@@ -54,8 +54,6 @@ Use this glossary when a label in sqlr or a procedure in the manual is unfamilia
 | Data transfer | Moving data between a source and a destination, including import and export |
 | Endpoint | A transfer's source or destination, such as a query, table or file |
 | Dump / Restore | Backing up or restoring a database with its native tools |
-| Saved task | A named transfer, dump, restore or script you can run again |
-| Task run | One saved task's execution and recorded outcome |
 | Schema compare | A comparison of structures with a generated migration script |
 | ER diagram | A drawing of tables and their foreign-key relationships |
 | Explain plan | A database's description of how it will execute a statement |

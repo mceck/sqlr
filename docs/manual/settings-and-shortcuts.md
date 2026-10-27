@@ -132,7 +132,7 @@ Use **Open settings folder** in Preferences for the configuration directory. Dia
 |---|---|
 | Configuration | `connections.toml`, `profiles.toml`, `settings.toml`, `overrides.toml`, `keymap.toml`, `updates.json` |
 | Configuration | `secrets.vault`, encrypted credentials and MCP token; its key is kept in the OS keychain |
-| Data | `sqlr.db`, containing history, snippets, saved tasks and diagram layouts |
+| Data | `sqlr.db`, containing history, snippets and diagram layouts |
 | Data | `drivers/<id>/<version>/`, installed sidecar drivers |
 | Data | `logs/` and `diagnostics/`, local logs and incident reports |
 
