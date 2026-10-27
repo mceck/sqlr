@@ -90,11 +90,11 @@ fn run(installations: &Installations, command: InstallCommand, shared: &Mutex<Sh
         InstallCommand::Install(kind, endpoint) => {
             let outcome = match installations.install(kind, &endpoint) {
                 Ok(()) => {
-                    tracing::info!(agent = kind.name(), "sqlr installed in an agent");
+                    tracing::info!(agent = kind.id(), "sqlr installed in an agent");
                     InstallOutcome::Installed(kind)
                 }
                 Err(error) => {
-                    tracing::warn!(agent = kind.name(), error = %error, "agent install failed");
+                    tracing::warn!(agent = kind.id(), error = %error, "agent install failed");
                     InstallOutcome::Failed {
                         kind,
                         error: error.to_string(),
@@ -106,11 +106,11 @@ fn run(installations: &Installations, command: InstallCommand, shared: &Mutex<Sh
         InstallCommand::Remove(kind, endpoint) => {
             let outcome = match installations.remove(kind) {
                 Ok(()) => {
-                    tracing::info!(agent = kind.name(), "sqlr removed from an agent");
+                    tracing::info!(agent = kind.id(), "sqlr removed from an agent");
                     InstallOutcome::Removed(kind)
                 }
                 Err(error) => {
-                    tracing::warn!(agent = kind.name(), error = %error, "agent remove failed");
+                    tracing::warn!(agent = kind.id(), error = %error, "agent remove failed");
                     InstallOutcome::Failed {
                         kind,
                         error: error.to_string(),
@@ -120,8 +120,14 @@ fn run(installations: &Installations, command: InstallCommand, shared: &Mutex<Sh
             (endpoint, Some(outcome))
         }
         InstallCommand::Rewrite(endpoint) => {
-            // Failures are logged inside; the recomputed state shows them as Outdated.
-            let _ = installations.rewrite_recorded(&endpoint);
+            // The recomputed states show each failure as Outdated (or Manual setup).
+            for (kind, error) in installations.rewrite_recorded(&endpoint) {
+                tracing::warn!(
+                    agent = kind.id(),
+                    error = %error,
+                    "agent installation could not be rewritten"
+                );
+            }
             (endpoint, None)
         }
     };
@@ -130,4 +136,73 @@ fn run(installations: &Installations, command: InstallCommand, shared: &Mutex<Sh
     shared.snapshot.rows = rows;
     shared.snapshot.pending = shared.snapshot.pending.saturating_sub(1);
     shared.outcomes.extend(outcome);
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt as _;
+    use std::sync::Arc;
+
+    use parking_lot::Mutex;
+
+    use super::*;
+    use crate::agent_install::AgentEnvironment;
+
+    #[derive(Clone, Default)]
+    struct Captured(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for Captured {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_failed_rewrite_is_logged_with_the_agent_id_and_never_the_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let env = AgentEnvironment::in_home(&home);
+        let file = AgentKind::GeminiCli.config_file(&env);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "{}").unwrap();
+        let installations = Installations::new(env, &dir.path().join("data"));
+        let url = "http://127.0.0.1:47821/mcp";
+        installations
+            .install(AgentKind::GeminiCli, &Endpoint::running(url, "tok-first"))
+            .unwrap();
+        let parent = file.parent().unwrap().to_path_buf();
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o500)).unwrap();
+
+        let logs = Captured::default();
+        let writer = logs.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+        let shared = Mutex::new(Shared::default());
+        tracing::subscriber::with_default(subscriber, || {
+            run(
+                &installations,
+                InstallCommand::Rewrite(Endpoint::running(url, "tok-rotated")),
+                &shared,
+            );
+        });
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o700)).unwrap();
+
+        let text = String::from_utf8(logs.0.lock().clone()).unwrap();
+        let line = text
+            .lines()
+            .find(|line| line.contains("could not be rewritten"))
+            .unwrap_or_else(|| panic!("no rewrite failure logged: {text}"));
+        assert!(line.contains("WARN"), "{line}");
+        assert!(line.contains("agent=\"gemini-cli\""), "{line}");
+        assert!(!text.contains("tok-rotated"), "{text}");
+        assert_eq!(text.matches("could not be rewritten").count(), 1, "{text}");
+    }
 }

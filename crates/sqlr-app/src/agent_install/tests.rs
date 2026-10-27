@@ -536,3 +536,26 @@ fn copy_config_is_in_each_agents_format() {
         Some("Bearer tok-first")
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn a_registry_that_cannot_be_serialized_leaves_the_stored_one() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let home = Home::new();
+    home.write(AgentKind::ClaudeCode, "{}");
+    let installations = home.installations();
+    installations
+        .install(AgentKind::ClaudeCode, &endpoint())
+        .unwrap();
+    let before = installations.records();
+    let unserializable = Registry {
+        installations: vec![Record {
+            agent: AgentKind::Cursor,
+            file: PathBuf::from(OsStr::from_bytes(b"/tmp/\xff.json")),
+        }],
+    };
+    assert!(installations.store(&unserializable).is_err());
+    assert_eq!(installations.records(), before);
+}

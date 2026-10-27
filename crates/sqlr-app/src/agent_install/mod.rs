@@ -333,6 +333,9 @@ pub enum InstallError {
     /// Install and Update write the running server's token.
     #[error("the MCP server is not running")]
     NotRunning,
+    /// The installation registry could not be written as JSON.
+    #[error("the installation registry cannot be saved: {0}")]
+    Registry(#[source] serde_json::Error),
 }
 
 /// One Agent installation in the registry: no token.
@@ -462,7 +465,8 @@ impl Installations {
 
     /// Rewrites every recorded installation whose entry differs from `endpoint`, after a
     /// token rotation or a port change. A record whose entry disappeared is dropped. The
-    /// failures are returned and logged with the agent and the error, never the token.
+    /// failures are returned, for the caller to log with the agent id and the error (the
+    /// error never holds the token).
     pub fn rewrite_recorded(&self, endpoint: &Endpoint) -> Vec<(AgentKind, InstallError)> {
         let Some(token) = endpoint.token() else {
             return Vec::new();
@@ -497,14 +501,7 @@ impl Installations {
             };
             match outcome {
                 Ok(()) => tracing::debug!(agent = kind.id(), "agent installation is current"),
-                Err(error) => {
-                    tracing::warn!(
-                        agent = kind.id(),
-                        error = %error,
-                        "agent installation could not be rewritten"
-                    );
-                    failures.push((kind, error));
-                }
+                Err(error) => failures.push((kind, error)),
             }
             keep.push(record);
         }
@@ -538,7 +535,7 @@ impl Installations {
     }
 
     fn store(&self, registry: &Registry) -> Result<(), InstallError> {
-        let text = serde_json::to_string_pretty(registry).unwrap_or_default();
+        let text = serde_json::to_string_pretty(registry).map_err(InstallError::Registry)?;
         files::write_atomic(&self.registry, &format!("{text}\n"))
             .map_err(|source| io(&self.registry, source))
     }
