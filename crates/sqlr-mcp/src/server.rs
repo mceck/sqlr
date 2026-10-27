@@ -67,20 +67,22 @@ pub enum StartError {
     #[error("port {port} is already in use")]
     PortBusy { port: u16 },
     #[error("the keychain is unavailable: {0}")]
-    Keychain(String),
+    Keychain(#[from] TokenError),
     #[error("the data directory is unavailable: {0}")]
-    DataDir(String),
+    DataDir(#[source] std::io::Error),
+    #[error("the data directory is unavailable: {0}")]
+    Discovery(#[source] ToolError),
     #[error("could not start the MCP server: {0}")]
-    Other(String),
+    Other(#[source] std::io::Error),
 }
 
-/// Why the keychain token could not be replaced.
+/// Why the keychain token could not be generated, read or stored.
 #[derive(Debug, thiserror::Error)]
-pub enum RotateTokenError {
+pub enum TokenError {
     /// The operating system has no randomness for a new token.
-    #[error("{0}")]
-    Generate(String),
-    /// The new token could not be stored.
+    #[error("{}", .0.message)]
+    Generate(#[source] ToolError),
+    /// The keychain could not read or store the token.
     #[error("{0}")]
     Store(#[from] sqlr_store::StoreError),
 }
@@ -336,24 +338,24 @@ impl McpServer {
         let token = match options.token_store.get() {
             Ok(Some(token)) => token,
             Ok(None) => {
-                let token = generate_token().map_err(|e| StartError::Keychain(e.message))?;
+                let token =
+                    generate_token().map_err(|e| StartError::Keychain(TokenError::Generate(e)))?;
                 options
                     .token_store
                     .set(&token)
-                    .map_err(|e| StartError::Keychain(e.to_string()))?;
+                    .map_err(|e| StartError::Keychain(e.into()))?;
                 token
             }
-            Err(e) => return Err(StartError::Keychain(e.to_string())),
+            Err(e) => return Err(StartError::Keychain(e.into())),
         };
-        std::fs::create_dir_all(&options.data_dir)
-            .map_err(|e| StartError::DataDir(e.to_string()))?;
+        std::fs::create_dir_all(&options.data_dir).map_err(StartError::DataDir)?;
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", options.port))
             .await
             .map_err(|e| {
                 if e.kind() == std::io::ErrorKind::AddrInUse {
                     StartError::PortBusy { port: options.port }
                 } else {
-                    StartError::Other(e.to_string())
+                    StartError::Other(e)
                 }
             })?;
         let state = Arc::new(ServerState::new(
@@ -412,7 +414,7 @@ impl McpServer {
             Ok(path) => path,
             Err(error) => {
                 cancellation.cancel();
-                return Err(StartError::DataDir(error.message));
+                return Err(StartError::Discovery(error));
             }
         };
         let sweeper_state = state.clone();
@@ -476,8 +478,8 @@ impl McpServer {
     }
 
     /// Replaces the keychain token and drops every session. The listener stays bound.
-    pub async fn rotate_token(&mut self) -> Result<(), RotateTokenError> {
-        let token = generate_token().map_err(|e| RotateTokenError::Generate(e.message))?;
+    pub async fn rotate_token(&mut self) -> Result<(), TokenError> {
+        let token = generate_token().map_err(TokenError::Generate)?;
         self.token_store.set(&token)?;
         self.state.rotate_token(token.clone());
         self.token = token;
@@ -526,13 +528,14 @@ pub fn denied() -> ToolError {
 
 #[cfg(test)]
 mod rotate_error_tests {
-    use super::RotateTokenError;
+    use super::TokenError;
+    use crate::error::ToolError;
 
     #[test]
     fn rotate_errors_show_the_underlying_message() {
-        let store = RotateTokenError::from(sqlr_store::StoreError::Secret("locked".into()));
+        let store = TokenError::from(sqlr_store::StoreError::Secret("locked".into()));
         assert_eq!(store.to_string(), "keychain: locked");
-        let random = RotateTokenError::Generate("no OS randomness available: x".into());
+        let random = TokenError::Generate(ToolError::internal("no OS randomness available: x"));
         assert_eq!(random.to_string(), "no OS randomness available: x");
     }
 }

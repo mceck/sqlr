@@ -1231,4 +1231,12 @@ mod tests {
         );
         assert_eq!(accent.from_json(&serde_json::json!([1, 2, 300])), None);
     }
+
+    #[test]
+    fn global_only_errors_keep_their_message() {
+        assert_eq!(
+            SettingError::GlobalOnly { label: "Theme" }.to_string(),
+            "Theme can only be set globally"
+        );
+    }
 }

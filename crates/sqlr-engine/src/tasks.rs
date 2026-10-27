@@ -325,3 +325,23 @@ impl Engine {
         job_id
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_errors_keep_their_messages() {
+        assert_eq!(
+            TaskError::NotConnected { id: "pg".into() }.to_string(),
+            "The connection \"pg\" is not connected, or no longer exists"
+        );
+        assert_eq!(
+            TaskError::FileMissing {
+                path: PathBuf::from("in.csv")
+            }
+            .to_string(),
+            "The file in.csv does not exist"
+        );
+    }
+}

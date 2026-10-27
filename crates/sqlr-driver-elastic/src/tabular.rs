@@ -138,9 +138,10 @@ impl RowStream for EsRows {
         }
         let mut b = ChunkBuilder::new(self.columns.clone());
         for _ in 0..max.min(self.buffer.len()) {
-            let Some(mut row) = self.buffer.pop_front() else {
-                break;
-            };
+            let mut row = self
+                .buffer
+                .pop_front()
+                .expect("the loop count is bounded by the buffer length");
             row.resize(self.columns.len(), Value::Null);
             let cells: Vec<Cell<'_>> = row.iter().map(Value::as_cell).collect();
             b.push_row(&cells)

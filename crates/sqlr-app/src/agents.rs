@@ -13,7 +13,7 @@ use sqlr_mcp::host::{
     AgentConnection, AgentHost, ApprovalRequest, ConnectionWrite, FolderOp, KeymapEntry, Risk,
     RunTarget, SettingEntry, SettingLevel, TabDetail, TabEdit, TabSummary,
 };
-use sqlr_mcp::server::{McpServer, RotateTokenError, StartError, StartOptions};
+use sqlr_mcp::server::{McpServer, StartError, StartOptions, TokenError};
 use sqlr_store::McpTokenStore;
 use tokio::sync::oneshot;
 
@@ -563,15 +563,17 @@ pub enum RotateError {
     Stopped(#[from] mpsc::RecvError),
     /// The server could not replace the keychain token.
     #[error(transparent)]
-    Token(#[from] RotateTokenError),
+    Token(#[from] TokenError),
 }
 
 fn start_error(error: StartError) -> (McpStatus, String) {
     match error {
         StartError::PortBusy { port } => (McpStatus::PortBusy, format!("Port {port} is in use")),
-        StartError::Keychain(error) => (McpStatus::KeychainError, error),
-        StartError::DataDir(error) => (McpStatus::Error, error),
-        StartError::Other(error) => (McpStatus::Error, error),
+        StartError::Keychain(error) => (McpStatus::KeychainError, error.to_string()),
+        StartError::DataDir(error) | StartError::Other(error) => {
+            (McpStatus::Error, error.to_string())
+        }
+        StartError::Discovery(error) => (McpStatus::Error, error.to_string()),
     }
 }
 

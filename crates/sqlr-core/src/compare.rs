@@ -571,9 +571,9 @@ fn dependency_order(items: &[&ObjectDiff]) -> Vec<usize> {
                 })
         });
         // A cycle: take the first one left.
-        let Some(next) = ready.or_else(|| (0..items.len()).find(|&i| !placed[i])) else {
-            break;
-        };
+        let next = ready
+            .or_else(|| (0..items.len()).find(|&i| !placed[i]))
+            .expect("the loop runs only while an object is still unplaced");
         placed[next] = true;
         order.push(next);
     }

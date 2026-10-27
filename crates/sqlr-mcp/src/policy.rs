@@ -330,4 +330,33 @@ mod tests {
         assert!(transport_security_ok("tls_verify", None, "false").is_ok());
         assert!(transport_security_ok("host", Some("x"), "y").is_ok());
     }
+
+    #[test]
+    fn looser_profile_errors_keep_their_messages() {
+        let cases = [
+            (
+                LooserProfile::NotReadOnly,
+                "the target profile is not read-only",
+            ),
+            (
+                LooserProfile::NoWriteConfirmation,
+                "the target profile does not confirm writes",
+            ),
+            (
+                LooserProfile::NoDestructiveConfirmation,
+                "the target profile does not confirm destructive statements",
+            ),
+            (
+                LooserProfile::LongerIdleTimeout,
+                "the target profile's idle transaction timeout is longer or absent",
+            ),
+            (
+                LooserProfile::EagerCommit,
+                "the target profile commits more eagerly",
+            ),
+        ];
+        for (error, message) in cases {
+            assert_eq!(error.to_string(), message);
+        }
+    }
 }

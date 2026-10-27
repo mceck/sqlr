@@ -9,6 +9,14 @@ pub struct ToolError {
     pub message: String,
 }
 
+impl std::fmt::Display for ToolError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for ToolError {}
+
 impl ToolError {
     pub fn new(code: &'static str, message: impl Into<String>) -> Self {
         Self {

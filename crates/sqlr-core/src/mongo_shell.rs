@@ -713,7 +713,7 @@ impl<'a> Parser<'a> {
                     Some((DocValue::Array(_), _)) => {
                         let mut it = args.into_iter();
                         let Some((DocValue::Array(stages), _)) = it.next() else {
-                            return self.err("aggregate() needs a pipeline array");
+                            unreachable!("the first argument was matched as an array above");
                         };
                         let options = it.next();
                         if let Some((_, at)) = it.next() {
@@ -763,7 +763,7 @@ impl<'a> Parser<'a> {
             }
             "distinct" => {
                 let [field, filter] = self.arity::<1, 2>(mt, method, args)?;
-                let (field, at) = self.required(field)?;
+                let (field, at) = field.expect("`Self::arity` checked this argument is present");
                 let DocValue::String(field) = field else {
                     return Err(ShellError::new("distinct() needs a field name string", at));
                 };
@@ -782,7 +782,7 @@ impl<'a> Parser<'a> {
             }
             "insertMany" => {
                 let [docs, options] = self.arity::<1, 2>(mt, method, args)?;
-                let (docs, at) = self.required(docs)?;
+                let (docs, at) = docs.expect("`Self::arity` checked this argument is present");
                 let DocValue::Array(docs) = docs else {
                     return Err(ShellError::new(
                         "insertMany() needs an array of documents",
@@ -803,8 +803,9 @@ impl<'a> Parser<'a> {
             }
             "updateOne" | "updateMany" | "findOneAndUpdate" => {
                 let [filter, update, options] = self.arity::<2, 3>(mt, method, args)?;
-                let filter = filter_doc(self.required(filter)?)?;
-                let (update, at) = self.required(update)?;
+                let filter =
+                    filter_doc(filter.expect("`Self::arity` checked this argument is present"))?;
+                let (update, at) = update.expect("`Self::arity` checked this argument is present");
                 if !matches!(update, DocValue::Document(_) | DocValue::Array(_)) {
                     return Err(ShellError::new(
                         format!("{method}() needs an update document or pipeline"),
@@ -837,9 +838,13 @@ impl<'a> Parser<'a> {
                 let [filter, replacement, options] = self.arity::<2, 3>(mt, method, args)?;
                 MongoOp::ReplaceOne {
                     coll,
-                    filter: filter_doc(self.required(filter)?)?,
-                    replacement: self
-                        .doc_arg(self.required(replacement)?, "a replacement document")?,
+                    filter: filter_doc(
+                        filter.expect("`Self::arity` checked this argument is present"),
+                    )?,
+                    replacement: self.doc_arg(
+                        replacement.expect("`Self::arity` checked this argument is present"),
+                        "a replacement document",
+                    )?,
                     options: self.opt_doc(options, "an options document")?,
                 }
             }
@@ -856,7 +861,10 @@ impl<'a> Parser<'a> {
                 let [keys, options] = self.arity::<1, 2>(mt, method, args)?;
                 MongoOp::CreateIndex {
                     coll,
-                    keys: self.doc_arg(self.required(keys)?, "a key document")?,
+                    keys: self.doc_arg(
+                        keys.expect("`Self::arity` checked this argument is present"),
+                        "a key document",
+                    )?,
                     options: self.opt_doc(options, "an options document")?,
                 }
             }
@@ -909,11 +917,6 @@ impl<'a> Parser<'a> {
             ));
         }
         Ok(<Self as Arity<MIN, MAX>>::shape(args))
-    }
-
-    /// An argument that [`Self::arity`] guarantees is present; a missing one is a parse error.
-    fn required(&self, arg: Option<(DocValue, usize)>) -> Result<(DocValue, usize), ShellError> {
-        arg.ok_or_else(|| ShellError::new("missing argument", self.pos()))
     }
 
     fn doc_arg(&self, (v, at): (DocValue, usize), what: &str) -> Result<DocValue, ShellError> {
@@ -979,9 +982,9 @@ impl<'a> Parser<'a> {
             }
             TokenKind::String | TokenKind::QuotedIdent if s.starts_with('/') => {
                 self.bump();
-                let Some(close) = s.rfind('/') else {
-                    return self.err("expected a regular expression");
-                };
+                let close = s
+                    .rfind('/')
+                    .expect("the token starts with `/`, so it contains one");
                 let mut flags: Vec<char> = s[close + 1..].chars().collect();
                 flags.sort_unstable();
                 Ok(DocValue::Regex {
@@ -1032,9 +1035,9 @@ impl<'a> Parser<'a> {
     }
 
     fn object(&mut self, depth: usize) -> Result<DocValue, ShellError> {
-        let Some(open) = self.bump() else {
-            return self.err("expected `{`");
-        };
+        let open = self
+            .bump()
+            .expect("`value` peeked the opening `{` before calling `object`");
         let mut fields = Vec::new();
         while !self.at("}") {
             let Some(k) = self.peek() else {

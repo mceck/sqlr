@@ -236,9 +236,10 @@ fn to_strict_json(src: &str) -> (String, Vec<usize>) {
         } else if src[i..].starts_with("/*") {
             i = src[i + 2..].find("*/").map_or(b.len(), |n| i + 2 + n + 2);
         } else {
-            let Some(ch) = src[i..].chars().next() else {
-                break;
-            };
+            let ch = src[i..]
+                .chars()
+                .next()
+                .expect("the loop condition keeps `i` below the text length");
             let mut tmp = [0u8; 4];
             push_str(&mut out, &mut map, ch.encode_utf8(&mut tmp), i);
             i += ch.len_utf8();

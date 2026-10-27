@@ -331,7 +331,7 @@ fn store_error(error: StoreError) -> StoreWorkerError {
 
 /// Runs `op` on `repo` (on the store thread; tests call it in place).
 pub(crate) fn run(repo: &ConnectionRepo, op: StoreOp) -> StoreReply {
-    let text = |r: Result<(), StoreError>| r.map_err(store_error);
+    let described = |r: Result<(), StoreError>| r.map_err(store_error);
     match op {
         StoreOp::ClientMigration { id, request } => {
             let importing = matches!(&request, MigrationRequest::Import(_));
@@ -367,7 +367,7 @@ pub(crate) fn run(repo: &ConnectionRepo, op: StoreOp) -> StoreReply {
             }
         }
         StoreOp::DeleteFolder(name) => {
-            let result = text(repo.delete_folder(&name));
+            let result = described(repo.delete_folder(&name));
             StoreReply::FolderDeleted {
                 name,
                 result,
@@ -379,7 +379,7 @@ pub(crate) fn run(repo: &ConnectionRepo, op: StoreOp) -> StoreReply {
             folder,
             target,
         } => {
-            let result = text(repo.move_connection(&conn, folder.as_deref(), target));
+            let result = described(repo.move_connection(&conn, folder.as_deref(), target));
             StoreReply::ConnectionMoved {
                 conn,
                 folder,
@@ -404,7 +404,7 @@ pub(crate) fn run(repo: &ConnectionRepo, op: StoreOp) -> StoreReply {
             secrets,
             editing,
         } => {
-            let result = text(repo.save(&cfg, &secrets));
+            let result = described(repo.save(&cfg, &secrets));
             StoreReply::Saved {
                 id: cfg.id,
                 editing,
@@ -413,7 +413,7 @@ pub(crate) fn run(repo: &ConnectionRepo, op: StoreOp) -> StoreReply {
             }
         }
         StoreOp::Delete { cfg, manifest } => {
-            let result = text(repo.delete(&cfg.id, &manifest));
+            let result = described(repo.delete(&cfg.id, &manifest));
             StoreReply::Deleted {
                 id: cfg.id,
                 name: cfg.name,

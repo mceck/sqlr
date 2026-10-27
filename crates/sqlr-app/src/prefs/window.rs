@@ -149,9 +149,11 @@ impl PrefsWindow {
                     }
                     Err(_) => None,
                 };
-                if let Some(result) = result
-                    && let Some(pending) = self.saving.take()
-                {
+                if let Some(result) = result {
+                    let pending = self
+                        .saving
+                        .take()
+                        .expect("`saving` was `Some` when this block began");
                     match result {
                         Ok(()) => {
                             self.original = pending.live;

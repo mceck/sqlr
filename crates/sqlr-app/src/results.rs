@@ -18,7 +18,7 @@ use crate::transfer_dialogs::{JobWhat, TrackedJob};
 
 /// Why the pending edits of a result cannot be turned into a changeset.
 #[derive(Debug, thiserror::Error)]
-enum ChangesetError {
+enum PendingEditsError {
     #[error("The tab is closed")]
     TabClosed,
     #[error("The result's table is unknown")]
@@ -197,19 +197,22 @@ impl SqlrApp {
     }
 
     /// The changeset of the result's pending edits.
-    fn changeset(&mut self, tab: u64, q: QueryId) -> Result<Changeset, ChangesetError> {
-        let t = tab_mut(&mut self.dock, tab).ok_or(ChangesetError::TabClosed)?;
+    fn changeset(&mut self, tab: u64, q: QueryId) -> Result<Changeset, PendingEditsError> {
+        let t = tab_mut(&mut self.dock, tab).ok_or(PendingEditsError::TabClosed)?;
         let table = t
             .edits
             .get(&q)
             .and_then(|e| e.table.clone())
-            .ok_or(ChangesetError::UnknownTable)?;
+            .ok_or(PendingEditsError::UnknownTable)?;
         let edits = t
             .grids
             .get(&q)
             .and_then(|g| g.edits.as_ref())
-            .ok_or(ChangesetError::NotEditable)?;
-        let result = self.engine.result(q).ok_or(ChangesetError::ResultClosed)?;
+            .ok_or(PendingEditsError::NotEditable)?;
+        let result = self
+            .engine
+            .result(q)
+            .ok_or(PendingEditsError::ResultClosed)?;
         let r = result.read();
         Ok(edits.changeset(&r.rows, table)?)
     }
@@ -733,17 +736,20 @@ mod changeset_error_tests {
 
     #[test]
     fn changeset_errors_keep_their_messages() {
-        assert_eq!(ChangesetError::TabClosed.to_string(), "The tab is closed");
         assert_eq!(
-            ChangesetError::UnknownTable.to_string(),
+            PendingEditsError::TabClosed.to_string(),
+            "The tab is closed"
+        );
+        assert_eq!(
+            PendingEditsError::UnknownTable.to_string(),
             "The result's table is unknown"
         );
         assert_eq!(
-            ChangesetError::NotEditable.to_string(),
+            PendingEditsError::NotEditable.to_string(),
             "The result cannot be edited"
         );
         assert_eq!(
-            ChangesetError::ResultClosed.to_string(),
+            PendingEditsError::ResultClosed.to_string(),
             "The result is closed"
         );
     }
