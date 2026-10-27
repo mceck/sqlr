@@ -10,6 +10,7 @@ pub mod policy;
 pub mod registry;
 pub mod results;
 pub mod server;
+pub mod skills;
 pub mod state;
 pub mod token;
 pub mod tools;

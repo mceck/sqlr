@@ -4,8 +4,9 @@
 #   scripts/bump-version.sh 0.2.0
 #   scripts/bump-version.sh patch|minor|major   # relative to the sqlr-app version
 #
-# Touches crates/*, drivers/*, tools/* and the driver template (the fuzz package stays 0.0.0),
-# then refreshes Cargo.lock. It does not commit.
+# Touches crates/*, drivers/*, tools/* and the driver template (the fuzz package stays 0.0.0)
+# and the `metadata.sqlr-version` of every sqlr skill, then refreshes Cargo.lock. It does
+# not commit.
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
@@ -38,6 +39,11 @@ for manifest in crates/*/Cargo.toml drivers/*/Cargo.toml tools/*/Cargo.toml temp
     awk -v v="$new" '!done && /^version = "/ { print "version = \"" v "\""; done = 1; next } { print }' \
         "$manifest" >"$manifest.tmp"
     mv "$manifest.tmp" "$manifest"
+done
+
+for skill in skills/*/SKILL.md; do
+    sed "s/^  sqlr-version: .*$/  sqlr-version: $new/" "$skill" >"$skill.tmp"
+    mv "$skill.tmp" "$skill"
 done
 
 cargo update --workspace --offline >/dev/null 2>&1 || cargo update --workspace >/dev/null
