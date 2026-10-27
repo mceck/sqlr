@@ -16,7 +16,6 @@ mod recent;
 mod secrets;
 mod settings;
 mod snippets;
-mod tasks;
 mod vault;
 
 use std::path::{Path, PathBuf};
@@ -35,7 +34,6 @@ pub use settings::{
     CONNECT_TIMEOUTS_S, DEFAULT_MCP_PORT, MCP_PORTS, MONO_FONT_SIZES, PAGE_SIZES,
     SIDECAR_IDLE_MINUTES, Settings, TERMINAL_FONT_SIZES, TERMINAL_SCROLLBACK, UI_SCALES,
 };
-pub use tasks::{MAX_RUN_LOG_BYTES, RUNS_KEPT};
 pub use vault::{VaultMcpTokenStore, VaultSecretStore};
 
 #[derive(Debug, thiserror::Error)]

@@ -190,7 +190,6 @@ impl Engine {
             inner: Mutex::new(Inner::default()),
             catalog: CatalogCache::default(),
             library: Library::default(),
-            tasks: crate::tasks::Tasks::default(),
             drivers_hub: crate::drivers::DriverHub::new(drivers.clone()),
             scripts: Scripts::default(),
             jobs: Jobs::with_operations(operations.clone()),
@@ -221,7 +220,6 @@ impl Engine {
             }
         });
         shared.load_snippets();
-        shared.load_tasks();
         shared.load_recent();
         let worker = shared.clone();
         let thread = std::thread::Builder::new()
@@ -1754,7 +1752,6 @@ pub(crate) struct Shared {
     pub(crate) inner: Mutex<Inner>,
     pub(crate) catalog: CatalogCache,
     pub(crate) library: Library,
-    pub(crate) tasks: crate::tasks::Tasks,
     pub(crate) scripts: Scripts,
     pub(crate) jobs: Jobs,
     pub(crate) db: DbQueue,

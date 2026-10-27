@@ -6,8 +6,7 @@ use async_trait::async_trait;
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 use sqlr_core::{
-    AgentAccess, ConnectionConfig, ConnectionProfile, Driver, DriverManifest, SavedTask, Secrets,
-    SettingValue,
+    AgentAccess, ConnectionConfig, ConnectionProfile, Driver, DriverManifest, Secrets, SettingValue,
 };
 use sqlr_driver_sqlite::SqliteDriver;
 use sqlr_engine::{DriverRegistry, Engine};
@@ -135,9 +134,6 @@ impl AgentHost for TestHost {
             .keymap_writes
             .push((action.into(), chords));
         Ok(())
-    }
-    async fn tasks(&self) -> sqlr_mcp::error::ToolResult<Vec<SavedTask>> {
-        Ok(Vec::new())
     }
     async fn write_connection(&self, write: ConnectionWrite) -> sqlr_mcp::error::ToolResult<()> {
         let mut state = self.state.lock();
@@ -1597,7 +1593,6 @@ async fn configuration_deletion_requires_approval_and_protects_used_profiles() {
         ("connection", "c1"),
         ("folder", "work"),
         ("profile", "unused"),
-        ("task", "task-1"),
     ]
     .into_iter()
     .enumerate()
@@ -1617,7 +1612,6 @@ async fn configuration_deletion_requires_approval_and_protects_used_profiles() {
             ("connection".into(), "c1".into()),
             ("folder".into(), "work".into()),
             ("profile".into(), "unused".into()),
-            ("task".into(), "task-1".into()),
         ]
     );
     let result = client
@@ -1640,7 +1634,6 @@ async fn configuration_deletion_requires_approval_and_protects_used_profiles() {
         ("folders", "folders"),
         ("settings", "settings"),
         ("keymap", "actions"),
-        ("tasks", "tasks"),
     ]
     .into_iter()
     .enumerate()
@@ -1658,5 +1651,14 @@ async fn configuration_deletion_requires_approval_and_protects_used_profiles() {
         )
         .await;
     assert_eq!(result["drivers"], json!([]));
+    // Saved tasks are gone from the surface.
+    let result = client
+        .tool(501, "config_list", json!({"target":"tasks"}))
+        .await;
+    assert_eq!(result["error"]["code"], "invalid");
+    let result = client
+        .tool(502, "config_delete", json!({"target":"task","id":"t1"}))
+        .await;
+    assert_eq!(result["error"]["code"], "invalid");
     server.shutdown().await;
 }

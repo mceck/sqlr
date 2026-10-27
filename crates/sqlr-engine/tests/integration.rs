@@ -20,7 +20,6 @@ mod script;
 mod ssh;
 mod store;
 mod support;
-mod tasks;
 mod tools;
 mod transfer;
 mod transfer_containers;

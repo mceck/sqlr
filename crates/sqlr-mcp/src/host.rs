@@ -7,9 +7,7 @@ use std::collections::BTreeMap;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlr_core::{
-    ConnectionConfig, ConnectionProfile, DriverManifest, SavedTask, Secrets, SettingValue,
-};
+use sqlr_core::{ConnectionConfig, ConnectionProfile, DriverManifest, Secrets, SettingValue};
 
 use crate::error::ToolResult;
 
@@ -194,7 +192,6 @@ pub trait AgentHost: Send + Sync {
     ) -> ToolResult<()>;
     async fn keymap(&self) -> ToolResult<Vec<KeymapEntry>>;
     async fn set_keymap(&self, action: &str, chords: Option<Vec<String>>) -> ToolResult<()>;
-    async fn tasks(&self) -> ToolResult<Vec<SavedTask>>;
     async fn write_connection(&self, write: ConnectionWrite) -> ToolResult<()>;
     async fn folder(&self, op: FolderOp) -> ToolResult<()>;
     /// Deletes a configuration target after the approval the caller obtained.

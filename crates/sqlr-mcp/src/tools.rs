@@ -1024,7 +1024,6 @@ async fn config_list(state: &Arc<ServerState>, args: &Args) -> ToolResult<CallTo
         "profiles" => json!({"target": "profiles", "profiles": state.host.profiles().await?}),
         "settings" => json!({"target": "settings", "settings": state.host.settings().await?}),
         "keymap" => json!({"target": "keymap", "actions": state.host.keymap().await?}),
-        "tasks" => json!({"target": "tasks", "tasks": state.host.tasks().await?}),
         "drivers" => {
             let only = args.opt_str("driver_id");
             let manifests: Vec<Value> = state
@@ -1740,10 +1739,6 @@ async fn config_delete(
                 "The profile definition is removed.".to_string(),
             )
         }
-        "task" => (
-            format!("Task \"{id}\""),
-            "The task definition is removed; it is never run.".to_string(),
-        ),
         other => {
             return Err(ToolError::invalid(format!(
                 "Unknown config_delete target \"{other}\""

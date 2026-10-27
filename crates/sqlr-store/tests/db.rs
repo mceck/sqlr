@@ -336,3 +336,43 @@ fn history_database_column_migrates() {
     assert_eq!(all[0].database.as_deref(), Some("analytics"));
     assert_eq!(all[1].database, None);
 }
+
+#[test]
+fn saved_task_tables_are_dropped_on_upgrade() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sqlr.db");
+    // A version 5 database, with saved tasks and their runs.
+    Db::open(&path).unwrap();
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
+               spec_json TEXT NOT NULL, created_ms INTEGER NOT NULL, updated_ms INTEGER NOT NULL);
+             CREATE TABLE IF NOT EXISTS task_runs (id INTEGER PRIMARY KEY, task_id TEXT NOT NULL,
+               started_ms INTEGER NOT NULL, ended_ms INTEGER, outcome TEXT NOT NULL,
+               summary TEXT NOT NULL, log TEXT NOT NULL);
+             INSERT INTO tasks VALUES ('t1', 'Copy', 'transfer', '{}', 1, 1);
+             INSERT INTO task_runs (task_id, started_ms, outcome, summary, log)
+               VALUES ('t1', 1, 'ok', '', '');
+             PRAGMA user_version = 5;",
+        )
+        .unwrap();
+    }
+    let db = Db::open(&path).unwrap();
+    db.add_history(&entry("a", "select 1", 1, HistoryOutcome::Rows(1)))
+        .unwrap();
+    drop(db);
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let tables: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE name IN ('tasks', 'task_runs', 'task_runs_task')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(tables, 0, "the task tables are gone");
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(version, 6);
+}

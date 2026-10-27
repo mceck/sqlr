@@ -34,7 +34,7 @@ pub static TOOLS: std::sync::LazyLock<Vec<ToolSpec>> = std::sync::LazyLock::new(
                 "type": "object",
                 "required": ["target"],
                 "properties": {
-                    "target": {"type": "string", "enum": ["connections", "folders", "profiles", "settings", "keymap", "tasks", "drivers"], "description": "Configuration collection to read; connections includes only connections exposed to agents."},
+                    "target": {"type": "string", "enum": ["connections", "folders", "profiles", "settings", "keymap", "drivers"], "description": "Configuration collection to read; connections includes only connections exposed to agents."},
                     "driver_id": {"type": "string", "description": "Optional manifest ID filter, used only with target=drivers; obtain IDs from connections or the unfiltered driver list."}
                 }
             }),
@@ -60,7 +60,7 @@ pub static TOOLS: std::sync::LazyLock<Vec<ToolSpec>> = std::sync::LazyLock::new(
                 "type": "object",
                 "required": ["target", "id"],
                 "properties": {
-                    "target": {"type": "string", "enum": ["connection", "folder", "profile", "task"]},
+                    "target": {"type": "string", "enum": ["connection", "folder", "profile"]},
                     "id": {"type": "string"}
                 }
             }),

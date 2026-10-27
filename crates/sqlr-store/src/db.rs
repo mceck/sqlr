@@ -10,7 +10,7 @@ pub const HISTORY_KEEP: usize = 100_000;
 /// History SQL longer than this is truncated.
 pub const MAX_HISTORY_SQL_BYTES: usize = 1 << 20;
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 /// Version 2: when each connection was last used (the welcome screen's "Recent").
 const SCHEMA_V2: &str = "
@@ -32,6 +32,13 @@ CREATE INDEX task_runs_task ON task_runs(task_id, started_ms DESC);
 /// Version 5: ER diagram layouts.
 const SCHEMA_V5: &str =
     "CREATE TABLE er_layouts (layout_key TEXT PRIMARY KEY, layout TEXT NOT NULL);";
+
+/// Version 6: saved tasks are removed, with their runs.
+const SCHEMA_V6: &str = "
+DROP INDEX IF EXISTS task_runs_task;
+DROP TABLE IF EXISTS task_runs;
+DROP TABLE IF EXISTS tasks;
+";
 
 const SCHEMA: &str = "
 CREATE TABLE history (id INTEGER PRIMARY KEY, conn_id TEXT NOT NULL, sql TEXT NOT NULL, started_at INTEGER NOT NULL,
@@ -160,6 +167,9 @@ fn migrate(conn: &mut Connection) -> Result<(), StoreError> {
     }
     if version < 5 {
         tx.execute_batch(SCHEMA_V5).map_err(db_err)?;
+    }
+    if version < 6 {
+        tx.execute_batch(SCHEMA_V6).map_err(db_err)?;
     }
     if version < SCHEMA_VERSION {
         tx.pragma_update(None, "user_version", SCHEMA_VERSION)

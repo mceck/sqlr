@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use serde_json::Value;
-use sqlr_core::{ConnectionProfile, DriverManifest, Level, SavedTask, SettingValue};
+use sqlr_core::{ConnectionProfile, DriverManifest, Level, SettingValue};
 use sqlr_engine::Engine;
 use sqlr_mcp::error::{ToolError, ToolResult};
 use sqlr_mcp::host::{
@@ -193,11 +193,6 @@ impl AgentHost for AppHostClient {
             Ok(())
         })
         .await
-    }
-
-    async fn tasks(&self) -> ToolResult<Vec<SavedTask>> {
-        self.request(|app| Ok(app.engine.tasks().as_ref().clone()))
-            .await
     }
 
     async fn write_connection(&self, write: ConnectionWrite) -> ToolResult<()> {
@@ -813,11 +808,6 @@ impl SqlrApp {
                 self.layered.forget(&Level::Profile(id.to_string()));
                 self.reload_profiles();
                 self.notify(format!("Agent deleted profile {id}"));
-                Ok(())
-            }
-            "task" => {
-                self.engine.delete_task(id);
-                self.notify(format!("Agent deleted task {id}"));
                 Ok(())
             }
             _ => Err(ToolError::invalid("Unknown delete target")),

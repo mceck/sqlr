@@ -113,8 +113,6 @@ pub enum JobOutcome {
     Plan(sqlr_core::PlanTree),
     /// The differences of a schema compare, by object (`Engine::compare_schemas`).
     Compared(Vec<sqlr_core::ObjectDiff>),
-    /// A task's runs, newest first (`Engine::task_runs`).
-    TaskRuns(Vec<sqlr_core::TaskRun>),
     /// A transfer source's columns and first rows (`Engine::probe_source`).
     Probed(SourceProbe),
     /// An object definition, loaded.
@@ -241,13 +239,9 @@ struct JobsInner {
     operations: Option<crate::operations::Operations>,
 }
 
-/// Called once with a job's final state, as it ends.
-type JobObserver = Box<dyn FnOnce(JobState) + Send>;
-
 #[derive(Default)]
 pub(crate) struct Jobs {
     inner: Arc<JobsInner>,
-    observers: Mutex<HashMap<JobId, JobObserver>>,
 }
 
 impl Jobs {
@@ -257,7 +251,6 @@ impl Jobs {
                 operations: Some(operations),
                 ..Default::default()
             }),
-            observers: Mutex::default(),
         }
     }
 
@@ -321,7 +314,7 @@ impl Jobs {
     }
 
     pub fn finish(&self, id: JobId, outcome: JobOutcome) {
-        let ended = {
+        {
             let mut map = self.inner.map.lock();
             match map.get_mut(&id) {
                 Some(entry) if entry.state.outcome.is_none() => {
@@ -339,16 +332,9 @@ impl Jobs {
                     log_job_failure(id, entry.operation, &entry.state, &outcome);
                     entry.state.outcome = Some(outcome);
                     entry.cancel = None;
-                    Some(entry.state.clone())
                 }
-                _ => None,
+                _ => {}
             }
-        };
-        // The observer sees the end before anyone can forget the job.
-        if let Some(state) = ended
-            && let Some(observer) = self.observers.lock().remove(&id)
-        {
-            observer(state);
         }
     }
 
@@ -369,23 +355,6 @@ impl Jobs {
             );
         }
         ids
-    }
-
-    /// Calls `observer` once with the job's final state: now when it already ended, else
-    /// when it ends.
-    pub fn observe(&self, id: JobId, observer: impl FnOnce(JobState) + Send + 'static) {
-        let map = self.inner.map.lock();
-        match map.get(&id) {
-            Some(entry) if entry.state.outcome.is_some() => {
-                let state = entry.state.clone();
-                drop(map);
-                observer(state);
-            }
-            Some(_) => {
-                self.observers.lock().insert(id, Box::new(observer));
-            }
-            None => {}
-        }
     }
 
     /// Flags the job cancelled and returns the statement to interrupt, if it runs one.
