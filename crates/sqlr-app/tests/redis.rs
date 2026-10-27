@@ -312,6 +312,60 @@ fn production_confirms_a_value_edit_and_a_key_delete() {
 }
 
 #[test]
+fn cmd_s_saves_an_edited_string_value() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut h, driver) = app(dir.path(), None);
+    h.get_by_label("Expand redis-conn").click();
+    wait_for_label(&mut h, "Expand db0");
+    h.get_by_label("Expand db0").click();
+    wait_for_label(&mut h, "Expand usr");
+    h.get_by_label("Expand usr").click();
+    wait_for_label(&mut h, "one");
+    double_click(&mut h, "one");
+    step_until(&mut h, "the value", |h| {
+        h.query_by_role_and_label(Role::TextInput, "String value")
+            .is_some()
+    });
+    // Nothing edited: nothing saved.
+    h.key_press_modifiers(Modifiers::COMMAND, Key::S);
+    h.run_steps(5);
+    assert!(driver.edits().is_empty());
+    h.get_by_role_and_label(Role::TextInput, "String value")
+        .click();
+    h.run_steps(2);
+    h.event(egui::Event::Text("!".into()));
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::S);
+    step_until(&mut h, "the save", |_| driver.edits().len() == 1);
+    assert!(matches!(
+        &driver.edits()[0].2,
+        sqlr_core::KvEdit::SetString(v) if v.ends_with(b"!") || v.starts_with(b"!")
+    ));
+}
+
+#[test]
+fn cmd_s_saves_an_inline_element() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut h, driver) = app(dir.path(), None);
+    h.get_by_label("Expand redis-conn").click();
+    wait_for_label(&mut h, "session");
+    h.get_by_label("session").click();
+    step_until(&mut h, "the hash", |h| {
+        h.query_by_label("Edit id").is_some()
+    });
+    h.get_by_label("Edit id").click();
+    h.run_steps(3);
+    h.event(egui::Event::Text("7".into()));
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::S);
+    step_until(&mut h, "the save", |_| driver.edits().len() == 1);
+    assert!(matches!(
+        &driver.edits()[0].2,
+        sqlr_core::KvEdit::HashSet(field, _) if field == b"id"
+    ));
+}
+
+#[test]
 fn a_console_runs_on_its_own_tabs_database_and_the_prompt_names_it() {
     let dir = tempfile::tempdir().unwrap();
     let (mut h, driver) = app(dir.path(), Some("production"));

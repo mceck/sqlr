@@ -74,9 +74,29 @@ pub struct KvViewState {
     add_b: String,
     error: Option<String>,
     rows: Option<TextRows>,
+    /// Save the unsaved edit on the next frame, as its Save button would.
+    save_requested: bool,
 }
 
 impl KvViewState {
+    /// Whether an edit is not saved yet: an open inline element editor, or a string value
+    /// that differs from the one loaded.
+    pub fn has_unsaved_edit(&self) -> bool {
+        self.editing.is_some() || self.text != self.original
+    }
+
+    /// Saves the unsaved edit when the view next draws, as its Save button (or Enter in an
+    /// element editor) would.
+    pub fn request_save(&mut self) {
+        self.save_requested = self.has_unsaved_edit();
+    }
+
+    /// Drops the unsaved edit, as Cancel or Revert would.
+    pub fn discard_edit(&mut self) {
+        self.editing = None;
+        self.text = self.original.clone();
+    }
+
     /// Forgets everything typed for another key.
     fn focus(&mut self, key: &[u8]) {
         if self.key != key {
@@ -242,6 +262,7 @@ pub fn key_value_view(
             _ => "Nothing loaded.".to_string(),
         };
         theme::hint(ui, &text);
+        state.save_requested = false;
         return action;
     };
     if let Some(edit) = body(ui, state, page, &p, &mut action) {
@@ -249,6 +270,8 @@ pub fn key_value_view(
         state.error = None;
         action = Some(KvViewAction::Edit(edit));
     }
+    // A request the page could not answer (the edited row scrolled away) is dropped.
+    state.save_requested = false;
     action
 }
 
@@ -393,7 +416,9 @@ fn body(
                     let (field, value) = &fields[i];
                     let name = cell_text(field);
                     cell(ui, 200.0, &name);
-                    if let Some(text) = edit_field(ui, &mut state.editing, i, "Value") {
+                    if let Some(text) =
+                        edit_field(ui, &mut state.editing, i, "Value", state.save_requested)
+                    {
                         edit = Some(KvEdit::HashSet(field.clone(), text.into_bytes()));
                         return;
                     }
@@ -425,7 +450,9 @@ fn body(
                     let index = *start + i as i64;
                     let value = &items[i];
                     cell(ui, 70.0, &index.to_string());
-                    if let Some(text) = edit_field(ui, &mut state.editing, i, "Value") {
+                    if let Some(text) =
+                        edit_field(ui, &mut state.editing, i, "Value", state.save_requested)
+                    {
                         edit = Some(KvEdit::ListSet(index, text.into_bytes()));
                         return;
                     }
@@ -484,7 +511,9 @@ fn body(
                     let (member, score) = &members[i];
                     let name = cell_text(member);
                     cell(ui, 220.0, &name);
-                    if let Some(text) = edit_field(ui, &mut state.editing, i, "Score") {
+                    if let Some(text) =
+                        edit_field(ui, &mut state.editing, i, "Score", state.save_requested)
+                    {
                         match text.trim().parse::<f64>() {
                             Ok(score) if !score.is_nan() => {
                                 edit = Some(KvEdit::ZAdd(member.clone(), score));
@@ -620,12 +649,14 @@ fn row_buttons(
     (begin, remove)
 }
 
-/// The inline editor of row `row`, when it is the row being edited: the text once saved.
+/// The inline editor of row `row`, when it is the row being edited: the text once saved
+/// (with Save, Enter or a `requested` save).
 fn edit_field(
     ui: &mut egui::Ui,
     editing: &mut Option<Editing>,
     row: usize,
     label: &str,
+    requested: bool,
 ) -> Option<String> {
     let e = editing.as_mut().filter(|e| e.row == row)?;
     let width = (ui.available_width() - 130.0).max(60.0);
@@ -636,7 +667,7 @@ fn edit_field(
     }
     let enter = response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
     let escape = response.has_focus() && ui.input(|i| i.key_pressed(Key::Escape));
-    let save = ui.button("Save").clicked() || enter;
+    let save = ui.button("Save").clicked() || enter || requested;
     let cancel = ui.button("Cancel").clicked() || escape;
     if save {
         let text = e.buffer.clone();
@@ -807,7 +838,11 @@ fn string_body(
         }
     });
     ui.add_space(Spacing::S);
+    let can_edit = valid && !truncated && bytes.len() <= EDIT_MAX;
     let mut edit = None;
+    if std::mem::take(&mut state.save_requested) && can_edit && state.text != state.original {
+        edit = Some(KvEdit::SetString(state.text.clone().into_bytes()));
+    }
     match state.mode {
         StringMode::Hex => {
             let shown = &bytes[..bytes.len().min(HEX_MAX)];
@@ -834,7 +869,6 @@ fn string_body(
             }
         }
         StringMode::Text => {
-            let can_edit = valid && !truncated && bytes.len() <= EDIT_MAX;
             if can_edit {
                 let dirty = state.text != state.original;
                 ui.horizontal(|ui| {

@@ -67,6 +67,17 @@ impl SessionsTab {
 
     fn refresh(&mut self, engine: &Engine, now: f64) {
         self.last = Some(now);
+        self.read(engine);
+    }
+
+    /// Asks for a new snapshot now (Refresh), unless one is being read.
+    pub fn reload(&mut self, engine: &Engine) {
+        if self.sessions_job.is_none() && self.locks_job.is_none() {
+            self.read(engine);
+        }
+    }
+
+    fn read(&mut self, engine: &Engine) {
         if self.support.sessions && self.sessions_job.is_none() {
             self.sessions_job = Some(engine.admin_snapshot(&self.conn, AdminQuery::Sessions));
         }

@@ -126,6 +126,22 @@ impl UsersTab {
         usize::from(self.editor.as_ref().is_some_and(|e| e.pending())) + self.grid.pending()
     }
 
+    /// Whether Apply and Revert act now: edits are pending and no apply runs.
+    pub fn editable_now(&self) -> bool {
+        self.pending() > 0 && self.apply.is_none()
+    }
+
+    /// Drops the role's and the grid's edits, as Revert does.
+    pub fn revert(&mut self) {
+        if !self.editable_now() {
+            return;
+        }
+        if let Some(editor) = &mut self.editor {
+            editor.revert();
+        }
+        self.grid.revert();
+    }
+
     fn set_loaded(&mut self, grants: Vec<Grant>) {
         self.grid.set_grants(&grants);
         self.loaded = grants;
@@ -504,10 +520,7 @@ impl UsersTab {
                 if icons::button(ui, pending > 0 && !busy, icons::CANCELLED, None, "Revert")
                     .clicked()
                 {
-                    if let Some(editor) = &mut self.editor {
-                        editor.revert();
-                    }
-                    self.grid.revert();
+                    self.revert();
                 }
                 let can_drop =
                     existing.is_some() && self.support.roles && !busy && blocked.is_none();

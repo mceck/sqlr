@@ -731,7 +731,11 @@ fn object_editor_body(
             action = Some(ObjectEditorAction::Revert);
         }
         let refresh = icons::button(ui, idle && !state.is_new(), icons::REFRESH, None, "Refresh")
-            .on_hover_text("Load the definition again");
+            .on_hover_text(crate::keymap::tooltip(
+                ui.ctx(),
+                "Load the definition again",
+                sqlr_core::ActionId::Refresh,
+            ));
         if refresh.clicked() {
             action = Some(ObjectEditorAction::Refresh);
         }

@@ -12,8 +12,8 @@ use sqlr_core::{
 use sqlr_engine::{AdminQuery, AdminSnapshot, ApplyOptions, Engine, JobId, JobOutcome, SessionKey};
 use sqlr_ui::theme::{self, Spacing, icons};
 use sqlr_ui::{
-    ObjectEditorAction, ObjectEditorContext, ObjectEditorState, PrivilegeGridState, PrivilegeRow,
-    object_editor, privilege_grid,
+    ObjectEditorAction, ObjectEditorContext, ObjectEditorState, ObjectSubTab, PrivilegeGridState,
+    PrivilegeRow, object_editor, privilege_grid,
 };
 
 /// Catalog tables with their columns: foreign key and index pickers.
@@ -65,6 +65,8 @@ pub struct ObjectTab {
     tables: Option<(u64, Tables)>,
     /// Grants and statistics.
     admin: ObjectAdmin,
+    /// The page to show once the definition loads (a reopened tab).
+    open_on: Option<ObjectSubTab>,
 }
 
 /// An object tab's administration: its grants per role (Permissions) and its statistics.
@@ -138,6 +140,37 @@ impl ObjectTab {
             pending_ddl: None,
             tables: None,
             admin: ObjectAdmin::default(),
+            open_on: None,
+        }
+    }
+
+    /// Shows `page` once the definition loads.
+    pub fn open_on(&mut self, page: ObjectSubTab) {
+        self.open_on = Some(page);
+    }
+
+    /// The page shown, once the definition is loaded.
+    pub fn page(&self) -> Option<ObjectSubTab> {
+        self.state.as_ref().map(|s| s.tab)
+    }
+
+    /// Whether the tab creates an object that does not exist yet.
+    pub fn is_new(&self) -> bool {
+        self.state.as_ref().is_some_and(ObjectEditorState::is_new)
+    }
+
+    /// Drops the Schema change list, as Revert does (not for a new object, or while an
+    /// apply runs).
+    pub fn revert(&mut self) {
+        if self.apply.is_some() {
+            return;
+        }
+        if let Some(state) = &mut self.state
+            && !state.is_new()
+            && state.pending() > 0
+        {
+            state.revert();
+            self.message = None;
         }
     }
 
@@ -206,6 +239,24 @@ impl ObjectTab {
         let schema = self.object.schema.clone();
         let query = AdminQuery::TableStats { schema };
         self.admin.stats_job = Some(engine.admin_snapshot(&self.conn, query));
+    }
+
+    /// The Permissions page is shown: the hosting tab draws the privilege grid.
+    pub fn permissions_shown(&self) -> bool {
+        self.state.as_ref().is_some_and(|s| s.permissions_shown())
+    }
+
+    /// Whether "Apply grants" applies something now: grant edits are pending and no apply
+    /// of them runs.
+    pub fn grants_applicable(&self) -> bool {
+        self.admin.grid.pending() > 0 && self.admin.apply.is_none()
+    }
+
+    /// Drops the grant edits, as "Revert grants" does.
+    pub fn revert_grants(&mut self) {
+        if self.grants_applicable() {
+            self.admin.grid.revert();
+        }
     }
 
     /// Whether "Apply grants" was clicked since the last call.
@@ -466,7 +517,13 @@ impl ObjectTab {
                             state.before = Some(def)
                         }
                         Some(state) => state.reload(def),
-                        None => self.state = Some(ObjectEditorState::new(def)),
+                        None => {
+                            let mut state = ObjectEditorState::new(def);
+                            if let Some(page) = self.open_on.take() {
+                                state.tab = page;
+                            }
+                            self.state = Some(state);
+                        }
                     }
                 }
                 // With a definition on screen, the failure joins the message line.

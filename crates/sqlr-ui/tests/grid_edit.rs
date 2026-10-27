@@ -548,6 +548,140 @@ fn add_row_appends_an_inserted_row() {
 }
 
 #[test]
+fn command_i_adds_a_row() {
+    let mut h = harness_with(sequential(2), false, Some(editable()));
+    click(&mut h, "name 0");
+    press(&mut h, Modifiers::COMMAND, Key::I);
+    assert!(h.state().actions.contains(&GridAction::AddRow));
+    assert_eq!(h.state().state.edits.as_ref().unwrap().pending(), 1);
+    assert_eq!(
+        h.state().state.view_rows(),
+        vec![0, 1, sqlr_ui::INSERTED_ROW_BASE]
+    );
+}
+
+#[test]
+fn command_d_duplicates_the_selected_rows() {
+    let mut h = harness_with(sequential(4), false, Some(editable()));
+    click(&mut h, "Row 2");
+    press(&mut h, Modifiers::SHIFT, Key::ArrowDown);
+    press(&mut h, Modifiers::COMMAND, Key::D);
+    let actions = &h.state().actions;
+    assert!(
+        actions.contains(&GridAction::DuplicateRow(1)),
+        "{actions:?}"
+    );
+    assert!(
+        actions.contains(&GridAction::DuplicateRow(2)),
+        "{actions:?}"
+    );
+    assert_eq!(h.state().state.edits.as_ref().unwrap().pending(), 2);
+    assert_eq!(h.get_all_by_label("name 1").count(), 2);
+    // One undo takes both copies back, as for the menu.
+    press(&mut h, Modifiers::COMMAND, Key::Z);
+    assert_eq!(h.state().state.edits.as_ref().unwrap().pending(), 0);
+}
+
+#[test]
+fn command_alt_n_sets_the_selected_cells_null() {
+    let mut h = harness_with(sequential(5), false, Some(editable()));
+    // `id` is NOT NULL: nothing happens.
+    click(&mut h, "3");
+    press(&mut h, Modifiers::COMMAND | Modifiers::ALT, Key::N);
+    assert!(h.state().actions.is_empty(), "{:?}", h.state().actions);
+    click(&mut h, "name 3");
+    press(&mut h, Modifiers::COMMAND | Modifiers::ALT, Key::N);
+    assert!(h.state().actions.contains(&GridAction::SetCell {
+        row: 3,
+        col: 1,
+        value: Value::Null
+    }));
+    assert_eq!(h.state().state.edits.as_ref().unwrap().pending(), 1);
+}
+
+#[test]
+fn row_chords_do_nothing_on_a_read_only_grid() {
+    let mut h = harness(sequential(3));
+    click(&mut h, "name 1");
+    press(&mut h, Modifiers::COMMAND, Key::I);
+    press(&mut h, Modifiers::COMMAND, Key::D);
+    press(&mut h, Modifiers::COMMAND | Modifiers::ALT, Key::N);
+    assert!(h.state().actions.is_empty(), "{:?}", h.state().actions);
+    assert_eq!(h.get_all_by_label("name 1").count(), 1);
+}
+
+#[test]
+fn row_chords_do_nothing_while_the_cell_editor_is_open() {
+    let mut h = harness_with(sequential(3), false, Some(editable()));
+    double_click(&mut h, "name 1");
+    press(&mut h, Modifiers::COMMAND, Key::I);
+    press(&mut h, Modifiers::COMMAND, Key::D);
+    assert!(h.state().actions.is_empty(), "{:?}", h.state().actions);
+    assert!(h.state().state.editing());
+}
+
+/// Whether some painted text reads exactly `text`.
+fn painted(h: &Harness<'static, App>, text: &str) -> bool {
+    fn visit(shape: &egui::Shape, text: &str) -> bool {
+        match shape {
+            egui::Shape::Text(t) => t.galley.text() == text,
+            egui::Shape::Vec(shapes) => shapes.iter().any(|s| visit(s, text)),
+            _ => false,
+        }
+    }
+    h.output().shapes.iter().any(|c| visit(&c.shape, text))
+}
+
+#[test]
+fn the_context_menu_shows_the_row_chords() {
+    let mut h = harness_with(sequential(3), false, Some(editable()));
+    h.run_steps(100);
+    let pos = center(&h, "name 1");
+    press_at(&mut h, pos, PointerButton::Secondary, Modifiers::NONE);
+    let keymap = sqlr_ui::keymap::ui_keymap(&h.ctx);
+    for action in [
+        sqlr_core::ActionId::AddRow,
+        sqlr_core::ActionId::DuplicateRows,
+        sqlr_core::ActionId::SetNull,
+    ] {
+        let chord = keymap.label(action).expect("bound");
+        assert!(painted(&h, &chord), "{chord} is not shown");
+    }
+}
+
+#[test]
+fn committing_the_cell_editor_stages_its_value() {
+    let mut h = harness_with(sequential(3), false, Some(editable()));
+    double_click(&mut h, "name 1");
+    h.event(Event::Text("renamed".into()));
+    h.run_steps(2);
+    let app = h.state_mut();
+    assert!(app.state.commit_editor(&app.rows));
+    assert!(!app.state.editing());
+    let edits = app.state.edits.as_ref().unwrap();
+    assert_eq!(
+        edits.value(&app.rows, 1, 1),
+        Some(Value::Text("renamed".into()))
+    );
+    // With no editor open there is nothing to commit.
+    assert!(app.state.commit_editor(&app.rows));
+}
+
+#[test]
+fn an_invalid_cell_editor_value_is_not_committed() {
+    let mut h = harness_with(sequential(3), false, Some(editable()));
+    double_click(&mut h, "2");
+    h.event(Event::Text("abc".into()));
+    h.run_steps(2);
+    let app = h.state_mut();
+    assert!(!app.state.commit_editor(&app.rows));
+    assert!(app.state.editing(), "the editor stays open");
+    assert_eq!(app.state.edits.as_ref().unwrap().pending(), 0);
+    h.run_steps(2);
+    h.get_by_label("Not an integer");
+}
+
+#[test]
 fn inserted_rows_keep_their_identity_when_more_rows_load() {
     let mut h = harness_with(sequential(2), true, Some(editable()));
     menu(&mut h, "name 0", "Add row");

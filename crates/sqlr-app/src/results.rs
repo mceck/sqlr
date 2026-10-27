@@ -385,7 +385,7 @@ impl SqlrApp {
 
     /// Runs the result's statement again as the tab's run, keeping its server sort and
     /// filter and the grid's local ones.
-    fn rerun_result(&mut self, tab: u64, q: QueryId) {
+    pub(crate) fn rerun_result(&mut self, tab: u64, q: QueryId) {
         let engine = &self.engine;
         let Some(t) = tab_mut(&mut self.dock, tab) else {
             return;

@@ -116,6 +116,8 @@ pub(crate) enum Discard {
     Data,
     /// An action of the users and roles tab.
     Users(crate::admin::UsersDiscard),
+    /// An editor tab's result is to run again (Refresh), dropping its changeset.
+    Rerun(sqlr_engine::QueryId),
 }
 
 /// `path` without its last segment.
@@ -295,6 +297,32 @@ impl SqlrApp {
             editing,
             vec![parent(&node.path)],
         );
+        self.push_object_tab(conn, tab);
+    }
+
+    /// Opens (or focuses) the object editor of `object` on `page`: a closed tab reopened.
+    pub(crate) fn reopen_object(
+        &mut self,
+        conn: &str,
+        object: ObjectRef,
+        refresh: Vec<NodePath>,
+        page: Option<sqlr_ui::ObjectSubTab>,
+    ) {
+        if let Some(path) = self.dock.find_tab_from(|t| {
+            t.object
+                .as_ref()
+                .is_some_and(|o| o.conn == conn && o.object == object)
+        }) {
+            let _ = self.dock.set_active_tab(path);
+            return;
+        }
+        let Some(editing) = self.editing_for(conn) else {
+            return;
+        };
+        let mut tab = ObjectTab::open(&self.engine, conn, object, editing, refresh);
+        if let Some(page) = page {
+            tab.open_on(page);
+        }
         self.push_object_tab(conn, tab);
     }
 
@@ -555,11 +583,6 @@ impl SqlrApp {
         }
     }
 
-    /// Whether the active tab is an object tab.
-    pub(crate) fn active_is_object(&mut self) -> bool {
-        self.active_tab().is_some_and(|t| t.object.is_some())
-    }
-
     /// Handles an object tab's editor action.
     pub(crate) fn object_action(&mut self, key: u64, action: ObjectEditorAction) {
         let engine = &self.engine;
@@ -712,24 +735,50 @@ impl SqlrApp {
         }
     }
 
+    /// The question, title, icon and confirming button of the discard prompt for tab `key`;
+    /// `None` once there is nothing to ask about.
+    fn discard_prompt(
+        &mut self,
+        key: u64,
+        then: &Discard,
+    ) -> Option<(String, &'static str, &'static str, &'static str)> {
+        if let Discard::Rerun(q) = then {
+            let pending = tab_mut(&mut self.dock, key)?
+                .grids
+                .get(q)?
+                .edits
+                .as_ref()?
+                .pending();
+            let noun = if pending == 1 { "change" } else { "changes" };
+            return Some((
+                format!("Discard {pending} pending {noun} and refresh?"),
+                "Refresh",
+                theme::icons::REFRESH,
+                "Refresh",
+            ));
+        }
+        let name = self.discard_name(key)?;
+        Some((
+            format!("Discard the pending changes of {name}?"),
+            "Discard changes",
+            theme::icons::UNDO,
+            "Discard",
+        ))
+    }
+
     fn discard_ui(&mut self, ctx: &egui::Context) {
         let Some((key, then)) = self.objects.discard.clone() else {
             return;
         };
-        let Some(name) = self.discard_name(key) else {
+        let Some((question, title, icon, confirm)) = self.discard_prompt(key, &then) else {
             self.objects.discard = None;
             return;
         };
         let answer = confirm_modal(
             ctx,
-            ConfirmSpec::new(
-                Id::new("discard_object_edits"),
-                theme::icons::UNDO,
-                "Discard changes",
-                "Discard",
-            ),
+            ConfirmSpec::new(Id::new("discard_object_edits"), icon, title, confirm),
             |ui| {
-                ui.label(format!("Discard the pending changes of {name}?"));
+                ui.label(question);
             },
             |_| {},
         );
@@ -766,6 +815,10 @@ impl SqlrApp {
                 {
                     users.perform(engine, action);
                 }
+            }
+            Discard::Rerun(q) => {
+                self.changes_action(key, q, sqlr_ui::ChangesAction::Discard);
+                self.rerun_result(key, q);
             }
         }
     }
