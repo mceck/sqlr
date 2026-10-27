@@ -56,12 +56,12 @@ A new tab opens either blank without a Connection, or bound to the Connection an
 ### Multi-cursor
 
 - ⌥-click adds a caret; ⌥⌘↑ and ⌥⌘↓ add one above or below at the primary caret's column; ⇧⌥I replaces the carets with one at the end of every line the selections touch. Esc closes the completion popup first, then the find bar, then collapses the extra carets, then clears the selection. Clicking elsewhere with no modifier places one caret.
-- Carets stay sorted, non-overlapping and at least one; overlapping ones merge. The primary caret is the last and drives the completion popup, the statement tint and the error reveal.
+- Carets stay sorted, non-overlapping and at least one; overlapping ones merge. One caret is primary and drives the completion popup, the statement tint and the error reveal: the one a click places, the one added below, or the occurrence a next or all occurrences command lands on; ⌥-click and add cursor above keep the current primary. Edits and moves keep the primary on the same caret.
 - Typing, deleting, pasting, indentation and newline edits apply once per caret as one command. Vertical moves keep a per-caret goal column, so moving through blank or short lines and back returns the caret to its column; any other motion, edit or caret placement resets the goal.
 - Copying several non-empty selections joins their text with line breaks.
 - **Add selection to next occurrence** (⌘D). With an empty primary selection, the first press selects the word around the primary caret; that word is then matched as a whole word with the same case. With a non-empty primary selection, its text is matched with the find bar's Match case and Whole word options. Each press searches after the most recently added selection, wraps around the text, skips ranges already selected, and adds the match as the new primary selection, scrolled into view. When every occurrence is selected the press changes nothing. A selection that spans a line break has no next occurrence, as find never matches across lines.
 - **Select all occurrences** (⇧⌘L) applies the same matching rules and selects every match, up to 10,000 carets. The match that holds the previous primary caret stays primary.
-- **Undo last cursor operation** (⌘U) restores the carets from before the latest caret-adding command: a caret added by ⌥-click, above or below, at line ends, or by a next or all occurrences command. Up to 100 caret sets are kept; a text edit or a plain click starts the history again. It changes no text and leaves the undo stack alone.
+- **Undo last cursor operation** (⌘U) restores the carets from before the latest caret-adding command: a caret added by ⌥-click, above or below, at line ends, or by a next or all occurrences command. Up to 100 caret sets are kept; a text edit, undo or redo, a plain click or Esc collapsing the carets starts the history again, while arrow moves keep it. It changes no text and leaves the undo stack alone.
 
 ### Undo and redo
 

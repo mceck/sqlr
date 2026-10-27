@@ -242,7 +242,7 @@ The Keymap is stored as the preset plus the differences from it. Each action is 
 
 | Active surface | Apply | Discard | Refresh |
 |---|---|---|---|
-| Editor tab Result | The shown Result's Changeset | Discards that Changeset | Runs the shown Result's statement again with its server sort and filter; asks first when the Changeset is not empty |
+| Editor tab Result | The shown Result's Changeset, committing an open cell editor first | Discards that Changeset and closes an open cell editor | Runs the shown Result's read again with its server sort and filter; asks first when the Changeset is not empty |
 | Object editor, Data page | The page's Changeset | Discards it | Loads the object again, asking first when edits are pending |
 | Object editor, Permissions page | The grants | Reverts the grants | Same as above |
 | Object editor, other pages | The Schema change list | Reverts it | Same as above |
@@ -252,21 +252,21 @@ The Keymap is stored as the preset plus the differences from it. Each action is 
 | Document tab | Saves the JSON view's edit or insert, after its validation | Cancels the JSON view's edit | Runs the tab's last statements again while the JSON view is not editing |
 | DDL viewer | Nothing to apply | Nothing to discard | Loads the DDL again |
 
-Refresh does nothing while the tab's query runs. In an Editor tab it reruns the shown Result and leaves the editor text alone; with no Result shown it does nothing. Apply, Discard, Refresh and Reopen closed tab act only while no modal dialog is open, so a chord pressed under a prompt never reaches the tab behind it.
+Refresh does nothing while the tab's query runs. In an Editor tab it reruns the shown Result and leaves the editor text alone; with no Result shown, or a Result produced by a statement that writes, such as `DELETE … RETURNING`, it does nothing, so a refresh never repeats a write without the profile's confirmation. An Object editor refreshes once its load or apply has finished, and a document tab once its JSON views are not editing or saving. Apply, Discard, Refresh and Reopen closed tab act only while no modal dialog is open, so a chord pressed under a prompt never reaches the tab behind it.
 
 **Go to tab** focuses a tab by its position in the order Next tab cycles through: every tab group in turn, each group's tabs left to right. A position past the last tab does nothing; Go to the last tab always lands on the last one.
 
 **Reopen closed tab** reopens the most recently closed tab of this session, and each further press the one closed before it. sqlr remembers up to 20 closed tabs in memory for the session. A reopened tab gets back what identifies it:
 
 - an Editor tab, its title, Connection, database and text;
-- an Object editor, its Connection, object and page;
+- an Object editor of an existing object, its Connection, object and page (an object still being created exists only as pending edits and is left out);
 - a DDL viewer, its Connection and object;
 - a Redis tab, its Connection, database and selected key;
 - a document tab, its title, Connection, database and text;
 - an administration panel, its Connection and panel;
 - an ER diagram, its Connection, database, schema and tables.
 
-Results, pending edits and transactions belong to the closed tab and end with it. A reopened tab runs nothing on its own and connects the way opening that tab normally does. When the Connection was deleted in the meantime, a Toast says "The connection of the closed tab no longer exists" and that entry is dropped.
+Results, pending edits and transactions belong to the closed tab and end with it. A reopened tab runs nothing on its own and connects the way opening that tab normally does; when the same object or panel is already open, its tab is focused instead. When the Connection was deleted in the meantime, a Toast says "The connection of the closed tab no longer exists" and that entry is dropped.
 
 ### Themes and fonts
 

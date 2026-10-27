@@ -118,7 +118,7 @@ impl NativeMenu {
         let find = item("Find…");
         let replace = item("Find and replace…");
         let comment = item("Toggle line comment");
-        let duplicate = item("Duplicate line or selection");
+        let duplicate = item("Copy line down");
         let rename = item("Rename…");
         let delete_rows = item("Delete selected rows");
         let edit = Submenu::with_items(

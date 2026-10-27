@@ -126,7 +126,7 @@ impl SqlrApp {
             command_item(
                 ui,
                 self,
-                "Duplicate line or selection",
+                "Copy line down",
                 C::Key(ActionId::DuplicateLine),
             );
             ui.separator();
