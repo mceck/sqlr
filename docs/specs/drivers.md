@@ -502,6 +502,8 @@ A Driver for a database sqlr does not ship with is a small program that implemen
 
 A Rust driver crate compiles both ways: in process, registered by the app as a Bundled driver, and as a sidecar executable through its three-line `main`.
 
+**Documented API.** Every public item a Rust driver author reaches through the driver SDK, including the core types and the sidecar pieces it re-exports, carries a doc comment written in the vocabulary of this spec. The build of those crates fails on an undocumented public item, so the generated API reference is always complete and a driver can be written from it alone.
+
 **From the template.** A `cargo generate` template creates a driver crate whose skeleton answers `SELECT 1`. The author fills in:
 
 1. **the manifest**: the id (saved Connections name it, so it is chosen once), the display name, the connection form fields and the Capabilities;
@@ -640,6 +642,7 @@ flowchart LR
 
 - **Out-of-process sidecars for drivers that do not ship with the app.** A sidecar is isolated (its crash cannot take the app down), can be written in any language and ships as a normal per-platform binary. Dynamic libraries were rejected: Rust has no stable ABI, so mixing compiler versions breaks drivers, and a driver crash would take down the app. WASM components were rejected: drivers need real TCP and TLS, WASI socket support is immature, and the runtime adds 15 to 20 MB.
 - **One driver interface for Bundled and Sidecar drivers.** The sidecar client implements the same interface as an in-process driver, so the engine and the UI cannot tell them apart, and a Rust driver compiles either way.
+- **The driver-authoring API is fully documented and the build enforces it.** Third-party authors work from the API reference, not from the app's source; requiring documentation only in the core, sidecar and SDK crates keeps that reference complete without imposing the rule on app-internal crates.
 - **sqlr's own columnar chunk format instead of Arrow.** The Arrow crates bring far more dependencies than needed. The protocol shares one binary encoding across Drivers. Local spill storage keeps indexed column arrays so the engine can read individual cells through mappings without decoding a whole chunk back into heap buffers.
 - **The Dialect crosses the protocol as data.** A sidecar cannot ship code into the app; a data description of quoting, keywords, placeholders, limits and transaction rules covers what the editor, the grid and generated SQL need.
 - **MessagePack control messages with named fields.** Compact, schema-less and available in every language, and named fields let optional fields be added within a major version.

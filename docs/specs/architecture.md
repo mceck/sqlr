@@ -166,6 +166,18 @@ Testing is part of the architecture: each layer has a seam that is tested at the
 - **Fuzzing** covers the sidecar frame decoder and the chunk decoder.
 - **Shared test services.** PostgreSQL, MySQL, MariaDB, MongoDB, Redis, Elasticsearch, SQL Server and Oracle run once, in containers on fixed ports, for the whole run. No test starts its own server: parallel tests isolate themselves with per-test databases, and tests that touch server-global state take a cross-process test lock. Setting `SQLR_SKIP_CONTAINER_TESTS=1` skips every test that needs a service and runs everything else. SAP HANA runs only where a test instance is available.
 
+### Code quality gates
+
+The Rust code follows one set of rules, declared once for the whole workspace and checked by the same Clippy command locally and in continuous integration (warnings denied, every target). Every crate inherits the workspace lints.
+
+- **Lints.** The workspace denies redundant clones, collections built only to be iterated again, functions that always succeed but return `Result` or `Option`, values taken by value and only borrowed, `map(..).unwrap_or(..)` chains, hand-written `let … else` and `ok_or` matches, and `unsafe` blocks without a safety comment. Clippy's pedantic group as a whole stays off; these lints are taken from it individually.
+- **Silenced lints.** A lint is silenced with an expectation that carries a reason, so the compiler reports it once the silencing is no longer needed. A plain allowance, also with a reason, is used only where the expectation would hold on some build targets and not others, such as test-support helpers shared by several test binaries.
+- **Panics.** Production code reaches a value inside an `Option` or `Result` through pattern matching, combinators or `?`. Where a local invariant guarantees the value, the code uses an `expect` whose message states that invariant. Unwrapping without a message is reserved to tests, examples, benches and the test-only crates.
+- **Locks.** Every mutex, read-write lock and condition variable is a `parking_lot` one. Its locks have no poisoning, so a panic in one worker leaves the lock usable for the rest of the app, and the whole codebase uses a single locking idiom. The standard library's lock types are refused by the lint gate.
+- **Errors.** A fallible function returns a typed error. Each module or area that produces errors defines one error type with `thiserror`, whose variants carry the message users see and wrap lower-level errors as their source. Messages are defined on the error type, and UI code turns an error into text only where it displays it. `anyhow` is used by the app's start-up wiring and by the example programs.
+- **Unsafe code.** Every `unsafe` block is preceded by a comment that explains why it is sound.
+- **Documentation.** The crates of the driver-authoring API document every public item, and their build fails otherwise (see [Drivers](drivers.md)). Other crates document their public items where the name and signature do not already say what the item does.
+
 ### Known accepted risks
 
 | Risk | How it is handled |
@@ -216,6 +228,10 @@ Security and privacy rules that hold everywhere: secrets never reach `connection
 - **Sidecar processes for third-party drivers** (rather than dynamic libraries or WASM): Rust has no stable ABI and an in-process crash would take the app down; WASI sockets are immature and a WASM runtime adds 15 to 20 MB. A sidecar is isolated and can be written in any language. Details in [Drivers](drivers.md).
 - **rustls only.** One TLS stack across every Driver, no system OpenSSL to find or ship. Servers that only speak TLS 1.0 or 1.1 cannot be reached, and this is documented.
 - **Panics contained per command task.** A bug in one Driver path fails one Operation and leaves an Incident, instead of taking down the session or the app.
+- **Workspace lints enforced by the existing Clippy gate.** Declaring the rules once in the workspace and denying them through the Clippy command CI already runs means drifting back fails the build with no extra tooling. Turning on the whole pedantic group was rejected: most of its findings (`must_use` candidates, numeric casts, function length) are noise for this codebase.
+- **Expectations instead of allowances for silenced lints.** An expectation fails when the lint stops firing, so stale silencing is cleaned up instead of accumulating, and the required reason documents the exception where it lives.
+- **`parking_lot` locks everywhere.** The workspace already depended on it; poisoning was never handled on purpose, and with standard locks one panicked worker would make every later `lock` fail. One lock type also removes the `lock().unwrap()` idiom from the code.
+- **Typed errors with `thiserror` in every crate, the app included.** Callers can match on the failure they care about, messages live in one place per module, and source chains survive for diagnostics. `anyhow` was kept only at start-up, where no caller inspects the error.
 - **Shared, long-lived test services instead of a server per test.** Starting eight database servers per test is too slow; per-test databases plus a cross-process lock for server-global state give isolation at a fraction of the cost.
 
 ## Related specs
