@@ -120,7 +120,7 @@ The next request loads it again from the server. An invalidation that arrives be
 
 ### The DDL viewer
 
-**Open DDL** opens a read-only DDL viewer tab titled "DDL · <name>"; opening it again for the same object focuses the existing tab. The statement is written by the engine as a Job ("Writing the DDL…" meanwhile):
+**Open DDL** opens a read-only DDL viewer tab titled "DDL · <name>"; opening it again for the same object focuses the existing tab. An Agent's `show_in_app` with the `ddl` view opens the same tab, and `get_ddl` returns the same statement as text. The statement is written by the engine as a Job ("Writing the DDL…" meanwhile):
 
 - **SQLite** returns the statements SQLite keeps for the object, exactly as written, comments and formatting included;
 - **other Drivers** load the object definition from the server catalogs and generate its `CREATE` script with the Dialect's DDL generator (PostgreSQL reads view, index and trigger definitions through `pg_get_viewdef`, `pg_get_indexdef` and `pg_get_triggerdef`).
@@ -331,5 +331,5 @@ flowchart LR
 - [Query editor](query-editor.md): autocomplete fed by the Catalog cache.
 - [Results and editing](results-and-editing.md): the Data sub-tab's grid, document and key-value views.
 - [Data and schema tools](data-and-schema-tools.md): import, export, transfer, data generation, ER diagrams, Schema compare, dumps.
-- [Agents and terminal](agents-and-terminal.md): Agent access levels set from the Explorer.
+- [Agents and terminal](agents-and-terminal.md): Agent access levels set from the Explorer, and the Agent tools that reuse the Explorer, the DDL viewer and the object data tab (`get_ddl`, `show_in_app`).
 - [Settings and workspace](settings-and-workspace.md): the Palette, the Keymap (F2, ⌘S) and tabs.

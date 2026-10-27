@@ -168,13 +168,14 @@ The Keymap section is the full editor described below.
 #### Agents
 
 - Enable agent access, off by default, and the MCP port, 47,821 by default from 1,024 to 65,535, with a note that changing it restarts the server.
-- The server's status, with Copy endpoint, Copy MCP configuration (the copy contains the token) and Rotate token.
+- The server's status, with Copy endpoint and Rotate token.
+- The agent list: each supported agent with its configuration file, its state (Not detected, Not installed, Installed, Outdated or Manual setup) and its action (Install, Remove, Update or Copy config), and an "Other agent…" link with Copy MCP configuration (the copy contains the token).
 - Access filters, All, Exposed or Hidden, a search over Connections, and Connections grouped by folder with a None, Read or Write picker per row.
 
 #### Terminal
 
 - Shell command: empty uses the login shell, and the command is kept from agents and logs.
-- Working directory: empty uses the terminal folder in the configuration directory, which holds the agent instructions and the MCP configuration.
+- Working directory: empty uses the Terminal workspace in the configuration directory, which holds the agent instructions and the sqlr skills.
 - Font size: 12 by default, 10 to 24.
 - Scrollback: 2,000 lines by default, 100 to 10,000.
 - An Open terminal action.
@@ -339,7 +340,7 @@ Updates are a background state machine in the app: idle, checking, offering, dow
 - [Query editor](query-editor.md): the editor settings' effect and the tab kinds.
 - [Results and editing](results-and-editing.md): page size, row cap, memory budgets, NULL text and data formats.
 - [Explorer and objects](explorer-and-objects.md): the Explorer panel, its context menus and the object actions the Palette runs.
-- [Agents and terminal](agents-and-terminal.md): the MCP server, agent access, the terminal panel and the settings that configure them.
+- [Agents and terminal](agents-and-terminal.md): the MCP server, agent access, Agent installations, the sqlr skills, the terminal panel and the settings that configure them.
 - [Drivers](drivers.md): per-Driver properties, the Driver Manager and the release downloads the update check shares a host with.
 - [Diagnostics](diagnostics.md): logs, incidents and the SQL privacy switch.
 - [Data and schema tools](data-and-schema-tools.md): the Operations panel and the tools the Palette opens.

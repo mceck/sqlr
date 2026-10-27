@@ -1,6 +1,6 @@
 # Agents and terminal
 
-sqlr exposes a local MCP server while it runs, so AI agents can inspect the connections the person has exposed, run statements, page results, fix open editor tabs, save snippets and manage configuration. The same workspace holds an integrated terminal where the person runs an agent, Claude Code or any other shell tool. This spec describes the server, its security and exposure model, the tool surface, approvals, and the terminal. Agents act with the person's rights, so every capability is gated by explicit consent, the existing profile safeguards, or both.
+sqlr exposes a local MCP server while it runs, so AI agents can inspect the connections the person has exposed, run statements, page results, work in open editor tabs, show objects in the app, save snippets and manage configuration. sqlr installs its server entry into the agents it finds on the machine and ships a set of sqlr skills that teach agents its workflows. The same workspace holds an integrated terminal where the person runs an agent, Claude Code or any other shell tool. This spec describes the server, its security and exposure model, Agent installations, the sqlr skills, the tool surface, approvals, and the terminal. Agents act with the person's rights, so every capability is gated by explicit consent, the existing profile safeguards, or both.
 
 ## Concepts
 
@@ -12,6 +12,10 @@ sqlr exposes a local MCP server while it runs, so AI agents can inspect the conn
 - An **Approval** is the in-app dialog where the person allows or denies a statement or a configuration delete that an Agent requested.
 - A **Safety flag** is a setting or profile field that can be tightened but not relaxed through the Agent surface.
 - The **Integrated terminal** is the PTY-backed shell docked at the bottom of the workspace. It is available to the person only.
+- The **Terminal workspace** is the persistent folder the Integrated terminal starts in. It holds the agent guidance and the sqlr skills.
+- A **Detected agent** is a supported agent client whose configuration or installation sqlr finds on the machine.
+- An **Agent installation** is sqlr's server entry in a Detected agent's user-level configuration. The person creates it with Install, and sqlr keeps it current.
+- A **sqlr skill** is one of the `sqlr-*` agent skills. Each teaches an Agent one sqlr workflow; they live in the repository, the app embeds them, and the Terminal workspace holds a copy.
 
 ## Behaviour
 
@@ -53,7 +57,7 @@ Only MCP tools are exposed. The server implements no resources, prompts, samplin
 
 Tokens carry 256 bits of OS randomness, encoded as unpadded base64url (43 characters). The token lives in the shared Credential vault, under a namespace separate from connection credentials. Its only stored form is the encrypted vault value; TOML files, the discovery file, logs, Incidents, tool results and `Debug` output carry everything else. Rotating the token is the containment action for a leaked token.
 
-The initialize response tells the Agent to call `get_guide` first and states that Connection access is explicit consent.
+The initialize response carries the server instructions described under [Initialize instructions](#initialize-instructions).
 
 ### Discovery file
 
@@ -81,7 +85,7 @@ The engine keeps a third kind of Session beside the explorer's Session and Edito
 
 Connections open lazily on the first catalog read or query. The app connects the explorer's Session when needed, so the Explorer shows the Connection, and opens the Agent Session for the work. The tool surface offers no connect or disconnect operation, so a Connection the person is using stays up.
 
-Catalog tools (`browse`, `describe_object`, `search_objects`) read through the explorer's catalog state and use it for the catalog query. `run_query` runs on the Agent Session. A Connection the person already had open stays open after the Agent is gone.
+Catalog tools (`browse`, `describe_object`, `get_ddl`, `search_objects`) read through the explorer's catalog state and use it for the catalog query. `run_query` runs on the Agent Session. A Connection the person already had open stays open after the Agent is gone.
 
 When credentials are missing, for example because the Connection does not save secrets and no in-memory secret exists, the tool returns `secret_required` naming the Connection and the secret field keys, never their values. The Agent may write the secrets through the configuration tools.
 
@@ -95,7 +99,7 @@ Paged Results read inside an open transaction, as the editor's do. Agent queries
 
 Connection values are write-only. For each exposed Connection, `config_list` returns only its id, name, driver, folder, profile and Agent access, plus a map that says, for each secret field declared by the driver, whether a value is stored. Hosts, ports, users, TLS and SSH options, driver properties and secret values stay inside the app.
 
-Profiles, settings, keymap and saved task definitions are readable, because they are policy and definitions rather than credentials. A driver's manifest is readable so an Agent can learn the field keys, types, defaults and secret flags needed to create a Connection.
+Profiles, settings and keymap are readable, because they are policy and definitions rather than credentials. Settings values stored at the Connection level are listed for exposed Connections only, so the listing reveals no other Connection. A driver's manifest is readable so an Agent can learn the field keys, types, defaults and secret flags needed to create a Connection.
 
 The following are human-only:
 
@@ -116,33 +120,40 @@ Safety flags are tighten-only for Agents:
 
 A rejected relaxation returns `invalid` with a message naming the flag.
 
+A configuration write or delete reaches an existing Connection when that Connection is exposed, or when the same MCP session created it. Any other id answers `not_exposed`, the same answer an unknown id receives. The exception for created Connections lets an Agent finish the Connection it just made, which starts at `None`, by writing its secrets and correcting its fields.
+
 Configuration writes are partial: only the provided fields change, and omitted fields stay. `remove_values` and `remove_secrets` name keys to delete. A Connection's driver is immutable after creation, and `agent_access` is rejected rather than ignored. Writes are serialized by the app, the last write wins per field, and `save_secrets` keeps its existing meaning: secrets for a Connection with it off stay in memory for the session and are written neither to the vault nor to `connections.toml`.
 
-Configuration changes apply to the running app rather than to files behind it. Connection and folder changes go through the store worker; profile, setting, keymap and task changes go through the in-memory stores and their save paths. A write is acknowledged only after the store confirms it, so the UI is current before the tool returns. A store failure returns an error without applying a half-written change.
+Configuration changes apply to the running app rather than to files behind it. Connection and folder changes go through the store worker; profile, setting and keymap changes go through the in-memory stores and their save paths. A write is acknowledged only after the store confirms it, so the UI is current before the tool returns. A store failure returns an error without applying a half-written change.
 
 Driver manifests are readable in full: id, name, family, dialect, default port, capabilities, and fields with key, label, type, default, required, secret, group and tighten-only flag.
 
 ### The tool surface
 
-The server exposes 19 tools with flat names. The tool catalogue and the guide are generated from one registry, so they stay in step. Data and configuration tools return structured JSON; the guide returns text.
+The server exposes 24 tools with flat names. The tool catalogue is generated from one registry, and the sqlr skills are checked against the same registry, so tools and skills stay in step. Data and configuration tools return structured JSON.
 
 | Tool | Request | Response and semantics |
 | --- | --- | --- |
-| `get_guide` | optional `topic`: `overview`, `security`, `tools`, `recipes`, `terminal` | Markdown guide for the topic, the overview by default. Covers the app model, exposure, write-only connections, approvals, the tool catalogue with arguments, recipes, limits and the fact that the terminal is not reachable through MCP. |
-| `config_list` | `target`: `connections`, `folders`, `profiles`, `settings`, `keymap`, `tasks`, `drivers`; optional `driver_id` | Configuration metadata. Connections are exposed Connections only, with names, drivers, folders, profile, exposure and secret presence and no values. Settings carry definition, default, allowed levels, safety, and stored values by global, profile and Connection level; `terminal.shell` has no value. Drivers are manifests. No secret is ever returned. |
-| `config_write` | `target`: `connection`, `folder`, `profile`, `setting`, `keymap`; target payload | Create or patch. Connections create or update, patch values, remove values, write and remove secrets and set `save_secrets`; `agent_access`, a changed `driver` and protected keys are rejected. Folders create, rename or move. Profiles create or update with tighten-only safety. Settings set or reset at global, profile or Connection level, validated against the setting definition and its allowed levels. Keymap sets or resets one action. Saved tasks are readable and deletable but not written through MCP. |
-| `config_delete` | `target`: `connection`, `folder`, `profile`, `task`; `id` | Deletes after an Approval. A Connection is disconnected and its secrets removed. A folder is removed and its Connections and subfolders move to the parent. A profile in use is rejected before the dialog. A task definition is removed and never run. |
+| `config_list` | `target`: `connections`, `folders`, `profiles`, `settings`, `keymap`, `drivers`; optional `driver_id` | Configuration metadata. Connections are exposed Connections only, with names, drivers, folders, profile, exposure and secret presence and no values. Settings carry definition, default, allowed levels, safety, and stored values by global, profile and exposed Connection level; `terminal.shell` has no value. Drivers are manifests. Secrets stay in the vault. |
+| `config_write` | `target`: `connection`, `folder`, `profile`, `setting`, `keymap`; target payload | Create or patch. Connections create or update, patch values, remove values, write and remove secrets and set `save_secrets`, for exposed Connections and those created by the session; `agent_access`, a changed `driver` and protected keys are rejected. Folders create, rename or move. Profiles create or update with tighten-only safety. Settings set or reset at global, profile or Connection level, validated against the setting definition and its allowed levels. Keymap sets or resets one action. |
+| `config_delete` | `target`: `connection`, `folder`, `profile`; `id` | Deletes after an Approval. A Connection, exposed or created by the session, is disconnected and its secrets removed. A folder is removed and its Connections and subfolders move to the parent. A profile in use is rejected before the dialog. |
+| `test_connection` | `connection_id` | Opens a temporary test Session, as the connection dialog's Test does, and closes it. Answers `{ok: true, server_version}` or `{ok: false, error}` with `auth`, `connection`, `tls` or `timeout`, or `secret_required` with the missing field keys. Accepts exposed Connections and those created by the session. |
 | `browse` | `connection_id`, optional `path` segments | Returns child Nodes with name, kind, path, has-children flag and detail, plus whether the catalog answer came from the cache. Works for every family. |
-| `describe_object` | `connection_id`, `name`, optional `database`, `schema` | Relational table details: columns with type, nullability, default and generated flag, primary key and unique keys. Non-relational Connections return `unsupported`; `browse` stays the generic path. Index and foreign-key lists are present but empty in this version. |
+| `describe_object` | `connection_id`, `name`, optional `database`, `schema` | Relational table details: columns with type, nullability, default and generated flag, primary key, unique keys, indexes (name, columns, unique, method, predicate) and foreign keys (name, columns, referenced table and columns, update and delete actions). Non-relational Connections return `unsupported`; `browse` is the generic path. |
+| `get_ddl` | `connection_id`, `path` from `browse` | The `CREATE` script of the Node, as the DDL viewer shows it. |
 | `search_objects` | `query`, optional `connection_id`, optional `limit` | Case-insensitive search of relation names across the default databases of exposed relational Connections, with at most 200 matches, 50 by default. Reports cache state and skips unreachable Connections. |
 | `run_query` | `connection_id`, `query`, optional `database`, `max_rows`, `timeout_s` | Runs one statement or native command, family-aware, and returns a tagged Result with a page, `truncated`, `query_id` and status. |
-| `get_query_result` | `query_id`, optional `offset`, `limit` | Pages an existing Result, fetching more from the server when the page passes the loaded rows. Expired or unknown ids return `not_found`. |
+| `explain_query` | `connection_id`, `query`, optional `analyze` | Runs Explain on the Agent Session and returns execution and planning time, cost, estimated and actual rows, the plain-language warnings, the operator mix and the raw plan up to 256 KiB. |
+| `get_query_result` | `query_id`, optional `offset`, `limit` | Pages an existing Result, its own or an editor tab's, fetching more from the server when the page passes the loaded rows. Expired or unknown ids return `not_found`. |
 | `cancel_query` | `query_id` | Requests cancellation through the engine. Repeated calls are safe. |
-| `close_result` | `query_id` | Releases the Result and its memory. Repeated calls are safe and report whether the id was still present. |
+| `close_result` | `query_id` | Releases one of the session's Results and its memory. Repeated calls are safe and report whether the id was still present. A tab's Result answers `invalid`. |
+| `search_history` | optional `query`, `connection_id`, `limit` | History entries of exposed Connections, newest first, matching the text as the History panel does: SQL, Connection, database, start time, duration and outcome. At most 200, 50 by default. |
 | `list_query_tabs` | none | Open SQL Editor tabs only: id, title, Connection, database, dirty flag, revision and busy flag. Object editors, DDL viewer, administration, document and Redis tabs are excluded. |
-| `get_query_tab` | `tab_id` | Text, revision, dirty and busy flags, Connection, database, caret and selection as character offsets. |
+| `get_query_tab` | `tab_id` | Text, revision, dirty and busy flags, Connection, database, caret and selection as character offsets; for an exposed Connection also `last_run_query_ids`, `transaction_open` and `grid_selection`. |
+| `open_query_tab` | `connection_id`, optional `database`, `text`, optional `title` | Opens a new unsaved SQL Editor tab beside the active one and makes it active. Returns `tab_id` and `revision`. |
 | `edit_query_tab` | `tab_id`, `expected_revision`, `edit` | Replaces the whole text or applies a list of range edits. A revision mismatch returns `conflict` with the current revision and changes nothing. |
-| `run_query_tab` | `tab_id`, `target`: `script`, `selection` or `{statement: index}`; optional `max_rows` | Runs the tab's current buffer in the tab's Session and database, through the same UI execution flow, and puts Results in the tab's grid. |
+| `run_query_tab` | `tab_id`, `target`: `script`, `selection` or `{statement: index}`; optional `max_rows` | Runs the tab's current buffer in the tab's Session and database, through the same UI execution flow, puts Results in the tab's grid and returns `{tab_id, status, query_ids}`. |
+| `show_in_app` | `connection_id`, `view` and its arguments | Shows something to the person: `explorer`, `ddl`, `table_data`, `er_diagram` or `explain`. Returns `tab_id` when it opens a tab. |
 | `list_snippets` | none | Snippet metadata: id, name, folder, Connection scope, updated time. |
 | `get_snippet` | `id` | The full Snippet, including its SQL. |
 | `write_snippet` | optional `id`, `name`, `folder`, optional `conn_id`, `sql` | Creates or updates a Snippet and returns its id. Without an id, an existing Snippet with the same name is replaced. |
@@ -164,7 +175,7 @@ Limits:
 - a page holds at most `max_rows` rows or documents, 200 by default and 1000 at most, and at most 256 KiB of encoded data;
 - reaching either limit sets `truncated` and leaves the `query_id` pageable;
 - a SQL or document query still running at the deadline returns `status: "running"` with the rows fetched so far and a `query_id`;
-- a Redis reply is available immediately and has no pages; a timed-out Redis command returns `running` without an id, and the guide tells the Agent not to resubmit it;
+- a Redis reply is available immediately and has no pages; a timed-out Redis command returns `running` without an id, and the skills tell the Agent to leave it rather than resubmit it;
 - Results stay available for five minutes after the last access, a background sweep closes expired ones, and `close_result` or the end of the MCP session closes them immediately.
 
 The result envelope is a tagged union:
@@ -201,9 +212,17 @@ Only the member matching `kind` is present. Values map as follows:
 
 #### Editor contract
 
-The editor tools operate on SQL Editor tabs. They read any open tab regardless of exposure; running requires exposure.
+The editor tools operate on SQL Editor tabs. They read the text of any open tab; running a tab, reading its Results, its transaction state and its grid selection, and opening a tab require an exposed Connection.
 
-`get_query_tab` returns character offsets, with an exclusive end, for the caret and selection. `edit_query_tab` accepts `replace` with the full text or `edits` with a list of `{start, end, text}` ranges applied as one change set, and both require `expected_revision`. A mismatch returns `conflict` with the current revision and applies nothing, so an Agent can re-read and retry. An edit is a single undo group, marks the tab dirty, scrolls to and briefly highlights the first changed range, and the person's undo reverts the whole edit in one step. Agents create, close and save no tabs.
+`get_query_tab` returns character offsets, with an exclusive end, for the caret and selection. For a tab on an exposed Connection it also returns:
+
+- `last_run_query_ids`: the Result ids of the tab's most recent run, whoever started it, one per executed statement;
+- `transaction_open`: whether the tab's Session holds an open transaction;
+- `grid_selection`: the selected cells of the tab's result grid as `{column, row, value}`, with values in the Result value mapping, up to 1000 cells and 256 KiB.
+
+`edit_query_tab` accepts `replace` with the full text or `edits` with a list of `{start, end, text}` ranges applied as one change set, and both require `expected_revision`. A mismatch returns `conflict` with the current revision and applies nothing, so an Agent can re-read and retry. An edit is a single undo group, marks the tab dirty, scrolls to and briefly highlights the first changed range, and the person's undo reverts the whole edit in one step.
+
+`open_query_tab` opens a new SQL Editor tab beside the active one, bound to the Connection and database, with the given text and title, and makes it active. The tab is unsaved and dirty, so closing it asks the person as usual. A toast names it. The tool runs nothing and returns `tab_id` and `revision`. Closing and saving tabs belong to the person.
 
 `run_query_tab` runs the tab's current buffer, not a stale saved version:
 
@@ -211,27 +230,77 @@ The editor tools operate on SQL Editor tabs. They read any open tab regardless o
 - `statement` with a zero-based index runs one split statement;
 - `selection` runs the current selection and returns `invalid` when there is none.
 
-It uses the tab's Session and database, applies the same profile confirmations and read-only rules as the person's run, records History, and places Results in the tab's normal result area. It returns a bounded summary of the run. A tab that is already running returns `busy` and the run is not interrupted. A tab whose Connection is not exposed returns `not_exposed`; a tab without a Connection returns `invalid`.
+It uses the tab's Session and database, applies the same read-only rules as the person's run, records History, and places Results in the tab's normal result area. When the profile asks for confirmation, the call waits on an Approval like `run_query` does. The run starts once, after the person allows it. The tool answers `{tab_id, status, query_ids}`. A tab that is already running returns `busy` and the run is not interrupted. A tab whose Connection is not exposed returns `not_exposed`; a tab without a Connection returns `invalid`.
+
+A tab's Results are paged with `get_query_result` and use the same envelope as `run_query`, so an Agent polls the same tool until the status leaves `running`. The tab owns them:
+
+- `close_result` on a tab Result answers `invalid` and leaves the grid as it is;
+- they have no TTL and live as long as the tab shows them;
+- running the tab again or closing it turns the previous ids into `not_found`;
+- paging reads the rows the grid has loaded and asks for more as scrolling would, within the 1000-row and 256 KiB page caps.
+
+One MCP session opens at most five tabs, counted across `open_query_tab` and the `show_in_app` views that open a tab. The sixth returns `busy` with a message to reuse the open tabs.
+
+#### Show-in-app contract
+
+`show_in_app` brings a view to the front for the person and shows a toast naming it. Every view needs an exposed Connection and only reads:
+
+| `view` | Arguments | Effect |
+| --- | --- | --- |
+| `explorer` | `path` from `browse` | Expands the Explorer to the Node and selects it. |
+| `ddl` | `path` | Opens the Node's DDL viewer, or focuses it when already open. |
+| `table_data` | `path` | Opens the object's data tab, as a double-click in the Explorer does, with its first page. |
+| `er_diagram` | optional `database`, `schema`; `tables` | Opens an ER diagram of the named tables. |
+| `explain` | `tab_id`, optional `statement`, `analyze`; or `query`, optional `analyze` | Runs Explain in an existing tab's Plan pane, on the indexed statement or the statement at the caret, or opens a new tab with the query and runs Explain there. |
+
+The views that open a tab return its `tab_id`.
+
+#### Explain contract
+
+`explain_query` and the `explain` view follow the person's Explain rules:
+
+- one statement only, on a Driver that declares Explain support, otherwise `unsupported`;
+- `analyze` executes the statement. On a `Read` exposure it is accepted for reads and answers `read_only` for a modifying statement;
+- `analyze` on a modifying statement waits on an Approval and runs inside a transaction that is always rolled back, so the plan is real and the writes are discarded;
+- a Session with an open transaction answers `busy`.
+
+`explain_query` runs on the Agent Session; the `explain` view runs on the tab's Session.
 
 #### Snippet contract
 
 `list_snippets` returns metadata only. `get_snippet` returns the SQL. `write_snippet` creates when no id is given, updates otherwise, and also updates a same-name Snippet when the id is omitted; name, folder and Connection scope are patchable, folders are `/`-separated strings created implicitly, and a leading or trailing `/` is trimmed. `delete_snippet` requires an Approval naming the Snippet and its folder. Snippets are global or scoped to one Connection.
 
-#### Guide contract
+#### History contract
 
-The guide is generated from the same registry that produces the tool list, so every registered tool appears in it. It covers:
+`search_history` searches the History of exposed Connections only, before the limit is applied, so entries of other Connections are neither returned nor counted. Matching is the History panel's case-insensitive substring match. The SQL is the stored History text, which already excludes statements that may hold a secret.
 
-- what sqlr is, and that the server exists only while the app runs;
-- the exposure model and the meaning of `None`, `Read` and `Write`;
-- the write-only Connection model and the rules for secrets;
-- Approvals and which operations can need one;
-- the tool catalogue with arguments;
-- recipes: discover the schema, run and page a query, fix an open tab, save a Snippet, create a Connection, and set up an agent inside the terminal;
-- limits: row and byte caps, deadlines, Result TTL, session cap and idle timeout;
-- error codes and the next step for each;
-- that the Integrated terminal exists and stays outside the MCP surface.
+#### Initialize instructions
 
-The guide carries descriptions only: secrets, Connection values and environment-specific data stay out.
+The initialize response carries short instructions generated in code:
+
+- what sqlr is, and that the server runs only while the app runs;
+- that Agents see exposed Connections only, and the person decides exposure;
+- Approvals, and that Safety flags only tighten;
+- that Connection values and secrets are write-only;
+- that the sqlr skills hold the workflows, that `npx skills add mceck/sqlr` installs them, and that the Integrated terminal's workspace already has them.
+
+The instructions carry descriptions only: secrets, Connection values and environment-specific data stay out.
+
+### sqlr skills
+
+The sqlr skills are agent skills in the open Agent Skills format: one folder per skill with a `SKILL.md` and optional `references/`. They describe workflows and rules; argument details stay in the tool schemas.
+
+| Skill | Used for |
+| --- | --- |
+| `sqlr-configure` | Settings and how to pick their level, a map from common requests to setting keys, when changes apply, profiles, keymap, folders and moving Connections, and what stays with the person. |
+| `sqlr-create-connection` | Reading the driver manifest, asking for values, creating the Connection in the right folder and profile, writing secrets, `test_connection`, and handing exposure back to the person. |
+| `sqlr-edit-user-query` | Working in the person's tabs: revisions and conflicts, busy tabs, run targets, the last run's Results, open transactions, the grid selection, opening tabs, `show_in_app`, History and Snippets. |
+| `sqlr-query-database` | Exploring the schema, running and paging queries, closing Results, limits, modifications under the profile and Approvals, transactions, DDL and Explain, with one reference per family. |
+| `sqlr-connect-agent` | Diagnosing a missing or failing connection to sqlr, reading the Discovery file, and the next step for each error. |
+
+The skills live in the repository's `skills/` folder, where `npx skills add mceck/sqlr` installs all of them or one by name. The app embeds the same files and writes them into the Terminal workspace. Each `SKILL.md` carries the sqlr version in its metadata, so an Agent can tell a downloaded copy from the running app's.
+
+Every registered tool is named in at least one skill, and every tool and setting key a skill names exists; a test holds both directions.
 
 ### Approvals
 
@@ -239,7 +308,7 @@ Approvals reuse the safety mechanism the person already sees for their own state
 
 A statement is classified per family: SQL through the Dialect's statement and script classifiers, MongoDB through the document shell classifier, Elasticsearch through the document request classifier, and Redis through the key-value command classifier. A read-only session rejects modification before any Approval is requested.
 
-When the profile requests confirmation for writes or for destructive statements, the tool call blocks and the app shows a modal dialog. It contains:
+When the profile requests confirmation for writes or for destructive statements, the tool call blocks and the app shows a modal dialog. This applies to `run_query`, `run_query_tab`, and Explain with `analyze` on a modifying statement. It contains:
 
 - the client name and version and the MCP session identifier;
 - the Connection name, profile, database and exposure level;
@@ -258,14 +327,14 @@ A tool failure sets the MCP error flag and returns text plus `{"error":{"code","
 
 The codes are:
 
-- `invalid`: malformed arguments, a multi-statement query, a missing selection, an unknown target, or a rejected relaxation;
-- `not_exposed`: the Connection or tab Connection is not exposed;
+- `invalid`: malformed arguments, a multi-statement query, a missing selection, an unknown target, a rejected relaxation, or `close_result` on a tab's Result;
+- `not_exposed`: the Connection or tab Connection is not exposed, or a configuration write names a Connection that is neither exposed nor created by the session;
 - `read_only`: the exposure or profile forbids the statement;
 - `secret_required`: named secret fields are missing;
 - `denied` and `timeout`: an Approval was refused or expired;
 - `not_found`: an unknown or expired id;
 - `conflict`: a tab revision mismatch;
-- `busy`: the tab is already running;
+- `busy`: the tab is already running, the session has opened its five tabs, or Explain met an open transaction;
 - `unsupported`: the family does not support the operation, or a Redis command is unavailable;
 - `permission`: the server refused the statement;
 - `connection`: the Connection failed to open;
@@ -276,6 +345,39 @@ The codes are:
 Engine error kinds such as auth, syntax, timeout, cancelled, permission and protocol appear inside a Result's `error` code, so a successful tool call can still carry a failed statement.
 
 Free-form driver error text is sanitized before it reaches the Agent: URL user information and values following `password=`, `passwd=`, `token=` and `secret=` are redacted.
+
+### Agent installations
+
+Settings → Agents lists the supported agents and installs sqlr's server entry into their user-level configuration, so an Agent reaches sqlr from any folder it works in:
+
+| Agent | Configuration file | Entry |
+| --- | --- | --- |
+| Claude Code | `~/.claude.json` | `mcpServers.sqlr` with `type: "http"`, `url` and an `Authorization` header |
+| Codex CLI | `~/.codex/config.toml` | `[mcp_servers.sqlr]` with `url` and `http_headers` |
+| Gemini CLI | `~/.gemini/settings.json` | `mcpServers.sqlr` with `httpUrl` and `headers` |
+| Cursor | `~/.cursor/mcp.json` | `mcpServers.sqlr` with `url` and `headers` |
+| VS Code | `mcp.json` in the Code user directory | `servers.sqlr` with `type: "http"`, `url` and `headers` |
+| OpenCode | `~/.config/opencode/opencode.json` | `mcp.sqlr` with `type: "remote"`, `url` and `headers` |
+
+Discovery looks for each agent's configuration directory and its known installation paths. It runs no process and reads no `PATH`, because an app started from the desktop has a minimal `PATH`. An agent found either way is a Detected agent.
+
+Each agent has one state:
+
+- **Not detected**: neither its configuration nor its installation is present;
+- **Not installed**: detected, with no `sqlr` entry;
+- **Installed**: the `sqlr` entry matches the running server's URL and token;
+- **Outdated**: a `sqlr` entry exists and differs from the running server;
+- **Manual setup**: the file exists and sqlr cannot read its format, with the reason.
+
+The actions are Install for Not installed, Remove for Installed, Update for Outdated, and Copy config, in that agent's format, for Manual setup. Install, Update and Copy config need a running server, because they write its current token. The first write to an agent's file asks once for confirmation, naming the file and saying it will hold the sqlr token. After Install or Update a toast says "Restart <agent> to load sqlr".
+
+Writes keep the file as the person had it. sqlr changes only its own entry. Comments, order, formatting and every other key stay, in JSON, JSONC and TOML alike. The write goes through a temporary file in the same directory and a rename and keeps the file's permissions; a file sqlr creates is owner-only on Unix. Before the first change to a file, sqlr saves a copy beside it as `<file>.sqlr-backup`, once. Remove deletes the `sqlr` entry and leaves the surrounding map in place.
+
+An installation registry in the data directory records each Agent installation by agent and file, without the token. Rotating the token or changing the port rewrites every recorded installation with the new URL and token. An installation that cannot be rewritten turns Outdated, and the log records the agent and the error. Remove drops the record. Turning the server off keeps the installations, so turning it on again reconnects them.
+
+States are computed on a background worker when Settings → Agents opens and after every action. An agent may rewrite its own file while it runs, so an entry it dropped reads Not installed the next time the list is computed.
+
+**Copy MCP config** gives any other MCP client a ready-to-paste configuration with the token, from the "Other agent…" link under the list.
 
 ### The integrated terminal
 
@@ -296,13 +398,17 @@ Shell resolution:
 
 The working directory defaults to a `terminal` folder inside the app's configuration directory. This folder is stable across launches and prepared on a background worker before the shell starts. An explicit `terminal.cwd` is used as given and receives no generated files.
 
-The automatic folder holds:
+This automatic folder is the Terminal workspace. It holds:
 
-- `AGENTS.md`, created only when missing, with MCP setup instructions and the required `get_guide` workflow plus the discovery file location;
-- `CLAUDE.md`, created as a symlink to `AGENTS.md` when no such entry exists, so Claude Code reads the same guide; on Windows the file contains `@AGENTS.md`. An existing `CLAUDE.md` stays as it is.
-- `.mcp.json`, the active client configuration including the URL and bearer token, refreshed atomically when the server starts, stops, changes port or rotates its token, including while the panel is hidden. When MCP is disabled it contains an empty server map. Identical content is left untouched.
+- `AGENTS.md`, created only when missing and then owned by the person. It says what the folder is, that sqlr is reached through MCP once the agent is installed from Settings → Agents, and that the `sqlr-*` skills hold the workflows;
+- `CLAUDE.md`, created as a symlink to `AGENTS.md` when no such entry exists, so Claude Code reads the same guide; on Windows the file contains `@AGENTS.md`. An existing `CLAUDE.md` stays as it is;
+- the sqlr skills, each in `.agents/skills/<name>/`, with a relative symlink `.claude/skills/<name>` pointing at it; on Windows the second entry is a copy. This is the layout `npx skills` uses, so skills the person adds sit beside sqlr's.
 
-On Unix the folder is created with mode `0700` and `.mcp.json` with mode `0600`. The files and any scratch files the person creates persist when sqlr closes. A write failure is reported in the panel and recovers on the next update.
+The `sqlr-*` names belong to sqlr. Each time the folder is prepared, a `sqlr-*` skill whose content differs from the embedded one is rewritten, and a `sqlr-*` folder or link that is no longer part of the set is removed. Every other entry stays as the person left it.
+
+The terminal reaches sqlr through the Agent installation, like any other folder. A generated `.mcp.json` in the folder, one that holds only a `sqlr` entry or an empty server map, is removed; a `.mcp.json` with any other content stays.
+
+On Unix the folder is created with mode `0700`. The files and any scratch files the person creates persist when sqlr closes. A write failure is reported in the panel and recovers on the next preparation.
 
 The shell inherits the application environment with `TERM=xterm-256color` and `COLORTERM=truecolor` added. The MCP token and Agent-specific variables stay out of it, and the person starts an Agent explicitly.
 
@@ -351,9 +457,10 @@ The MCP surface excludes the terminal entirely: no tool reads, writes, starts or
 - An enable switch explaining that enabling creates a local endpoint for Agents, exposes no Connection yet and requires a token.
 - A port field with validation and a note that changing it restarts the server.
 - A status pill with the endpoint and active session count when running, and the last error inline.
-- A copy button for the endpoint, a Rotate token action that warns that active Agents are disconnected, and Copy MCP config, which copies a ready-to-paste client configuration and warns that it contains the token.
+- A copy button for the endpoint, and a Rotate token action that warns that active Agents are disconnected and that Agent installations receive the new token.
+- The agent list: one row per supported agent with its name, configuration file, state and action, as described in [Agent installations](#agent-installations). Below it, "Other agent…" offers Copy MCP config and warns that the copy contains the token.
 - A connection access list of every saved Connection, grouped by folder, with search, All, Exposed and Hidden filters, an "N of M exposed" count and a None, Read, Write segmented control on each row. Changes apply immediately without Save and work while the server is off.
-- A short explanation of exposure and a link to the guide.
+- A short explanation of exposure and a link to the sqlr skills in the repository.
 
 **Settings → Terminal**
 
@@ -391,11 +498,11 @@ Agent configuration and Snippet writes produce short toasts naming the target, f
 
 Two components carry the feature, and the application wires them.
 
-The MCP component owns the listener, authentication, discovery, MCP sessions, tool routing, policy, Approvals requests and the guide. It talks to the engine for queries, catalog reads and Snippets, and to the application through a host interface for everything that needs the UI thread: configuration stores, editor tabs, Approvals, Connection metadata and toasts. It depends on the engine, the store and the core model, and not on the UI or the application.
+The MCP component owns the listener, authentication, discovery, MCP sessions, tool routing, policy, Approvals requests, the initialize instructions and the embedded sqlr skills. It tracks, per MCP session, the Connections that session created and the tabs it opened. It talks to the engine for queries, catalog reads, DDL, Explain, History and Snippets, and to the application through a host interface for everything that needs the UI thread: configuration stores, editor tabs and their Results, transaction state and grid selection, opening tabs and views, Approvals, Connection metadata and toasts. It depends on the engine, the store and the core model, and not on the UI or the application.
 
 The terminal component owns the PTY session, the terminal parser, input encoding, the screen snapshot and the terminal widget. It depends only on egui and the PTY library. The application gives it the theme, the font size, the UI scale and the current settings; the terminal returns input events and lifecycle actions.
 
-The application implements the host interface, owns the server lifecycle and Settings, mounts the terminal panel, adds the toolbar, menu, palette and keymap actions, and shows Approvals.
+The application implements the host interface, owns the server lifecycle and Settings, mounts the terminal panel, adds the toolbar, menu, palette and keymap actions, and shows Approvals. It also owns the agent installation component, which discovers agents, reads and writes their configuration files and keeps the installation registry on a background worker, and the Terminal workspace preparation, which writes the guidance and the embedded skills on a background worker.
 
 The host bridge is asynchronous. A request that needs the UI thread is enqueued, the UI is woken with a repaint request and the request is processed at the start of the next frame, and a one-shot reply resolves the MCP call. The UI thread works through the request queue while I/O and database work stay off it. Queries, catalog reads and Snippet operations run against the engine on its runtime. The MCP server runs on its own runtime with two worker threads; the app holds its handle and reads its status each frame.
 
@@ -428,7 +535,8 @@ The terminal session owns the PTY master, the child process, a reader thread tha
 - A **Connection** carries its Agent access level with a default of `None`.
 - The **Credential vault** holds the MCP bearer token under a namespace separate from Connection credentials.
 - `mcp.json` is a runtime artifact, not user configuration, and exists only while the server runs.
-- `AGENTS.md`, `CLAUDE.md` and `.mcp.json` are files in the automatic terminal folder and persist across launches.
+- `AGENTS.md`, `CLAUDE.md` and the sqlr skills are files in the Terminal workspace and persist across launches.
+- The installation registry lists each Agent installation by agent and configuration file, and carries no token. Each Agent installation holds the URL and token inside the agent's own file.
 - Results are held in memory for the server and keyed by an opaque id that belongs to one MCP session.
 - Terminal settings are ordinary global settings; terminal visibility and height are session state.
 - Agent queries are ordinary History entries, and the rotating application log is the audit record.
@@ -438,7 +546,7 @@ The terminal session owns the PTY master, the child process, a reader thread tha
 - A disabled MCP server and an unopened terminal start no process, listener or shell, so cold start and idle memory stay within the product budgets.
 - The terminal keeps at most the configured scrollback in memory; the default is 2000 lines within a 100 to 10000 range.
 - At most eight MCP sessions run at once; results expire after five minutes of inactivity; a page is capped at 1000 rows and 256 KiB.
-- The token has 256 bits of entropy and is compared in constant time. The discovery file is owner-only, and the terminal folder and `.mcp.json` are owner-only on Unix.
+- The token has 256 bits of entropy and is compared in constant time. The discovery file is owner-only, the Terminal workspace is owner-only on Unix, and an agent configuration file sqlr creates is owner-only on Unix while an existing one keeps its permissions.
 - The listener works with no network beyond loopback.
 - Agent tool calls are logged with the client name and version, MCP session id, tool name, Connection, outcome, duration and numeric result metadata. Log lines carry metadata only; SQL text, native commands, Result rows, secrets, Connection values, the shell command and terminal output stay out. The MCP protocol library's own logs stay at warn level so request bodies stay out too.
 - Errors returned to Agents are structured and sanitized.
@@ -447,7 +555,7 @@ The terminal session owns the PTY master, the child process, a reader thread tha
 
 - **Loopback Streamable HTTP with a bearer token instead of an OS socket or no authentication.** Local clients of every kind, including browser-based tooling, already speak HTTP; a Unix socket would not work on Windows and an unauthenticated loopback port would be reachable by any page or process. Loopback binding, a token, and Host and Origin validation together keep the endpoint to local tools the person configured. TLS on loopback adds certificate management with no threat it addresses.
 - **The token lives in the shared Credential vault.** One keychain-protected vault means at most one keychain authorization per App session shared with Connection credentials, and rotation is a single explicit action. A separate keychain item would prompt separately and could drift from the vault's key.
-- **A token-free discovery file.** Local tooling needs to find the URL and protocol without being handed the secret; the file carries process metadata only and is readable by its owner. The client configuration, which does contain the token, is copied only on an explicit action or written to the owner-only terminal folder.
+- **A token-free discovery file.** Local tooling needs to find the URL and protocol without being handed the secret; the file carries process metadata only and is readable by its owner. The client configuration, which does contain the token, is copied or installed into an agent's file only on an explicit action of the person.
 - **Exposure is consent on the Connection.** Nothing is reachable until the person marks a Connection `Read` or `Write`; the default is `None`, duplicates reset to `None`, imports never grant access, and an Agent cannot change the level. This makes the boundary explicit and keeps a copied or imported Connection from silently widening access.
 - **`Read` is enforced twice: a read-only engine Session and a family classifier.** A server-side read-only session catches anything the classifier misses, while the classifier gives a clear error before execution and works across SQL, document and key-value families.
 - **One Agent Session per MCP session and Connection.** Agents work concurrently with the person and with each other without sharing transactions; closing the MCP session rolls back what the Agent left open and never touches the person's Sessions.
@@ -455,7 +563,15 @@ The terminal session owns the PTY master, the child process, a reader thread tha
 - **Connection values and secrets are write-only.** Agents can complete a Connection but never read what they wrote or what was already there, which keeps hosts, users, options and passwords out of the model's context while still allowing setup automation.
 - **Safety flags are tighten-only, including profile moves, setting resets and transport-security driver fields.** An Agent must not be able to remove its own guardrails through an indirect route such as assigning a looser profile or resetting a stricter value.
 - **Approvals reuse the person's confirmation rules.** The profile already decides when a statement needs confirmation; routing an Agent request through the same dialog keeps one safety model and leaves no bypass. The dialog denies by default and times out because an Agent can wait indefinitely.
-- **A small flat tool surface, with the guide generated from the same registry.** Flat names are unambiguous because the server is dedicated to sqlr. Generating the catalogue and the guide from one list keeps them from drifting and makes the guide a completeness test.
+- **A small flat tool surface generated from one registry.** Flat names are unambiguous because the server is dedicated to sqlr. The catalogue comes from the registry, and the skills are tested against it, so a new tool fails the build until a skill covers it.
+- **Skills instead of a guide tool.** A guide reachable only through the server teaches nothing before the Agent is connected, and a reference listing arguments repeats the tool schemas. Hand-written skills teach workflows, travel with any agent through `npx skills`, and are embedded from the same files so the app and the repository agree. The initialize instructions keep the essential rules for an Agent without skills.
+- **Agent installations at user level, written by sqlr.** Installing into each agent's user configuration makes sqlr reachable from every folder, the Integrated terminal included, with one entry per agent. A project `.mcp.json` in the terminal would duplicate it and ask for a project trust prompt. sqlr rewrites the files on rotation and port change, because both happen inside the app.
+- **Direct, format-preserving file edits instead of agent command lines.** Agent command lines need the binary on a `PATH` the desktop app lacks, exist only for some agents, and differ in header support. Editing the file keeps one mechanism for every agent, preserves comments and unrelated keys, and is testable against fixtures. A backup before the first change keeps the edit recoverable.
+- **The token stays in the agent's file rather than behind a stdio bridge.** A bridge would keep agent files stable, but it would need the token from the vault on every agent launch, which means a keychain prompt each time, or from a plaintext file, which undoes the vault. Writing the token on an explicit Install, the same consent as Copy MCP config, avoids both.
+- **sqlr owns the `sqlr-*` skill names in the Terminal workspace.** Skills describe the current tool surface, so a stale copy misleads an Agent. Rewriting them on change keeps them current, and the per-skill links leave every other skill to the person. `AGENTS.md` is the person's place for local instructions.
+- **Configuration writes follow exposure.** A write reaches only exposed Connections and those the session created. Otherwise an Agent could repoint a non-exposed Connection that has a saved password at a host it controls, and receive that password on the person's next connect.
+- **Tab Results belong to the tab.** An Agent reads the person's Results through the same envelope as its own, but releasing them stays with the tab, so an Agent never clears the person's grid.
+- **A cap on tabs an Agent opens.** Opening tabs lets an Agent propose queries and show objects. Five tabs per MCP session is enough for that and bounds the workspace an Agent can fill.
 - **The terminal is a PTY and is human-only.** A command runner would not run TUIs or login shells. Keeping the terminal off the MCP surface, and `terminal.shell` unreadable, means a writable shell command could not be turned into arbitrary code execution chosen by an Agent. `terminal.cwd`, font size and scrollback remain ordinary settings.
 - **The shell process group dies with the app.** An Agent running in the terminal must not outlive sqlr; the process group is killed on quit and on Restart after a short grace period.
 

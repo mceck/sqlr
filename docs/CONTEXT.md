@@ -179,13 +179,6 @@ A source or target of a Data transfer: a table, a query, a file, a workbook shee
 **Dump** and **Restore**:
 Backing up and restoring a database with its native command-line tools.
 
-**Saved task**:
-A dump, restore, transfer or script kept under a name and run again on demand.
-_Avoid_: task, job (for the saved definition)
-
-**Task run**:
-One execution of a Saved task, kept with its log, outcome and start time.
-
 **Schema compare**:
 The diff of two schemas or databases with a generated migration script.
 
@@ -260,6 +253,20 @@ The in-app dialog where the user allows or denies an Agent's destructive or conf
 
 **Integrated terminal**:
 The shell terminal docked in the app, available to the user only.
+
+**Terminal workspace**:
+The persistent folder the Integrated terminal starts in, holding the agent guidance and the sqlr skills.
+_Avoid_: terminal folder
+
+**Detected agent**:
+A supported agent client whose configuration or installation sqlr finds on this machine.
+
+**Agent installation**:
+sqlr's MCP server entry in a Detected agent's user-level configuration, written by Install and kept current by sqlr.
+_Avoid_: MCP config (for an installed entry)
+
+**sqlr skill**:
+One of the `sqlr-*` agent skills that teach an Agent a sqlr workflow, kept in the Terminal workspace and downloadable on its own.
 
 ## Diagnostics
 

@@ -12,7 +12,6 @@ These are the tools that work on whole databases rather than on a single result:
 - A **Batch** is the set of rows written between two commits.
 - A **Rejected row** is a row that a conversion or the target refused. Its position, reason and source values are recorded.
 - A **Dump** writes a database to a file with the database's native dump program. A **Restore** reads such a file back with the native program.
-- A **Saved task** names a Dump, a Restore, a Data transfer or a script and stores what it needs to run again. Each execution is a **Task run**.
 - A **Schema snapshot** is the object list of one schema, with each object's definition and dependencies.
 - A **Diff** classifies each object as added, removed or changed between two snapshots, with the changed pieces of a definition.
 - A **Migration script** is SQL generated from a Diff that transforms the target schema into the source schema.
@@ -201,18 +200,6 @@ The dialog sets the row count, default 100 and up to 100,000,000, and the seed, 
 
 A preview of 20 rows shows the result before anything is written; foreign keys in the preview use small stand-in values. Insert asks for confirmation and writes through the Data transfer engine in batches of 1,000, then reports rows written and rejected. A failure with unique values after 200 attempts stops with an error saying the domain is too small. The generator is deterministic: the same specification and seed produce the same rows.
 
-### Saved tasks and Task runs
-
-A Saved task holds an identifier, a name, and one specification: a Dump with its Connection, database and options plus an output file; a Restore with its Connection, database and options plus an input file; a Data transfer with its full specification; or a script with its Connection, database and SQL. A task reports the Connections it needs and its kind.
-
-Tasks are kept in the application database behind the store worker, loaded at startup before any change is written, and listed by name, case-insensitively. Saving or deleting a task updates the list in memory and writes it through the worker; deleting a task also deletes its runs.
-
-Running a task checks that its Connections exist and are connected, that a restore input exists, and that a dump output directory is writable, then starts the corresponding Job. A script task settles as failed with the message that scripts cannot be run as tasks yet.
-
-Every run records its task, start and end time, outcome (running, ok, failed or cancelled), a one-line summary and the Job log. The newest 50 runs per task are kept. A log is cut from the end at 1 MiB on a character boundary.
-
-The engine starts a Saved task on request, and the Agent interface lists and deletes Saved tasks. The app starts Dump, Restore and Data transfer directly from their dialogs, which carry the options for one run.
-
 ### Schema compare
 
 Compare takes a source and a target Schema side: a Connection, an optional database and a schema. The two sides must be Connections of the same Driver. The dialog offers Swap, and enables Compare once both sides are complete.
@@ -301,9 +288,9 @@ stateDiagram-v2
 
 ## Architecture
 
-The core holds the pure parts: the Endpoint and transfer specification, column mapping, transforms and type mapping; the generator specification and the deterministic row generator; the schema snapshot, the Diff, the migration script, the ER model and its layout; the plan tree with its warnings, roles and hot path; the Saved task, Task run and Dump/Restore specifications; and the command lines for the native tools, built as data.
+The core holds the pure parts: the Endpoint and transfer specification, column mapping, transforms and type mapping; the generator specification and the deterministic row generator; the schema snapshot, the Diff, the migration script, the ER model and its layout; the plan tree with its warnings, roles and hot path; the Dump and Restore specifications; and the command lines for the native tools, built as data.
 
-The engine executes them. It discovers the native tool, resolves the real Connection including credentials and any SSH tunnel, runs the child process with a dedicated process group, streams its output into the Job log and turns Cancel into a signal for that process group. It probes transfer sources, reads foreign-key pools, creates new tables, writes the target in batches with savepoints for bad rows, and writes the rejected rows file. It reads schema snapshots through the Drivers, computes the Diff in the core, and generates the migration script with the target Driver's DDL. It loads and saves Saved tasks and their runs, and ER layouts, through the store worker. It runs Explain on the tab's Session and hands the raw plan to the core parser.
+The engine executes them. It discovers the native tool, resolves the real Connection including credentials and any SSH tunnel, runs the child process with a dedicated process group, streams its output into the Job log and turns Cancel into a signal for that process group. It probes transfer sources, reads foreign-key pools, creates new tables, writes the target in batches with savepoints for bad rows, and writes the rejected rows file. It reads schema snapshots through the Drivers, computes the Diff in the core, and generates the migration script with the target Driver's DDL. It loads and saves ER layouts through the store worker. It runs Explain on the tab's Session and hands the raw plan to the core parser.
 
 The app owns the dialogs: Dump and Restore with their tool options and logs, Export and Import as presets, the five-step transfer wizard, the generator, the compare view with its tree and side-by-side definitions, the ER canvas, and the Plan pane with its cards and hot path. Dialogs follow the Job they started and show its progress, log and result. File and folder pickers are native dialogs opened asynchronously and polled, so the UI thread never blocks on them.
 
@@ -317,15 +304,13 @@ The Drivers supply what differs per database: whether databases can be dumped an
 - **Generator specification**: table, row count, seed, and one entry per column with its generator, NULL ratio, unique switch and optional target name.
 - **Schema snapshot**: engine, schema, objects with kind, name, signature, definition and dependencies.
 - **Diff**: object kind, name, added, removed or changed, the changed parts, the destructive flag, and dependencies.
-- **Saved task**: identifier, name, specification, created and updated time.
-- **Task run**: identifier, task, start and end time, outcome, summary, log.
 - **Plan tree**: planning time, execution time, the raw plan text and a root operator. Each operator has a role, cost, estimated rows, actual rows, loops, self time, total time, extra properties, buffers and children.
 - **ER layout**: a position per table, keyed by Connection, database, schema and the sorted table names.
 
 ## Non-functional requirements
 
 - A transfer holds bounded memory: 500-row chunks from files and collections, 1,000-row reads from a loaded Result, and 256 KiB write flushes. A dump streams tool output rather than buffering it.
-- A Job log keeps the last 5,000 lines. A Task run log is cut from the end at 1 MiB.
+- A Job log keeps the last 5,000 lines.
 - The generator is deterministic for a given specification and seed, and holds at most 100,000 foreign-key values per referenced table.
 - Rejected rows are capped at 1,000 per transfer.
 - The Compare, ER and Explain tools read only. A migration script is generated and opened, never applied; an analyzed write runs inside a transaction that is rolled back.
@@ -363,5 +348,5 @@ The Drivers supply what differs per database: whether databases can be dumped an
 - [Query editor](query-editor.md): the statement at the caret that Explain runs, and the editor tab a migration script opens in.
 - [Drivers](drivers.md): dump and restore support, DDL generation, type names, Explain commands and their parsers.
 - [Connections](connections.md): the Connection, its credentials and SSH tunnel that the native tools and transfers use.
-- [Agents and terminal](agents-and-terminal.md): agent access to Saved tasks and Task runs.
+- [Agents and terminal](agents-and-terminal.md): `explain_query` and the `explain` and `er_diagram` views that Agents use, with the same Explain rules.
 - [Settings and workspace](settings-and-workspace.md): the Operations panel, panels and layout, and the settings that affect these tools.
