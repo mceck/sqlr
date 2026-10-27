@@ -74,6 +74,41 @@ impl RedisTab {
         self.console.input = line.to_string();
     }
 
+    /// The key the value view shows.
+    pub(crate) fn selected(&self) -> Option<&[u8]> {
+        self.selected.as_deref()
+    }
+
+    /// Saves the value view's unsaved edit (Apply), as its Save button would. Only the key
+    /// browser shows the value view.
+    pub(crate) fn save_edit(&mut self) {
+        if self.mode == Mode::Keys && self.selected.is_some() {
+            self.value.request_save();
+        }
+    }
+
+    /// Drops the value view's unsaved edit (Discard).
+    pub(crate) fn discard_edit(&mut self) {
+        self.value.discard_edit();
+    }
+
+    /// Scans the keys again and reloads the shown value unless it holds an unsaved edit
+    /// (Refresh).
+    pub(crate) fn refresh(&self, engine: &Engine, conn: &str) {
+        if !matches!(
+            engine.session_status(conn),
+            Some(SessionStatus::Connected(_))
+        ) {
+            return;
+        }
+        engine.kv_scan(conn, self.db, &self.pattern, false);
+        if let Some(key) = &self.selected
+            && !self.value.has_unsaved_edit()
+        {
+            engine.kv_open(conn, self.db, key);
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn console_input(&self) -> &str {
         &self.console.input

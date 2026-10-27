@@ -151,6 +151,45 @@ impl DocTab {
     pub(crate) fn rerun(&self) -> Vec<String> {
         self.statements.clone()
     }
+
+    /// The JSON view of the shown result, while the JSON view is shown.
+    fn shown_json(&mut self) -> Option<&mut JsonViewState> {
+        if self.view != DocView::Json {
+            return None;
+        }
+        let last = self.results.len().checked_sub(1)?;
+        let q = *self.results.get(self.shown?.min(last))?;
+        self.views.get_mut(&q).map(|v| &mut v.json)
+    }
+
+    /// Saves the shown JSON view's edit or insert (Apply), as its Save button would.
+    pub(crate) fn save_json(&mut self) {
+        if let Some(json) = self.shown_json() {
+            json.request_save();
+        }
+    }
+
+    /// Closes the shown JSON view's editor without saving (Discard), as Cancel would.
+    pub(crate) fn cancel_json(&mut self) {
+        if let Some(json) = self.shown_json() {
+            json.cancel();
+        }
+    }
+
+    /// Whether a JSON view is editing or inserting a document.
+    pub(crate) fn json_editing(&self) -> bool {
+        self.views.values().any(|v| v.json.editing())
+    }
+
+    /// Whether the last run, or an edit of its documents, is still running.
+    pub(crate) fn is_running(&self, engine: &Engine) -> bool {
+        !self.jobs.is_empty()
+            || self.results.iter().any(|q| {
+                engine
+                    .doc_result(*q)
+                    .is_some_and(|r| r.read().status == QueryStatus::Running)
+            })
+    }
 }
 
 /// Why a document cannot be edited.

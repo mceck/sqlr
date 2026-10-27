@@ -92,6 +92,16 @@ pub(crate) struct ErDialog {
 }
 
 impl ErDialog {
+    /// What reopening the diagram needs once its tab closed.
+    pub(crate) fn closed_tab(&self) -> crate::closed_tabs::ClosedTab {
+        crate::closed_tabs::ClosedTab::Er {
+            conn: self.conn.clone(),
+            database: self.database.clone(),
+            schema: self.schema.clone(),
+            tables: self.tables.clone(),
+        }
+    }
+
     fn new(
         conn: String,
         database: Option<String>,

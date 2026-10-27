@@ -52,6 +52,8 @@ pub struct JsonViewState {
     refused: Option<(usize, String)>,
     /// The shown document's text, by index and the document it was built from.
     shown: Option<(usize, DocValue, String)>,
+    /// Save the editor when the view next draws, as its Save button would.
+    save_requested: bool,
 }
 
 fn editor_for(text: &str) -> Box<EditorState> {
@@ -124,6 +126,12 @@ impl JsonViewState {
         });
     }
 
+    /// Saves the open editor when the view next draws, as its Save button would: the text
+    /// is checked first, and an invalid one keeps the editor open with its message.
+    pub fn request_save(&mut self) {
+        self.save_requested = self.edit.is_some();
+    }
+
     /// Closes the editor without saving.
     pub fn cancel(&mut self) {
         self.edit = None;
@@ -162,8 +170,9 @@ pub fn json_view(
 ) -> Option<DocAction> {
     let p = theme::palette(ui.ctx());
     let mut action = None;
+    let requested = std::mem::take(&mut state.save_requested);
     if let Some(edit) = &mut state.edit {
-        let mut save = false;
+        let mut save = requested;
         let mut cancel = false;
         ui.horizontal(|ui| {
             let what = match edit.index {
@@ -171,7 +180,7 @@ pub fn json_view(
                 None => "New document".to_string(),
             };
             ui.label(RichText::new(what).strong());
-            save = ui.button("Save").clicked();
+            save |= ui.button("Save").clicked();
             cancel = ui.button("Cancel").clicked();
         });
         if let Some(error) = &state.error {

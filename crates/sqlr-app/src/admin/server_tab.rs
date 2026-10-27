@@ -96,6 +96,11 @@ impl ServerTab {
         out
     }
 
+    /// Loads the active pane again (Refresh), unless a load runs.
+    pub fn reload(&mut self, engine: &Engine) {
+        self.load(engine, self.pane);
+    }
+
     fn load(&mut self, engine: &Engine, pane: Pane) {
         if self.job.is_some() {
             return;

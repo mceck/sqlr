@@ -196,6 +196,8 @@ pub struct SqlrApp {
     pub(crate) tree: TreeState,
     pub(crate) dock: DockState<QueryTab>,
     pub(crate) next_tab: u64,
+    /// Closed tabs Reopen closed tab opens again, most recent last (this session only).
+    pub(crate) closed_tabs: Vec<crate::closed_tabs::ClosedTab>,
     pub(crate) show_value_panel: bool,
     pub(crate) show_history: bool,
     pub(crate) show_operations: bool,
@@ -379,6 +381,7 @@ impl SqlrApp {
             tree: TreeState::default(),
             dock: DockState::new(Vec::new()),
             next_tab: 0,
+            closed_tabs: Vec::new(),
             show_value_panel: false,
             show_history: false,
             show_operations: false,
@@ -504,10 +507,13 @@ impl SqlrApp {
         self.native_menu_ui(ui.ctx());
         sqlr_ui::keymap::set_ui_keymap(ui.ctx(), self.keymap.keymap.clone());
         let terminal_focused = self.terminal.focused();
+        // Sampled from the last frame, before any dialog draws in this one.
+        let modal_open = ui.ctx().memory(|m| m.top_modal_layer()).is_some();
         for action in crate::actions::dispatch_actions(ui.ctx(), &self.keymap.keymap, |action| {
             self.prefs.is_none()
                 && self.palette.state.mode.is_none()
                 && action != sqlr_core::ActionId::Stop
+                && !(modal_open && crate::actions::waits_for_modals(action))
                 && (!terminal_focused
                     || matches!(
                         action,

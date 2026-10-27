@@ -724,6 +724,66 @@ fn object_permissions_and_statistics() {
     });
 }
 
+#[test]
+fn cmd_s_applies_the_role_changes() {
+    let (mut h, driver, _dir) = harness(full_admin());
+    open_users(&mut h);
+    edit_reader(&mut h);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
+    step_until(&mut h, "the apply", |_| {
+        driver
+            .executed()
+            .iter()
+            .any(|s| s.starts_with("ALTER ROLE reader"))
+    });
+    wait_for_label(&mut h, "No pending changes");
+}
+
+#[test]
+fn f5_reloads_the_roles_and_asks_when_edits_are_pending() {
+    let (mut h, driver, _dir) = harness(full_admin());
+    open_users(&mut h);
+    let loads = |driver: &FakeDriver| {
+        driver
+            .admin_calls()
+            .iter()
+            .filter(|c| *c == "roles")
+            .count()
+    };
+    let before = loads(&driver);
+    edit_reader(&mut h);
+    h.key_press(egui::Key::F5);
+    wait_for_label(&mut h, "Discard the pending changes of reader?");
+    click_in_modal(&mut h, "Discard");
+    step_until(&mut h, "the roles to load again", |_| {
+        loads(&driver) == before + 1
+    });
+    assert!(driver.executed().is_empty());
+}
+
+#[test]
+fn cmd_s_applies_the_grants_on_the_permissions_page() {
+    let (mut h, driver, _dir) = harness(full_admin());
+    connect(&mut h);
+    h.get_by_label("Expand s").click();
+    wait_for_label(&mut h, "Expand tables");
+    h.get_by_label("Expand tables").click();
+    wait_for_label(&mut h, "orders");
+    context_menu(&mut h, "orders", "Open editor");
+    wait_for_label(&mut h, "Permissions");
+    h.get_by_label("Permissions").click();
+    wait_for_label(&mut h, "INSERT on reader");
+    h.get_by_label("INSERT on reader").click();
+    h.run_steps(2);
+    wait_for_label(&mut h, "1 pending change");
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
+    step_until(&mut h, "the grant", |_| {
+        driver
+            .executed()
+            .contains(&"GRANT INSERT ON s.orders TO reader".to_string())
+    });
+}
+
 use crate::visual;
 
 #[test]

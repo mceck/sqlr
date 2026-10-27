@@ -1054,6 +1054,259 @@ fn discarding_pending_edits_clears_them() {
     wait_for_label(&mut h, "No pending changes");
 }
 
+/// Opens the editable `orders` and types `15` over `10` in the grid's inline editor;
+/// `commit` presses Enter so the edit is staged.
+fn type_total(h: &mut Harness<'static, SqlrApp>, commit: bool) {
+    expand_to_orders(h);
+    double_click(h, "orders");
+    wait_for_label(h, "20");
+    wait_for_label(h, "No pending changes");
+    double_click(h, "10");
+    h.event(egui::Event::Text("15".into()));
+    h.run_steps(2);
+    if commit {
+        press(h, Modifiers::NONE, Key::Enter);
+        wait_for_label(h, "1 pending change");
+    }
+}
+
+fn updates(driver: &FakeDriver) -> usize {
+    driver
+        .executed()
+        .iter()
+        .filter(|s| s.starts_with("UPDATE"))
+        .count()
+}
+
+fn selects(driver: &FakeDriver) -> usize {
+    driver
+        .executed()
+        .iter()
+        .filter(|s| s.starts_with("SELECT"))
+        .count()
+}
+
+#[test]
+fn cmd_s_applies_the_shown_results_changeset() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut h, driver) = harness_with_script(&dir, orders_table_script());
+    type_total(&mut h, true);
+    press(&mut h, Modifiers::COMMAND, Key::S);
+    step_until(&mut h, "the changes to apply", |h| {
+        updates(&driver) == 1 && h.query_by_label("No pending changes").is_some()
+    });
+    let with = driver.executed_with();
+    assert_eq!(
+        with.last().unwrap().1,
+        vec![sqlr_core::Value::Int(15), sqlr_core::Value::Int(1)]
+    );
+}
+
+#[test]
+fn cmd_s_commits_the_open_cell_editor_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut h, driver) = harness_with_script(&dir, orders_table_script());
+    type_total(&mut h, false);
+    press(&mut h, Modifiers::COMMAND, Key::S);
+    step_until(&mut h, "the typed value to apply", |_| {
+        updates(&driver) == 1
+    });
+    assert_eq!(
+        driver.executed_with().last().unwrap().1,
+        vec![sqlr_core::Value::Int(15), sqlr_core::Value::Int(1)]
+    );
+}
+
+#[test]
+fn cmd_s_keeps_an_invalid_cell_editor_open_and_applies_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut h, driver) = harness_with_script(&dir, orders_table_script());
+    expand_to_orders(&mut h);
+    double_click(&mut h, "orders");
+    wait_for_label(&mut h, "20");
+    double_click(&mut h, "10");
+    h.event(egui::Event::Text("abc".into()));
+    h.run_steps(2);
+    press(&mut h, Modifiers::COMMAND, Key::S);
+    wait_for_label(&mut h, "Not an integer");
+    h.run_steps(10);
+    assert_eq!(updates(&driver), 0);
+    h.get_by_label("No pending changes");
+}
+
+#[test]
+fn cmd_s_with_nothing_pending_does_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut h, driver) = harness_with_script(&dir, orders_table_script());
+    expand_to_orders(&mut h);
+    double_click(&mut h, "orders");
+    wait_for_label(&mut h, "No pending changes");
+    let executed = driver.executed().len();
+    press(&mut h, Modifiers::COMMAND, Key::S);
+    h.run_steps(10);
+    assert_eq!(driver.executed().len(), executed);
+    assert!(
+        h.state().toast_texts().is_empty(),
+        "{:?}",
+        h.state().toast_texts()
+    );
+}
+
+#[test]
+fn cmd_s_reviews_first_when_the_profile_confirms_writes() {
+    let dir = tempfile::tempdir().unwrap();
+    let (deps, driver) = deps_with(dir.path(), orders_table_script());
+    let mut cfg = deps.repo.list().unwrap().remove(0);
+    cfg.profile = Some("production".into());
+    deps.repo.save(&cfg, &Secrets::default()).unwrap();
+    let app = SqlrApp::new(deps, &egui::Context::default());
+    let mut h = Harness::builder()
+        .with_size((1400.0, 900.0))
+        .with_step_dt(0.01)
+        .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    h.run_steps(2);
+    type_total(&mut h, true);
+    press(&mut h, Modifiers::COMMAND, Key::S);
+    wait_for_label(
+        &mut h,
+        "This connection's profile asks before writing: review the changes.",
+    );
+    assert_eq!(updates(&driver), 0);
+    h.get_by_label("Apply changes").click();
+    step_until(&mut h, "the reviewed changes to apply", |_| {
+        updates(&driver) == 1
+    });
+}
+
+#[test]
+fn shortcuts_wait_while_a_modal_dialog_is_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut h, driver) = harness_with_script(&dir, orders_table_script());
+    type_total(&mut h, true);
+    let before = selects(&driver);
+    context_menu(&mut h, "fake-conn", "Delete");
+    wait_for_label(&mut h, "Delete connection");
+    h.run_steps(3);
+    // Under the prompt, the chords do not reach the tab behind it.
+    press(&mut h, Modifiers::COMMAND, Key::S);
+    press(&mut h, Modifiers::NONE, Key::F5);
+    h.run_steps(10);
+    assert_eq!((updates(&driver), selects(&driver)), (0, before));
+    assert!(h.query_by_label_contains("and refresh?").is_none());
+    h.get_by_label("Cancel").click();
+    h.run_steps(5);
+    press(&mut h, Modifiers::COMMAND, Key::S);
+    step_until(&mut h, "the changes to apply", |_| updates(&driver) == 1);
+}
+
+#[test]
+fn a_user_binding_discards_the_pending_changeset() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("keymap.toml"),
+        "preset = \"sqlr\"\n[bindings]\ndiscard_changes = [\"Cmd+Alt+D\"]\n",
+    )
+    .unwrap();
+    let (mut h, driver) = harness_with_script(&dir, orders_table_script());
+    type_total(&mut h, true);
+    press(&mut h, Modifiers::COMMAND | Modifiers::ALT, Key::D);
+    wait_for_label(&mut h, "No pending changes");
+    assert_eq!(updates(&driver), 0);
+}
+
+#[test]
+fn f5_and_cmd_r_run_the_shown_result_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut h, driver) = harness_with_script(&dir, orders_table_script());
+    expand_to_orders(&mut h);
+    double_click(&mut h, "orders");
+    wait_for_label(&mut h, "No pending changes");
+    let before = selects(&driver);
+    press(&mut h, Modifiers::NONE, Key::F5);
+    step_until(&mut h, "the refresh", |_| selects(&driver) == before + 1);
+    wait_for_label(&mut h, "No pending changes");
+    press(&mut h, Modifiers::COMMAND, Key::R);
+    step_until(&mut h, "the second refresh", |_| {
+        selects(&driver) == before + 2
+    });
+    let executed = driver.executed();
+    let mut runs = executed.iter().filter(|s| s.starts_with("SELECT"));
+    let first = runs.next().unwrap();
+    assert!(runs.all(|s| s == first), "{executed:?}");
+}
+
+#[test]
+fn refresh_asks_before_dropping_a_pending_changeset() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut h, driver) = harness_with_script(&dir, orders_table_script());
+    type_total(&mut h, true);
+    let before = selects(&driver);
+    press(&mut h, Modifiers::NONE, Key::F5);
+    wait_for_label(&mut h, "Discard 1 pending change and refresh?");
+    h.run_steps(3);
+    h.get_by_label("Cancel").click();
+    h.run_steps(5);
+    assert_eq!(selects(&driver), before);
+    h.get_by_label("1 pending change");
+    press(&mut h, Modifiers::NONE, Key::F5);
+    wait_for_label(&mut h, "Discard 1 pending change and refresh?");
+    h.run_steps(3);
+    h.get_all_by_label("Refresh").last().unwrap().click();
+    step_until(&mut h, "the refresh", |h| {
+        selects(&driver) == before + 1 && h.query_by_label("No pending changes").is_some()
+    });
+    assert_eq!(updates(&driver), 0);
+}
+
+#[test]
+fn cmd_shift_t_reopens_a_closed_editor_tab_without_running_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut h, driver) = harness_with_driver(&dir);
+    open_orders(&mut h);
+    replace_text(&mut h, "select 7");
+    let executed = driver.executed().len();
+    press(&mut h, Modifiers::COMMAND, Key::W);
+    step_until(&mut h, "the tab to close", |h| {
+        h.state().tab_titles() == ["Query 1"]
+    });
+    press(&mut h, Modifiers::COMMAND | Modifiers::SHIFT, Key::T);
+    step_until(&mut h, "the tab to reopen", |h| {
+        h.state().tab_titles() == ["Query 1", "orders"]
+    });
+    let (_, title, text, _) = h.state_mut().active_tab_for_tests().unwrap();
+    assert_eq!((title.as_str(), text.as_str()), ("orders", "select 7"));
+    assert_eq!(h.state().tab_conns()[1].as_deref(), Some("c1"));
+    h.run_steps(20);
+    assert_eq!(driver.executed().len(), executed, "nothing ran");
+    // Nothing else was closed.
+    press(&mut h, Modifiers::COMMAND | Modifiers::SHIFT, Key::T);
+    assert_eq!(h.state().tab_titles(), ["Query 1", "orders"]);
+}
+
+#[test]
+fn reopening_a_tab_of_a_deleted_connection_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = harness(&dir);
+    open_orders(&mut h);
+    press(&mut h, Modifiers::COMMAND, Key::W);
+    step_until(&mut h, "the tab to close", |h| {
+        h.state().tab_titles() == ["Query 1"]
+    });
+    context_menu(&mut h, "fake-conn", "Delete");
+    wait_for_label(&mut h, "Delete connection");
+    h.run_steps(3);
+    h.get_all_by_label("Delete").last().unwrap().click();
+    step_until(&mut h, "the connection to go", |h| {
+        h.state().saved_connections().is_empty()
+    });
+    press(&mut h, Modifiers::COMMAND | Modifiers::SHIFT, Key::T);
+    let message = "The connection of the closed tab no longer exists";
+    step_until(&mut h, "the toast", |h| {
+        h.state().toast_texts().iter().any(|t| t == message)
+    });
+    assert_eq!(h.state().tab_titles(), ["Query 1"]);
+}
+
 #[test]
 fn a_driver_without_editing_shows_the_result_read_only() {
     let dir = tempfile::tempdir().unwrap();

@@ -812,6 +812,85 @@ fn closing_an_editor_with_pending_row_edits_asks() {
     assert!(!driver.executed().iter().any(|s| s.starts_with("UPDATE")));
 }
 
+fn press(h: &mut Harness<'static, SqlrApp>, modifiers: egui::Modifiers, key: egui::Key) {
+    h.key_press_modifiers(modifiers, key);
+    h.run_steps(2);
+}
+
+#[test]
+fn cmd_s_applies_the_data_page_changeset() {
+    let (mut h, driver, _dir) = harness(editable_orders());
+    open_orders_editor(&mut h);
+    edit_data_cell(&mut h);
+    press(&mut h, egui::Modifiers::COMMAND, egui::Key::S);
+    step_until(&mut h, "the row to apply", |_| {
+        driver.executed().iter().any(|s| s == "COMMIT")
+    });
+    assert!(
+        driver
+            .executed()
+            .contains(&"UPDATE orders SET total = ? WHERE id = ?".to_string())
+    );
+    assert!(!driver.executed().iter().any(|s| s.starts_with("ALTER")));
+}
+
+#[test]
+fn cmd_s_applies_the_schema_change_list_on_the_other_pages() {
+    let (mut h, driver, _dir) = harness(FakeScript::default());
+    open_orders_editor(&mut h);
+    h.get_by_label("Add column").click();
+    h.run_steps(2);
+    wait_for_label(&mut h, "1 pending change");
+    press(&mut h, egui::Modifiers::COMMAND, egui::Key::S);
+    step_until(&mut h, "the column to apply", |_| {
+        driver.executed().iter().any(|s| s.contains("ADD COLUMN"))
+    });
+    step_until(&mut h, "the reload", |h| {
+        h.query_by_label("No pending changes").is_some()
+    });
+}
+
+#[test]
+fn f5_reloads_the_object_and_asks_when_edits_are_pending() {
+    let (mut h, driver, _dir) = harness(FakeScript::default());
+    open_orders_editor(&mut h);
+    h.get_by_label("Add column").click();
+    h.run_steps(2);
+    press(&mut h, egui::Modifiers::NONE, egui::Key::F5);
+    wait_for_label(&mut h, "Discard the pending changes of orders?");
+    click_in_modal(&mut h, "Discard");
+    step_until(&mut h, "the reload", |h| {
+        h.query_by_label("No pending changes").is_some()
+    });
+    assert!(driver.executed().is_empty());
+}
+
+#[test]
+fn cmd_shift_t_reopens_an_object_editor_on_its_page() {
+    let (mut h, driver, _dir) = harness(FakeScript::default());
+    open_orders_editor(&mut h);
+    h.get_by_label("DDL").click();
+    wait_for_label(&mut h, "Current DDL");
+    press(&mut h, egui::Modifiers::COMMAND, egui::Key::W);
+    step_until(&mut h, "the tab to close", |h| {
+        h.state().tab_titles() == ["Query 1"]
+    });
+    press(
+        &mut h,
+        egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+        egui::Key::T,
+    );
+    step_until(&mut h, "the editor to reopen", |h| {
+        h.state().tab_titles() == ["Query 1", "orders"]
+    });
+    // The definition loads again, on the page it was closed on.
+    step_until(&mut h, "the DDL page", |h| {
+        h.query_by_label("Current DDL").is_some()
+    });
+    assert!(h.query(field("total")).is_none(), "not the Columns page");
+    assert!(driver.executed().is_empty());
+}
+
 fn manual_harness() -> (
     Harness<'static, SqlrApp>,
     Arc<FakeDriver>,

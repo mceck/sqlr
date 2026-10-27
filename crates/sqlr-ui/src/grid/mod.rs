@@ -501,6 +501,13 @@ impl GridState {
         }
     }
 
+    /// Closes the open inline cell editor without staging its value, as Esc does.
+    pub fn cancel_editor(&mut self) {
+        if self.editor.take().is_some() {
+            self.refocus = true;
+        }
+    }
+
     /// Appends a row of defaults and reveals it (the result bar's "Add row").
     pub fn add_row(&mut self) {
         let Some(edits) = &mut self.edits else {

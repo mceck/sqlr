@@ -419,11 +419,12 @@ impl SqlrApp {
         self.ask_end(EndTarget::Reconnect(conn.to_string()), sessions);
     }
 
-    /// Closes the tab, its results and its session.
+    /// Closes the tab, its results and its session; Reopen closed tab can open it again.
     pub(crate) fn close_tab_now(&mut self, key: u64) {
         let Some(path) = self.dock.find_tab_from(|t| t.key == key) else {
             return;
         };
+        self.remember_closed_tab(key);
         if let Some(tab) = tab_mut(&mut self.dock, key) {
             if let (Some(redis), Some(conn)) = (&tab.redis, &tab.conn) {
                 self.engine.kv_close_console(conn, key);

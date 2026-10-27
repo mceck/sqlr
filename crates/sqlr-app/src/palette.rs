@@ -101,6 +101,14 @@ pub enum AppCommand {
     OpenObject,
     /// Opens ⌘⇧P.
     Commands,
+    /// Applies the active tab's pending changes.
+    Apply,
+    /// Drops the active tab's pending changes.
+    Discard,
+    /// Reloads what the active tab shows.
+    Refresh,
+    /// Reopens the most recently closed tab.
+    ReopenClosedTab,
     /// Presses the action's current shortcut for the focused widget: the editor, grid and
     /// explorer actions that have no command of their own (Format SQL, Find, Rename…).
     Key(sqlr_core::ActionId),
@@ -382,6 +390,10 @@ impl SqlrApp {
                     command("Explain analyze", "", AppCommand::ExplainAnalyze),
                     command("Commit", "", AppCommand::Commit),
                     command("Rollback", "", AppCommand::Rollback),
+                    command("Apply pending changes", "", AppCommand::Apply),
+                    command("Discard pending changes", "", AppCommand::Discard),
+                    command("Refresh", "", AppCommand::Refresh),
+                    command("Reopen closed tab", "", AppCommand::ReopenClosedTab),
                     command("Toggle value panel", "", AppCommand::ToggleValuePanel),
                     command("Toggle terminal", "", AppCommand::ToggleTerminal),
                     command("Toggle history panel", "", AppCommand::ToggleHistory),
@@ -660,6 +672,10 @@ impl SqlrApp {
             AppCommand::NewTabOnConnection => self.new_editor_tab(),
             AppCommand::OpenObject => self.open_palette(PaletteMode::Objects),
             AppCommand::Commands => self.open_palette(PaletteMode::Commands),
+            AppCommand::Apply => self.apply_active(),
+            AppCommand::Discard => self.discard_active(),
+            AppCommand::Refresh => self.refresh_active(),
+            AppCommand::ReopenClosedTab => self.reopen_closed_tab(),
             AppCommand::Key(action) => {
                 let mac = ctx.os() == egui::os::OperatingSystem::Mac;
                 if let Some(shortcut) = self
@@ -737,6 +753,28 @@ pub(crate) mod tests {
             diagnostics_warning: None,
         };
         (SqlrApp::new(deps, &egui::Context::default()), dir)
+    }
+
+    #[test]
+    fn the_palette_offers_pending_changes_refresh_and_reopen_with_their_chords() {
+        let (app, _dir) = bare_app();
+        let (items, _) = app.palette_items(PaletteMode::Commands, None, true);
+        let shortcut = |label: &str| {
+            items
+                .iter()
+                .find(|i| i.label == label)
+                .unwrap_or_else(|| panic!("{label} is listed"))
+                .shortcut
+                .clone()
+        };
+        assert_eq!(shortcut("Apply pending changes").as_deref(), Some("⌘S"));
+        assert_eq!(
+            shortcut("Discard pending changes"),
+            None,
+            "no default chord"
+        );
+        assert_eq!(shortcut("Refresh").as_deref(), Some("F5"));
+        assert_eq!(shortcut("Reopen closed tab").as_deref(), Some("⇧⌘T"));
     }
 
     #[test]

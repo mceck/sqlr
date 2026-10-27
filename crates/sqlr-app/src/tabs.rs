@@ -2316,6 +2316,115 @@ mod tests {
     }
 
     #[test]
+    fn go_to_tab_follows_the_next_tab_order_across_groups() {
+        use sqlr_core::ActionId as A;
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = sqlite_app(dir.path());
+        let ctx = egui::Context::default();
+        app.dock = egui_dock::DockState::new(vec![]);
+        for i in 1..=10 {
+            app.new_tab(Some(format!("t{i}")), None, "");
+        }
+        // The last three tabs move to a second group.
+        let moved: Vec<QueryTab> = (0..3)
+            .filter_map(|_| {
+                let path = app.dock.iter_all_tabs().last()?.0;
+                app.dock.remove_tab(path)
+            })
+            .collect();
+        app.dock
+            .main_surface_mut()
+            .split_right(egui_dock::NodeIndex::root(), 0.5, moved);
+        let order: Vec<u64> = app.dock.iter_all_tabs().map(|(_, t)| t.key).collect();
+        let go = [
+            A::GoToTab1,
+            A::GoToTab2,
+            A::GoToTab3,
+            A::GoToTab4,
+            A::GoToTab5,
+            A::GoToTab6,
+            A::GoToTab7,
+            A::GoToTab8,
+        ];
+        for (n, action) in go.into_iter().enumerate() {
+            app.dispatch_action(action, &ctx);
+            assert_eq!(app.active_key(), Some(order[n]), "tab {}", n + 1);
+            // Next tab agrees with the position.
+            app.dispatch_action(A::NextTab, &ctx);
+            assert_eq!(app.active_key(), Some(order[n + 1]));
+        }
+        app.dispatch_action(A::GoToLastTab, &ctx);
+        assert_eq!(app.active_key(), Some(order[9]));
+
+        // A position past the last tab does nothing.
+        app.dock = egui_dock::DockState::new(vec![]);
+        let first = app.new_tab(None, None, "");
+        let second = app.new_tab(None, None, "");
+        app.dispatch_action(A::GoToTab5, &ctx);
+        assert_eq!(app.active_key(), Some(second));
+        app.dispatch_action(A::GoToTab1, &ctx);
+        assert_eq!(app.active_key(), Some(first));
+        app.dispatch_action(A::GoToLastTab, &ctx);
+        assert_eq!(app.active_key(), Some(second));
+    }
+
+    #[test]
+    fn reopen_closed_tab_pops_the_latest_of_twenty() {
+        use sqlr_core::ActionId as A;
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = sqlite_app(dir.path());
+        let ctx = egui::Context::default();
+        app.dock = egui_dock::DockState::new(vec![]);
+        for i in 1..=22 {
+            let key = app.new_tab(
+                Some(format!("t{i}")),
+                Some("db".into()),
+                &format!("SELECT {i}"),
+            );
+            app.tab(key).unwrap().database = Some(format!("d{i}"));
+            app.close_tab_now(key);
+        }
+        assert_eq!(app.dock.iter_all_tabs().count(), 0);
+        for i in (3..=22).rev() {
+            app.dispatch_action(A::ReopenClosedTab, &ctx);
+            let tab = app.active_tab().unwrap();
+            assert_eq!(tab.title, format!("t{i}"));
+            assert_eq!(tab.editor.text(), format!("SELECT {i}"));
+            assert_eq!(tab.conn.as_deref(), Some("db"));
+            assert_eq!(tab.database, Some(format!("d{i}")));
+            assert!(tab.run.is_none(), "nothing runs");
+        }
+        // Only twenty were kept.
+        app.dispatch_action(A::ReopenClosedTab, &ctx);
+        assert_eq!(app.dock.iter_all_tabs().count(), 20);
+    }
+
+    #[test]
+    fn a_closed_tab_whose_connection_is_gone_is_dropped_with_a_toast() {
+        use sqlr_core::ActionId as A;
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = sqlite_app(dir.path());
+        let ctx = egui::Context::default();
+        app.dock = egui_dock::DockState::new(vec![]);
+        let text = app.new_tab(Some("notes".into()), None, "scratch");
+        app.close_tab_now(text);
+        let sql = app.new_tab(Some("orders".into()), Some("db".into()), "SELECT 1");
+        app.close_tab_now(sql);
+        app.connections.retain(|c| c.id != "db");
+        app.dispatch_action(A::ReopenClosedTab, &ctx);
+        assert_eq!(app.dock.iter_all_tabs().count(), 0);
+        assert_eq!(
+            app.toast_texts(),
+            ["The connection of the closed tab no longer exists"]
+        );
+        // The next press reopens the one closed before, a tab without a connection.
+        app.dispatch_action(A::ReopenClosedTab, &ctx);
+        let tab = app.active_tab().unwrap();
+        assert_eq!((tab.title.as_str(), tab.conn.as_deref()), ("notes", None));
+        assert_eq!(tab.editor.text(), "scratch");
+    }
+
+    #[test]
     fn explain_uses_the_tabs_selected_postgres_database() {
         sqlr_testkit::skip_container_tests!();
         use sqlr_core::{ConnectionConfig, ConnectionProfile, Secrets};

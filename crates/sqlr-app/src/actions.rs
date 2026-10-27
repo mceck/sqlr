@@ -25,6 +25,15 @@ pub fn dispatch_actions(
         actions
     })
 }
+/// Whether `action` waits while a modal dialog is open: a chord pressed under a prompt never
+/// reaches the tab behind it.
+pub(crate) fn waits_for_modals(action: ActionId) -> bool {
+    matches!(
+        action,
+        ActionId::Apply | ActionId::Discard | ActionId::Refresh | ActionId::ReopenClosedTab
+    )
+}
+
 impl SqlrApp {
     pub(crate) fn dispatch_action(&mut self, action: ActionId, ctx: &egui::Context) {
         use ActionId as A;
@@ -83,12 +92,33 @@ impl SqlrApp {
                 self.open_palette(sqlr_ui::PaletteMode::Commands);
                 return;
             }
-            A::Apply => {
-                if self.active_is_object()
-                    && let Some(key) = self.active_key()
-                {
-                    self.apply_object_tab(key);
-                }
+            A::Apply => AppCommand::Apply,
+            A::Discard => AppCommand::Discard,
+            A::Refresh => AppCommand::Refresh,
+            A::ReopenClosedTab => AppCommand::ReopenClosedTab,
+            A::GoToTab1
+            | A::GoToTab2
+            | A::GoToTab3
+            | A::GoToTab4
+            | A::GoToTab5
+            | A::GoToTab6
+            | A::GoToTab7
+            | A::GoToTab8 => {
+                let tabs = [
+                    A::GoToTab1,
+                    A::GoToTab2,
+                    A::GoToTab3,
+                    A::GoToTab4,
+                    A::GoToTab5,
+                    A::GoToTab6,
+                    A::GoToTab7,
+                    A::GoToTab8,
+                ];
+                self.go_to_tab(tabs.iter().position(|a| *a == action));
+                return;
+            }
+            A::GoToLastTab => {
+                self.go_to_tab(None);
                 return;
             }
             _ => return,
@@ -135,6 +165,10 @@ impl AppCommand {
             Self::NewTabOnConnection => A::NewTabOnConnection,
             Self::OpenObject => A::OpenObject,
             Self::Commands => A::Commands,
+            Self::Apply => A::Apply,
+            Self::Discard => A::Discard,
+            Self::Refresh => A::Refresh,
+            Self::ReopenClosedTab => A::ReopenClosedTab,
             Self::Key(action) => *action,
             _ => return None,
         })
@@ -187,6 +221,10 @@ impl AppCommand {
             Self::NewIndex(..) => i::KEY,
             Self::OpenObject => i::GO_TO,
             Self::Commands => i::COMMAND,
+            Self::Apply => i::SUCCESS,
+            Self::Discard => i::CANCELLED,
+            Self::Refresh => i::REFRESH,
+            Self::ReopenClosedTab => i::UNDO,
             Self::Key(_) => i::COMMAND,
         }
     }

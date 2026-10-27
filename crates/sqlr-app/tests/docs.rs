@@ -285,6 +285,29 @@ fn save_from_the_json_view_then_delete() {
 }
 
 #[test]
+fn cmd_s_saves_the_json_edit_and_f5_reads_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut h, driver) = app(dir.path());
+    open_users_json(&mut h);
+    h.get_by_label("Edit document").click();
+    wait_for_label(&mut h, "Editing document 1");
+    let runs = driver.runs().len();
+    // While the JSON view edits, Refresh leaves the tab alone.
+    h.key_press(egui::Key::F5);
+    h.run_steps(10);
+    assert_eq!(driver.runs().len(), runs);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::S);
+    step_until(&mut h, "the save", |h| {
+        h.query_by_label("Editing document 1").is_none()
+    });
+    step_until(&mut h, "the re-read", |_| driver.runs().len() > runs);
+    let runs = driver.runs().len();
+    h.run_steps(5);
+    h.key_press(egui::Key::F5);
+    step_until(&mut h, "the refresh", |_| driver.runs().len() > runs);
+}
+
+#[test]
 fn a_failed_save_keeps_the_text_and_says_why() {
     let dir = tempfile::tempdir().unwrap();
     let (mut h, driver) = app(dir.path());
