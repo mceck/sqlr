@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 ---
 
 # Apply the Rust best practices across the workspace
@@ -117,19 +117,19 @@ Users see no change: every error message keeps its current text and every behavi
 
 ## Acceptance Criteria
 
-- [ ] The root manifest declares `[workspace.lints.clippy]` with the deny list above, and every workspace member inherits it with `lints.workspace = true`.
-- [ ] `clippy.toml` disallows `std::sync::Mutex`, `std::sync::RwLock` and `std::sync::Condvar`, and no crate uses them.
-- [ ] `unwrap_used` is denied in the production code of every crate except `sqlr-testkit` and `sqlr-driver-tests`.
-- [ ] Production code contains no `#[allow(...)]`; every silenced lint uses `#[expect(..., reason = "...")]`; the remaining test-support `#[allow]`s have a reason.
-- [ ] Every `unsafe` block has a `// SAFETY:` comment.
-- [ ] No function signature in the workspace returns `Result<_, String>`.
-- [ ] Every new error type derives `thiserror::Error`, wraps lower errors with `#[from]` or `#[source]`, and reproduces the previous message text exactly.
-- [ ] `sqlr-core`, `sqlr-sidecar` and `sqlr-driver-sdk` deny `missing_docs`, and `cargo doc` for them builds without warnings.
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings` passes.
-- [ ] `cargo fmt --all -- --check` passes.
-- [ ] `cargo tree -d | grep egui` prints nothing and `cargo tree -i openssl-sys` finds no match.
-- [ ] The full workspace suite passes (`make test`).
-- [ ] The Architecture and Drivers specs describe the code quality gates.
+- [x] The root manifest declares `[workspace.lints.clippy]` with the deny list above, and every workspace member inherits it with `lints.workspace = true`.
+- [x] `clippy.toml` disallows `std::sync::Mutex`, `std::sync::RwLock` and `std::sync::Condvar`, and no crate uses them.
+- [x] `unwrap_used` is denied in the production code of every crate except `sqlr-testkit` and `sqlr-driver-tests`.
+- [x] Production code contains no `#[allow(...)]`; every silenced lint uses `#[expect(..., reason = "...")]`; the remaining test-support `#[allow]`s have a reason.
+- [x] Every `unsafe` block has a `// SAFETY:` comment.
+- [x] No function signature in the workspace returns `Result<_, String>`.
+- [x] Every new error type derives `thiserror::Error`, wraps lower errors with `#[from]` or `#[source]`, and reproduces the previous message text exactly.
+- [x] `sqlr-core`, `sqlr-sidecar` and `sqlr-driver-sdk` deny `missing_docs`, and `cargo doc` for them builds without warnings.
+- [x] `cargo clippy --workspace --all-targets -- -D warnings` passes.
+- [x] `cargo fmt --all -- --check` passes.
+- [x] `cargo tree -d | grep egui` prints nothing and `cargo tree -i openssl-sys` finds no match.
+- [x] The full workspace suite passes (`make test`).
+- [x] The Architecture and Drivers specs describe the code quality gates.
 
 ## Out of Scope
 
