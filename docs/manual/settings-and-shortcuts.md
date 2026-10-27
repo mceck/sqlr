@@ -20,7 +20,7 @@ Use Preferences to make queries easier to read, control result sizes and choose 
 
 | Section | Use it for |
 |---|---|
-| **General** | Stop scripts at the first error, retain completed operations, include SQL in diagnostics, check for updates |
+| **General** | Stop scripts at the first error, retain completed operations, include SQL in diagnostics, show empty explorer folders, check for updates |
 | **Appearance** | **System**, **Light** or **Dark** theme, interface scale and accent color |
 | **Editor** | Font size, completion, line numbers, wrapping and SQL formatting |
 | **Result grid** | Fetch size, row cap, memory budgets and the text displayed for NULL |

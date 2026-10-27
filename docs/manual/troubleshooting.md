@@ -14,6 +14,7 @@ Start with the error shown beside your query or connection. Use Diagnostics for 
 | Results cannot be edited | No usable row key, unsupported result shape or driver capability | Open a base table with a primary key or non-null unique key; see [result editing](results-and-editing.md) |
 | Fetching stops before all rows arrive | Row cap or memory budget reached | Close unused results or adjust the **Result grid** limits; loaded rows remain available |
 | Edits conflict with another user's changes | The original row changed after you loaded it | Review the reported conflict, refresh the data and reapply the intended change |
+| Dropping a database fails because it is in use | Other sessions are connected to it | Use the **Database in use** dialog to terminate the blocking sessions, then **Retry drop** |
 | A feature or action is absent | The driver does not declare that capability | Check [driver support](drivers.md) and the relevant database's limitations |
 | Saved credentials cannot be read | Locked keychain, denied access or damaged vault | Unlock or authorize the OS keychain and retry. Keep the existing vault; moving it alone does not transfer its key |
 | MCP client cannot connect | Server disabled, occupied port or stale token | Follow the [MCP troubleshooting table](agents.md#fix-a-connection-problem) |

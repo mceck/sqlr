@@ -55,6 +55,7 @@ img{max-width:100%}
 <h2 id="find-an-object">Find an object</h2>
 <ol><li>Expand a connection with its arrow.</li><li>Expand its databases or schemas, then the object group you need.</li><li>Use the explorer&#x27;s filter field to narrow the tree.</li><li>Right-click an object to see its available actions.</li></ol>
 <p>Children load as you expand the tree. Previously loaded catalog information is cached, so names can appear before a server refresh finishes. Use <strong>Refresh</strong> after changes made by another client. Successful DDL run through sqlr invalidates its catalog cache.</p>
+<p>The explorer hides folders that are empty, such as a schema with no views or functions, so the tree lists only what exists. The <strong>Tables</strong> folder is always shown. To keep empty folders visible, turn on the empty-folders option in <strong>General</strong> preferences.</p>
 <p>Relational connections group tables, views and other supported objects under databases or schemas. MongoDB shows databases and collections; Elasticsearch shows indices; Redis shows numbered databases. Use <a href="nosql.html">Document and key-value databases</a> for their specialised views.</p>
 <p>For a quicker route, press ⌘P, type part of an object name and select a match. The object palette searches known catalog entries across connections.</p>
 <h2 id="choose-the-right-action">Choose the right action</h2>
@@ -68,6 +69,7 @@ img{max-width:100%}
 <h2 id="create-rename-or-remove-objects">Create, rename or remove objects</h2>
 <p>Use the explorer&#x27;s <strong>New ...</strong> actions for the selected database or schema, or find the corresponding command in ⌘Shift+P. Only object kinds supported by the driver are offered.</p>
 <p>Select an object and press F2 to rename it where supported. Before <strong>Drop</strong> or <strong>Truncate</strong>, check the active connection and profile. These actions follow <a href="profiles-and-transactions.html">write and destructive-statement protections</a>; database grants still apply.</p>
+<p>If a database drop fails because it is in use, sqlr opens a <strong>Database in use</strong> dialog. It keeps the server error visible and lists the sessions connected to that database, with their id, user, client and state. Choose <strong>Terminate session</strong> (after confirming) to close one, <strong>Refresh</strong> to reload the list, and <strong>Retry drop</strong> to run the drop again. Terminating a session interrupts its work and rolls back its open transactions; a session belonging to sqlr asks for a second confirmation. Read-only profiles block both actions.</p>
 <p>The <strong>Data</strong> page edits rows, while structure pages edit the schema. A row changeset and a schema change list are separate: review and apply each in its own view.</p>
 <h2 id="related">Related</h2>
 <ul><li><a href="results-and-editing.html">Results and editing</a>: change table contents.</li><li><a href="schema-tools.html">Schema tools</a>: compare definitions and view relationships.</li></ul>

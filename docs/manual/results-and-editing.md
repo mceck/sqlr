@@ -16,6 +16,10 @@ sqlr fetches 500 rows at a time by default. Scrolling near the end loads another
 
 Adjust these in **Result grid** preferences. Memory limits apply to SQL row buffers. Older chunks are stored in private temporary files and remain readable as you scroll, copy, sort or edit. The operating system manages mapped file pages, so these limits are not an exact ceiling on the app's total RAM. A storage failure stops the fetch with an error and keeps previously loaded rows. Closing a tab or rerunning releases its old results; temporary storage is reclaimed after the last reader finishes. A later query on the same session can also cut short a result whose rows are still on the server.
 
+## Resize columns
+
+Drag the right boundary of a column header to change its width. Double-click the boundary to fit the column to its header and its loaded values, as in a spreadsheet. Resizing does not change sorting or selection.
+
 ## Sort, filter and inspect values
 
 Click a header to sort a complete result locally. If rows remain unfetched, sqlr offers **Sort on server**, which reruns the query with ordering. The SQL filter condition always runs on the server, including when all rows are loaded. **Filter by this value** builds a condition for you. Applying a sort or filter that reruns the query replaces the result; apply or discard edits first.
