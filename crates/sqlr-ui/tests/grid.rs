@@ -72,6 +72,69 @@ fn click(h: &mut Harness<'static, App>, pos: Pos2) {
     h.run_steps(2);
 }
 
+fn drag(h: &mut Harness<'static, App>, from: Pos2, to: Pos2) {
+    h.event(Event::PointerMoved(from));
+    h.run_steps(1);
+    h.event(Event::PointerButton {
+        pos: from,
+        button: PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::NONE,
+    });
+    h.run_steps(1);
+    h.event(Event::PointerMoved(to));
+    h.run_steps(1);
+    h.event(Event::PointerButton {
+        pos: to,
+        button: PointerButton::Primary,
+        pressed: false,
+        modifiers: Modifiers::NONE,
+    });
+    h.run_steps(2);
+}
+
+#[test]
+fn dragging_a_header_boundary_resizes_cells_without_sorting() {
+    let mut h = harness(50, false);
+    let before = h.get_by_label("0").rect();
+    let header = h.get_by_label("id").rect();
+    let from = header.right_center();
+    drag(&mut h, from, from + vec2(150.0, 0.0));
+    let after = h.get_by_label("0").rect();
+    assert!(
+        (after.width() - before.width() - 150.0).abs() < 1.0,
+        "{before:?} -> {after:?}"
+    );
+    assert!(h.state().state.sort.is_empty());
+    assert_eq!(h.state().state.selected, None);
+    assert!((h.get_by_label("name 0").rect().left() - after.right()).abs() < 1.0);
+
+    // A newly fetched page changes the width sample but keeps the user's width.
+    let columns = h.state().rows.columns().to_vec().into();
+    let mut chunk = ChunkBuilder::new(columns);
+    chunk
+        .push_row(&[
+            Cell::Int(50),
+            Cell::Text("a much longer name arriving on a new page"),
+        ])
+        .unwrap();
+    h.state_mut().rows.push_chunk(chunk.finish());
+    h.run_steps(2);
+    assert!((h.get_by_label("0").rect().width() - after.width()).abs() < 1.0);
+}
+
+#[test]
+fn last_column_can_grow_past_automatic_width_and_shrink_to_minimum() {
+    let mut h = harness(50, false);
+    let from = h.get_by_label("name").rect().right_center();
+    drag(&mut h, from, from + vec2(550.0, 0.0));
+    assert!(h.get_by_label("name 0").rect().width() > 550.0);
+    let from = h.get_by_label("name").rect().right_center();
+    drag(&mut h, from, from - vec2(900.0, 0.0));
+    assert!((h.get_by_label("name 0").rect().width() - 60.0).abs() < 1.0);
+    assert!(h.state().state.sort.is_empty());
+}
+
 #[test]
 fn cell_display_rules() {
     assert_eq!(cell_display(Cell::Null), "NULL");

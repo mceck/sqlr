@@ -97,6 +97,8 @@ pub struct GridState {
     /// A source row to reveal (select and scroll to) once the view is rebuilt.
     reveal: Option<usize>,
     layout: Option<ColumnLayout>,
+    /// Column and starting width for an active header-boundary drag.
+    resizing: Option<(usize, f32)>,
     view: Option<(ViewKey, RowOrder)>,
     sort_worker: Option<sort_worker::SortWorker>,
     sorting: Option<ViewKey>,
@@ -112,8 +114,21 @@ pub struct GridState {
 /// Column widths for one column set, measured once and reused every frame.
 struct ColumnLayout {
     key: u64,
+    columns_key: u64,
+    manual_widths: Vec<Option<f32>>,
     /// `x[i]` is the left edge of column `i`; the last entry is the total width.
     x: Vec<f32>,
+}
+
+impl ColumnLayout {
+    fn resize(&mut self, col: usize, width: f32) {
+        let width = width.max(MIN_COL_WIDTH);
+        let delta = width - (self.x[col + 1] - self.x[col]);
+        for x in &mut self.x[col + 1..] {
+            *x += delta;
+        }
+        self.manual_widths[col] = Some(width);
+    }
 }
 
 /// The inline single-line editor over one cell.
@@ -818,10 +833,28 @@ pub fn data_grid(ui: &mut egui::Ui, state: &mut GridState, input: &GridInput<'_>
         formats.as_deref(),
     );
     if state.layout.as_ref().is_none_or(|l| l.key != key) {
-        state.layout = Some(ColumnLayout {
+        let columns_key = layout_key(columns, 0, 0.0, None);
+        let manual_widths = state
+            .layout
+            .take()
+            .filter(|layout| layout.columns_key == columns_key)
+            .map(|layout| layout.manual_widths)
+            .unwrap_or_else(|| vec![None; columns.len()]);
+        let mut layout = ColumnLayout {
             key,
+            columns_key,
+            manual_widths,
             x: measure_columns(rows, glyph_width, formats.as_deref()),
-        });
+        };
+        for col in 0..columns.len() {
+            if let Some(width) = layout.manual_widths[col] {
+                layout.resize(col, width);
+            }
+        }
+        state.layout = Some(layout);
+        if state.resizing.is_some_and(|(col, _)| col >= columns.len()) {
+            state.resizing = None;
+        }
     }
     let col_x: Vec<f32> = state
         .layout
@@ -864,7 +897,10 @@ pub fn data_grid(ui: &mut egui::Ui, state: &mut GridState, input: &GridInput<'_>
             response.request_focus();
             state.refocus = false;
         }
-        output.selection_changed |= pointer(ui, state, input, &response, &geo);
+        let resizing = resize_columns(ui, state, response.id, &geo);
+        if !resizing {
+            output.selection_changed |= pointer(ui, state, input, &response, &geo);
+        }
         if response.has_focus() && state.editor.is_none() {
             output.selection_changed |= keyboard(ui, response.id, state, input, &geo);
         }
@@ -909,6 +945,48 @@ pub fn data_grid(ui: &mut egui::Ui, state: &mut GridState, input: &GridInput<'_>
     output.need_more =
         input.more_available && state.last_visible_rows.end + NEED_MORE_MARGIN >= rows.row_count();
     output
+}
+
+/// Header boundary handles take precedence over sorting and cell selection.
+fn resize_columns(ui: &egui::Ui, state: &mut GridState, id: egui::Id, geo: &Geometry<'_>) -> bool {
+    let header = geo.header_rect();
+    let left = header.left() + geo.gutter;
+    let mut active = false;
+    for col in 0..geo.columns() {
+        let x = geo.origin.x + geo.gutter + geo.col_x[col + 1];
+        let handle_id = id.with(("resize", col));
+        let rect =
+            Rect::from_center_size(egui::pos2(x, header.center().y), vec2(8.0, HEADER_HEIGHT))
+                .intersect(Rect::from_min_max(
+                    egui::pos2(left, header.top()),
+                    header.max,
+                ));
+        // Keep an active handle registered even when dragged outside the viewport.
+        if rect.width() <= 0.0 && !ui.ctx().is_being_dragged(handle_id) {
+            continue;
+        }
+        let handle = ui
+            .interact(rect, handle_id, Sense::drag())
+            .on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+        active |= handle.hovered() || handle.dragged() || handle.drag_stopped();
+        if handle.drag_started_by(egui::PointerButton::Primary) {
+            state.resizing = Some((col, geo.col_x[col + 1] - geo.col_x[col]));
+        }
+        if handle.dragged_by(egui::PointerButton::Primary) {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+            if let Some((active_col, width)) = state.resizing
+                && active_col == col
+                && let Some(delta) = handle.total_drag_delta()
+                && let Some(layout) = &mut state.layout
+            {
+                layout.resize(col, width + delta.x);
+            }
+        }
+        if handle.drag_stopped() {
+            state.resizing = None;
+        }
+    }
+    active
 }
 
 /// The server `WHERE` field: re-runs the query with the condition on ↵.

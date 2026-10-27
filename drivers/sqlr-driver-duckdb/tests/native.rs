@@ -391,26 +391,86 @@ async fn timezone_values_keep_offsets_and_instant_precision() {
 }
 
 #[tokio::test]
-async fn unsupported_nanosecond_time_is_explicit_and_does_not_break_connection() {
+async fn nanosecond_time_preserves_precision_nulls_and_chunk_boundaries() {
     let conn = connect(":memory:", false).await;
-    let error = match conn
+    let Execution::Rows(mut stream) = conn
         .relational()
         .unwrap()
-        .execute("SELECT '12:34:56.123456789'::TIME_NS")
+        .execute("SELECT i, CASE WHEN i % 3 = 0 THEN NULL ELSE '12:34:56.123456789'::TIME_NS END AS t FROM range(5000) r(i)")
         .await
-    {
-        Err(error) => error,
-        Ok(Execution::Rows(mut stream)) => stream.next_chunk(1).await.unwrap_err(),
-        Ok(_) => panic!("expected unsupported TIME_NS"),
+        .unwrap() else {
+        panic!("expected rows");
     };
-    assert_eq!(error.kind, sqlr_driver_sdk::ErrorKind::Unsupported);
-    assert!(
-        error
-            .hint
-            .as_deref()
-            .is_some_and(|hint| hint.contains("VARCHAR"))
+    assert_eq!(stream.columns()[1].type_name, "TIME_NS");
+    assert_eq!(
+        stream.columns()[1].hint,
+        sqlr_driver_sdk::DisplayHint::Temporal
     );
+    let mut count = 0;
+    while let Some(chunk) = stream.next_chunk(7).await.unwrap() {
+        assert!(chunk.len() <= 7);
+        for row in 0..chunk.len() {
+            assert_eq!(chunk.cell(row, 0), Cell::Int(count));
+            assert_eq!(
+                chunk.cell(row, 1),
+                if count % 3 == 0 {
+                    Cell::Null
+                } else {
+                    Cell::Text("12:34:56.123456789")
+                }
+            );
+            count += 1;
+        }
+    }
+    assert_eq!(count, 5000);
     assert_eq!(rows(&*conn, "SELECT 42").await[0][0], Value::Int(42));
+}
+
+#[tokio::test]
+async fn nanosecond_time_keeps_other_column_types_and_supports_returning() {
+    let conn = connect(":memory:", false).await;
+    let expressions = "true, 1::TINYINT, 2::SMALLINT, 3::INTEGER, 4::BIGINT, \
+        5::UTINYINT, 6::USMALLINT, 7::UINTEGER, 18446744073709551615::UBIGINT, \
+        170141183460469231731687303715884105727::HUGEINT, \
+        340282366920938463463374607431768211455::UHUGEINT, \
+        12.340::DECIMAL(10,3), 1.5::FLOAT, 2.5::DOUBLE, 'text', '\\x00\\xFF'::BLOB, \
+        UUID '550e8400-e29b-41d4-a716-446655440000', \
+        DATE '2026-10-27', TIME '12:34:56.123456', TIMETZ '12:34:56.123456+02', \
+        TIMESTAMP 'infinity', TIMESTAMP '-infinity', \
+        '2026-10-27 12:34:56.123456789'::TIMESTAMP_NS, \
+        TIMESTAMPTZ '2026-10-27 12:34:56+02', INTERVAL '1 month 2 days 3 seconds', \
+        [1, NULL, 3], {'a': 42}, NULL";
+    let expected = rows(&*conn, &format!("SELECT {expressions}")).await;
+    let mut actual = rows(
+        &*conn,
+        &format!("SELECT {expressions}, '00:00:00.000000001'::TIME_NS"),
+    )
+    .await;
+    assert_eq!(
+        actual[0].pop(),
+        Some(Value::Text("00:00:00.000000001".into()))
+    );
+    assert_eq!(actual, expected);
+
+    let rel = conn.relational().unwrap();
+    rel.execute("CREATE TABLE times(t TIME_NS)").await.unwrap();
+    assert_eq!(
+        rows(
+            &*conn,
+            "INSERT INTO times VALUES ('23:59:59.999999999') RETURNING t"
+        )
+        .await,
+        vec![vec![Value::Text("23:59:59.999999999".into())]]
+    );
+    assert_eq!(
+        rows(&*conn, "SELECT count(*) FROM times").await[0][0],
+        Value::Int(1)
+    );
+    assert!(
+        rows(&*conn, "SELECT t FROM times WHERE false")
+            .await
+            .is_empty()
+    );
 }
 
 #[tokio::test]

@@ -72,20 +72,6 @@ pub(crate) fn run(
             return DONE;
         }
     };
-    // duckdb-rs 1.20000 cannot decode top-level Arrow Time64(ns) rows. Reject the
-    // result before execution, including DML RETURNING, so its decoder cannot panic.
-    if (0..stmt.column_count())
-        .any(|index| stmt.column_logical_type(index).id() == duckdb::core::LogicalTypeId::TimeNs)
-    {
-        let _ = reply.send(Err(DriverError::new(
-            ErrorKind::Unsupported,
-            "DuckDB TIME_NS results are not supported by the native row decoder",
-        )
-        .with_hint(
-            "Cast TIME_NS columns to VARCHAR to preserve all nine fractional digits.",
-        )));
-        return DONE;
-    }
     if stmt.parameter_count() != params.len() {
         let _ = reply.send(Err(DriverError::new(
             ErrorKind::Other,
@@ -121,6 +107,10 @@ pub(crate) fn run(
         return DONE;
     }
     let columns = types::columns(&stmt);
+    // duckdb-rs's row decoder omits Time64(ns). Decode these results directly
+    // from fallible Arrow batches, preserving precision and cancellation errors.
+    let nanosecond_time = columns.iter().any(|column| column.type_name == "TIME_NS");
+    let mut batches = BatchRows::default();
     let mut rows = stmt.raw_query();
     let call = tokens
         .iter()
@@ -182,7 +172,11 @@ pub(crate) fn run(
                     Ok(None)
                 } else {
                     let _running = Running::start(running);
-                    fetch(&mut rows, &columns, max_rows.max(1), &mut exhausted)
+                    if nanosecond_time {
+                        batches.fetch(&stmt, &columns, max_rows.max(1), &mut exhausted)
+                    } else {
+                        fetch(&mut rows, &columns, max_rows.max(1), &mut exhausted)
+                    }
                 };
                 let _ = reply.send(result);
             }
@@ -206,6 +200,56 @@ pub(crate) fn run(
                 };
             }
         }
+    }
+}
+
+#[derive(Default)]
+struct BatchRows {
+    batch: Option<duckdb::arrow::array::StructArray>,
+    row: usize,
+}
+
+impl BatchRows {
+    fn fetch(
+        &mut self,
+        stmt: &duckdb::Statement<'_>,
+        columns: &Arc<[ColumnMeta]>,
+        max_rows: usize,
+        exhausted: &mut bool,
+    ) -> Result<Option<ResultChunk>, DriverError> {
+        use duckdb::arrow::array::Array;
+
+        let mut builder = ChunkBuilder::new(columns.clone());
+        while builder.len() < max_rows {
+            if self
+                .batch
+                .as_ref()
+                .is_none_or(|batch| self.row == batch.len())
+            {
+                self.batch = stmt.step().map_err(map_error)?;
+                self.row = 0;
+            }
+            let Some(batch) = &self.batch else {
+                *exhausted = true;
+                break;
+            };
+            if batch.is_empty() {
+                continue;
+            }
+            let values = columns
+                .iter()
+                .enumerate()
+                .map(|(index, column)| {
+                    types::decode_array(batch.column(index).as_ref(), self.row, column)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let cells: Vec<_> = values.iter().map(Value::as_cell).collect();
+            builder
+                .push_row(&cells)
+                .map_err(|error| DriverError::new(ErrorKind::Protocol, error.to_string()))?;
+            self.row += 1;
+        }
+        Ok((!builder.is_empty()).then(|| builder.finish()))
     }
 }
 

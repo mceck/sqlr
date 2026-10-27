@@ -10,7 +10,7 @@ fn default_port(d: &str) -> u16 {
     match d {
         "postgres" => 5432,
         "mysql" => 3306,
-        "mssql" => 1433,
+        "sqlserver" => 1433,
         "oracle" => 1521,
         "redis" => 6379,
         "mongo" => 27017,
@@ -37,7 +37,7 @@ fn jdbc_url(c: &ConnectionConfig) -> Result<String, String> {
     let mut u =
         url::Url::parse(&connection_url(c, false)?).map_err(|_| "Invalid connection URL.")?;
     u.set_username("").map_err(|_| "Invalid JDBC URL.")?;
-    if c.driver == "mssql" {
+    if c.driver == "sqlserver" {
         let authority = &u[url::Position::BeforeHost..url::Position::AfterPort];
         let db = val(c, "database");
         if db.contains([';', '{', '}']) {
@@ -62,7 +62,7 @@ fn connection_url(c: &ConnectionConfig, tableplus: bool) -> Result<String, Strin
             "postgres" => "postgresql",
             "mysql" => "mysql",
             "sqlite" => "sqlite",
-            "mssql" => "mssql",
+            "sqlserver" => "mssql",
             // Complex Oracle/JDBC, document and HTTP configurations need their own adapters.
             _ => return Err(
                 "This driver cannot be represented by this client's portable connection format."
@@ -218,7 +218,7 @@ fn encode_inner(
                     "postgres" => ("postgresql", "postgres-jdbc"),
                     "mysql" => ("mysql", "mysql8"),
                     "sqlite" => ("sqlite", "sqlite_jdbc"),
-                    "mssql" => ("sqlserver", "microsoft"),
+                    "sqlserver" => ("sqlserver", "microsoft"),
                     "oracle" => ("oracle", "oracle_thin"),
                     _ => {
                         warnings.push(format!("{}: unsupported DBeaver driver; excluded.", c.name));
@@ -254,7 +254,7 @@ fn encode_inner(
                         json!(val(c, "ssl_mode").to_ascii_uppercase()),
                     );
                 }
-                if c.driver == "mssql" {
+                if c.driver == "sqlserver" {
                     properties.insert("encrypt".into(), json!(val(c, "encryption") != "disabled"));
                     properties.insert(
                         "trustServerCertificate".into(),
@@ -342,7 +342,7 @@ fn encode_inner(
             let d = match c.driver.as_str() {
                 "postgres" => "postgresql",
                 "mysql" => "mysql.8",
-                "mssql" => "sqlserver.jb",
+                "sqlserver" => "sqlserver.jb",
                 _ => "sqlite.xerial",
             };
             s.push_str(&format!("  <data-source source=\"LOCAL\" name=\"{}\" uuid=\"{}\" group=\"{}\">\n    <driver-ref>{d}</driver-ref>\n    <jdbc-url>{}</jdbc-url>\n    <user-name>{}</user-name>\n  </data-source>\n",xml(&c.name),xml(&c.id),xml(c.group.as_deref().unwrap_or_default()),xml(&u),xml(val(c,"user"))));

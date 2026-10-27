@@ -114,11 +114,13 @@ pub fn supports_export(format: ClientFormat, c: &ConnectionConfig) -> bool {
         ClientFormat::PgAdmin => c.driver == "postgres",
         ClientFormat::Dbeaver => matches!(
             c.driver.as_str(),
-            "postgres" | "mysql" | "sqlite" | "mssql" | "oracle"
+            "postgres" | "mysql" | "sqlite" | "sqlserver" | "oracle"
         ),
         ClientFormat::Datagrip | ClientFormat::TablePlus => {
-            matches!(c.driver.as_str(), "postgres" | "mysql" | "sqlite" | "mssql")
-                && c.values.get("ssh_enabled").is_none_or(|v| v != "true")
+            matches!(
+                c.driver.as_str(),
+                "postgres" | "mysql" | "sqlite" | "sqlserver"
+            ) && c.values.get("ssh_enabled").is_none_or(|v| v != "true")
         }
     }
 }
@@ -182,7 +184,7 @@ pub(super) fn driver(id: &str) -> Option<&'static str> {
     } else if id.contains("sqlserver")
         || matches!(id, "mssql" | "sql server" | "microsoft sql server")
     {
-        Some("mssql")
+        Some("sqlserver")
     } else if id.starts_with("oracle") {
         Some("oracle")
     } else if id.starts_with("mongo") {
@@ -271,7 +273,7 @@ pub fn same_connection(a: &ConnectionConfig, b: &ConnectionConfig) -> bool {
             "" => match c.driver.as_str() {
                 "postgres" => "5432",
                 "mysql" => "3306",
-                "mssql" => "1433",
+                "sqlserver" => "1433",
                 "oracle" => "1521",
                 "mongodb" => "27017",
                 "redis" => "6379",

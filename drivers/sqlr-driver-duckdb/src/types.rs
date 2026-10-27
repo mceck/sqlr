@@ -185,6 +185,93 @@ fn unsupported() -> DriverError {
         "this DuckDB result type is not supported; cast the column to VARCHAR",
     )
 }
+
+/// Decodes Arrow batches for results containing TIME_NS, which the native row
+/// decoder does not handle. Other result sets keep the native decoding path.
+pub(crate) fn decode_array(
+    array: &dyn duckdb::arrow::array::Array,
+    row: usize,
+    column: &ColumnMeta,
+) -> Result<Value, DriverError> {
+    use duckdb::arrow::datatypes::TimeUnit as ArrowTimeUnit;
+    use duckdb::arrow::{array::*, datatypes::DataType};
+
+    if array.is_null(row) {
+        return Ok(Value::Null);
+    }
+    macro_rules! scalar {
+        ($array:ty, $variant:ident) => {
+            ValueRef::$variant(array_as::<$array>(array)?.value(row))
+        };
+    }
+    macro_rules! temporal {
+        ($array:ty, $variant:ident, $unit:ident) => {
+            ValueRef::$variant(TimeUnit::$unit, array_as::<$array>(array)?.value(row))
+        };
+    }
+    let value = match array.data_type() {
+        DataType::Null => ValueRef::Null,
+        DataType::Boolean => scalar!(BooleanArray, Boolean),
+        DataType::Int8 => scalar!(Int8Array, TinyInt),
+        DataType::Int16 => scalar!(Int16Array, SmallInt),
+        DataType::Int32 => scalar!(Int32Array, Int),
+        DataType::Int64 => scalar!(Int64Array, BigInt),
+        DataType::UInt8 => scalar!(UInt8Array, UTinyInt),
+        DataType::UInt16 => scalar!(UInt16Array, USmallInt),
+        DataType::UInt32 => scalar!(UInt32Array, UInt),
+        DataType::UInt64 => scalar!(UInt64Array, UBigInt),
+        DataType::Float32 => scalar!(Float32Array, Float),
+        DataType::Float64 => scalar!(Float64Array, Double),
+        DataType::Binary => scalar!(BinaryArray, Blob),
+        DataType::LargeBinary => scalar!(LargeBinaryArray, Blob),
+        DataType::FixedSizeBinary(_) => scalar!(FixedSizeBinaryArray, Blob),
+        DataType::Date32 => scalar!(Date32Array, Date32),
+        DataType::Time64(ArrowTimeUnit::Microsecond) => {
+            temporal!(Time64MicrosecondArray, Time64, Microsecond)
+        }
+        DataType::Time64(ArrowTimeUnit::Nanosecond) => {
+            temporal!(Time64NanosecondArray, Time64, Nanosecond)
+        }
+        DataType::Timestamp(ArrowTimeUnit::Second, _) => {
+            temporal!(TimestampSecondArray, Timestamp, Second)
+        }
+        DataType::Timestamp(ArrowTimeUnit::Millisecond, _) => {
+            temporal!(TimestampMillisecondArray, Timestamp, Millisecond)
+        }
+        DataType::Timestamp(ArrowTimeUnit::Microsecond, _) => {
+            temporal!(TimestampMicrosecondArray, Timestamp, Microsecond)
+        }
+        DataType::Timestamp(ArrowTimeUnit::Nanosecond, _) => {
+            temporal!(TimestampNanosecondArray, Timestamp, Nanosecond)
+        }
+        DataType::Decimal128(_, _) if column.type_name == "HUGEINT" => {
+            scalar!(Decimal128Array, HugeInt)
+        }
+        DataType::Decimal128(_, _) if column.type_name == "UHUGEINT" => {
+            ValueRef::UHugeInt(array_as::<Decimal128Array>(array)?.value(row) as u128)
+        }
+        DataType::Interval(duckdb::arrow::datatypes::IntervalUnit::MonthDayNano) => {
+            let interval = array_as::<IntervalMonthDayNanoArray>(array)?.value(row);
+            ValueRef::Interval {
+                months: interval.months,
+                days: interval.days,
+                nanos: interval.nanoseconds,
+            }
+        }
+        _ => return display(array, row),
+    };
+    decode(value, column)
+}
+
+fn array_as<T: duckdb::arrow::array::Array + 'static>(
+    array: &dyn duckdb::arrow::array::Array,
+) -> Result<&T, DriverError> {
+    array
+        .as_any()
+        .downcast_ref::<T>()
+        .ok_or_else(|| DriverError::new(ErrorKind::Protocol, "invalid DuckDB Arrow array type"))
+}
+
 fn nanoseconds(unit: TimeUnit, value: i64) -> i128 {
     i128::from(value)
         * match unit {

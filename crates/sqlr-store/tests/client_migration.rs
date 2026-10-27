@@ -239,7 +239,7 @@ fn datagrip_export_uses_native_jdbc_syntax_without_userinfo() {
     );
     assert!(!doc.contents.contains("alice@"));
     let mut ms = c;
-    ms.driver = "mssql".into();
+    ms.driver = "sqlserver".into();
     let doc = encode(ClientFormat::Datagrip, &[ms]).unwrap();
     assert!(
         doc.contents
@@ -247,6 +247,40 @@ fn datagrip_export_uses_native_jdbc_syntax_without_userinfo() {
     );
     let b = decode(ClientFormat::Datagrip, doc.contents.as_bytes()).unwrap();
     assert_eq!(b.connections[0].values["database"], "sales");
+}
+
+#[test]
+fn sql_server_migration_uses_the_bundled_driver_and_default_port() {
+    let mut connection = pg();
+    connection.driver = "sqlserver".into();
+    connection.values.remove("port");
+    for format in [
+        ClientFormat::Dbeaver,
+        ClientFormat::Datagrip,
+        ClientFormat::TablePlus,
+    ] {
+        let document = encode(format, std::slice::from_ref(&connection)).unwrap();
+        let imported = decode(format, document.contents.as_bytes()).unwrap();
+        assert_eq!(imported.connections.len(), 1, "{format:?}");
+        let actual = &imported.connections[0];
+        assert_eq!(actual.driver, "sqlserver", "{format:?}");
+        assert_eq!(actual.values["port"], "1433", "{format:?}");
+        assert_eq!(actual.values["database"], "sales", "{format:?}");
+        assert!(
+            sqlr_store::client_migration::same_connection(&connection, actual),
+            "{format:?}"
+        );
+    }
+}
+
+#[test]
+fn tableplus_mssql_url_imports_with_the_bundled_driver_id() {
+    let imported = decode(
+        ClientFormat::TablePlus,
+        b"mssql://alice@db.example.com:1433/sales",
+    )
+    .unwrap();
+    assert_eq!(imported.connections[0].driver, "sqlserver");
 }
 
 #[test]
