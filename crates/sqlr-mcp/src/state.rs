@@ -46,12 +46,65 @@ pub struct ServerState {
     /// The Connection ids each MCP session created: that session may keep writing them
     /// while they are not exposed.
     pub created: Mutex<HashMap<String, HashSet<String>>>,
-    /// How many tabs each MCP session opened.
-    pub tabs_opened: Mutex<HashMap<String, usize>>,
+    /// How many tabs each MCP session opened or is opening.
+    pub tabs_opened: TabCounts,
 }
 
 /// One MCP session opens at most this many tabs.
 pub const MAX_AGENT_TABS: usize = 5;
+
+/// The tabs each MCP session opened, counted with the openings still in flight, so
+/// concurrent calls of one session never go past [`MAX_AGENT_TABS`].
+#[derive(Default)]
+pub struct TabCounts(Mutex<HashMap<String, usize>>);
+
+impl TabCounts {
+    /// Takes one of `session`'s tab slots, or `None` at the cap. The check and the count
+    /// happen under one lock; the slot is given back when the reservation is dropped
+    /// without [`TabSlot::keep`].
+    pub fn reserve(&self, session: &str) -> Option<TabSlot<'_>> {
+        let mut counts = self.0.lock();
+        let count = counts.entry(session.to_string()).or_default();
+        if *count >= MAX_AGENT_TABS {
+            return None;
+        }
+        *count += 1;
+        Some(TabSlot {
+            counts: self,
+            session: session.to_string(),
+            kept: false,
+        })
+    }
+
+    /// Drops `session`'s count when the session ends.
+    pub fn forget(&self, session: &str) {
+        self.0.lock().remove(session);
+    }
+}
+
+/// A reserved tab slot: counted while held, kept once a tab opened.
+pub struct TabSlot<'a> {
+    counts: &'a TabCounts,
+    session: String,
+    kept: bool,
+}
+
+impl TabSlot<'_> {
+    /// A tab opened: the slot stays counted.
+    pub fn keep(mut self) {
+        self.kept = true;
+    }
+}
+
+impl Drop for TabSlot<'_> {
+    fn drop(&mut self) {
+        if !self.kept
+            && let Some(count) = self.counts.0.lock().get_mut(&self.session)
+        {
+            *count = count.saturating_sub(1);
+        }
+    }
+}
 
 impl ServerState {
     pub fn new(engine: Arc<Engine>, host: Arc<dyn AgentHost>, port: u16, token: String) -> Self {
@@ -66,7 +119,7 @@ impl ServerState {
             sessions: Mutex::new(HashMap::new()),
             inflight: Mutex::new(HashMap::new()),
             created: Mutex::new(HashMap::new()),
-            tabs_opened: Mutex::new(HashMap::new()),
+            tabs_opened: TabCounts::default(),
         }
     }
 
@@ -121,21 +174,12 @@ impl ServerState {
         self.sessions.lock().remove(id);
         self.inflight.lock().remove(id);
         self.created.lock().remove(id);
-        self.tabs_opened.lock().remove(id);
+        self.tabs_opened.forget(id);
     }
 
-    /// Whether MCP session `session` may open another tab.
-    pub fn may_open_tab(&self, session: &str) -> bool {
-        self.tabs_opened.lock().get(session).copied().unwrap_or(0) < MAX_AGENT_TABS
-    }
-
-    /// Counts a tab MCP session `session` opened.
-    pub fn record_tab(&self, session: &str) {
-        *self
-            .tabs_opened
-            .lock()
-            .entry(session.to_string())
-            .or_default() += 1;
+    /// Reserves one of MCP session `session`'s tab slots; `None` at the cap.
+    pub fn reserve_tab(&self, session: &str) -> Option<TabSlot<'_>> {
+        self.tabs_opened.reserve(session)
     }
 
     /// Records that MCP session `session` created the Connection `connection`.
@@ -195,5 +239,38 @@ impl ServerState {
             },
             client_version: version,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tab_slots_are_reserved_atomically_and_released_unless_kept() {
+        let counts = TabCounts::default();
+        let kept: Vec<_> = (0..MAX_AGENT_TABS - 1)
+            .map(|_| counts.reserve("s1").expect("below the cap"))
+            .collect();
+        let last = counts.reserve("s1").expect("the fifth slot");
+        assert!(
+            counts.reserve("s1").is_none(),
+            "a reservation holds the slot"
+        );
+        drop(last);
+        let last = counts
+            .reserve("s1")
+            .expect("a dropped reservation frees its slot");
+        for slot in kept {
+            slot.keep();
+        }
+        last.keep();
+        assert!(counts.reserve("s1").is_none(), "kept slots stay counted");
+        assert!(
+            counts.reserve("s2").is_some(),
+            "each session has its own five"
+        );
+        counts.forget("s1");
+        assert!(counts.reserve("s1").is_some());
     }
 }

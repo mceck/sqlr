@@ -103,29 +103,68 @@ impl ToolError {
 
 pub type ToolResult<T> = Result<T, ToolError>;
 
-/// Replaces credentials in free-form error text before it reaches a log or the model.
+/// Replaces credentials in free-form error text before it reaches a log or the model:
+/// the password of every URL ([`sqlr_core::url::redact_url`]) and the value of every
+/// `password=`, `passwd=`, `token=` and `secret=`, whatever their case.
 pub fn redact(text: &str) -> String {
-    let mut out = text.to_string();
-    // userinfo in URLs
-    if let Some(scheme) = out.find("://") {
-        let rest = &out[scheme + 3..];
-        if let Some(at) = rest.find('@') {
-            let authority = &rest[..at];
-            if authority.contains(':') {
-                let user = authority.split(':').next().unwrap_or_default();
-                out.replace_range(scheme + 3..scheme + 3 + at, &format!("{user}:***"));
-            }
+    let mut out = String::with_capacity(text.len());
+    for piece in text.split_inclusive(char::is_whitespace) {
+        let word = piece.trim_end_matches(char::is_whitespace);
+        let token = word.trim_end_matches([',', ';', '.', ')', ']', '>', '"', '\'']);
+        if token.contains("://") {
+            out.push_str(&sqlr_core::url::redact_url(token));
+            out.push_str(&piece[token.len()..]);
+        } else {
+            out.push_str(piece);
         }
     }
     for key in ["password=", "passwd=", "token=", "secret="] {
-        let lower = out.to_ascii_lowercase();
-        if let Some(mut start) = lower.find(key) {
-            start += key.len();
-            let end = out[start..]
-                .find(|c: char| c.is_whitespace() || c == '&' || c == ';' || c == ',')
-                .map_or(out.len(), |i| start + i);
-            out.replace_range(start..end, "***");
-        }
+        out = redact_values(&out, key);
     }
     out
+}
+
+/// `text` with the value after every case-insensitive `key` replaced by `***`.
+fn redact_values(text: &str, key: &str) -> String {
+    // ASCII lowercasing keeps every byte offset.
+    let lower = text.to_ascii_lowercase();
+    let mut out = String::with_capacity(text.len());
+    let mut pos = 0;
+    while let Some(found) = lower[pos..].find(key) {
+        let start = pos + found + key.len();
+        let end = text[start..]
+            .find(|c: char| c.is_whitespace() || matches!(c, '&' | ';' | ','))
+            .map_or(text.len(), |i| start + i);
+        out.push_str(&text[pos..start]);
+        out.push_str("***");
+        pos = end;
+    }
+    out.push_str(&text[pos..]);
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::redact;
+
+    #[test]
+    fn redact_hides_every_occurrence() {
+        let text = "connect postgres://alice:pw1@db1/app failed; retry mysql://bob:pw2@db2/x \
+                    password=one token=two PASSWORD=three&secret=four passwd=five token=six";
+        let out = redact(text);
+        for secret in ["pw1", "pw2", "one", "two", "three", "four", "five", "six"] {
+            assert!(!out.contains(secret), "{secret} leaked: {out}");
+        }
+        assert!(out.contains("postgres://alice:***@db1/app"), "{out}");
+        assert!(out.contains("mysql://bob:***@db2/x"), "{out}");
+        assert!(out.contains("password=***"), "{out}");
+        assert!(out.contains("PASSWORD=***&secret=***"), "{out}");
+        assert!(out.contains("token=***"), "{out}");
+    }
+
+    #[test]
+    fn redact_keeps_text_without_credentials() {
+        let text = "relation \"orders\" does not exist at https://example.com/docs";
+        assert_eq!(redact(text), text);
+    }
 }

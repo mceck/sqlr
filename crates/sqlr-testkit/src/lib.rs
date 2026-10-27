@@ -266,6 +266,9 @@ pub struct FakeScript {
     pub editable: bool,
     /// The manifest declares native dump/restore (`Capabilities::dump`).
     pub dump: bool,
+    /// The manifest declares query plans (`Capabilities::explain`); the dialect still has
+    /// no Explain statements, so a plan request fails as unsupported.
+    pub explain: bool,
     /// When set, the connection answers administration (see [`FakeAdmin`]).
     pub admin: Option<FakeAdmin>,
 }
@@ -617,6 +620,7 @@ impl FakeDriver {
                 transactions: true,
                 editable_results: script.editable,
                 dump: script.dump,
+                explain: script.explain,
                 ..Capabilities::default()
             },
             fields: vec![

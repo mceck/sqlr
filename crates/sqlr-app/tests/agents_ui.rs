@@ -315,6 +315,16 @@ fn agent_app(
     access: AgentAccess,
     profile: Option<&str>,
 ) -> (Harness<'static, SqlrApp>, Arc<FakeDriver>) {
+    agent_app_with(dir, access, profile, |_| {})
+}
+
+/// [`agent_app`], with the fake driver's script adjusted by `script`.
+fn agent_app_with(
+    dir: &std::path::Path,
+    access: AgentAccess,
+    profile: Option<&str>,
+    script: impl FnOnce(&mut FakeScript),
+) -> (Harness<'static, SqlrApp>, Arc<FakeDriver>) {
     let node = |parent: &NodePath, name: &str, kind, has_children| Node {
         path: parent.child(name),
         name: name.into(),
@@ -337,7 +347,7 @@ fn agent_app(
         nullable: true,
         ..Default::default()
     }];
-    let driver = FakeDriver::new(FakeScript {
+    let mut fake = FakeScript {
         rows: 3,
         tree: vec![s, tables, orders],
         default_schemas: vec!["s".into()],
@@ -347,7 +357,9 @@ fn agent_app(
         }),
         objects: vec![sqlr_core::ObjectDef::Table(def)],
         ..Default::default()
-    });
+    };
+    script(&mut fake);
+    let driver = FakeDriver::new(fake);
     let mut drivers = DriverRegistry::default();
     drivers.register(driver.clone());
     let engine = Engine::new(drivers, Arc::new(|| {}));
@@ -669,4 +681,114 @@ fn show_in_app_opens_the_expected_views() {
         serde_json::json!({"connection_id":"c1","view":"explain","query":"select n"}),
     );
     assert_eq!(explain["error"]["code"], "unsupported", "{explain}");
+}
+
+#[test]
+fn an_unanswered_tab_run_approval_times_out_and_runs_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut harness, driver) = agent_app(dir.path(), AgentAccess::Write, Some("production"));
+    let agent = Agent::new(&harness);
+    let opened = agent.call(
+        &mut harness,
+        "open_query_tab",
+        serde_json::json!({"connection_id":"c1","text":"delete from orders"}),
+    );
+    let tab = opened["tab_id"]
+        .as_u64()
+        .unwrap_or_else(|| panic!("{opened}"));
+    let pending = agent.start(
+        "run_query_tab",
+        serde_json::json!({"tab_id":tab,"target":"script"}),
+    );
+    step_until_label(&mut harness, "Agent request");
+    harness.state_mut().expire_approvals_for_tests();
+    let timed_out = agent.finish(&mut harness, pending);
+    assert_eq!(timed_out["error"]["code"], "timeout", "{timed_out}");
+    assert!(
+        !driver
+            .executed()
+            .iter()
+            .any(|sql| sql.contains("delete from orders")),
+        "{:?}",
+        driver.executed()
+    );
+    assert!(harness.query_by_label("Agent request").is_none());
+}
+
+#[test]
+fn show_in_app_explains_in_an_open_tab_without_opening_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut harness, _driver) = agent_app_with(dir.path(), AgentAccess::Read, None, |script| {
+        script.explain = true;
+    });
+    let agent = Agent::new(&harness);
+    let opened = agent.call(
+        &mut harness,
+        "open_query_tab",
+        serde_json::json!({"connection_id":"c1","text":"select n","title":"Plan me"}),
+    );
+    let tab = opened["tab_id"]
+        .as_u64()
+        .unwrap_or_else(|| panic!("{opened}"));
+    let other = agent.call(
+        &mut harness,
+        "open_query_tab",
+        serde_json::json!({"connection_id":"c1","text":"select 2"}),
+    );
+    assert_ne!(other["tab_id"], tab, "{other}");
+    let tabs = harness.state().tab_titles().len();
+
+    let explained = agent.call(
+        &mut harness,
+        "show_in_app",
+        serde_json::json!({"connection_id":"c1","view":"explain","tab_id":tab}),
+    );
+    assert_eq!(explained["tab_id"], tab, "{explained}");
+    assert_eq!(harness.state().tab_titles().len(), tabs, "no tab opened");
+    assert_eq!(harness.state_mut().active_tab_for_tests().unwrap().0, tab);
+    step_until_label(
+        &mut harness,
+        "Agent explained a statement in \u{201c}Plan me\u{201d}",
+    );
+}
+
+#[test]
+fn at_the_tab_cap_show_in_app_still_focuses_open_tabs() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut harness, _driver) = agent_app(dir.path(), AgentAccess::Read, None);
+    let agent = Agent::new(&harness);
+    let path = serde_json::json!(["s", "tables", "orders"]);
+    let ddl = agent.call(
+        &mut harness,
+        "show_in_app",
+        serde_json::json!({"connection_id":"c1","view":"ddl","path":path}),
+    );
+    let ddl_tab = ddl["tab_id"].as_u64().unwrap_or_else(|| panic!("{ddl}"));
+    for _ in 0..4 {
+        let opened = agent.call(
+            &mut harness,
+            "open_query_tab",
+            serde_json::json!({"connection_id":"c1","text":"select n"}),
+        );
+        assert!(opened["tab_id"].is_u64(), "{opened}");
+    }
+    let tabs = harness.state().tab_titles().len();
+
+    let refused = agent.call(
+        &mut harness,
+        "show_in_app",
+        serde_json::json!({"connection_id":"c1","view":"table_data","path":path}),
+    );
+    assert_eq!(refused["error"]["code"], "busy", "{refused}");
+    let focused = agent.call(
+        &mut harness,
+        "show_in_app",
+        serde_json::json!({"connection_id":"c1","view":"ddl","path":path}),
+    );
+    assert_eq!(focused["tab_id"], ddl_tab, "{focused}");
+    assert_eq!(
+        harness.state_mut().active_tab_for_tests().unwrap().0,
+        ddl_tab
+    );
+    assert_eq!(harness.state().tab_titles().len(), tabs, "no tab opened");
 }

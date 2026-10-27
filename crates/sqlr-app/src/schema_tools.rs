@@ -300,6 +300,24 @@ impl ErDialog {
 }
 
 impl SqlrApp {
+    /// Where the ER diagram tab of these tables is, when one is open.
+    pub(crate) fn er_diagram_tab(
+        &self,
+        conn: &str,
+        database: Option<&str>,
+        schema: &str,
+        tables: Option<&[String]>,
+    ) -> Option<egui_dock::TabPath> {
+        self.dock.find_tab_from(|t| {
+            t.er.as_ref().is_some_and(|er| {
+                er.conn == conn
+                    && er.database.as_deref() == database
+                    && er.schema == schema
+                    && er.tables.as_deref() == tables
+            })
+        })
+    }
+
     /// "ER diagram" on a schema or database node: the whole schema, or `tables` of it.
     pub(crate) fn open_er_diagram(
         &mut self,
@@ -311,14 +329,9 @@ impl SqlrApp {
         if self.engine.session_status(conn).is_none() {
             self.connect(conn);
         }
-        if let Some(path) = self.dock.find_tab_from(|t| {
-            t.er.as_ref().is_some_and(|er| {
-                er.conn == conn
-                    && er.database == database
-                    && er.schema == schema
-                    && er.tables == tables
-            })
-        }) {
+        if let Some(path) =
+            self.er_diagram_tab(conn, database.as_deref(), &schema, tables.as_deref())
+        {
             let _ = self.dock.set_active_tab(path);
             return;
         }

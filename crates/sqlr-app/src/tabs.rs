@@ -271,6 +271,17 @@ impl QueryTab {
         }
     }
 
+    /// Whether this is a SQL Editor tab, the only kind agents read, edit and run: not an
+    /// object editor, DDL viewer, ER diagram, administration, document or Redis tab.
+    pub(crate) fn is_sql_editor(&self) -> bool {
+        self.redis.is_none()
+            && self.object.is_none()
+            && self.doc.is_none()
+            && self.admin.is_none()
+            && self.ddl.is_none()
+            && self.er.is_none()
+    }
+
     pub fn is_running(&self, engine: &Engine) -> bool {
         match &self.run {
             None => false,
@@ -1808,17 +1819,14 @@ impl SqlrApp {
     }
 
     /// The SQL Editor tab `key`; `invalid` for another kind of tab.
-    fn agent_sql_tab(&mut self, key: u64) -> sqlr_mcp::error::ToolResult<Option<&mut QueryTab>> {
+    pub(crate) fn agent_sql_tab(
+        &mut self,
+        key: u64,
+    ) -> sqlr_mcp::error::ToolResult<Option<&mut QueryTab>> {
         let Some(tab) = tab_mut(&mut self.dock, key) else {
             return Ok(None);
         };
-        if tab.redis.is_some()
-            || tab.object.is_some()
-            || tab.doc.is_some()
-            || tab.admin.is_some()
-            || tab.ddl.is_some()
-            || tab.er.is_some()
-        {
+        if !tab.is_sql_editor() {
             return Err(sqlr_mcp::error::ToolError::invalid(
                 "Only SQL query tabs are available",
             ));

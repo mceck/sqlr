@@ -288,8 +288,9 @@ impl AgentHost for AppHostClient {
         self.request(move |app| app.agent_open_tab(open)).await
     }
 
-    async fn show(&self, view: ShowView) -> ToolResult<Shown> {
-        self.request(move |app| app.agent_show(view)).await
+    async fn show(&self, view: ShowView, open_allowed: bool) -> ToolResult<Shown> {
+        self.request(move |app| app.agent_show(view, open_allowed))
+            .await
     }
 
     async fn toast(&self, text: &str) {
@@ -842,13 +843,7 @@ impl SqlrApp {
     fn agent_tabs(&self) -> Vec<TabSummary> {
         self.dock
             .iter_all_tabs()
-            .filter(|(_, tab)| {
-                tab.redis.is_none()
-                    && tab.object.is_none()
-                    && tab.doc.is_none()
-                    && tab.admin.is_none()
-                    && tab.ddl.is_none()
-            })
+            .filter(|(_, tab)| tab.is_sql_editor())
             .map(|(_, tab)| TabSummary {
                 id: tab.key,
                 title: tab.title.clone(),
@@ -868,13 +863,7 @@ impl SqlrApp {
             .find(|(_, tab)| tab.key == id)
             .map(|(_, tab)| tab)
             .ok_or_else(|| ToolError::not_found("Unknown tab"))?;
-        if tab.redis.is_some()
-            || tab.object.is_some()
-            || tab.doc.is_some()
-            || tab.admin.is_some()
-            || tab.ddl.is_some()
-            || tab.er.is_some()
-        {
+        if !tab.is_sql_editor() {
             return Err(ToolError::invalid("Only SQL query tabs are available"));
         }
         Ok(self.agent_tab_detail(tab))
@@ -975,8 +964,32 @@ impl SqlrApp {
         self.agent_tab(key)
     }
 
-    /// Brings a view to the front for an agent, with a toast naming it.
-    fn agent_show(&mut self, view: ShowView) -> ToolResult<Shown> {
+    /// Whether showing `view` opens a new tab rather than focusing an open one.
+    fn show_opens_tab(&self, view: &ShowView) -> bool {
+        match view {
+            ShowView::Explorer { .. } | ShowView::Explain { .. } => false,
+            ShowView::Ddl {
+                connection_id,
+                node,
+            } => self.ddl_tab(connection_id, node).is_none(),
+            ShowView::TableData { .. } => true,
+            ShowView::ErDiagram {
+                connection_id,
+                database,
+                schema,
+                tables,
+            } => self
+                .er_diagram_tab(connection_id, database.as_deref(), schema, Some(tables))
+                .is_none(),
+        }
+    }
+
+    /// Brings a view to the front for an agent, with a toast naming it. Without
+    /// `open_allowed` a view that would open a new tab answers the tab limit.
+    fn agent_show(&mut self, view: ShowView, open_allowed: bool) -> ToolResult<Shown> {
+        if !open_allowed && self.show_opens_tab(&view) {
+            return Err(ToolError::tab_limit());
+        }
         let before: std::collections::HashSet<u64> =
             self.dock.iter_all_tabs().map(|(_, tab)| tab.key).collect();
         let notice = match view {
@@ -984,12 +997,12 @@ impl SqlrApp {
                 connection_id,
                 path,
             } => {
-                let name = self
+                let (name, group) = self
                     .connection(&connection_id)
                     .map(|cfg| (cfg.name.clone(), cfg.group.clone()))
                     .ok_or_else(|| ToolError::not_found("Unknown connection"))?;
                 self.left = crate::app::LeftPane::Connections;
-                if let Some(group) = &name.1 {
+                if let Some(group) = &group {
                     self.tree.expand_folder(group);
                 }
                 for depth in 0..path.len() {
@@ -1001,7 +1014,7 @@ impl SqlrApp {
                 }
                 self.tree.selected = Some((connection_id, sqlr_core::NodePath(path.clone())));
                 self.tree.selected_folder = None;
-                let target = path.last().cloned().unwrap_or(name.0);
+                let target = path.last().cloned().unwrap_or(name);
                 self.notify(format!("Agent showed {target} in the Explorer"));
                 return Ok(Shown::default());
             }
@@ -1034,7 +1047,7 @@ impl SqlrApp {
                 analyze,
             } => {
                 let engine = self.engine.clone();
-                let Some(tab) = self.agent_sql_tab_mut(tab_id)? else {
+                let Some(tab) = self.agent_sql_tab(tab_id)? else {
                     return Err(ToolError::not_found("Unknown tab"));
                 };
                 let Some(conn) = tab.conn.clone() else {
@@ -1059,11 +1072,6 @@ impl SqlrApp {
             tab_id: active,
             opened: active.is_some_and(|key| !before.contains(&key)),
         })
-    }
-
-    fn agent_sql_tab_mut(&mut self, key: u64) -> ToolResult<Option<&mut crate::tabs::QueryTab>> {
-        self.agent_tab(key)?;
-        Ok(crate::app::tab_mut(&mut self.dock, key))
     }
 }
 
@@ -1175,6 +1183,14 @@ impl SqlrApp {
         });
         self.approval_focus_pending = true;
         rx
+    }
+
+    /// Puts every queued approval past its deadline, as if nobody answered in time.
+    #[doc(hidden)]
+    pub fn expire_approvals_for_tests(&mut self) {
+        for pending in &mut self.pending_approvals {
+            pending.deadline = Instant::now();
+        }
     }
 
     /// An MCP server state on this app's engine and host, without a listener: a test calls

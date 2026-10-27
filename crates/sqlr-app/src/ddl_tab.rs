@@ -196,13 +196,18 @@ impl DdlTab {
 }
 
 impl SqlrApp {
-    /// Opens (or focuses) the DDL tab of `node`.
-    pub(crate) fn open_ddl(&mut self, conn: &str, node: &sqlr_core::Node) {
-        if let Some(path) = self.dock.find_tab_from(|t| {
+    /// Where the DDL tab of `node` is, when one is open.
+    pub(crate) fn ddl_tab(&self, conn: &str, node: &sqlr_core::Node) -> Option<egui_dock::TabPath> {
+        self.dock.find_tab_from(|t| {
             t.ddl
                 .as_ref()
                 .is_some_and(|d| d.conn == conn && d.node.path == node.path)
-        }) {
+        })
+    }
+
+    /// Opens (or focuses) the DDL tab of `node`.
+    pub(crate) fn open_ddl(&mut self, conn: &str, node: &sqlr_core::Node) {
+        if let Some(path) = self.ddl_tab(conn, node) {
             let _ = self.dock.set_active_tab(path);
             return;
         }

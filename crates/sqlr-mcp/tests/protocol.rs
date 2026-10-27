@@ -326,15 +326,34 @@ impl AgentHost for TestHost {
         };
         self.tab(id).await
     }
-    async fn show(&self, view: ShowView) -> sqlr_mcp::error::ToolResult<Shown> {
+    async fn show(&self, view: ShowView, open_allowed: bool) -> sqlr_mcp::error::ToolResult<Shown> {
         let mut state = self.state.lock();
+        // An ER diagram of the same tables focuses the tab it opened.
+        if let ShowView::ErDiagram { tables, .. } = &view
+            && let Some(index) = state.shown.iter().position(
+                |shown| matches!(shown, ShowView::ErDiagram { tables: open, .. } if open == tables),
+            )
+        {
+            state.shown.push(view);
+            return Ok(Shown {
+                tab_id: Some(151 + index as u64),
+                opened: false,
+            });
+        }
         let opened = matches!(
             view,
             ShowView::Ddl { .. } | ShowView::TableData { .. } | ShowView::ErDiagram { .. }
         );
+        if opened && !open_allowed {
+            return Err(sqlr_mcp::error::ToolError::tab_limit());
+        }
+        let explained = match &view {
+            ShowView::Explain { tab_id, .. } => Some(*tab_id),
+            _ => None,
+        };
         state.shown.push(view);
         Ok(Shown {
-            tab_id: opened.then_some(150 + state.shown.len() as u64),
+            tab_id: explained.or(opened.then_some(150 + state.shown.len() as u64)),
             opened,
         })
     }
@@ -2142,6 +2161,7 @@ async fn search_history_filters_exposed_connections_before_the_limit() {
     assert_eq!(entries.len(), 2, "{found}");
     assert_eq!(entries[0]["sql"], "select 2 from visible");
     assert_eq!(entries[0]["connection_id"], "c1");
+    assert_eq!(entries[0]["connection_name"], "Test");
     assert_eq!(entries[0]["database"], "main");
     assert_eq!(entries[0]["duration_ms"], 3);
     assert_eq!(entries[0]["outcome"]["status"], "rows");
@@ -2446,6 +2466,17 @@ async fn open_query_tab_and_show_in_app_validate_and_share_the_tab_limit() {
         )
         .await;
     assert_eq!(busy["error"]["code"], "busy", "{busy}");
+    // The statement is checked before the open transaction.
+    host.state.lock().tab_text = "delete from t".into();
+    let refused = client
+        .tool(
+            24,
+            "show_in_app",
+            json!({"connection_id":"c1","view":"explain","tab_id":1,"analyze":true}),
+        )
+        .await;
+    assert_eq!(refused["error"]["code"], "read_only", "{refused}");
+    host.state.lock().tab_text = "select 1".into();
 
     // Five tabs per MCP session, across open_query_tab and the tab-opening views.
     let opened = client
@@ -2516,6 +2547,33 @@ async fn open_query_tab_and_show_in_app_validate_and_share_the_tab_limit() {
         )
         .await;
     assert_eq!(sixth["error"]["code"], "busy", "{sixth}");
+    // At the cap, a call that opens no tab still works: Explain in an open tab, and a
+    // view that focuses the tab it opened before.
+    host.state.lock().tab_transaction_open = false;
+    let explained = client
+        .tool(
+            50,
+            "show_in_app",
+            json!({"connection_id":"c1","view":"explain","tab_id":1}),
+        )
+        .await;
+    assert_eq!(explained["tab_id"], 1, "{explained}");
+    let focused = client
+        .tool(
+            51,
+            "show_in_app",
+            json!({"connection_id":"c1","view":"er_diagram","tables":["a","b"]}),
+        )
+        .await;
+    assert_eq!(focused["tab_id"], er["tab_id"], "{focused}");
+    let new_er = client
+        .tool(
+            52,
+            "show_in_app",
+            json!({"connection_id":"c1","view":"er_diagram","tables":["c"]}),
+        )
+        .await;
+    assert_eq!(new_er["error"]["code"], "busy", "{new_er}");
     // The explorer opens no tab and stays available.
     let explorer = client
         .tool(
@@ -2554,5 +2612,108 @@ async fn open_query_tab_and_show_in_app_validate_and_share_the_tab_limit() {
         )
         .await;
     assert_eq!(hidden["error"]["code"], "not_exposed", "{hidden}");
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn describe_object_reports_a_failed_object_definition() {
+    use sqlr_core::{TableInfo, TableRef};
+    use sqlr_testkit::{FakeDriver, FakeScript};
+    let orders = TableInfo {
+        table: TableRef {
+            database: None,
+            schema: None,
+            name: "orders".into(),
+        },
+        columns: Vec::new(),
+        primary_key: Vec::new(),
+        unique_keys: Vec::new(),
+    };
+    // A driver that reads object definitions but fails on this one: an error, not empty
+    // lists.
+    let state = driver_state(
+        FakeDriver::new(FakeScript {
+            tables: vec![orders.clone()],
+            editing: Some(Default::default()),
+            objects: Vec::new(),
+            ..Default::default()
+        }),
+        AgentAccess::Read,
+    );
+    let failed = direct_tool(
+        &state,
+        "describe_object",
+        json!({"connection_id":"c1","name":"orders"}),
+    )
+    .await;
+    assert_eq!(failed["error"]["code"], "catalog", "{failed}");
+
+    // A driver that reads no object definitions answers empty lists.
+    let state = driver_state(
+        FakeDriver::new(FakeScript {
+            tables: vec![orders],
+            ..Default::default()
+        }),
+        AgentAccess::Read,
+    );
+    let described = direct_tool(
+        &state,
+        "describe_object",
+        json!({"connection_id":"c1","name":"orders"}),
+    )
+    .await;
+    assert!(described.get("error").is_none(), "{described}");
+    assert_eq!(described["indexes"], json!([]), "{described}");
+    assert_eq!(described["foreign_keys"], json!([]), "{described}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn explain_query_checks_the_statement_before_an_open_transaction() {
+    let store = Arc::new(MemoryMcpTokenStore::with_token("t"));
+    let (server, host, _dir, port, token) = setup(AgentAccess::Read, store).await;
+    // Production commits manually: the agent's first read opens a transaction.
+    host.state.lock().profile = ConnectionProfile::builtins().remove(2);
+    let mut client = Client::new(port, &token);
+    client.initialize().await;
+    let read = client
+        .tool(
+            2,
+            "run_query",
+            json!({"connection_id":"c1","query":"select 1"}),
+        )
+        .await;
+    assert_eq!(read["status"], "ready", "{read}");
+    let busy = client
+        .tool(
+            3,
+            "explain_query",
+            json!({"connection_id":"c1","query":"select 1"}),
+        )
+        .await;
+    assert_eq!(busy["error"]["code"], "busy", "{busy}");
+    let multi = client
+        .tool(
+            4,
+            "explain_query",
+            json!({"connection_id":"c1","query":"select 1; select 2"}),
+        )
+        .await;
+    assert_eq!(multi["error"]["code"], "invalid", "{multi}");
+    let write = client
+        .tool(
+            5,
+            "explain_query",
+            json!({"connection_id":"c1","query":"delete from t","analyze":true}),
+        )
+        .await;
+    assert_eq!(write["error"]["code"], "read_only", "{write}");
+    let analyze = client
+        .tool(
+            6,
+            "explain_query",
+            json!({"connection_id":"c1","query":"select 1","analyze":"yes"}),
+        )
+        .await;
+    assert_eq!(analyze["error"]["code"], "invalid", "{analyze}");
     server.shutdown().await;
 }

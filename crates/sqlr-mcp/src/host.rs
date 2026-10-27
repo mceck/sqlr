@@ -296,8 +296,11 @@ pub trait AgentHost: Send + Sync {
     async fn tab_result(&self, id: u64, query: u64) -> ToolResult<TabResultRef>;
     /// Opens a new unsaved SQL Editor tab and makes it active.
     async fn open_tab(&self, open: OpenTab) -> ToolResult<TabDetail>;
-    /// Brings a view to the front for the person, with a toast naming it.
-    async fn show(&self, view: ShowView) -> ToolResult<Shown>;
+    /// Brings a view to the front for the person, with a toast naming it. Without
+    /// `open_allowed` (the MCP session reached its tab cap) a view that would open a new
+    /// tab opens nothing and answers [`crate::error::ToolError::tab_limit`]; focusing an
+    /// open tab and the views that open none still work.
+    async fn show(&self, view: ShowView, open_allowed: bool) -> ToolResult<Shown>;
     /// A short notice in the app; never contains a secret or a result row.
     async fn toast(&self, text: &str);
 }

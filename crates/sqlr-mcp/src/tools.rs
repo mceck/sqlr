@@ -466,7 +466,7 @@ async fn describe_object(state: &Arc<ServerState>, args: &Args) -> ToolResult<Ca
     loop {
         match state.engine.table_info(id, &table) {
             Some(LoadState::Ready(info)) => {
-                let definition = table_definition(state, id, &info.table).await;
+                let definition = table_definition(state, id, &info.table).await?;
                 let (indexes, foreign_keys) = definition
                     .as_ref()
                     .map(|def| (indexes_json(def), foreign_keys_json(def)))
@@ -507,18 +507,48 @@ async fn describe_object(state: &Arc<ServerState>, args: &Args) -> ToolResult<Ca
     }
 }
 
-/// The table's definition from the object loader; `None` when the driver cannot introspect.
+/// The table's definition from the object loader. `None` when the Driver reads no object
+/// definitions, or when the relation is a view (which has no indexes or foreign keys); a
+/// failed or late load is a `catalog` or `timeout` error.
 async fn table_definition(
     state: &Arc<ServerState>,
     id: &str,
     table: &TableRef,
-) -> Option<TableDef> {
+) -> ToolResult<Option<TableDef>> {
+    let error = match load_definition(state, id, ObjectKind::Table, table).await? {
+        Ok(ObjectDef::Table(def)) => return Ok(Some(def)),
+        Ok(_) => return Ok(None),
+        Err(error) if error.kind == ErrorKind::Unsupported => return Ok(None),
+        Err(error) => error,
+    };
+    // The table loader reads tables only; a view describes with empty lists.
+    if let Ok(Ok(ObjectDef::View(_))) = load_definition(state, id, ObjectKind::View, table).await {
+        return Ok(None);
+    }
+    Err(ToolError::new(
+        if error.kind == ErrorKind::Timeout {
+            "timeout"
+        } else {
+            "catalog"
+        },
+        redact(&error.message),
+    ))
+}
+
+/// One object definition load: the Driver's answer, or `timeout` when it takes too long.
+async fn load_definition(
+    state: &Arc<ServerState>,
+    id: &str,
+    kind: ObjectKind,
+    table: &TableRef,
+) -> ToolResult<Result<ObjectDef, DriverError>> {
     let job = state
         .engine
-        .load_object(id, ObjectRef::relation(ObjectKind::Table, table));
-    match wait_job(state.engine.as_ref(), job, Duration::from_secs(20)).await {
-        Ok(JobOutcome::Object(ObjectDef::Table(def))) => Some(def),
-        _ => None,
+        .load_object(id, ObjectRef::relation(kind, table));
+    match wait_job(state.engine.as_ref(), job, Duration::from_secs(20)).await? {
+        JobOutcome::Object(def) => Ok(Ok(def)),
+        JobOutcome::Failed(error) => Ok(Err(error)),
+        _ => Err(ToolError::internal("unexpected object definition outcome")),
     }
 }
 
@@ -1157,30 +1187,30 @@ async fn close_result(
 /// The raw plan an Agent receives is cut at this size.
 pub const MAX_PLAN_BYTES: usize = 256 * 1024;
 
-/// Checks the Explain rules for one statement on `connection`: one statement, `analyze`
-/// refused for a write on a read-only exposure or profile, and an Approval for a write
-/// under analyze. Returns the statement to explain.
-pub(crate) async fn explain_checks(
+/// A statement that passed the Explain checks, waiting for the Approval an Analyze of a
+/// write needs.
+pub(crate) struct ExplainStatement {
+    pub sql: String,
+    class: StatementClass,
+    analyze: bool,
+}
+
+/// Checks the Explain rules for one statement on `connection`, before anything waits on the
+/// Session: the Driver provides plans, the query holds exactly one statement, and `analyze`
+/// of a write is refused on a read-only exposure or profile.
+pub(crate) fn explain_checks(
     state: &Arc<ServerState>,
-    ctx: &ToolContext,
     connection: &crate::host::AgentConnection,
-    database: Option<&str>,
     query: &str,
     analyze: bool,
-) -> ToolResult<String> {
+) -> ToolResult<ExplainStatement> {
     if connection.manifest.family != Family::Relational || !connection.manifest.capabilities.explain
     {
         return Err(ToolError::unsupported(
             "This database does not provide query plans",
         ));
     }
-    let dialect = state
-        .engine
-        .drivers()
-        .get(&connection.config.driver)
-        .and_then(|driver| driver.dialect())
-        .ok_or_else(|| ToolError::unsupported("This driver has no SQL dialect"))?;
-    let syntax = dialect.syntax();
+    let syntax = connection_syntax(state, connection)?;
     let statements = policy::sql_statements(&syntax, query);
     if statements.len() > 1 {
         return Err(ToolError::invalid(format!(
@@ -1188,17 +1218,42 @@ pub(crate) async fn explain_checks(
             statements.len()
         )));
     }
-    let Some(statement) = statements.into_iter().next() else {
+    let Some(sql) = statements.into_iter().next() else {
         return Err(ToolError::invalid("query contains no statement"));
     };
+    let class = syntax.classify(&sql);
     if analyze {
-        let class = syntax.classify(&statement);
         check_read_only(connection, &class)?;
-        if class.modifies() {
-            approve(state, ctx, Some(connection), database, &class, &statement).await?;
-        }
     }
-    Ok(statement)
+    Ok(ExplainStatement {
+        sql,
+        class,
+        analyze,
+    })
+}
+
+impl ExplainStatement {
+    /// Waits on the Approval an Analyze of a write needs; the statement to explain.
+    async fn approved(
+        self,
+        state: &Arc<ServerState>,
+        ctx: &ToolContext,
+        connection: &crate::host::AgentConnection,
+        database: Option<&str>,
+    ) -> ToolResult<String> {
+        if self.analyze && self.class.modifies() {
+            approve(
+                state,
+                ctx,
+                Some(connection),
+                database,
+                &self.class,
+                &self.sql,
+            )
+            .await?;
+        }
+        Ok(self.sql)
+    }
 }
 
 fn session_busy(state: &Arc<ServerState>, key: &SessionKey) -> bool {
@@ -1254,18 +1309,9 @@ async fn explain_query(
     let id = args.str("connection_id")?;
     let query = args.str("query")?;
     let database = args.opt_str("database");
-    let analyze = match args.get("analyze") {
-        None | Some(Value::Null) => false,
-        Some(value) => value
-            .as_bool()
-            .ok_or_else(|| ToolError::invalid("analyze must be a boolean"))?,
-    };
+    let analyze = bool_arg(args, "analyze")?;
     let connection = exposed_connection(state, id).await?;
-    if connection.manifest.family != Family::Relational {
-        return Err(ToolError::unsupported(
-            "Explain is available for relational Connections",
-        ));
-    }
+    let checked = explain_checks(state, &connection, query, analyze)?;
     let key = ensure_connected(state, ctx, &connection).await?;
     if session_busy(state, &key) {
         return Err(ToolError::new(
@@ -1273,7 +1319,7 @@ async fn explain_query(
             "A transaction is open on the agent session: commit or roll back first",
         ));
     }
-    let statement = explain_checks(state, ctx, &connection, database, query, analyze).await?;
+    let statement = checked.approved(state, ctx, &connection, database).await?;
     let job = state.engine.explain_in(&key, database, statement, analyze);
     match wait_job(state.engine.as_ref(), job, Duration::from_secs(120)).await? {
         JobOutcome::Plan(plan) => {
@@ -1305,18 +1351,18 @@ async fn search_history(state: &Arc<ServerState>, args: &Args) -> ToolResult<Cal
         Some(n) if (1..=200).contains(&n) => n as usize,
         Some(_) => return Err(ToolError::invalid("limit must be between 1 and 200")),
     };
-    let exposed: Vec<String> = state
+    let names: BTreeMap<String, String> = state
         .host
         .connections()
         .await?
         .into_iter()
         .filter(|config| config.agent_access != AgentAccess::None)
-        .map(|config| config.id)
+        .map(|config| (config.id, config.name))
         .collect();
     let conns = match args.opt_str("connection_id") {
-        Some(id) if exposed.iter().any(|known| known == id) => vec![id.to_string()],
+        Some(id) if names.contains_key(id) => vec![id.to_string()],
         Some(id) => return Err(ToolError::not_exposed(id)),
-        None => exposed,
+        None => names.keys().cloned().collect(),
     };
     let query = HistoryQuery {
         text,
@@ -1334,6 +1380,7 @@ async fn search_history(state: &Arc<ServerState>, args: &Args) -> ToolResult<Cal
             .iter()
             .map(|entry| json!({
                 "connection_id": entry.conn_id,
+                "connection_name": names.get(&entry.conn_id),
                 "database": entry.database,
                 "sql": entry.sql,
                 "started_at_ms": entry.started_at_ms,
@@ -2365,9 +2412,9 @@ async fn open_query_tab(
             "SQL Editor tabs are for relational Connections",
         ));
     }
-    if !state.may_open_tab(&ctx.session_id) {
-        return Err(ToolError::tab_limit());
-    }
+    let slot = state
+        .reserve_tab(&ctx.session_id)
+        .ok_or_else(ToolError::tab_limit)?;
     let tab = state
         .host
         .open_tab(OpenTab {
@@ -2377,7 +2424,7 @@ async fn open_query_tab(
             title: args.opt_str("title").map(str::to_string),
         })
         .await?;
-    state.record_tab(&ctx.session_id);
+    slot.keep();
     Ok(CallToolResult::structured(json!({
         "tab_id": tab.id,
         "revision": tab.revision,
@@ -2451,18 +2498,25 @@ fn run_target(value: Option<&Value>) -> ToolResult<RunTarget> {
     }
 }
 
-/// The SQL syntax of a Connection's driver.
-fn connection_syntax(
+/// The SQL dialect of a Connection's driver.
+fn connection_dialect(
     state: &Arc<ServerState>,
     connection: &crate::host::AgentConnection,
-) -> ToolResult<Arc<sqlr_core::SqlSyntax>> {
+) -> ToolResult<Arc<dyn sqlr_core::Dialect>> {
     state
         .engine
         .drivers()
         .get(&connection.config.driver)
         .and_then(|driver| driver.dialect())
-        .map(|dialect| dialect.syntax())
         .ok_or_else(|| ToolError::unsupported("This driver has no SQL dialect"))
+}
+
+/// The SQL syntax of a Connection's driver.
+fn connection_syntax(
+    state: &Arc<ServerState>,
+    connection: &crate::host::AgentConnection,
+) -> ToolResult<Arc<sqlr_core::SqlSyntax>> {
+    connection_dialect(state, connection).map(|dialect| dialect.syntax())
 }
 
 /// The tab's exposed Connection, connected for the person's Sessions.
@@ -2547,28 +2601,70 @@ fn bool_arg(args: &Args, key: &str) -> ToolResult<bool> {
     }
 }
 
+/// The views `show_in_app` brings to the front.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum View {
+    Explorer,
+    Ddl,
+    TableData,
+    ErDiagram,
+    Explain,
+}
+
+impl View {
+    fn parse(view: &str) -> ToolResult<Self> {
+        Ok(match view {
+            "explorer" => Self::Explorer,
+            "ddl" => Self::Ddl,
+            "table_data" => Self::TableData,
+            "er_diagram" => Self::ErDiagram,
+            "explain" => Self::Explain,
+            _ => {
+                return Err(ToolError::invalid(format!(
+                    "Unknown view \"{view}\": use explorer, ddl, table_data, er_diagram or explain"
+                )));
+            }
+        })
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Explorer => "explorer",
+            Self::Ddl => "ddl",
+            Self::TableData => "table_data",
+            Self::ErDiagram => "er_diagram",
+            Self::Explain => "explain",
+        }
+    }
+}
+
+/// Shows a view that opens a tab or focuses the one it opened before. A tab slot is
+/// reserved first; at the cap only focusing an open tab works.
+async fn show_tab_view(
+    state: &Arc<ServerState>,
+    ctx: &ToolContext,
+    view: ShowView,
+) -> ToolResult<crate::host::Shown> {
+    let slot = state.reserve_tab(&ctx.session_id);
+    let shown = state.host.show(view, slot.is_some()).await?;
+    if shown.opened
+        && let Some(slot) = slot
+    {
+        slot.keep();
+    }
+    Ok(shown)
+}
+
 async fn show_in_app(
     state: &Arc<ServerState>,
     ctx: &ToolContext,
     args: &Args,
 ) -> ToolResult<CallToolResult> {
     let connection_id = args.str("connection_id")?;
-    let view = args.str("view")?;
-    if !matches!(
-        view,
-        "explorer" | "ddl" | "table_data" | "er_diagram" | "explain"
-    ) {
-        return Err(ToolError::invalid(format!(
-            "Unknown view \"{view}\": use explorer, ddl, table_data, er_diagram or explain"
-        )));
-    }
+    let view = View::parse(args.str("view")?)?;
     let connection = exposed_connection(state, connection_id).await?;
-    let opens_tab = view != "explorer";
-    if opens_tab && !state.may_open_tab(&ctx.session_id) {
-        return Err(ToolError::tab_limit());
-    }
     let shown = match view {
-        "explorer" => {
+        View::Explorer => {
             let path = match args.get("path") {
                 None | Some(Value::Null) => Vec::new(),
                 Some(_) => args.string_array("path")?,
@@ -2580,13 +2676,16 @@ async fn show_in_app(
             }
             state
                 .host
-                .show(ShowView::Explorer {
-                    connection_id: connection_id.to_string(),
-                    path,
-                })
+                .show(
+                    ShowView::Explorer {
+                        connection_id: connection_id.to_string(),
+                        path,
+                    },
+                    false,
+                )
                 .await?
         }
-        "ddl" | "table_data" => {
+        View::Ddl | View::TableData => {
             let path = path_arg(args)?;
             if connection.manifest.family != Family::Relational {
                 return Err(ToolError::unsupported(
@@ -2595,7 +2694,7 @@ async fn show_in_app(
             }
             let node = node_at(state, &connection, &path).await?;
             let connection_id = connection_id.to_string();
-            let view = if view == "ddl" {
+            let shown = if view == View::Ddl {
                 ShowView::Ddl {
                     connection_id,
                     node,
@@ -2612,9 +2711,9 @@ async fn show_in_app(
                     node,
                 }
             };
-            state.host.show(view).await?
+            show_tab_view(state, ctx, shown).await?
         }
-        "er_diagram" => {
+        View::ErDiagram => {
             if connection.manifest.family != Family::Relational {
                 return Err(ToolError::unsupported(
                     "ER diagrams are available for relational Connections",
@@ -2626,31 +2725,23 @@ async fn show_in_app(
             }
             let schema = match args.opt_str("schema") {
                 Some(schema) => schema.to_string(),
-                None => state
-                    .engine
-                    .drivers()
-                    .get(&connection.config.driver)
-                    .and_then(|driver| driver.dialect())
+                None => connection_dialect(state, &connection)
+                    .ok()
                     .and_then(|dialect| dialect.default_schemas().into_iter().next())
                     .ok_or_else(|| ToolError::invalid("schema is required for this driver"))?,
             };
             ensure_connected(state, &catalog_context("catalog"), &connection).await?;
-            state
-                .host
-                .show(ShowView::ErDiagram {
-                    connection_id: connection_id.to_string(),
-                    database: args.opt_str("database").map(str::to_string),
-                    schema,
-                    tables,
-                })
-                .await?
+            let shown = ShowView::ErDiagram {
+                connection_id: connection_id.to_string(),
+                database: args.opt_str("database").map(str::to_string),
+                schema,
+                tables,
+            };
+            show_tab_view(state, ctx, shown).await?
         }
-        _ => show_explain(state, ctx, args, &connection).await?,
+        View::Explain => show_explain(state, ctx, args, &connection).await?,
     };
-    if shown.opened {
-        state.record_tab(&ctx.session_id);
-    }
-    let mut value = json!({"connection_id": connection_id, "view": view});
+    let mut value = json!({"connection_id": connection_id, "view": view.name()});
     if let (Some(tab), Some(object)) = (shown.tab_id, value.as_object_mut()) {
         object.insert("tab_id".into(), json!(tab));
     }
@@ -2665,23 +2756,12 @@ async fn show_explain(
     connection: &crate::host::AgentConnection,
 ) -> ToolResult<crate::host::Shown> {
     let analyze = bool_arg(args, "analyze")?;
-    if !connection.manifest.capabilities.explain {
-        return Err(ToolError::unsupported(
-            "This database does not provide query plans",
-        ));
-    }
     let connection_id = connection.config.id.as_str();
     match (args.opt_u64("tab_id")?, args.opt_str("query")) {
         (Some(tab_id), None) => {
             let tab = state.host.tab(tab_id).await?;
             if tab.connection_id.as_deref() != Some(connection_id) {
                 return Err(ToolError::invalid("The tab is not on this connection"));
-            }
-            if tab.transaction_open {
-                return Err(ToolError::new(
-                    "busy",
-                    "The tab has an open transaction: commit or roll back first",
-                ));
             }
             let target = match args.opt_u64("statement")? {
                 Some(index) => RunTarget::Statement(index as usize),
@@ -2691,29 +2771,38 @@ async fn show_explain(
             let [statement] = statements.as_slice() else {
                 return Err(ToolError::invalid("Explain takes exactly one statement"));
             };
+            let checked = explain_checks(state, connection, statement, analyze)?;
+            if tab.transaction_open {
+                return Err(ToolError::new(
+                    "busy",
+                    "The tab has an open transaction: commit or roll back first",
+                ));
+            }
             ensure_connected(state, &catalog_context("catalog"), connection).await?;
-            let statement = explain_checks(
-                state,
-                ctx,
-                connection,
-                tab.database.as_deref(),
-                statement,
-                analyze,
-            )
-            .await?;
+            let statement = checked
+                .approved(state, ctx, connection, tab.database.as_deref())
+                .await?;
             state
                 .host
-                .show(ShowView::Explain {
-                    tab_id,
-                    statement,
-                    analyze,
-                })
+                .show(
+                    ShowView::Explain {
+                        tab_id,
+                        statement,
+                        analyze,
+                    },
+                    false,
+                )
                 .await
         }
         (None, Some(query)) => {
             let database = args.opt_str("database");
-            let statement =
-                explain_checks(state, ctx, connection, database, query, analyze).await?;
+            let checked = explain_checks(state, connection, query, analyze)?;
+            // The slot is held from before the Approval, so a session at the cap is not
+            // asked for one.
+            let slot = state
+                .reserve_tab(&ctx.session_id)
+                .ok_or_else(ToolError::tab_limit)?;
+            let statement = checked.approved(state, ctx, connection, database).await?;
             ensure_connected(state, &catalog_context("catalog"), connection).await?;
             let tab = state
                 .host
@@ -2724,13 +2813,17 @@ async fn show_explain(
                     title: Some("Explain".into()),
                 })
                 .await?;
+            slot.keep();
             state
                 .host
-                .show(ShowView::Explain {
-                    tab_id: tab.id,
-                    statement,
-                    analyze,
-                })
+                .show(
+                    ShowView::Explain {
+                        tab_id: tab.id,
+                        statement,
+                        analyze,
+                    },
+                    false,
+                )
                 .await?;
             Ok(crate::host::Shown {
                 tab_id: Some(tab.id),
