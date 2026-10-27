@@ -657,7 +657,7 @@ fn build_defs() -> Vec<SettingDef> {
             "grid.result_memory_mib",
             "Result grid",
             "Memory per result",
-            "Stop loading a SQL result before it exceeds this memory budget; 0 means no limit.",
+            "Keep SQL result buffers in memory up to this budget, then spill older chunks to temporary files; 0 means no limit.",
             &["ram", "memory", "limit"],
             K::Int {
                 min: 0,
@@ -670,7 +670,7 @@ fn build_defs() -> Vec<SettingDef> {
             "grid.total_memory_mib",
             "Result grid",
             "Memory for all results",
-            "The combined memory budget of loaded SQL results; 0 means no limit. Existing rows are kept.",
+            "The combined memory budget of SQL result buffers; older results spill to temporary files when needed. 0 means no limit.",
             &["ram", "memory", "limit", "tabs"],
             K::Int {
                 min: 0,

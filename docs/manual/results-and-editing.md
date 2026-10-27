@@ -11,10 +11,10 @@ sqlr fetches 500 rows at a time by default. Scrolling near the end loads another
 | Default limit | What happens when reached |
 | --- | --- |
 | 100,000 rows for **Fetch all** | The stream closes and the result reports truncation |
-| 128 MiB per SQL result | Loaded rows remain; a warning explains that the memory budget stopped the result |
-| 512 MiB for all SQL results | Close other results or raise the budget before rerunning |
+| 128 MiB per SQL result | Older chunks move to temporary storage and loading continues |
+| 512 MiB for all SQL results | Older results spill to temporary storage so fetching can continue |
 
-Adjust these in **Result grid** preferences. Memory limits apply to SQL row buffers, rather than every part of the app's memory. Results are not spilled to disk. Closing a tab or rerunning releases its old results. A later query on the same session can also cut short a result whose rows are still on the server.
+Adjust these in **Result grid** preferences. Memory limits apply to SQL row buffers. Older chunks are stored in private temporary files and remain readable as you scroll, copy, sort or edit. The operating system manages mapped file pages, so these limits are not an exact ceiling on the app's total RAM. A storage failure stops the fetch with an error and keeps previously loaded rows. Closing a tab or rerunning releases its old results; temporary storage is reclaimed after the last reader finishes. A later query on the same session can also cut short a result whose rows are still on the server.
 
 ## Sort, filter and inspect values
 

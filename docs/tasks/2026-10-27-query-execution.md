@@ -31,7 +31,7 @@ Each Editor tab runs on its own Session, so tabs never block each other or the e
 7. As a user, I want more rows to load as I scroll, so that I can browse naturally.
 8. As a user, I want to change how many rows each fetch brings (100, 500, 1000, 5000 or custom), so that I can tune paging.
 9. As a user, I want Fetch all with progress and Cancel, capped at a configurable row count, so that I can load everything safely.
-10. As a user, I want results to stop loading at a memory budget with a clear warning, so that the app never runs out of memory.
+10. As a user, I want results to spill older chunks to temporary storage at a memory budget, so that I can keep loading without retaining every row in RAM.
 11. As a user, I want closing a result to free its memory at once, so that I can reclaim memory.
 12. As a user, I want to sort and filter a complete result locally, so that it is instant.
 13. As a user, I want to sort or filter a partial result on the server, so that the order covers every row and not only the loaded ones.
@@ -65,7 +65,7 @@ Each Editor tab runs on its own Session, so tabs never block each other or the e
 
 - Engine Sessions are keyed by Connection and slot (explorer, Editor tab, Agent). The explorer Session also serves the explorer, Catalog loads and Jobs. A tab Session opens on its first run; per-tab sessions follow the global or per-Connection setting.
 - Each Session has an async side with a ticket queue (executes start in issue order) and a stream lock holding at most one open stream; a new execute closes the previous stream and marks its Result cut short. Other-database connections are opened on demand per Session.
-- Results are shared, lock-protected objects with status, rows, affected count, elapsed time, Page size, cut-short flag, messages and a memory reservation against a per-Result cap and a global atomic budget.
+- Results are shared, lock-protected objects with status, rows, affected count, elapsed time, Page size, cut-short flag and messages. Heap reservations follow individual chunks and their snapshots against per-Result and global budgets. Under pressure the engine spills older chunks to one private anonymous append-only file per Result and publishes read-only mappings after background file work. Large incoming chunks and chunks blocked by pinned snapshots spill directly. Storage failures fail the fetch explicitly while retaining published rows.
 - Fetching reads up to 1,024 rows per chunk until a page is full; fetch all loops pages up to the row cap and probes one row at the cap.
 - Scripts start their first statement immediately (taking the next ticket) and run the rest as one Operation, waiting for each statement's first page or outcome.
 - Transactions are a state machine in the engine fed by the Dialect's transaction rules (DDL commits, errors abort, nested begin, savepoint replacement, savepoint starts a transaction) and by classified statements; the engine runs the Dialect's begin, savepoint and read-only statements itself. Transaction commands run in the Session's order.
@@ -78,6 +78,7 @@ Each Editor tab runs on its own Session, so tabs never block each other or the e
 
 - Engine seam: the engine's public interface with the fake relational Driver scripted per test: commit modes, savepoints, read-only refusal and server switch, per-tab and shared Sessions, closing and disconnecting, lost connections, PostgreSQL-style aborts, MySQL DDL commits, other-database refusal, page reads outside Manual transactions, scripts with stop and continue, cancellation, paging and memory budgets. Prior art: the engine's transaction, script, operations and integration suites.
 - Real servers: engine transaction tests against SQL Server, and Driver suites against the shared PostgreSQL, MySQL and MariaDB services for cancel, streaming and paging.
+- Spill storage seam: the chunk codec checks every cell kind, multi-word NULL bitmaps, UTF-8, exact payload size estimates and unchanged wire encodings. The engine storage boundary checks multiple mappings, last-reader file cleanup, private file permissions and write errors preserving original rows. Engine paging tests cover per-Result and global limits, oversized chunks, snapshots after close, concurrent Results, cancellation and unlimited budgets.
 - Core seam: unit tests of the statement classifier (batches, CTEs, EXPLAIN, FOR UPDATE, comments and strings) and of the built-in profiles.
 - App seam: `egui_kittest` and app-level tests for confirmations (destructive first, then writes, batches, long lists), the transaction prompts (tab close, disconnect, quit, auto-commit switch, idle timeout, forced disconnect) and closing tabs closing their Sessions.
 
@@ -90,8 +91,8 @@ Each Editor tab runs on its own Session, so tabs never block each other or the e
 - [x] Scrolling near the end fetches the next page; Fetch all is cancellable and stops at the row cap with a note.
 - [x] The default per-Result memory budget is 128 MiB, with a 512 MiB global budget.
 - [x] A per-Result and a global memory budget are configurable, and 0 disables each.
-- [ ] Chunks beyond a memory budget spill to a temporary file read back through mmap instead of being discarded.
-- [x] Closing a Result frees its buffers at once.
+- [x] Chunks beyond a memory budget spill to private temporary storage read back through mmap; loading continues, and snapshots retain their rows and memory accounting until their last reader finishes.
+- [x] Closing a Result releases its chunk ownership; heap reservations and temporary storage are released when their last reader finishes.
 - [x] Complete Results sort locally; partial Results offer Sort on server through the Dialect's wrapper; the WHERE filter reruns on the server.
 - [x] Stop requests a server-side cancel on every Driver that declares the capability.
 - [x] Scripts run statement by statement, write to Output, and stop at the first error by default or continue by setting.
@@ -115,4 +116,4 @@ Each Editor tab runs on its own Session, so tabs never block each other or the e
 
 ## Further Notes
 
-This task records retroactively the work that built the area as it exists today. The accepted defaults are 128 MiB per Result and 512 MiB globally. Spilling large Results to disk remains to do: the engine currently truncates at the memory budget.
+This task records retroactively the work that built the area as it exists today. The accepted defaults are 128 MiB per Result and 512 MiB globally. Results spill to private temporary storage at the memory budgets, preserving loaded rows, chunk types and snapshots.

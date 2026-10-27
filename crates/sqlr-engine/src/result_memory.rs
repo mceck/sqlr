@@ -1,9 +1,10 @@
-//! Atomic accounting shared by loaded SQL results. Reservations follow result lifetimes.
+//! Atomic accounting shared by loaded SQL results. Reservations follow chunk lifetimes.
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
 };
 
+#[derive(Debug)]
 pub(crate) struct ResultBudget {
     pub limit: AtomicUsize,
     used: AtomicUsize,
@@ -20,27 +21,35 @@ impl ResultBudget {
 
 pub(crate) struct Reservation {
     budget: Arc<ResultBudget>,
-    bytes: usize,
+    used: Arc<AtomicUsize>,
 }
 
 impl Reservation {
     pub fn new(budget: Arc<ResultBudget>) -> Self {
-        Self { budget, bytes: 0 }
+        Self {
+            budget,
+            used: Arc::new(AtomicUsize::new(0)),
+        }
     }
-    pub fn grow(&mut self, bytes: usize) -> bool {
+
+    pub fn bytes(&self) -> usize {
+        self.used.load(Ordering::Relaxed)
+    }
+
+    pub fn reserve(&self, bytes: usize) -> Option<Arc<ChunkReservation>> {
         let limit = self.budget.limit.load(Ordering::Relaxed);
-        if self
-            .budget
+        self.budget
             .used
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
                 used.checked_add(bytes).filter(|&next| next <= limit)
             })
-            .is_err()
-        {
-            return false;
-        }
-        self.bytes += bytes;
-        true
+            .ok()?;
+        self.used.fetch_add(bytes, Ordering::Relaxed);
+        Some(Arc::new(ChunkReservation {
+            budget: self.budget.clone(),
+            used: self.used.clone(),
+            bytes,
+        }))
     }
 }
 
@@ -50,9 +59,17 @@ impl Default for Reservation {
     }
 }
 
-impl Drop for Reservation {
+#[derive(Debug)]
+pub(crate) struct ChunkReservation {
+    budget: Arc<ResultBudget>,
+    used: Arc<AtomicUsize>,
+    bytes: usize,
+}
+
+impl Drop for ChunkReservation {
     fn drop(&mut self) {
         self.budget.used.fetch_sub(self.bytes, Ordering::Relaxed);
+        self.used.fetch_sub(self.bytes, Ordering::Relaxed);
     }
 }
 
@@ -74,12 +91,14 @@ mod tests {
                 let release = release.clone();
                 let successes = successes.clone();
                 threads.spawn(move || {
-                    let mut reservation = Reservation::new(budget);
-                    if reservation.grow(100) {
+                    let reservation = Reservation::new(budget);
+                    let lease = reservation.reserve(100);
+                    if lease.is_some() {
                         successes.fetch_add(1, Ordering::Relaxed);
                     }
                     attempted.wait();
                     release.wait();
+                    drop(lease);
                 });
             }
             attempted.wait();
@@ -88,7 +107,7 @@ mod tests {
             assert_eq!(accepted, 1);
         });
         assert!(
-            Reservation::new(budget).grow(100),
+            Reservation::new(budget).reserve(100).is_some(),
             "dropping results frees their reservations"
         );
     }

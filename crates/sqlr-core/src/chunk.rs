@@ -6,6 +6,9 @@ use std::sync::Arc;
 
 use crate::table::TableRef;
 
+mod spill;
+pub use spill::{SpillBacking, SpillEncoding};
+
 /// The physical kind of a column: how its values are stored in a chunk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ColumnKind {
@@ -395,7 +398,8 @@ impl ChunkBuilder {
         ResultChunk {
             columns: self.columns,
             len: self.len,
-            data: self.data,
+            data: Arc::new(ChunkData::Owned(self.data)),
+            memory_owner: None,
         }
     }
 }
@@ -404,7 +408,15 @@ impl ChunkBuilder {
 pub struct ResultChunk {
     columns: Arc<[ColumnMeta]>,
     len: usize,
-    data: Vec<Column>,
+    data: Arc<ChunkData>,
+    // Accounting follows the payload through snapshots and background readers.
+    memory_owner: Option<Arc<dyn fmt::Debug + Send + Sync>>,
+}
+
+#[derive(Debug)]
+enum ChunkData {
+    Owned(Vec<Column>),
+    Mapped(spill::MappedChunk),
 }
 
 impl ResultChunk {
@@ -423,7 +435,11 @@ impl ResultChunk {
     /// Panics if `row` or `col` is out of range.
     pub fn cell(&self, row: usize, col: usize) -> Cell<'_> {
         assert!(row < self.len, "row {row} out of range (len {})", self.len);
-        let column = &self.data[col];
+        let data = match self.data.as_ref() {
+            ChunkData::Owned(data) => data,
+            ChunkData::Mapped(data) => return data.cell(row, col),
+        };
+        let column = &data[col];
         if !column.is_valid(row) {
             return Cell::Null;
         }
@@ -461,12 +477,34 @@ impl ResultChunk {
         }
     }
 
-    /// Approximate heap bytes.
+    /// Approximate payload size, retained after spilling for copy/export estimates.
     pub fn byte_size(&self) -> usize {
-        self.data
-            .iter()
+        let data = match self.data.as_ref() {
+            ChunkData::Owned(data) => data,
+            ChunkData::Mapped(data) => return data.payload_bytes,
+        };
+        data.iter()
             .map(|c| c.data.byte_size() + c.validity.capacity() * 8)
             .sum()
+    }
+
+    /// Heap bytes retained by the payload. File-backed pages are managed by the OS.
+    pub fn resident_byte_size(&self) -> usize {
+        if self.is_spilled() {
+            0
+        } else {
+            self.byte_size()
+        }
+    }
+
+    pub fn is_spilled(&self) -> bool {
+        matches!(self.data.as_ref(), ChunkData::Mapped(_))
+    }
+
+    /// Retains an allocation's accounting until its last snapshot releases the payload.
+    pub fn with_memory_owner(mut self, owner: Arc<dyn fmt::Debug + Send + Sync>) -> Self {
+        self.memory_owner = Some(owner);
+        self
     }
 }
 

@@ -295,7 +295,7 @@ fn connection_settings_override_the_global_row_cap_and_sessions() {
 }
 
 #[test]
-fn memory_budget_bounds_fetch_more_and_reports_truncation() {
+fn memory_budget_spills_without_losing_rows_or_invalidating_snapshots() {
     let (engine, fake) = connected(FakeScript {
         rows: 5000,
         ..Default::default()
@@ -303,35 +303,64 @@ fn memory_budget_bounds_fetch_more_and_reports_truncation() {
     engine.set_result_memory_limits(1500, 10_000);
     let q = engine.execute("c", "SELECT n".into(), 100);
     assert_eq!(settled(&engine, q).1, 100);
+    let snapshot = engine.result(q).unwrap().read().rows.clone();
     engine.fetch_more(q);
     assert_eq!(
         settled(&engine, q),
-        (QueryStatus::Ready { more: false }, 100)
+        (QueryStatus::Ready { more: true }, 200)
+    );
+    engine.fetch_all(q);
+    assert_eq!(
+        settled(&engine, q),
+        (QueryStatus::Ready { more: false }, 5000)
     );
     let result = engine.result(q).unwrap();
     let r = result.read();
-    assert!(r.rows.byte_size() <= 1500);
-    assert!(r.cut_short);
-    assert!(r.messages.iter().any(|m| m.text.contains("memory budget")));
+    assert!(r.rows.resident_byte_size() <= 1500);
+    assert!(!r.cut_short);
+    assert!(!r.messages.iter().any(|m| m.text.contains("truncated")));
+    for row in 0..5000 {
+        assert_eq!(r.rows.cell(row, 0), Some(sqlr_core::Cell::Int(row as i64)));
+    }
+    let spilled_snapshot = r.rows.clone();
+    drop(r);
+    drop(result);
+    engine.close_result(q);
+    assert_eq!(snapshot.cell(99, 0), Some(sqlr_core::Cell::Int(99)));
+    assert_eq!(
+        spilled_snapshot.cell(4999, 0),
+        Some(sqlr_core::Cell::Int(4999))
+    );
     assert_eq!(fake.closed_streams(), 1);
 }
 
 #[test]
-fn oversized_first_chunk_is_not_retained() {
+fn oversized_first_chunk_spills_directly_and_fetch_all_continues() {
     let (engine, fake) = connected(FakeScript {
         rows: 5000,
         ..Default::default()
     });
     engine.set_result_memory_limits(1, 1);
     let q = engine.execute("c", "SELECT n".into(), 100);
-    assert_eq!(settled(&engine, q), (QueryStatus::Ready { more: false }, 0));
-    assert!(cut_short(&engine, q));
-    assert_eq!(engine.result(q).unwrap().read().rows.byte_size(), 0);
+    assert_eq!(
+        settled(&engine, q),
+        (QueryStatus::Ready { more: true }, 100)
+    );
+    engine.fetch_all(q);
+    assert_eq!(
+        settled(&engine, q),
+        (QueryStatus::Ready { more: false }, 5000)
+    );
+    assert!(!cut_short(&engine, q));
+    assert_eq!(
+        engine.result(q).unwrap().read().rows.resident_byte_size(),
+        0
+    );
     assert_eq!(fake.closed_streams(), 1);
 }
 
 #[test]
-fn global_memory_budget_is_released_when_a_result_is_dropped() {
+fn global_memory_budget_spills_older_results_and_keeps_both_readable() {
     let (engine, _) = connected(FakeScript {
         rows: 5000,
         ..Default::default()
@@ -340,10 +369,125 @@ fn global_memory_budget_is_released_when_a_result_is_dropped() {
     let first = engine.execute("c", "SELECT n".into(), 100);
     assert_eq!(settled(&engine, first).1, 100);
     let second = engine.execute("c", "SELECT n".into(), 100);
-    assert_eq!(settled(&engine, second).1, 0);
+    assert_eq!(settled(&engine, second).1, 100);
+    assert_eq!(
+        engine
+            .result(first)
+            .unwrap()
+            .read()
+            .rows
+            .resident_byte_size(),
+        0
+    );
+    assert_eq!(
+        engine.result(first).unwrap().read().rows.cell(99, 0),
+        Some(sqlr_core::Cell::Int(99))
+    );
     engine.close_result(first);
     let third = engine.execute("c", "SELECT n".into(), 100);
     assert_eq!(settled(&engine, third).1, 100);
+}
+
+#[test]
+fn snapshots_keep_their_memory_reservations_after_a_result_closes() {
+    let (engine, _) = connected(FakeScript {
+        rows: 5000,
+        ..Default::default()
+    });
+    engine.set_result_memory_limits(10_000, 1500);
+    let first = engine.execute("c", "SELECT n".into(), 100);
+    settled(&engine, first);
+    let snapshot = engine.result(first).unwrap().read().rows.clone();
+    engine.close_result(first);
+    let second = engine.execute("c", "SELECT n".into(), 100);
+    assert_eq!(settled(&engine, second).1, 100);
+    assert_eq!(
+        engine
+            .result(second)
+            .unwrap()
+            .read()
+            .rows
+            .resident_byte_size(),
+        0
+    );
+    assert_eq!(snapshot.cell(99, 0), Some(sqlr_core::Cell::Int(99)));
+    drop(snapshot);
+    let third = engine.execute("c", "SELECT n".into(), 100);
+    settled(&engine, third);
+    assert!(
+        engine
+            .result(third)
+            .unwrap()
+            .read()
+            .rows
+            .resident_byte_size()
+            > 0
+    );
+}
+
+#[test]
+fn cancelling_a_spilled_fetch_keeps_received_rows_readable() {
+    let (engine, _) = connected(FakeScript {
+        rows: 500_000,
+        ..Default::default()
+    });
+    engine.set_result_memory_limits(1, 1);
+    engine.set_row_cap(0);
+    let q = engine.execute("c", "SELECT n".into(), 100);
+    settled(&engine, q);
+    engine.fetch_all(q);
+    assert!(wait_until(TIMEOUT, || rows(&engine, q) >= 500));
+    engine.cancel(q);
+    assert_eq!(settled(&engine, q).0, QueryStatus::Cancelled);
+    let result = engine.result(q).unwrap();
+    let snapshot = result.read().rows.clone();
+    assert_eq!(snapshot.resident_byte_size(), 0);
+    assert!(snapshot.row_count() >= 500);
+    engine.close_result(q);
+    drop(result);
+    let last = snapshot.row_count() - 1;
+    assert_eq!(
+        snapshot.cell(last, 0),
+        Some(sqlr_core::Cell::Int(last as i64))
+    );
+}
+
+#[test]
+fn concurrent_results_spill_under_the_shared_budget_without_losing_rows() {
+    let (engine, _) = connected(FakeScript {
+        rows: 5000,
+        ..Default::default()
+    });
+    engine.connect(config("other", "fake"), Secrets::default(), dev());
+    assert!(wait_until(TIMEOUT, || matches!(
+        engine.session_status("other"),
+        Some(SessionStatus::Connected(_))
+    )));
+    engine.set_result_memory_limits(1500, 1500);
+    let first = engine.execute("c", "SELECT n".into(), 100);
+    let second = engine.execute("other", "SELECT n".into(), 100);
+    settled(&engine, first);
+    settled(&engine, second);
+    engine.fetch_all(first);
+    engine.fetch_all(second);
+    assert_eq!(
+        settled(&engine, first),
+        (QueryStatus::Ready { more: false }, 5000)
+    );
+    assert_eq!(
+        settled(&engine, second),
+        (QueryStatus::Ready { more: false }, 5000)
+    );
+    let first = engine.result(first).unwrap();
+    let second = engine.result(second).unwrap();
+    assert!(
+        first.read().rows.resident_byte_size() + second.read().rows.resident_byte_size() <= 1500
+    );
+    for result in [first, second] {
+        let result = result.read();
+        assert_eq!(result.rows.cell(0, 0), Some(sqlr_core::Cell::Int(0)));
+        assert_eq!(result.rows.cell(4999, 0), Some(sqlr_core::Cell::Int(4999)));
+    }
 }
 
 #[test]

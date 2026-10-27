@@ -7568,6 +7568,7 @@ dependencies = [
  "flate2",
  "futures-util",
  "libc",
+ "memmap2",
  "minisign",
  "mongodb",
  "parking_lot",

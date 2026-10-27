@@ -58,6 +58,7 @@ sqlr is one native application for relational, document and key-value databases,
 - An Operation registry records every in-flight Operation with kind, label, Connection, progress and state, and maps cancellation to the right target (connect signal, read signal, query cancel, Job cancel, script cancel). Finished entries are kept for a configurable retention (30 s by default).
 - Each command task runs under a panic guard; a panic fails the Operations and Jobs the task started and records one `engine_panic` Incident. A thread-local marker set around every poll lets the global panic hook leave those panics to the engine.
 - Driver errors carry one of nine kinds (Connection, Auth, Syntax, Timeout, Cancelled, Permission, Unsupported, Protocol, Other), a message, an optional position and hint; the kind decides the UI presentation and the log level.
+- The engine spills older Result chunks to private append-only temporary files on a blocking worker and publishes read-only mappings. The core supplies the pure columnar encoding and cell reader. Heap reservations and temporary file ownership follow the last snapshot reader.
 - Result chunks are columnar with physical kinds (bool, int, float, text, bytes, mixed) and display hints; validity bitmaps; offsets over one byte arena. Doc chunks encode documents as tagged values with varint lengths. The engine reads at most 1,024 rows per chunk.
 - Bundled drivers are registered by the app at startup; the engine reaches them only through the driver interface.
 - Performance harnesses: an app example that launches the release binary in temporary directories and measures startup, idle RSS, binary size and grid scrolling; an editor measurement example and a checker script for the editor budgets.
@@ -88,7 +89,7 @@ sqlr is one native application for relational, document and key-value databases,
 - [x] A crashed Sidecar driver fails only its own Connections.
 - [x] A Connection error fails its Session, closes its stream and reports a lost transaction.
 - [x] Result chunks use the same bytes in process and over the sidecar protocol.
-- [ ] Results that exceed their memory budget spill their oldest chunks to a temporary file read back through mmap.
+- [x] Results that exceed their memory budget spill their oldest chunks to a private temporary file read back through mmap, preserving rows and snapshot lifetimes.
 - [x] The build contains no OpenSSL and exactly one egui version, enforced by a CI check.
 - [x] UI widgets depend only on core and return actions instead of calling the engine.
 - [x] The Conformance suite runs every relational Driver against a real database.
@@ -103,4 +104,4 @@ sqlr is one native application for relational, document and key-value databases,
 
 ## Further Notes
 
-This task records retroactively the area as it exists. Spilling Results to disk remains to do; the engine currently truncates at the memory budget. CI uses Linux without container services or performance budget harnesses. Repaint requests are coalesced by egui, and widget tests use interaction checks and on-demand visual audits.
+This task records retroactively the area as it exists. SQL Results spill older chunks to temporary storage at their memory budgets and retain all loaded rows. CI uses Linux without container services or performance budget harnesses. Repaint requests are coalesced by egui, and widget tests use interaction checks and on-demand visual audits.

@@ -26,6 +26,7 @@ serde_json.workspace = true
 futures-util.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "sync", "net", "time", "io-util", "macros", "fs", "process"] }
 tempfile.workspace = true
+memmap2.workspace = true
 tracing.workspace = true
 russh.workspace = true
 rusqlite.workspace = true

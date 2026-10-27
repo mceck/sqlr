@@ -204,6 +204,7 @@ impl Engine {
             row_cap: AtomicUsize::new(DEFAULT_ROW_CAP),
             result_byte_cap: AtomicUsize::new(DEFAULT_RESULT_BYTES),
             result_budget: crate::result_memory::ResultBudget::new(DEFAULT_TOTAL_RESULT_BYTES),
+            spill_lock: tokio::sync::Mutex::new(()),
             conn_settings: Mutex::new(HashMap::new()),
             export_formats: Mutex::new(None),
             ssh: SshContext::default(),
@@ -1027,7 +1028,7 @@ impl Engine {
     }
 
     /// Memory retained by one SQL result and by all SQL results, in bytes. Zero disables
-    /// a limit. Existing rows stay loaded; a later fetch stops before exceeding a limit.
+    /// a limit. Later fetches spill older chunks to temporary storage as needed.
     pub fn set_result_memory_limits(&self, per_result: usize, total: usize) {
         self.shared.result_byte_cap.store(
             if per_result == 0 {
@@ -1627,7 +1628,6 @@ enum PageEnd {
     /// `page_size` rows arrived; the stream may hold more.
     More,
     Exhausted,
-    MemoryBudget,
     /// Cancel requested or result closed.
     Stopped,
     /// A later query on the session takes the stream over, or the stream was closed under
@@ -1765,6 +1765,7 @@ pub(crate) struct Shared {
     row_cap: AtomicUsize,
     result_byte_cap: AtomicUsize,
     result_budget: Arc<crate::result_memory::ResultBudget>,
+    spill_lock: tokio::sync::Mutex<()>,
     /// Per-connection overrides of the settings above.
     conn_settings: Mutex<HashMap<String, ConnectionSettings>>,
     /// Display formats for text exports; `None` writes the raw values.
@@ -1948,6 +1949,7 @@ impl Shared {
     ) {
         let result = QueryResult {
             memory: crate::result_memory::Reservation::new(self.result_budget.clone()),
+            spill: Arc::new(crate::result_spill::SpillStore::default()),
             sql: text,
             database: None,
             status: QueryStatus::Running,
@@ -2076,6 +2078,7 @@ impl Shared {
             };
             let result = QueryResult {
                 memory: crate::result_memory::Reservation::new(self.result_budget.clone()),
+                spill: Arc::new(crate::result_spill::SpillStore::default()),
                 sql,
                 database: database.clone(),
                 status,
@@ -2875,12 +2878,6 @@ impl Shared {
                 PageEnd::More if all => QueryStatus::Running,
                 PageEnd::More => QueryStatus::Ready { more: true },
                 PageEnd::Exhausted => QueryStatus::Ready { more: false },
-                PageEnd::MemoryBudget => {
-                    self.mark_cut_short(q);
-                    self.add_message(q, RunMessage::new(MessageLevel::Warning,
-                        "Result truncated at the memory budget; increase the result memory limits or close other results"));
-                    QueryStatus::Ready { more: false }
-                }
                 PageEnd::CutShort => {
                     self.mark_cut_short(q);
                     QueryStatus::Ready { more: false }
@@ -2921,6 +2918,97 @@ impl Shared {
         self.result(q).map_or(0, |r| r.read().rows.row_count())
     }
 
+    /// Publishes a chunk only after reserving its heap bytes or completing its spill.
+    /// File work holds neither the engine lock nor a result lock.
+    async fn retain_chunk(
+        &self,
+        q: QueryId,
+        result: &Arc<RwLock<QueryResult>>,
+        chunk: sqlr_core::ResultChunk,
+    ) -> Result<(), PageEnd> {
+        let bytes = chunk.resident_byte_size();
+        let try_keep = |chunk: sqlr_core::ResultChunk| {
+            let mut r = result.write();
+            let cap = self.result_byte_cap.load(Ordering::Relaxed);
+            if bytes <= cap.saturating_sub(r.memory.bytes())
+                && let Some(lease) = r.memory.reserve(bytes)
+            {
+                r.rows.push_chunk(chunk.with_memory_owner(lease));
+                Ok(())
+            } else {
+                Err(chunk)
+            }
+        };
+        let mut chunk = match try_keep(chunk) {
+            Ok(()) => return Ok(()),
+            Err(chunk) => chunk,
+        };
+        // Serialize slow paths, including spills in other results, so two fetches
+        // cannot select and write the same victim. Normal in-memory fetches stay fast.
+        let _spill = self.spill_lock.lock().await;
+        loop {
+            if let Some(end) = self.stop(q) {
+                return Err(end);
+            }
+            chunk = match try_keep(chunk) {
+                Ok(()) => return Ok(()),
+                Err(chunk) => chunk,
+            };
+            let cap = self.result_byte_cap.load(Ordering::Relaxed);
+            let global = self.result_budget.limit.load(Ordering::Relaxed);
+            let victim = if bytes > cap || bytes > global {
+                // One oversize chunk goes straight to disk, without evicting others.
+                None
+            } else if bytes > cap.saturating_sub(result.read().memory.bytes()) {
+                result
+                    .read()
+                    .rows
+                    .oldest_resident_chunk()
+                    .map(|(index, chunk)| (result.clone(), index, chunk))
+            } else {
+                // Under global pressure, spill older results first, then their
+                // oldest resident chunks. Snapshot leases stay charged until dropped.
+                let mut results: Vec<_> = self
+                    .inner
+                    .lock()
+                    .results
+                    .iter()
+                    .map(|(id, entry)| (*id, entry.result.clone()))
+                    .collect();
+                results.sort_by_key(|(id, _)| *id);
+                results.into_iter().find_map(|(_, result)| {
+                    let oldest = result.read().rows.oldest_resident_chunk();
+                    oldest.map(|(index, chunk)| (result, index, chunk))
+                })
+            };
+            let Some((victim, index, original)) = victim else {
+                // Older snapshots may pin all remaining heap allocations. Store
+                // the incoming chunk directly rather than overbook their memory.
+                let store = result.read().spill.clone();
+                let mapped = store
+                    .store(Arc::new(chunk))
+                    .await
+                    .map_err(PageEnd::Failed)?;
+                if let Some(end) = self.stop(q) {
+                    return Err(end);
+                }
+                result.write().rows.push_chunk(mapped);
+                return Ok(());
+            };
+            let store = victim.read().spill.clone();
+            let mapped = store
+                .store(original.clone())
+                .await
+                .map_err(PageEnd::Failed)?;
+            victim
+                .write()
+                .rows
+                .replace_chunk_storage(index, &original, mapped);
+            // Drop the old chunk and its lease before trying to reserve again.
+            drop(original);
+        }
+    }
+
     async fn fetch_page(&self, q: QueryId, slot: &mut StreamSlot, limit: Option<usize>) -> PageEnd {
         // The stream may have been closed meanwhile (new query, disconnect).
         let Some((_, stream)) = slot.as_mut().filter(|(owner, _)| *owner == q) else {
@@ -2950,14 +3038,11 @@ impl Shared {
                     if chunk.is_empty() {
                         break;
                     }
-                    let mut r = result.write();
-                    let bytes = chunk.byte_size();
-                    let cap = self.result_byte_cap.load(Ordering::Relaxed);
-                    if bytes > cap.saturating_sub(r.rows.byte_size()) || !r.memory.grow(bytes) {
-                        return PageEnd::MemoryBudget;
-                    }
                     fetched += chunk.len();
-                    r.rows.push_chunk(chunk);
+                    if let Err(end) = self.retain_chunk(q, &result, chunk).await {
+                        return end;
+                    }
+                    let mut r = result.write();
                     r.elapsed = started.elapsed();
                 }
                 Ok(None) => return PageEnd::Exhausted,

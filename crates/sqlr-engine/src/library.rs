@@ -432,6 +432,7 @@ mod tests {
         let sql = format!("x{}", "é".repeat(MAX_HISTORY_SQL_BYTES));
         let r = QueryResult {
             memory: Default::default(),
+            spill: Arc::new(crate::result_spill::SpillStore::default()),
             sql,
             database: None,
             status: QueryStatus::Ready { more: false },
@@ -462,6 +463,7 @@ mod tests {
         ] {
             let r = QueryResult {
                 memory: Default::default(),
+                spill: Arc::new(crate::result_spill::SpillStore::default()),
                 sql: sql.into(),
                 database: None,
                 status: QueryStatus::Ready { more: false },

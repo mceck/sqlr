@@ -70,7 +70,7 @@ A script is split into statements by the Dialect, then run in order on the tab's
 - **Fetch all** streams the rest of the Result page after page, cancellable, with the row count growing as it goes. It stops at the row cap `grid.row_cap` (100,000 by default, 0 for no cap, settable per profile and per Connection); rows fetched before count toward the cap. At the cap the engine reads one more row to tell whether the Result was truncated, closes the stream, and adds "Result truncated at the row cap (`N` rows)".
 - Pages read inside an open transaction belong to it, so they see its uncommitted changes.
 - **Statuses**: Running, Ready (with or without more rows), Cancelled, Failed with the error. A Result ends cut short when a later statement on its Session took its stream, or its Session disconnected or was lost.
-- **Closing** a Result (closing its tab, rerunning the tab, closing a script) interrupts it when running, closes its stream and frees its memory at once.
+- **Closing** a Result (closing its tab, rerunning the tab, closing a script) interrupts it when running, closes its stream and releases its chunk ownership. Snapshots and background readers keep their data until they finish.
 
 ### Memory budgets
 
@@ -79,7 +79,13 @@ SQL Results have two budgets, counted in the bytes of their columnar buffers:
 - per Result: `grid.result_memory_mib`, 128 MiB by default;
 - for all SQL Results together: `grid.total_memory_mib`, 512 MiB by default.
 
-Both are global settings, and 0 disables a limit. Every page fetch and fetch-all reserves a chunk's bytes atomically before keeping it. A chunk that does not fit is discarded, the stream is closed and the Result ends complete with the warning "Result truncated at the memory budget; increase the result memory limits or close other results"; the rows already loaded stay. Lowering a limit never evicts loaded rows. A closed Result releases its reservation when its last reader lets go. The budgets cover result buffers only: in-flight chunks, sort keys, UI state, document Results (256 MiB per Result by default) and graphics memory are outside them, and one very large value can need a larger temporary allocation before the engine can refuse it.
+Both are global settings, and 0 disables the corresponding limit. Each page fetch and fetch-all reserves a chunk's heap bytes atomically before retaining it. When a per-Result budget would be exceeded, the engine spills that Result's oldest heap-backed chunks. At the global budget it spills older Results first, starting with their oldest heap-backed chunks. A chunk larger than either enabled budget goes directly to disk. Fetching continues up to the configured row cap or the end of the stream, with every received row still accessible.
+
+Each Result lazily creates one private anonymous temporary file. A background blocking worker appends complete columnar payloads and creates read-only mappings of their completed ranges. Published ranges stay immutable. The engine holds neither its state lock nor a Result lock during file work. The core encodes and reads chunk data; file creation, writes and mappings belong to the engine. A failed write or mapping fails the fetch with an explicit storage error and preserves rows already published. Cancellation and closing are checked again after file work, before publishing an incoming chunk.
+
+Heap reservations follow the chunks through every snapshot and background reader. Replacing a chunk with its mapped representation releases its reservation only after the last reader of the old heap payload finishes. If snapshots pin all reclaimable allocations, the incoming chunk goes directly to disk. Closing a Result releases its ownership; the file remains alive until the last mapped reader or in-flight writer finishes, then the OS removes its temporary storage. Lowering a limit takes effect on subsequent fetches; existing readers keep their rows.
+
+The budgets cover retained SQL payload buffers. Chunk metadata, in-flight chunks and the temporary encoding of one spill chunk, sort keys, UI state, document Results (256 MiB per Result by default) and graphics memory are outside them. Mapped pages use the OS page cache and may contribute to resident process memory; their cache residency follows OS memory pressure. Reading a cold mapped page can incur a page fault. Payload-size estimates for copy and export retain their original size after spilling, so large copies still run in the background.
 
 ### Sorting and filtering
 
@@ -205,7 +211,7 @@ sequenceDiagram
 
 - Every engine call from the UI returns immediately; the UI never waits for a statement, a fetch, a commit or a cancel.
 - A long statement in one Editor tab never delays another tab or the explorer while per-editor sessions are on.
-- Loaded SQL Results stay within 128 MiB each and 512 MiB together by default.
+- Retained SQL payload buffers are reserved against 128 MiB per Result and 512 MiB globally by default; spill mappings use the OS page cache.
 - Failed and cancelled statements are logged once when they settle, at info (expected server errors), warn (unexpected kinds) or debug (cancellation), with SQL capped at 4 KiB and included only when `diagnostics.include_sql` is on (see [Diagnostics](diagnostics.md)).
 - A lost connection never leaves the UI believing a transaction is still open.
 
@@ -214,7 +220,7 @@ sequenceDiagram
 - **One Session per Editor tab, plus one for the explorer.** Users expect tabs to be independent, as in other clients: a long query or an open transaction in one tab must not block another or the explorer. The cost is one server connection per tab, so a setting turns it off for servers with tight connection limits.
 - **One open stream per Session; a new statement cuts the previous Result short.** Most protocols cannot interleave two result streams on one connection. Cutting short (and saying so in the status bar) is predictable; queueing the new statement behind an unfinished Result would freeze the tab.
 - **Paging with a 500-row default instead of loading everything.** Opening a large table is instant and memory stays bounded; Fetch all is explicit and capped.
-- **Truncate at the memory budget instead of spilling to disk.** Bounded memory with explicit truncation keeps the engine simple and predictable; a Result that needs more is better served by an export or a narrower query.
+- **Spill immutable columnar chunks through read-only mappings.** Results remain complete under memory pressure, and consumers keep the same cell interface. One append-only anonymous file per Result bounds open file handles and lets the OS reclaim temporary storage after the last reader, including after a process exit. Chunk-level reservations keep snapshots accounted for; a worker performs storage I/O without holding Result locks.
 - **Statement classification on lexer tokens, conservative by default.** Keywords inside strings and comments never count, a `WHERE` counts only at the statement's own depth, and anything unknown counts as a write, so read-only mode and confirmations never miss a statement.
 - **Read-only enforced twice.** The server's own read-only mode catches what a classifier cannot see (functions with side effects); the client classifier refuses writes before they reach a server that has no read-only mode (SQL Server, Oracle).
 - **Commit modes driven by plain SQL from the Dialect and tracked by the engine.** The engine runs the begin, savepoint and read-only statements itself and follows typed transaction verbs, so the toolbar and status bar always reflect the server's real state, including server quirks (MySQL's implicit commit before DDL, PostgreSQL's aborted transactions).

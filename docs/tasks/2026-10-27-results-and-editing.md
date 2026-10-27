@@ -25,7 +25,7 @@ Results appear below the editor in Result, Messages, Output and Plan panes, with
 1. As a user running a query, I want a Result pane with the rows, so that I can read what came back.
 2. As a user running a script, I want one result tab per statement and an Output pane, so that I can follow each statement.
 3. As a user, I want a Messages pane with each statement's outcome, notices and timings, so that I know what the server said.
-4. As a user, I want to see when a result was truncated at the row cap or memory budget, so that I do not mistake a partial result for the whole.
+4. As a user, I want to see when a result was truncated at the row cap or cut short by another statement, so that I do not mistake a partial result for the whole.
 5. As a user, I want a clear error panel with the message, hint and a jump to the failing line, so that I can fix a failed statement.
 6. As an administrator, I want a visual plan with a summary, warnings, a hot path bar and operator cards, so that I can see where a query spends its time.
 7. As a user, I want to keep a plan while I edit the statement and recompute it explicitly, so that I can compare.
@@ -97,7 +97,7 @@ Results appear below the editor in Result, Messages, Output and Plan panes, with
 - [x] A single run shows Result and Messages, and a script shows one result pane per statement plus Output, Messages and Plan.
 - [x] Messages list each outcome, notice and transaction note with time and level, and can be copied as text.
 - [x] Result errors show the message, hint, statement, a copy action and a link to the failing line.
-- [x] Truncation at the row cap or memory budget is stated in Messages, and a cut-short result says so in the status bar.
+- [x] Truncation at the row cap is stated in Messages, and a cut-short result says so in the status bar. SQL Results spill at the memory budget while fetching continues.
 - [x] The Plan pane shows a summary, warnings, a hot path bar, operator cards, an inspector, a raw toggle and a stale recompute offer.
 - [x] The grid virtualizes rows and columns and paints only the viewport.
 - [x] Column widths are measured once per column set from the header and the first 100 rows.

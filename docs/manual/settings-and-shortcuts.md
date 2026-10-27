@@ -56,7 +56,7 @@ Appearance, editor preferences, memory budgets, diagnostics privacy and terminal
 | **Memory for all results** | 512 MiB | Combined memory budget for SQL results; 0 removes this limit |
 | **NULL text** | `NULL` | Display text for a database NULL value |
 
-The memory limits stop further loading and preserve rows already fetched. Close results you no longer need before loading more. Removing the row cap does not remove the memory budgets.
+The memory limits move older SQL result chunks to private temporary storage while loading continues. All loaded rows remain available. Closing results releases their storage after the last reader finishes. Removing the row cap leaves the memory budgets active; the operating system manages the cache of mapped file pages.
 
 ## Format displayed values
 

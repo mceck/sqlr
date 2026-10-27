@@ -39,6 +39,7 @@ pub struct QueryResult {
     pub cut_short: bool,
     /// The statement's outcome, server notices and transaction notes, oldest first.
     pub messages: Vec<RunMessage>,
-    // Drop the payload before releasing its reservation.
+    // Chunk-owned leases retain this accounting through snapshots after result close.
     pub(crate) memory: crate::result_memory::Reservation,
+    pub(crate) spill: std::sync::Arc<crate::result_spill::SpillStore>,
 }

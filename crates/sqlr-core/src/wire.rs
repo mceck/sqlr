@@ -1,5 +1,5 @@
 //! Binary encodings of [`ResultChunk`] and [`DocChunk`] (spec §7.2): one format in process,
-//! over a sidecar's pipe and in spill files.
+//! and over a sidecar's pipe. Local spill storage uses indexed column arrays for mapped reads.
 //!
 //! Numbers are little-endian; lengths and counts are LEB128 varints. Decoding is total: any
 //! byte string either decodes or fails with a [`WireError`], and no length a buffer claims

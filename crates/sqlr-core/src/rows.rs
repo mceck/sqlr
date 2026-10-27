@@ -70,6 +70,43 @@ impl RowBuffer {
     pub fn byte_size(&self) -> usize {
         self.bytes
     }
+
+    pub fn resident_byte_size(&self) -> usize {
+        self.chunks
+            .iter()
+            .map(|chunk| chunk.resident_byte_size())
+            .sum()
+    }
+
+    /// The oldest heap-backed chunk, for background spilling.
+    pub fn oldest_resident_chunk(&self) -> Option<(usize, Arc<ResultChunk>)> {
+        self.chunks
+            .iter()
+            .enumerate()
+            .find(|(_, chunk)| !chunk.is_spilled() && chunk.byte_size() > 0)
+            .map(|(index, chunk)| (index, chunk.clone()))
+    }
+
+    /// Replaces storage only if this is still the same chunk. Rows and revision stay fixed.
+    pub fn replace_chunk_storage(
+        &mut self,
+        index: usize,
+        expected: &Arc<ResultChunk>,
+        mapped: ResultChunk,
+    ) -> bool {
+        let Some(current) = self.chunks.get_mut(index) else {
+            return false;
+        };
+        if !Arc::ptr_eq(current, expected)
+            || mapped.len() != current.len()
+            || mapped.columns() != current.columns()
+        {
+            return false;
+        }
+        self.bytes = self.bytes - current.byte_size() + mapped.byte_size();
+        *current = Arc::new(mapped);
+        true
+    }
 }
 
 #[cfg(test)]
