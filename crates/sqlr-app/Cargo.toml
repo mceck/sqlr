@@ -67,6 +67,9 @@ serde_json.workspace = true
 async-trait.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 tempfile.workspace = true
+directories.workspace = true
+jsonc-parser.workspace = true
+toml_edit.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # The native menu bar and About panel; eframe/winit only provide the minimal app menu.
@@ -82,6 +85,8 @@ sqlr-testkit = { path = "../sqlr-testkit" }
 # Writes a foreign `demo.sqlite` and reads the generated demo database back.
 rusqlite.workspace = true
 reqwest = { workspace = true, features = ["json"] }
+# Reads back the Codex configuration the agent installation tests write.
+toml.workspace = true
 rustls.workspace = true
 
 [lints]

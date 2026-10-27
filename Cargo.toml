@@ -27,6 +27,9 @@ async-trait = "0.1"
 parking_lot = "0.12"
 percent-encoding = "2"
 toml = "1"
+# Format-preserving edits of agent configuration files (Agent installations).
+toml_edit = "0.25"
+jsonc-parser = { version = "0.34", features = ["cst", "serde_json"] }
 directories = "6"
 keyring = "4"
 uuid = "1"
