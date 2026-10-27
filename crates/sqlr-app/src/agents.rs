@@ -1291,7 +1291,7 @@ impl SqlrApp {
             self.mcp_token_store.clone(),
             repaint,
         );
-        self.terminal_workspace.sync(self.mcp.client_config());
+        self.terminal_workspace.sync();
         self.agent_installs_tick();
         if self.settings.agents_enabled || self.terminal.is_open() {
             ctx.request_repaint_after(Duration::from_millis(250));
@@ -1414,25 +1414,9 @@ impl SqlrApp {
     }
 
     pub(crate) fn terminal_ui(&mut self, ui: &mut egui::Ui) {
-        if self.settings.terminal_cwd.trim().is_empty()
-            && self.mcp.status == McpStatus::Starting
-            && !self.terminal.started()
-        {
-            ui.horizontal(|ui| {
-                ui.spinner();
-                ui.label("Starting MCP server…");
-            });
-            return;
-        }
         let cwd = if self.settings.terminal_cwd.trim().is_empty() {
-            let config = self.mcp.client_config();
-            self.terminal_workspace.start(
-                &self.config_dir,
-                &self.data_dir,
-                config.clone(),
-                ui.ctx(),
-            );
-            self.terminal_workspace.sync(config);
+            self.terminal_workspace.start(&self.config_dir, ui.ctx());
+            self.terminal_workspace.sync();
             if let Some(error) = self.terminal_workspace.error() {
                 ui.colored_label(sqlr_ui::theme::palette(ui.ctx()).error, error);
                 if !self.terminal.started() && ui.button("Retry").clicked() {

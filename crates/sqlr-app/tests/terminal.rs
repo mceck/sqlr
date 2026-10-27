@@ -77,11 +77,26 @@ fn wait_for_terminal_canvas(harness: &mut Harness<'_, SqlrApp>) {
 
 #[cfg(unix)]
 #[test]
-fn the_default_terminal_starts_in_the_config_workspace_with_mcp_instructions() {
+fn the_default_terminal_starts_in_the_config_workspace_with_the_sqlr_skills() {
     let dir = tempfile::tempdir().unwrap();
+    // A project config written by an earlier version, holding only sqlr's entry.
+    let workspace = dir.path().join("terminal");
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&workspace)
+            .unwrap();
+    }
+    std::fs::write(
+        workspace.join(".mcp.json"),
+        r#"{"mcpServers":{"sqlr":{"url":"http://127.0.0.1:47821/mcp","headers":{"Authorization":"Bearer old"}}}}"#,
+    )
+    .unwrap();
     let app = app_with_shell(
         dir.path(),
-        "pwd -P > shell-cwd; test -f AGENTS.md && test -f .mcp.json && printf 'agents-ready\\n'; sleep 30",
+        "pwd -P > shell-cwd; test -f AGENTS.md && test -f .claude/skills/sqlr-query-database/SKILL.md \
+         && test ! -e .mcp.json && printf 'agents-ready\\n'; sleep 30",
     );
     let mut harness = Harness::builder()
         .with_size((1100.0, 760.0))
@@ -99,7 +114,6 @@ fn the_default_terminal_starts_in_the_config_workspace_with_mcp_instructions() {
         assert!(Instant::now() < deadline, "terminal output: {text:?}");
         std::thread::sleep(Duration::from_millis(20));
     }
-    let workspace = dir.path().join("terminal");
     assert_eq!(
         std::fs::read_to_string(workspace.join("shell-cwd"))
             .unwrap()
@@ -108,85 +122,40 @@ fn the_default_terminal_starts_in_the_config_workspace_with_mcp_instructions() {
     );
     let guide = std::fs::read_to_string(workspace.join("AGENTS.md")).unwrap();
     for required in [
-        "Copy MCP config",
-        "get_guide",
-        "config_list",
-        "browse",
-        "close_result",
+        "Settings → Agents",
+        "Install",
+        "sqlr-*",
+        "sqlr-connect-agent",
     ] {
         assert!(guide.contains(required), "missing {required}: {guide}");
     }
-    assert!(guide.contains(&dir.path().join("mcp.json").display().to_string()));
-    assert!(!guide.contains("Bearer "));
-    let config: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(workspace.join(".mcp.json")).unwrap())
-            .unwrap();
-    assert_eq!(config["mcpServers"], serde_json::json!({}));
-
-    // Enabling MCP after opening the terminal refreshes the configuration in place.
-    harness.state_mut().set_mcp_enabled_for_tests(true);
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        harness.step();
-        let config: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(workspace.join(".mcp.json")).unwrap())
-                .unwrap();
-        if config["mcpServers"]["sqlr"]["headers"]["Authorization"] == "Bearer terminal-test-token"
-        {
-            assert!(
-                config["mcpServers"]["sqlr"]["url"]
-                    .as_str()
-                    .unwrap()
-                    .starts_with("http://127.0.0.1:")
-            );
-            let _ = rustls::crypto::ring::default_provider().install_default();
-            let response = tokio::runtime::Runtime::new().unwrap().block_on(async {
-                reqwest::Client::new()
-                    .post(config["mcpServers"]["sqlr"]["url"].as_str().unwrap())
-                    .header(
-                        "Authorization",
-                        config["mcpServers"]["sqlr"]["headers"]["Authorization"]
-                            .as_str()
-                            .unwrap(),
-                    )
-                    .header("Accept", "application/json, text/event-stream")
-                    .json(&serde_json::json!({
-                        "jsonrpc": "2.0", "id": 1, "method": "initialize",
-                        "params": {
-                            "protocolVersion": "2025-11-25", "capabilities": {},
-                            "clientInfo": {"name": "terminal-test", "version": "1.0"}
-                        }
-                    }))
-                    .send()
-                    .await
-                    .unwrap()
-            });
-            assert!(
-                response.status().is_success(),
-                "MCP config must authenticate"
-            );
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "MCP configuration did not refresh"
-        );
-        std::thread::sleep(Duration::from_millis(20));
+    for stale in ["get_guide", ".mcp.json", "Bearer "] {
+        assert!(!guide.contains(stale), "stale {stale}: {guide}");
     }
-    #[cfg(unix)]
+    for skill in sqlr_mcp::skills::SKILLS {
+        for file in skill.files {
+            let path = workspace
+                .join(".agents/skills")
+                .join(skill.name)
+                .join(file.path);
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), file.contents);
+        }
+        assert_eq!(
+            std::fs::read_link(workspace.join(".claude/skills").join(skill.name)).unwrap(),
+            std::path::Path::new("../../.agents/skills").join(skill.name)
+        );
+    }
+    assert!(!workspace.join(".mcp.json").exists());
+
+    // Enabling MCP does not bring a project config back.
+    harness.state_mut().set_mcp_enabled_for_tests(true);
+    harness.run_steps(20);
+    assert!(!workspace.join(".mcp.json").exists());
     {
         use std::os::unix::fs::PermissionsExt;
         assert_eq!(
             std::fs::metadata(&workspace).unwrap().permissions().mode() & 0o777,
             0o700
-        );
-        assert_eq!(
-            std::fs::metadata(workspace.join(".mcp.json"))
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o600
         );
     }
 
@@ -203,25 +172,6 @@ fn the_default_terminal_starts_in_the_config_workspace_with_mcp_instructions() {
             .terminal_text_for_tests()
             .contains("agents-ready")
     );
-
-    // Disabling MCP while the panel is hidden removes credentials from its config.
-    harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Backtick);
-    harness.state_mut().set_mcp_enabled_for_tests(false);
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        harness.step();
-        let config: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(workspace.join(".mcp.json")).unwrap())
-                .unwrap();
-        if config["mcpServers"] == serde_json::json!({}) {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "disabled MCP credentials remain in config"
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
 }
 
 #[cfg(unix)]
