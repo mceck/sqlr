@@ -13,7 +13,6 @@ use sqlr_core::{
     ConnectionConfig, ConnectionProfile, Dialect, DriverManifest, Node, Secrets, SqlSyntax,
 };
 use sqlr_driver_elastic::ElasticDriver;
-use sqlr_driver_mongo::MongoDriver;
 use sqlr_driver_mssql::SqlServerDriver;
 use sqlr_driver_mysql::MysqlDriver;
 use sqlr_driver_oracle::OracleDriver;
@@ -124,7 +123,6 @@ pub fn production_deps_with(
     drivers.register(OracleDriver::new());
     drivers.register(SqliteDriver::new());
     drivers.register(SnowflakeDriver::new());
-    drivers.register(MongoDriver::new());
     drivers.register(ElasticDriver::new());
     drivers.register(RedisDriver::new());
     let db_path = data_dir.as_ref().map(|d| d.join("sqlr.db"));
@@ -1916,7 +1914,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn production_registers_snowflake_but_not_duckdb() {
+    fn production_registers_snowflake_but_keeps_heavy_drivers_out() {
         let dir = tempfile::tempdir().unwrap();
         let deps = production_deps_in(
             Arc::new(|| {}),
@@ -1931,6 +1929,7 @@ mod tests {
         assert_eq!(manifest.family, sqlr_core::Family::Relational);
         // DuckDB is a sidecar driver installed from a file, not part of the app.
         assert!(deps.engine.manifest("duckdb").is_none());
+        assert!(deps.engine.manifest("mongodb").is_none());
     }
 
     #[test]

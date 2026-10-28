@@ -106,3 +106,45 @@ pub trait DocumentConn: Send + Sync {
     /// [`read_only_error`].
     fn set_read_only(&self, on: bool);
 }
+
+impl QueryLanguage {
+    /// The statement that opens a Document target in this language.
+    pub fn open_document_text(self, target: &DocTarget, page: usize) -> String {
+        match self {
+            Self::MongoShell => {
+                let mut chars = target.collection.chars();
+                let plain = chars
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')
+                    && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$');
+                let coll = if plain {
+                    format!("db.{}", target.collection)
+                } else {
+                    format!(
+                        "db.getCollection({})",
+                        DocValue::String(target.collection.clone()).to_relaxed_json()
+                    )
+                };
+                format!("{coll}.find({{}}).limit({page})")
+            }
+            Self::EsConsole => format!(
+                "GET {}/_search\n{{\n  \"query\": {{\"match_all\": {{}}}}\n}}",
+                target.collection
+            ),
+            _ => String::new(),
+        }
+    }
+
+    /// Classifies one Document statement using the core parser of this language.
+    pub fn classify_document(self, text: &str) -> StatementClass {
+        match self {
+            Self::MongoShell => crate::parse_mongo_shell(text)
+                .ok()
+                .filter(|ops| ops.len() == 1)
+                .and_then(|mut ops| ops.pop())
+                .map_or(StatementClass::Other, |(_, op)| op.class()),
+            Self::EsConsole => crate::es_request::classify_console(text),
+            _ => StatementClass::Other,
+        }
+    }
+}

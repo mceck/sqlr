@@ -2717,3 +2717,46 @@ async fn explain_query_checks_the_statement_before_an_open_transaction() {
     assert_eq!(analyze["error"]["code"], "invalid", "{analyze}");
     server.shutdown().await;
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn document_mcp_queries_use_the_sidecar_connection() {
+    let spec = sqlr_sidecar::SidecarSpec::new(
+        "fakedoc",
+        "1.0.0",
+        sqlr_testkit::workspace_binary("examples/document_driver"),
+    );
+    let (driver, _) = sqlr_sidecar::SidecarDriver::probe(spec).await.unwrap();
+    let state = driver_state(Arc::new(driver), AgentAccess::Read);
+    let result = direct_tool(
+        &state,
+        "run_query",
+        json!({
+            "connection_id":"c1", "query":"db.c.find({})", "database":"db", "max_rows":1
+        }),
+    )
+    .await;
+    assert_eq!(result["kind"], "document", "{result}");
+    assert_eq!(
+        result["document"]["documents"][0]["_id"],
+        json!("070707070707070707070707")
+    );
+    let id = result["query_id"].as_str().unwrap();
+    let next = direct_tool(
+        &state,
+        "get_query_result",
+        json!({"query_id":id,"offset":1,"limit":1}),
+    )
+    .await;
+    assert_eq!(next["truncated"], false, "{next}");
+    let denied = direct_tool(
+        &state,
+        "run_query",
+        json!({"connection_id":"c1", "query":"db.c.insertOne({n:1})"}),
+    )
+    .await;
+    assert_eq!(denied["error"]["code"], "read_only");
+    assert_eq!(
+        direct_tool(&state, "close_result", json!({"query_id":id})).await["closed"],
+        true
+    );
+}

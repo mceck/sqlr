@@ -479,15 +479,6 @@ impl MongoConnection {
     }
 }
 
-/// Whether `name` can follow `db.` in the shell.
-fn plain_collection_name(name: &str) -> bool {
-    let mut chars = name.chars();
-    chars
-        .next()
-        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')
-        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
-}
-
 #[async_trait::async_trait]
 impl DocumentConn for MongoConnection {
     fn language(&self) -> QueryLanguage {
@@ -584,15 +575,7 @@ impl DocumentConn for MongoConnection {
     }
 
     fn open_target_text(&self, target: &DocTarget, page: usize) -> String {
-        let coll = if plain_collection_name(&target.collection) {
-            format!("db.{}", target.collection)
-        } else {
-            format!(
-                "db.getCollection({})",
-                DocValue::String(target.collection.clone()).to_relaxed_json()
-            )
-        };
-        format!("{coll}.find({{}}).limit({page})")
+        self.language().open_document_text(target, page)
     }
 
     /// `[db, folder, collection]` and its indexes `[db, folder, collection, index]`.
@@ -607,7 +590,7 @@ impl DocumentConn for MongoConnection {
     }
 
     fn classify(&self, text: &str) -> StatementClass {
-        parse_one(text).map_or(StatementClass::Other, |op| op.class())
+        self.language().classify_document(text)
     }
 
     fn set_read_only(&self, on: bool) {

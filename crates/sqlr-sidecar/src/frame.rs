@@ -13,8 +13,7 @@ pub const MAX_FRAME: usize = 64 * 1024 * 1024;
 pub const CONTROL: u8 = 0x01;
 /// A result chunk in the [`sqlr_core::encode_chunk`] encoding.
 pub const CHUNK: u8 = 0x02;
-/// A document chunk in the [`sqlr_core::encode_doc_chunk`] encoding (reserved: protocol 1
-/// serves relational drivers).
+/// A document chunk in the [`sqlr_core::encode_doc_chunk`] encoding (protocol 1.1+).
 pub const DOC_CHUNK: u8 = 0x03;
 /// A line of the driver's log, UTF-8.
 pub const LOG: u8 = 0x04;

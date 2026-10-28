@@ -11,7 +11,7 @@ A **Driver** speaks one database's protocol and exposes it to sqlr through one s
 - A **Bundled driver** is compiled into the app. A **Sidecar driver** runs as a separate process and talks to the app over the **sidecar protocol**. The engine and the UI cannot tell them apart.
 - A **Driver archive** is a packaged Sidecar driver for one platform. The **Driver Manager** installs Driver archives from the sqlr GitHub release or from a file the user picks.
 - The **JDBC bridge** is a Sidecar driver that reaches any database with a JDBC driver through a Java runtime.
-- The **Conformance suite** is the shared test harness every relational Driver passes against a real database.
+- The **Conformance suite** is the shared test harness every relational and Document Driver passes against a real database.
 - A **Known database** (see [Connections](connections.md)) names the Driver that serves it: bundled, compatible (served by a Bundled driver with preset fields), installable (a Sidecar driver the release publishes) or planned.
 
 ## Behaviour
@@ -406,7 +406,7 @@ sequenceDiagram
 
 The app sends `Hello { protocol, sqlr_version }`; the driver answers `Welcome { protocol, manifest }` with its Driver manifest. Protocol versions are semver: a different **major** version makes the app kill the process and refuse the driver with "Driver <id> speaks protocol X, sqlr speaks Y". The handshake must complete within **10 seconds**; otherwise the process is killed and the driver fails with a `Timeout` error. Any other answer to `Hello` is a protocol error.
 
-**Minor versions.** Within major version 1 a driver and the app interoperate whatever their minor versions are. A driver that answers `Welcome` with protocol 1.0 never receives a Document request, and a relational driver of any minor version works as before. A driver whose manifest declares the Document Family must answer with protocol 1.1 or newer; the app refuses a Document driver that answers lower with "Driver <id> speaks protocol X, sqlr needs 1.1 for a Document driver".
+**Minor versions.** Within major version 1 a driver and the app interoperate whatever their minor versions are. A driver that answers `Welcome` with protocol 1.0 never receives a Document request, and a relational driver of any minor version works as before. A driver whose manifest declares the Document Family accepts a Hello offering 1.1 or newer within major version 1; an older Hello receives a Protocol error and the process ends. Such a driver must answer with protocol 1.1 or newer; the app refuses a Document driver that answers lower with "Driver <id> speaks protocol X, sqlr needs 1.1 for a Document driver".
 
 #### Requests
 
@@ -416,7 +416,7 @@ The app sends `Hello { protocol, sqlr_version }`; the driver answers `Welcome { 
 | `Connect { conn, config, secrets }` | `Connected { server_info, dialect, database_name, schema_path }` |
 | `ConnectDatabase { conn, new_conn, database }` | `Connected` for `new_conn`: another database on the same server |
 | `Ping { conn }` | `Pong(server_info)` |
-| `Browse { conn, path }` | `Nodes([…])` |
+| `Browse { conn, path }` | `Nodes([…])` for relational drivers; `DocumentNodes([{ node, target? }, …])` for Document drivers |
 | `Execute { conn, sql, params? }` | `Rows { stream, columns }` or `Affected(n)`; `params` binds placeholders when present |
 | `Fetch { stream, max }` | zero or more result chunk frames, then `FetchDone { exhausted }` |
 | `CloseStream { stream }` | `Ok` |
@@ -424,13 +424,15 @@ The app sends `Hello { protocol, sqlr_version }`; the driver answers `Welcome { 
 | `Describe { conn, table }` | `Table(…)` |
 | `Catalog { conn, schema }` | `Catalog(…)` |
 | `TakeNotices { conn }` | `Notices([…])` |
-| `Run { conn, database?, text }` | A Document driver's statement: `DocStream { stream }` (documents), `Rows { stream, columns }` (tabular), `Written { matched, modified, inserted, deleted, ids }` or `Value(doc)` |
-| `FetchDocs { stream, max }` | zero or more document chunk frames, then `FetchDone { exhausted }` |
-| `CloseDocStream { stream }` | `Ok` |
-| `ReplaceDoc { conn, target, id, doc }`, `InsertDoc { conn, target, doc }`, `DeleteDoc { conn, target, id }` | `Written` for a replace, `Value(id)` for an insert, `Affected(n)` for a delete |
-| `IsView { conn, target }` | `Bool` |
-| `Indexes { conn, target }` | `Docs([…])` |
-| `SetReadOnly { conn, on }` | `Ok`; later writes of the connection obey the flag |
+| `DocRun { conn, database?, text }` | `Docs { stream }`, `Rows { stream, columns }`, `Written { matched, modified, inserted, deleted, ids }` or `DocValue(values)` |
+| `DocFetch { conn, stream, max }` | zero or more document chunk frames, then `DocFetchDone { exhausted, notices }` |
+| `DocClose { conn, stream }` | `Ok` |
+| `DocReplace { conn, target, values }` | `Affected(n)`, with exactly two encoded values: id and replacement document |
+| `DocInsert { conn, target, values }` | `DocValue(values)` holding the inserted id; request holds exactly one document |
+| `DocDelete { conn, target, values }` | `Affected(n)`; request holds exactly one id |
+| `DocIsView { conn, target }` | `DocIsView(bool)` |
+| `DocIndexes { conn, target }` | `DocIndexes(values)` holding the index descriptions |
+| `DocSetReadOnly { conn, on }` | `Ok`; later writes of the connection obey the flag |
 | `Disconnect { conn }` | `Ok`; closes the connection's streams |
 | `Shutdown` | `Ok`; the driver then exits |
 
@@ -438,13 +440,17 @@ Connection ids (`conn`) are chosen by the app. `Connected` answers after the dri
 
 Any request may be answered by `Error { kind, message, position, hint }`, which carries a driver error with the kinds listed above. A relational request sent to a driver without a relational interface, and a Document request sent to a driver without a document interface, are answered with `Unsupported`; a request naming an unknown connection or stream with `Protocol`.
 
-**Secrets cross the pipe only inside `Connect`.** The app's protocol log prints their keys, never their values, and the readable form of an `Execute` shows the SQL length and parameter count, never the SQL or the values, and the readable form of a `Run`, `ReplaceDoc`, `InsertDoc` or `DeleteDoc` shows the statement length or the target, never the text, ids or documents.
+**Secrets cross the pipe only inside `Connect`.** The app's protocol log prints their keys, never their values, and the readable form of an `Execute` shows the SQL length and parameter count, never the SQL or the values, and the readable form of a `DocRun`, `DocReplace`, `DocInsert` or `DocDelete` shows the statement length or the target, never the text, ids or documents.
 
 #### Streams
 
 `Execute` of a query returns a stream id and the result's columns. `Fetch { stream, max }` asks for up to `max` rows: the driver answers with result chunk frames and then `FetchDone`. A chunk that would pass the frame limit is split in halves until every part fits; a single row larger than a frame fails the fetch with "a row is larger than the 64 MiB frame limit of the sidecar protocol; select fewer or smaller columns". `exhausted: true` means no more rows, and the app then sends no `Fetch` or `CloseStream` for that stream. A chunk whose columns differ from the stream's columns is a protocol violation: the app kills the process.
 
-**Document streams.** `Run` of a Document driver returns a document stream, a row stream (read with `Fetch` like a relational stream), a write outcome or a single value. `FetchDocs { stream, max }` answers with document chunk frames and then `FetchDone`; the frame limit, the halving of an oversized chunk and `exhausted` work as for result chunks, and a single document larger than a frame fails the fetch with "a document is larger than the 64 MiB frame limit of the sidecar protocol". Documents, ids and values cross the pipe in the Doc value encoding. Statement splitting, statement classification, the text a new query tab opens with and the target a Node stands for are computed by the app from the manifest's query language and the Node returned by `Browse`; they cost no request.
+**Document streams.** `DocRun` returns a document stream, a row stream (read with `Fetch` like a relational stream), a write outcome or a single value. `DocFetch { conn, stream, max }` answers with document chunk frames and then `DocFetchDone { exhausted, notices }`; `max` is clamped to at least one. Each frame answers the fetch's request id. The frame limit, halving of an oversized chunk and exhaustion work as for result chunks. A single document larger than a frame fails the fetch with "a document is larger than the 64 MiB frame limit of the sidecar protocol; select fewer or smaller fields". Exhausting, closing or disconnecting releases the cursor. Closing twice succeeds. Document stream requests name the owning Connection; another Connection's stream receives a Protocol error. Notices are retained by the client until the caller reads them.
+
+**Document values in control messages.** Each `values` or `ids` field is a MessagePack binary containing one complete Doc chunk, including its version, count and lengths, in the encoding below. An id or single value has exactly one entry; replacement has two, id first; index descriptions and inserted ids have one entry per value. A malformed chunk or the wrong number of entries receives a Protocol error. `Written` carries four unsigned 64-bit counts. Targets are named maps with `database` (optional string) and `collection` (string). Payload-bearing control variants are externally tagged MessagePack maps, for example a map keyed `DocRun` whose value is the named request fields; single-payload answers use the variant name as key too. Unit variants such as `Ok` and `Shutdown` are MessagePack strings containing the variant name.
+
+**Local Document operations.** Statement splitting, classification and open-target text use the core parser and formatting for the manifest's query language. Document `Browse` returns each Node together with its optional target; the client caches these by Node path and resolves a target locally. An index Node carries its collection's target. `DocSetReadOnly` is enqueued synchronously and applied in wire order through a per-Connection Document request queue, together with document statements, fetches and edits. Browse and Cancel remain concurrent with that queue; the initial flag still arrives in `Connect`.
 
 #### Dialect over the wire
 
@@ -648,7 +654,7 @@ flowchart LR
 - **Throughput:** binary columnar chunks over pipes run at hundreds of MB/s, faster than the network link to a database. Each running sidecar costs about 5 to 15 MB of RAM.
 - **Bounded input:** frames at most 64 MiB, archives at most 1 GiB downloaded and 2 GiB unpacked, `SHA256SUMS.txt` at most 8 MiB, `driver.toml` at most 64 KiB, documents nested at most 128 levels on the wire. Decoders of frames, messages and chunks never panic on any input; they are fuzzed, and a seeded test runs 20,000 random mutations of the chunk decoder.
 - **Security:** rustls only, no OpenSSL. Connections begin without TLS unless the Connection enables it. Catalog queries are parameterized and identifiers in generated SQL go through the Dialect's quoting. Secrets never appear in logs, in readable request forms or in errors (Snowflake strips the token from echoed messages).
-- **Size:** the app with its Bundled drivers stays under 75 MB; drivers that would break that budget ship as sidecars.
+- **Size:** the app with its Bundled drivers stays under 75 MB; drivers that would break that budget ship as sidecars. A macOS arm64 release built with Rust 1.98.1 using `cargo build --release -p sqlr-app --bin sqlr` measures 51,585,408 bytes (51.59 MB) with MongoDB bundled and 48,622,368 bytes (48.62 MB) with the MongoDB sidecar. The saving is 2,963,040 bytes (2.96 MB, 5.74%). Both use the same stripped release profile with fat LTO and one codegen unit; the app remains below the 75 MB budget.
 - **No telemetry:** the app contacts GitHub for drivers only when the user asks.
 
 ## Decisions
@@ -659,7 +665,7 @@ flowchart LR
 - **sqlr's own columnar chunk format instead of Arrow.** The Arrow crates bring far more dependencies than needed. The protocol shares one binary encoding across Drivers. Local spill storage keeps indexed column arrays so the engine can read individual cells through mappings without decoding a whole chunk back into heap buffers.
 - **The Dialect crosses the protocol as data.** A sidecar cannot ship code into the app; a data description of quoting, keywords, placeholders, limits and transaction rules covers what the editor, the grid and generated SQL need.
 - **MessagePack control messages with named fields.** Compact, schema-less and available in every language, and named fields let optional fields be added within a major version.
-- **Protocol 1 is relational only.** Every non-relational database sqlr supports ships as a Bundled driver; the document chunk frame type is reserved for a later protocol.
+- **Protocol 1.1 serves the Document Family additively.** Relational 1.0 peers keep their existing messages. A Document driver requires 1.1 in both handshake directions, so an older client receives a clear refusal before document frames can arrive.
 - **Downloads come from the sqlr GitHub release, checked against its `SHA256SUMS.txt`; no remote index and no background update check.** The release already publishes checksums, and the app makes no network request the user did not ask for. A separate signed index (minisign) was built and is kept only for tests and local mirrors: it adds a key to manage without protecting more than the release's https and checksums do.
 - **A local Driver archive is reviewed, never verified.** The user sees id, version, size and SHA-256 and confirms; sqlr does not pretend to vouch for a file it did not build.
 - **Nothing is kept unless the driver answers its handshake.** An archive that unpacks but does not start is worse than none.

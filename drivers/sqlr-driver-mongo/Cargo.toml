@@ -5,9 +5,14 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[[bin]]
+name = "sqlr-driver-mongodb"
+path = "src/main.rs"
+
 [dependencies]
+sqlr-driver-sdk = { path = "../../crates/sqlr-driver-sdk" }
 parking_lot.workspace = true
-sqlr-core = { path = "../sqlr-core" }
+sqlr-core = { path = "../../crates/sqlr-core" }
 async-trait.workspace = true
 bson.workspace = true
 futures-util.workspace = true
@@ -16,7 +21,9 @@ rustls.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 
 [dev-dependencies]
-sqlr-testkit = { path = "../sqlr-testkit" }
+sqlr-sidecar = { path = "../../crates/sqlr-sidecar" }
+sqlr-driver-tests = { path = "../../crates/sqlr-driver-tests" }
+sqlr-testkit = { path = "../../crates/sqlr-testkit" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }
 
 [lints]

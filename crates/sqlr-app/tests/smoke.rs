@@ -3252,3 +3252,150 @@ fn cancel_hung_connect_from_operations() {
         h.query_by_label_contains("Operations (1)").is_some()
     });
 }
+
+#[test]
+fn saved_mongodb_connection_offers_install_without_downloading_or_changing_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let (deps, _) = deps_with(dir.path(), FakeScript::default());
+    let mut cfg = deps.repo.list().unwrap().remove(0);
+    cfg.driver = "mongodb".into();
+    cfg.name = "saved-mongo".into();
+    cfg.values.insert("host".into(), "mongo.example".into());
+    cfg.values.insert("tls".into(), "true".into());
+    deps.repo.save(&cfg, &Secrets::default()).unwrap();
+    let before = std::fs::read(dir.path().join("connections.toml")).unwrap();
+    deps.engine.configure_drivers(&dir.path().join("data"), 5);
+    let app = SqlrApp::new(deps, &egui::Context::default());
+    let mut h = Harness::builder()
+        .with_size((1400.0, 900.0))
+        .with_step_dt(0.01)
+        .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    step_until(&mut h, "saved-mongo", |h| {
+        h.query_all_by_label("saved-mongo").next().is_some()
+    });
+    wait_for_label(&mut h, "Driver MongoDB is not installed");
+    h.get_by_label("saved-mongo").click_secondary();
+    h.run_steps(2);
+    h.get_by_label("Connect").click();
+    wait_for_label(&mut h, "Download and install");
+    h.run_steps(10);
+    assert!(
+        h.state().driver_install_jobs().is_empty(),
+        "opening the install invitation downloads nothing"
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("connections.toml")).unwrap(),
+        before
+    );
+}
+
+#[test]
+fn saved_mongodb_connection_connects_after_installing_its_driver_file() {
+    sqlr_testkit::skip_container_tests!("MONGO");
+    let _lock = sqlr_testkit::TestLock::acquire("mongo");
+    let dir = tempfile::tempdir().unwrap();
+    let deps = deps_with_driver_file(dir.path(), "mongodb", "sqlr-driver-mongodb");
+    let (host, port) = sqlr_testkit::service("MONGO");
+    let cfg = ConnectionConfig {
+        id: "saved-mongo".into(),
+        name: "saved-mongo".into(),
+        driver: "mongodb".into(),
+        group: None,
+        color: None,
+        profile: None,
+        save_secrets: true,
+        agent_access: Default::default(),
+        values: [
+            ("host".into(), host),
+            ("port".into(), port.to_string()),
+            ("database".into(), "test".into()),
+        ]
+        .into(),
+    };
+    deps.repo.save(&cfg, &Secrets::default()).unwrap();
+    let before = std::fs::read(dir.path().join("connections.toml")).unwrap();
+    deps.engine.connect(
+        cfg,
+        Secrets::default(),
+        ConnectionProfile::builtins().remove(0),
+    );
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !matches!(
+        deps.engine.session_status("saved-mongo"),
+        Some(sqlr_engine::SessionStatus::Connected(_))
+    ) {
+        assert!(
+            Instant::now() < deadline,
+            "{:?}",
+            deps.engine.session_status("saved-mongo")
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        std::fs::read(dir.path().join("connections.toml")).unwrap(),
+        before
+    );
+    let app = SqlrApp::new(deps, &egui::Context::default());
+    let mut h = Harness::builder()
+        .with_size((1400.0, 900.0))
+        .with_step_dt(0.01)
+        .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    step_until(&mut h, "saved-mongo", |h| {
+        h.query_all_by_label("saved-mongo").next().is_some()
+    });
+    assert!(
+        h.query_all_by_label("Driver MongoDB is not installed")
+            .next()
+            .is_none()
+    );
+}
+
+/// Regenerates the manual's Driver Manager image from the running app UI.
+#[test]
+#[ignore = "writes a manual screenshot; needs a wgpu adapter"]
+fn mongodb_driver_manager_manual_screenshot() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut deps, fake) = deps_with(dir.path(), FakeScript::default());
+    use sqlr_core::Driver;
+    for cfg in deps.repo.list().unwrap() {
+        deps.repo.delete(&cfg.id, fake.manifest()).unwrap();
+    }
+    let mut drivers = DriverRegistry::default();
+    drivers.register(sqlr_driver_postgres::PostgresDriver::new());
+    drivers.register(sqlr_driver_mysql::MysqlDriver::new());
+    drivers.register(sqlr_driver_mssql::SqlServerDriver::new());
+    drivers.register(sqlr_driver_oracle::OracleDriver::new());
+    drivers.register(sqlr_driver_sqlite::SqliteDriver::new());
+    drivers.register(sqlr_driver_snowflake::SnowflakeDriver::new());
+    drivers.register(sqlr_driver_elastic::ElasticDriver::new());
+    drivers.register(sqlr_driver_redis::RedisDriver::new());
+    deps.engine = Engine::new(drivers, Arc::new(|| {}));
+    deps.engine.configure_drivers(&dir.path().join("data"), 5);
+    deps.settings.theme = ThemePref::Dark;
+    let app = SqlrApp::new(deps, &egui::Context::default());
+    let mut h = Harness::builder()
+        .with_size((1280.0, 800.0))
+        .with_step_dt(0.01)
+        .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    sqlr_ui::theme::install_fonts(&h.ctx, &[]);
+    h.run_steps(3);
+    press(&mut h, Modifiers::COMMAND | Modifiers::SHIFT, Key::P);
+    h.run_steps(2);
+    h.get_by_label("Command palette")
+        .type_text("driver manager");
+    h.run_steps(3);
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    wait_for_label(&mut h, "Search drivers");
+    h.get_by_label("Search drivers").click();
+    h.run_steps(2);
+    h.get_by_label("Search drivers").type_text("MongoDB");
+    wait_for_label(&mut h, "Download and install");
+    h.run_steps(8);
+    h.render()
+        .unwrap()
+        .save(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../docs/manual/images/drivers/manager.png"),
+        )
+        .unwrap();
+}

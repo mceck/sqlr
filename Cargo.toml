@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/*", "drivers/sqlr-driver-duckdb", "drivers/sqlr-driver-hana"]
+members = ["crates/*", "drivers/sqlr-driver-duckdb", "drivers/sqlr-driver-hana", "drivers/sqlr-driver-mongo"]
 # `cargo run` and `cargo build` without -p act on the app; the sidecar drivers are extra binaries.
 default-members = ["crates/sqlr-app"]
 exclude = ["fuzz", "templates", "tools"]

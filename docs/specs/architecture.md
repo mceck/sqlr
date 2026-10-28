@@ -27,6 +27,8 @@ sqlr is one native app for relational, document and key-value databases, with a 
 
 These targets rule out Electron, any webview and the JVM, and are why the UI is native Rust. The app collects no telemetry; diagnostics stay local (see [Diagnostics](diagnostics.md)).
 
+A macOS arm64 release built with Rust 1.98.1 using `cargo build --release -p sqlr-app --bin sqlr` measures 51,585,408 bytes (51.59 MB) with MongoDB bundled and 48,622,368 bytes (48.62 MB) with the MongoDB sidecar. The saving is 2,963,040 bytes (2.96 MB, 5.74%). Both use the same stripped release profile with fat LTO and one codegen unit; the app remains below the 75 MB budget. See [Drivers](drivers.md) for the sidecar protocol and distribution.
+
 ### Component layering
 
 The application is split into components with one role each. Dependencies point downward only.
@@ -161,7 +163,7 @@ Testing is part of the architecture: each layer has a seam that is tested at the
 
 - **Unit tests** in core and the engine: chunk encoding and decoding, statement splitting per Dialect, DML generation, the Changeset, Mongo shell parsing, the statement classifier, the transaction state machine.
 - **Engine tests** drive the public engine interface with the fake Drivers for every Family, and against real servers where behaviour depends on the server.
-- **The Conformance suite** runs the same checks against every relational Driver on a real database: connect, ping, browse, execute and streaming, fetch more, affected rows, syntax errors, identifier quoting round trips, cancel, the type round-trip matrix and describe for editing. A Sidecar driver runs it through the protocol and must pass the same checks as its in-process build.
+- **The Conformance suite** runs the same checks against every relational Driver on a real database: connect, ping, browse, execute and streaming, fetch more, affected rows, syntax errors, identifier quoting round trips, cancel, the type round-trip matrix and describe for editing. The Document section checks all four statement outcomes, document paging and closing, typed edits by id, views, indexes, read-only enforcement and cancellation. MongoDB runs that section in process and through the sidecar client with identical reports. Engine integration tests also exercise document editing, Database tools and collection transfers through the sidecar; MCP query tools use the same Document interface.
 - **Widget and app tests** use `egui_kittest`: widgets in isolation, and the whole app driven through simulated input with fake Drivers. Visual audits that render screenshots need a GPU and run on demand.
 - **Fuzzing** covers the sidecar frame decoder and the chunk decoder.
 - **Shared test services.** PostgreSQL, MySQL, MariaDB, MongoDB, Redis, Elasticsearch, SQL Server and Oracle run once, in containers on fixed ports, for the whole run. No test starts its own server: parallel tests isolate themselves with per-test databases, and tests that touch server-global state take a cross-process test lock. Setting `SQLR_SKIP_CONTAINER_TESTS=1` skips every test that needs a service and runs everything else. SAP HANA runs only where a test instance is available.

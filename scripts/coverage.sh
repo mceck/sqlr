@@ -118,6 +118,7 @@ for entry in files:
     parts = name.split("/")
     if len(parts) < 3 or parts[0] not in ("crates", "drivers"):
         continue
+    # Both bundled crates and sidecars (including MongoDB) count toward the gates.
     crate = parts[1]
     if crate == "sqlr-driver-hana":
         continue

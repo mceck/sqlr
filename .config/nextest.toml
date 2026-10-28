@@ -42,7 +42,7 @@ inherits = "default"
 slow-timeout = { period = "120s", terminate-after = 4 }
 
 [[profile.containers.overrides]]
-filter = 'package(sqlr-driver-mongo) or (package(sqlr-engine) and test(/^(docs::(run_doc_pages_and_fetch_all|edit_document_preserves_types|delete_docs_confirms_count)|nosql_transfer::(mongo_to_pg_flattened|csv_to_mongo_documents))$/))'
+filter = 'package(sqlr-driver-mongo) or (package(sqlr-engine) and test(/^(docs::(run_doc_pages_and_fetch_all|edit_document_preserves_types|delete_docs_confirms_count|mongodb_database_tools_run_through_the_sidecar)|nosql_transfer::(mongo_to_pg_flattened|csv_to_mongo_documents))$/))'
 test-group = "mongo"
 
 [[profile.containers.overrides]]

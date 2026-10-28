@@ -5,14 +5,14 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use sqlr_core::{
-    ColumnMeta, ConnectionConfig, DriverError, DriverManifest, Node, NodePath, SchemaCatalog,
-    Secrets, ServerInfo, TableInfo, TableRef, Value,
+    ColumnMeta, ConnectionConfig, DocChunk, DocTarget, DocValue, DriverError, DriverManifest, Node,
+    NodePath, SchemaCatalog, Secrets, ServerInfo, TableInfo, TableRef, Value,
 };
 
 use crate::dialect::DialectSpec;
 
 /// Semver of the protocol; a major difference refuses to start the driver.
-pub const PROTOCOL: &str = "1.0.0";
+pub const PROTOCOL: &str = "1.1.0";
 
 /// Client → driver.
 #[derive(Clone, Serialize, Deserialize)]
@@ -104,6 +104,79 @@ pub enum Request {
         /// The connection to close.
         conn: u64,
     },
+    /// Runs one statement of the Document Family.
+    DocRun {
+        /// The connection to run on.
+        conn: u64,
+        /// Optional database override.
+        database: Option<String>,
+        /// Statement text, omitted from readable diagnostics.
+        text: String,
+    },
+    /// Fetches up to `max` documents; document frames precede `DocFetchDone`.
+    DocFetch {
+        /// The owning connection.
+        conn: u64,
+        /// The document stream.
+        stream: u64,
+        /// Maximum documents requested.
+        max: u32,
+    },
+    /// Closes a document stream, releasing its cursor.
+    DocClose {
+        /// The owning connection.
+        conn: u64,
+        /// The document stream.
+        stream: u64,
+    },
+    /// Replaces a document by its id.
+    DocReplace {
+        /// The connection.
+        conn: u64,
+        /// The collection or index.
+        target: DocTarget,
+        /// Two Doc chunk values: id, then replacement document.
+        values: DocValues,
+    },
+    /// Inserts a document and returns its id.
+    DocInsert {
+        /// The connection.
+        conn: u64,
+        /// The collection or index.
+        target: DocTarget,
+        /// One Doc chunk value: the document.
+        values: DocValues,
+    },
+    /// Deletes a document by its id.
+    DocDelete {
+        /// The connection.
+        conn: u64,
+        /// The collection or index.
+        target: DocTarget,
+        /// One Doc chunk value: the id.
+        values: DocValues,
+    },
+    /// Checks whether a target is a read-only view.
+    DocIsView {
+        /// The connection.
+        conn: u64,
+        /// The collection or index.
+        target: DocTarget,
+    },
+    /// Lists a target's indexes, mappings or settings.
+    DocIndexes {
+        /// The connection.
+        conn: u64,
+        /// The collection or index.
+        target: DocTarget,
+    },
+    /// Sets the read-only flag before subsequent requests execute.
+    DocSetReadOnly {
+        /// The connection.
+        conn: u64,
+        /// Whether writes are refused.
+        on: bool,
+    },
     /// Asks the driver to exit.
     Shutdown,
 }
@@ -176,6 +249,52 @@ impl fmt::Debug for Request {
                 f.debug_struct("TakeNotices").field("conn", conn).finish()
             }
             Self::Disconnect { conn } => f.debug_struct("Disconnect").field("conn", conn).finish(),
+            Self::DocRun { conn, text, .. } => f
+                .debug_struct("DocRun")
+                .field("conn", conn)
+                .field("text_bytes", &text.len())
+                .finish(),
+            Self::DocFetch { conn, stream, max } => f
+                .debug_struct("DocFetch")
+                .field("conn", conn)
+                .field("stream", stream)
+                .field("max", max)
+                .finish(),
+            Self::DocClose { conn, stream } => f
+                .debug_struct("DocClose")
+                .field("conn", conn)
+                .field("stream", stream)
+                .finish(),
+            Self::DocReplace { conn, target, .. } => f
+                .debug_struct("DocReplace")
+                .field("conn", conn)
+                .field("target", target)
+                .finish(),
+            Self::DocInsert { conn, target, .. } => f
+                .debug_struct("DocInsert")
+                .field("conn", conn)
+                .field("target", target)
+                .finish(),
+            Self::DocDelete { conn, target, .. } => f
+                .debug_struct("DocDelete")
+                .field("conn", conn)
+                .field("target", target)
+                .finish(),
+            Self::DocIsView { conn, target } => f
+                .debug_struct("DocIsView")
+                .field("conn", conn)
+                .field("target", target)
+                .finish(),
+            Self::DocIndexes { conn, target } => f
+                .debug_struct("DocIndexes")
+                .field("conn", conn)
+                .field("target", target)
+                .finish(),
+            Self::DocSetReadOnly { conn, on } => f
+                .debug_struct("DocSetReadOnly")
+                .field("conn", conn)
+                .field("on", on)
+                .finish(),
             Self::Shutdown => f.write_str("Shutdown"),
         }
     }
@@ -228,6 +347,39 @@ pub enum Response {
     Catalog(SchemaCatalog),
     /// The answer to `TakeNotices`.
     Notices(Vec<String>),
+    /// A document stream produced by `DocRun`.
+    Docs {
+        /// The document stream id.
+        stream: u64,
+    },
+    /// The end of a document fetch, including messages since the last page.
+    DocFetchDone {
+        /// Whether the stream is exhausted.
+        exhausted: bool,
+        /// Messages for the user.
+        notices: Vec<String>,
+    },
+    /// The outcome of a Document write statement.
+    Written {
+        /// Documents matched.
+        matched: u64,
+        /// Documents modified.
+        modified: u64,
+        /// Documents inserted.
+        inserted: u64,
+        /// Documents deleted.
+        deleted: u64,
+        /// Inserted or upserted ids, in Doc chunk encoding.
+        ids: DocValues,
+    },
+    /// A single Document value or inserted id (exactly one encoded value).
+    DocValue(DocValues),
+    /// Index descriptions in Doc chunk encoding.
+    DocIndexes(DocValues),
+    /// Whether the target is a view.
+    DocIsView(bool),
+    /// Document explorer nodes with their locally usable targets.
+    DocumentNodes(Vec<DocumentNode>),
     /// The request failed.
     Error(DriverError),
 }
@@ -240,6 +392,67 @@ pub fn encode<T: Serialize>(message: &T) -> Vec<u8> {
 /// Decodes a MessagePack message.
 pub fn decode<'a, T: Deserialize<'a>>(bytes: &'a [u8]) -> Result<T, rmp_serde::decode::Error> {
     rmp_serde::from_slice(bytes)
+}
+
+/// An explorer node and its Document target, resolved by the driver during Browse.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct DocumentNode {
+    /// The explorer entry.
+    pub node: Node,
+    /// The collection held by this node, including a collection's index nodes.
+    pub target: Option<DocTarget>,
+}
+
+/// Doc values carried in a control message using the Doc chunk wire encoding.
+/// Readable diagnostics omit the encoded contents.
+#[derive(Clone, Serialize, Deserialize)]
+pub struct DocValues(#[serde(with = "serde_bytes")] pub Vec<u8>);
+
+impl fmt::Debug for DocValues {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("DocValues(<redacted>)")
+    }
+}
+
+impl DocValues {
+    /// Encodes values with the same typed representation used by document frames.
+    pub fn new(values: &[DocValue]) -> Self {
+        let mut bytes = Vec::new();
+        sqlr_core::encode_doc_chunk(&DocChunk::from_docs(values), &mut bytes);
+        Self(bytes)
+    }
+
+    /// Decodes and validates every value before exposing any of them.
+    pub fn decode(&self) -> Result<Vec<DocValue>, DriverError> {
+        sqlr_core::decode_doc_chunk(&self.0)
+            .map(|chunk| chunk.docs().collect())
+            .map_err(|e| {
+                DriverError::new(
+                    sqlr_core::ErrorKind::Protocol,
+                    format!("malformed document values: {e}"),
+                )
+            })
+    }
+
+    /// Decodes an exact number of values, as required by a request or result.
+    pub fn exactly<const N: usize>(&self) -> Result<[DocValue; N], DriverError> {
+        self.decode()?.try_into().map_err(|_| {
+            DriverError::new(
+                sqlr_core::ErrorKind::Protocol,
+                "incorrect number of document values",
+            )
+        })
+    }
+}
+
+/// Whether a peer can carry Document requests within protocol major version 1.
+pub fn supports_documents(protocol: &str) -> bool {
+    let mut parts = protocol.split('.');
+    parts.next() == Some("1")
+        && parts
+            .next()
+            .and_then(|n| n.parse::<u64>().ok())
+            .is_some_and(|n| n >= 1)
 }
 
 #[cfg(test)]

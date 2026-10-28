@@ -61,6 +61,7 @@ impl SidecarSpec {
 pub(crate) enum Event {
     Control(Box<Response>),
     Chunk(Vec<u8>),
+    DocChunk(Vec<u8>),
     Closed(DriverError),
 }
 
@@ -249,11 +250,7 @@ impl Process {
                             "{}",
                             String::from_utf8_lossy(&frame.payload)
                         ),
-                        DOC_CHUNK => tracing::warn!(
-                            target: "sqlr_sidecar::driver",
-                            driver = %reader.id,
-                            "document chunk ignored"
-                        ),
+                        DOC_CHUNK => reader.deliver(frame.id, Event::DocChunk(frame.payload)),
                         _ => {}
                     },
                     Ok(None) => {
@@ -377,6 +374,16 @@ impl Process {
             process.kill(e.clone());
             return Err(e);
         }
+        if manifest.family == sqlr_core::Family::Document
+            && !crate::messages::supports_documents(&protocol)
+        {
+            let e = protocol_error(format!(
+                "Driver {} speaks protocol {protocol}, sqlr needs 1.1 for a Document driver",
+                spec.id
+            ));
+            process.kill(e.clone());
+            return Err(e);
+        }
         startup.complete();
         tracing::info!(
             target: "sqlr_sidecar::process",
@@ -471,7 +478,9 @@ impl Process {
                 Response::Error(e) => Err(e),
                 response => Ok(response),
             },
-            Event::Chunk(_) => Err(protocol_error("a chunk answered a request that takes none")),
+            Event::Chunk(_) | Event::DocChunk(_) => {
+                Err(protocol_error("a chunk answered a request that takes none"))
+            }
             Event::Closed(e) => Err(e),
         }
     }

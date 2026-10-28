@@ -31,6 +31,11 @@ pub enum EsRequest {
 }
 
 impl EsRequest {
+    /// The request's class for read-only enforcement and destructive confirmations.
+    pub fn class(&self) -> crate::StatementClass {
+        classify(self)
+    }
+
     /// Whether the body is sent as NDJSON (`_bulk`, `_msearch`): several values on lines.
     pub fn is_ndjson(&self) -> bool {
         match self {
@@ -278,6 +283,139 @@ fn parse_body(src: &str, base: usize) -> Result<Option<serde_json::Value>, Shell
         1 => values.pop(),
         _ => Some(serde_json::Value::Array(values)),
     })
+}
+
+/// APIs that only read (for POST and DELETE; GET and HEAD always read).
+const READ_APIS: &[&str] = &[
+    "_search",
+    "_count",
+    "_msearch",
+    "_mget",
+    "_sql",
+    "_query",
+    "_field_caps",
+    "_explain",
+    "_validate",
+    "_termvectors",
+    "_mtermvectors",
+    "_search_shards",
+    "_rank_eval",
+    "_eql",
+    "_async_search",
+    "_pit",
+    "_resolve",
+];
+
+/// APIs that write documents.
+const WRITE_APIS: &[&str] = &[
+    "_doc",
+    "_create",
+    "_update",
+    "_bulk",
+    "_update_by_query",
+    "_reindex",
+];
+
+const DDL_APIS: &[&str] = &[
+    "_mapping",
+    "_settings",
+    "_alias",
+    "_aliases",
+    "_index_template",
+    "_template",
+    "_component_template",
+    "_ingest",
+    "_ilm",
+    "_close",
+    "_open",
+    "_rollover",
+    "_shrink",
+    "_split",
+    "_clone",
+    "_data_stream",
+];
+
+fn matches_all(body: Option<&serde_json::Value>) -> bool {
+    match body.map(|b| &b["query"]) {
+        None | Some(serde_json::Value::Null) => true,
+        Some(q) => q.get("match_all").is_some(),
+    }
+}
+
+/// The statement class of a request. GET and HEAD read; other methods are classified by
+/// the API, the first `_` segment (after an index expression such as `_all`), checking
+/// writes before reads; anything unknown counts as a write.
+fn classify(req: &EsRequest) -> crate::StatementClass {
+    use crate::StatementClass::*;
+    let (method, path, body) = match req {
+        EsRequest::Esql(_) | EsRequest::Sql(_) => return Read,
+        EsRequest::Http { method, path, body } => (method.as_str(), path, body.as_ref()),
+    };
+    if validate_path(path).is_err() {
+        return Other;
+    }
+    if matches!(method, "GET" | "HEAD") {
+        return Read;
+    }
+    let p = path.split('?').next().unwrap_or("");
+    let segs: Vec<_> = p.split('/').filter(|s| !s.is_empty()).collect();
+    let index_part = segs
+        .first()
+        .is_some_and(|s| !s.starts_with('_') || *s == "_all");
+    let api = segs
+        .iter()
+        .skip(usize::from(index_part))
+        .find(|s| s.starts_with('_'))
+        .copied();
+    match (method, api) {
+        ("DELETE", None) if index_part && segs.len() == 1 => {
+            Destructive(format!("DELETE drops the index {}", segs[0]))
+        }
+        ("PUT", None) if index_part && segs.len() == 1 => Ddl,
+        (_, None) => Other,
+        (_, Some(a)) if WRITE_APIS.contains(&a) => Write,
+        (_, Some("_delete_by_query")) => {
+            if matches_all(body) {
+                Destructive("_delete_by_query without a query deletes every document".into())
+            } else {
+                Write
+            }
+        }
+        ("DELETE", Some("_data_stream")) => Destructive(format!(
+            "DELETE drops the data stream {}",
+            segs.last().copied().unwrap_or_default()
+        )),
+        (_, Some(a)) if READ_APIS.contains(&a) => Read,
+        (_, Some(a)) if DDL_APIS.contains(&a) => Ddl,
+        _ => Other,
+    }
+}
+
+/// Checks that URL parsing preserves the request path used for classification.
+/// Fragments, controls, percent escapes, backslashes and dot segments return Syntax.
+pub fn validate_path(path: &str) -> Result<(), crate::DriverError> {
+    let p = path.split('?').next().unwrap_or("");
+    if path.contains('#')
+        || path.chars().any(|c| c.is_ascii_control())
+        || p.contains(['%', '\\'])
+        || p.split('/').any(|s| s == "." || s == "..")
+    {
+        Err(crate::DriverError::new(
+            crate::ErrorKind::Syntax,
+            "URL fragments, control characters, backslashes, `.`/`..` segments and \
+             percent-escapes are not supported in request paths",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+pub(crate) fn classify_console(text: &str) -> crate::StatementClass {
+    parse_es_console(text)
+        .ok()
+        .filter(|ops| ops.len() == 1)
+        .and_then(|mut ops| ops.pop())
+        .map_or(crate::StatementClass::Other, |(_, op)| classify(&op))
 }
 
 #[cfg(test)]

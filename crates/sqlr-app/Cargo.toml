@@ -29,7 +29,6 @@ parking_lot.workspace = true
 thiserror.workspace = true
 sqlr-core = { path = "../sqlr-core" }
 sqlr-driver-elastic = { path = "../sqlr-driver-elastic" }
-sqlr-driver-mongo = { path = "../sqlr-driver-mongo" }
 sqlr-driver-mssql = { path = "../sqlr-driver-mssql" }
 sqlr-driver-mysql = { path = "../sqlr-driver-mysql" }
 sqlr-driver-oracle = { path = "../sqlr-driver-oracle" }

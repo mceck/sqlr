@@ -23,11 +23,17 @@ pub struct MongoDriver {
     manifest: DriverManifest,
 }
 
+impl Default for MongoDriver {
+    fn default() -> Self {
+        Self {
+            manifest: manifest::manifest(),
+        }
+    }
+}
+
 impl MongoDriver {
     pub fn new() -> Arc<Self> {
-        Arc::new(Self {
-            manifest: manifest::manifest(),
-        })
+        Arc::new(Self::default())
     }
 }
 

@@ -134,7 +134,7 @@ async fn protocol_major_mismatch_refused() {
     assert_eq!(e.kind, ErrorKind::Protocol);
     assert_eq!(
         e.message,
-        "Driver echo speaks protocol 2.0.0, sqlr speaks 1.0.0"
+        "Driver echo speaks protocol 2.0.0, sqlr speaks 1.1.0"
     );
 }
 
@@ -721,4 +721,17 @@ async fn cancelled_connect_restarts_unshared_process_and_preserves_live_connecti
     assert!(driver.is_running());
     live.ping().await.unwrap();
     driver.restart();
+}
+
+#[tokio::test]
+async fn a_1_0_relational_driver_still_works() {
+    let mut spec = echo_spec();
+    spec.env.push(("ECHO_PROTOCOL".into(), "1.0.0".into()));
+    let (driver, _) = SidecarDriver::probe(spec).await.unwrap();
+    let conn = driver
+        .connect(&config(), &Secrets::default())
+        .await
+        .unwrap();
+    assert!(conn.document().is_none());
+    assert_eq!(count_rows(&conn, "rows 3", 2).await, 3);
 }

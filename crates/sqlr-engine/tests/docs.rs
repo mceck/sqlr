@@ -428,7 +428,7 @@ mod mongo {
         let lock = TestLock::acquire("mongo");
         rt.block_on(support::reset_mongo(&host, port));
         let mut drivers = DriverRegistry::default();
-        drivers.register(sqlr_driver_mongo::MongoDriver::new());
+        drivers.register(support::mongo_sidecar());
         let engine = Engine::new(drivers, no_repaint());
         engine.set_connect_timeout(60);
         let cfg = ConnectionConfig {
@@ -815,4 +815,32 @@ fn es_doc_edit_by_id_and_index() {
         JobOutcome::DocsWritten { written: 1, .. }
     ));
     drop(engine);
+}
+
+#[test]
+fn mongodb_database_tools_run_through_the_sidecar() {
+    sqlr_testkit::skip_container_tests!("MONGO");
+    let server = mongo::start();
+    let engine = &server.engine;
+    let id = engine.doc_admin(
+        &SessionKey::meta("m"),
+        Some("test".into()),
+        "db.tools.createIndex({n:1}, {name:'n_1'})".into(),
+    );
+    assert_eq!(job(engine, id), JobOutcome::Done);
+    let query = mongo::run(engine, "db.tools.getIndexes()");
+    let result = engine.doc_result(query).unwrap();
+    let result = result.read();
+    assert!(
+        (0..result.len())
+            .filter_map(|i| result.doc(i))
+            .any(|d| d.get("name") == Some(&DocValue::String("n_1".into())))
+    );
+    drop(result);
+    let id = engine.doc_admin(
+        &SessionKey::meta("m"),
+        Some("test".into()),
+        "db.tools.dropIndex('n_1')".into(),
+    );
+    assert_eq!(job(engine, id), JobOutcome::Done);
 }

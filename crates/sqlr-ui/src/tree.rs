@@ -1055,7 +1055,11 @@ fn render_row(
             row_ui(ui, |ui| {
                 ui.add_space(*depth as f32 * INDENT + ARROW_WIDTH);
                 icons::paint(ui, icons::WARNING, palette.warning);
-                let text = format!("Driver {} is not installed", conn.driver);
+                let name = sqlr_core::known_databases()
+                    .iter()
+                    .find(|db| db.driver() == Some(conn.driver))
+                    .map_or(conn.driver, |db| db.name);
+                let text = format!("Driver {name} is not installed");
                 ui.add(
                     egui::Label::new(RichText::new(text).color(palette.warning))
                         .selectable(false)

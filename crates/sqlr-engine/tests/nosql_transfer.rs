@@ -20,7 +20,7 @@ use support::{
 
 fn engine() -> Engine {
     let mut drivers = DriverRegistry::default();
-    drivers.register(sqlr_driver_mongo::MongoDriver::new());
+    drivers.register(support::mongo_sidecar());
     drivers.register(sqlr_driver_postgres::PostgresDriver::new());
     drivers.register(sqlr_driver_elastic::ElasticDriver::new());
     drivers.register(sqlr_driver_redis::RedisDriver::new());

@@ -40,7 +40,6 @@ fn harness_with_drivers(dir: &Path, theme: ThemePref, all: bool) -> Harness<'sta
     drivers.register(PostgresDriver::new());
     if all {
         drivers.register(sqlr_driver_snowflake::SnowflakeDriver::new());
-        drivers.register(sqlr_driver_mongo::MongoDriver::new());
         drivers.register(sqlr_driver_elastic::ElasticDriver::new());
         drivers.register(sqlr_driver_redis::RedisDriver::new());
         drivers.register(sqlr_driver_mssql::SqlServerDriver::new());

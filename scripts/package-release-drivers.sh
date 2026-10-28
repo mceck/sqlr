@@ -11,7 +11,7 @@
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 # The drivers of sqlr_core's known databases that do not ship with the app.
-DRIVERS="hana duckdb jdbc jdbc-db2 jdbc-clickhouse jdbc-h2"
+DRIVERS="hana duckdb mongodb jdbc jdbc-db2 jdbc-clickhouse jdbc-h2"
 
 out=${1:?usage: package-release-drivers.sh OUT_DIR [--target TRIPLE] [--platform KEY]}
 shift
@@ -49,7 +49,7 @@ crate_version() {
     sed -n 's/^version *= *"\(.*\)"/\1/p' "$root/$1/Cargo.toml" | head -1
 }
 version=$(crate_version crates/sqlr-app)
-for dir in drivers/sqlr-driver-hana drivers/sqlr-driver-duckdb crates/sqlr-driver-jdbc; do
+for dir in drivers/sqlr-driver-hana drivers/sqlr-driver-duckdb drivers/sqlr-driver-mongo crates/sqlr-driver-jdbc; do
     if [ "$(crate_version "$dir")" != "$version" ]; then
         echo "$dir is not at the release version $version (scripts/bump-version.sh)" >&2
         exit 1
@@ -57,7 +57,7 @@ for dir in drivers/sqlr-driver-hana drivers/sqlr-driver-duckdb crates/sqlr-drive
 done
 
 (cd "$root" && cargo build --release ${target:+--target "$target"} \
-    -p sqlr-driver-hana -p sqlr-driver-duckdb -p sqlr-driver-jdbc)
+    -p sqlr-driver-hana -p sqlr-driver-duckdb -p sqlr-driver-mongo -p sqlr-driver-jdbc)
 bindir="$root/target/${target:+$target/}release"
 
 work=$(mktemp -d)
@@ -67,6 +67,7 @@ sh "$root/drivers/jdbc-bridge/build.sh" "$work/sqlr-jdbc-bridge.jar" > /dev/null
 mkdir -p "$out"
 for id in $DRIVERS; do
     case "$id" in
+        mongodb) package=sqlr-driver-mongodb ;;
         jdbc | jdbc-*) package=sqlr-driver-jdbc ;;
         *) package=sqlr-driver-$id ;;
     esac

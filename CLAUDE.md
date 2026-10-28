@@ -9,7 +9,8 @@ sqlr is a lightweight, universal database client in native Rust + egui. No webvi
 | Crate | Role | May depend on |
 |---|---|---|
 | `sqlr-core` | domain types, columnar chunks, driver traits | nothing internal |
-| `sqlr-driver-*` | one driver per database (`tokio-postgres`, …) | `sqlr-core` |
+| `sqlr-driver-*` | Bundled drivers, one per database (`tokio-postgres`, …) | `sqlr-core` |
+| `drivers/sqlr-driver-*` | Sidecar drivers: MongoDB, DuckDB and SAP HANA | `sqlr-core`, `sqlr-driver-sdk` |
 | `sqlr-engine` | tokio runtime off the UI thread: sessions, explorer/catalog cache, results, history, installed sidecar drivers | `sqlr-core`, `sqlr-store`, `sqlr-registry`, `sqlr-sidecar` |
 | `sqlr-sidecar` | sidecar protocol, `SidecarDriver` client, `serve` loop | `sqlr-core` |
 | `sqlr-registry` | driver-file installs, versions and review (no UI) | `sqlr-core`, `sqlr-sidecar` |
@@ -50,7 +51,7 @@ To run `cargo test` or `cargo nextest` directly, start the services first with
 
 ## Hard rules
 
-- **egui versions:** `egui`, `eframe`, `egui_extras` and `egui_kittest` are pinned to `=0.36.2`, and `egui_dock` to `0.21.1`. Never allow two egui versions in one build (`cargo tree -d | grep egui` must print nothing).
+- **egui versions:** `egui`, `eframe`, `egui_extras` and `egui_kittest` are pinned to `=0.36.2`, and `egui_dock` to `0.21.1`. Never allow two egui versions in one build (`cargo tree -d --depth 0 | grep egui` must print nothing).
 - **No OpenSSL:** rustls only (`cargo tree -i openssl-sys` must find no match). Connections begin without TLS unless the driver configuration enables it.
 - **UI thread:** it never does I/O or blocks. Database, keychain and credential-vault work runs on background workers. Never hold an `engine.result(q)` read guard while calling engine methods.
 - **Secrets:** never written to `connections.toml`, to logs, or to `Debug` output.

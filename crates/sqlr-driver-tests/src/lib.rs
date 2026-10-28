@@ -10,7 +10,9 @@
 //! assert!(report.failed.is_empty(), "{report}");
 //! ```
 
+mod document;
 mod relational;
+pub use document::{DocumentTarget, document_suite};
 
 use std::fmt;
 use std::future::Future;

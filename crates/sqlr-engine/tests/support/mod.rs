@@ -118,3 +118,16 @@ pub async fn reset_redis(host: &str, port: u16) {
     }
     panic!("flush redis: timed out");
 }
+
+/// MongoDB through the same client used for an installed sidecar.
+pub fn mongo_sidecar() -> std::sync::Arc<dyn sqlr_core::Driver> {
+    use sqlr_core::Driver;
+    std::sync::Arc::new(sqlr_sidecar::SidecarDriver::with_manifest(
+        sqlr_sidecar::SidecarSpec::new(
+            "mongodb",
+            env!("CARGO_PKG_VERSION"),
+            sqlr_testkit::workspace_binary("sqlr-driver-mongodb"),
+        ),
+        sqlr_driver_mongo::MongoDriver::new().manifest().clone(),
+    ))
+}

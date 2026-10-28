@@ -3,6 +3,7 @@ name: release
 # Push a tag like `v0.1.0` to build every platform and publish a GitHub release.
 # The tag must match the version in crates/sqlr-app/Cargo.toml.
 # Each platform also publishes the sidecar drivers the Driver Manager downloads:
+# Includes MongoDB (sqlr-driver-mongodb) on every platform.
 # sqlr-driver-<id>_<version>_<os>-<arch>.tar.gz, listed in SHA256SUMS.txt.
 on:
   push:

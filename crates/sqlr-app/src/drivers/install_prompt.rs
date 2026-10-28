@@ -8,6 +8,12 @@ use super::PendingInstall;
 use crate::app::SqlrApp;
 
 impl SqlrApp {
+    /// Driver install jobs exposed to the UI harness to check explicit download intent.
+    #[doc(hidden)]
+    pub fn driver_install_jobs(&self) -> Vec<(String, DriverJobState)> {
+        self.engine.driver_jobs()
+    }
+
     /// Opens the Drivers window on `driver`: on its download when the sqlr release has it,
     /// otherwise on the file picker for a local driver file. With `known` set, the
     /// new-connection form for that database opens once the driver is installed. A request

@@ -1,7 +1,7 @@
 //! `SidecarDriver`: a [`Driver`] whose database lives in a child process. The engine cannot
 //! tell it from an in-process driver (spec §6.2).
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::Instant;
@@ -9,13 +9,15 @@ use std::time::Instant;
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use sqlr_core::{
-    CancelHandle, ColumnMeta, Connection, ConnectionConfig, Dialect, Driver, DriverError,
-    DriverManifest, ErrorKind, Execution, Node, NodePath, RelationalConn, ResultChunk, RowStream,
-    SchemaCatalog, Secrets, ServerInfo, TableInfo, TableRef, Value, decode_chunk,
+    CancelHandle, ColumnMeta, Connection, ConnectionConfig, Dialect, DocChunk, DocExecution,
+    DocStream, DocTarget, DocValue, DocumentConn, Driver, DriverError, DriverManifest, ErrorKind,
+    Execution, Family, Node, NodePath, QueryLanguage, RelationalConn, ResultChunk, RowStream,
+    SchemaCatalog, Secrets, ServerInfo, StatementClass, TableInfo, TableRef, Value, decode_chunk,
+    decode_doc_chunk,
 };
 
 use crate::dialect::SidecarDialect;
-use crate::messages::{Request, Response};
+use crate::messages::{DocValues, Request, Response};
 use crate::process::{ConnectGuard, Event, Process, SidecarSpec};
 
 fn protocol_error(message: impl Into<String>) -> DriverError {
@@ -142,7 +144,12 @@ impl Driver for SidecarDriver {
         {
             *self.dialect.lock() = Some(Arc::new(SidecarDialect::new(spec.clone())));
         }
-        let connection = SidecarConnection::open(process, conn, answer)?;
+        let connection = SidecarConnection::open(
+            process,
+            conn,
+            answer,
+            (self.manifest.family == Family::Document).then(|| self.manifest.language()),
+        )?;
         pending.complete();
         Ok(connection)
     }
@@ -177,6 +184,8 @@ pub struct SidecarConnection {
     process: Arc<Process>,
     conn: u64,
     dialect: Option<SidecarDialect>,
+    language: Option<QueryLanguage>,
+    targets: Mutex<HashMap<NodePath, Option<DocTarget>>>,
     database: Option<String>,
     schema_path: NodePath,
     inflight: Arc<Inflight>,
@@ -188,6 +197,7 @@ impl SidecarConnection {
         process: Arc<Process>,
         conn: u64,
         answer: Response,
+        language: Option<QueryLanguage>,
     ) -> Result<Arc<dyn Connection>, DriverError> {
         let Response::Connected {
             dialect,
@@ -203,6 +213,8 @@ impl SidecarConnection {
             process,
             conn,
             dialect: dialect.map(SidecarDialect::new),
+            language,
+            targets: Mutex::default(),
             database: database_name,
             schema_path,
             inflight: Arc::default(),
@@ -253,6 +265,16 @@ impl Connection for SidecarConnection {
             .await?
         {
             Response::Nodes(nodes) => Ok(nodes),
+            Response::DocumentNodes(nodes) => {
+                let mut targets = self.targets.lock();
+                Ok(nodes
+                    .into_iter()
+                    .map(|entry| {
+                        targets.insert(entry.node.path.clone(), entry.target);
+                        entry.node
+                    })
+                    .collect())
+            }
             other => Err(unexpected(&other)),
         }
     }
@@ -267,6 +289,10 @@ impl Connection for SidecarConnection {
 
     fn relational(&self) -> Option<&dyn RelationalConn> {
         self.dialect.as_ref().map(|_| self as &dyn RelationalConn)
+    }
+
+    fn document(&self) -> Option<&dyn DocumentConn> {
+        self.language.map(|_| self as &dyn DocumentConn)
     }
 
     fn database_name(&self) -> Option<&str> {
@@ -289,7 +315,7 @@ impl Connection for SidecarConnection {
                 database: database.to_string(),
             })
             .await?;
-        SidecarConnection::open(self.process.clone(), new_conn, answer)
+        SidecarConnection::open(self.process.clone(), new_conn, answer, self.language)
     }
 }
 
@@ -474,6 +500,7 @@ impl RowStream for SidecarStream {
                     Response::Error(e) => return Err(e),
                     other => return Err(unexpected(&other)),
                 },
+                Event::DocChunk(_) => return Err(protocol_error("document frame in a row stream")),
                 Event::Closed(e) => return Err(e),
             }
         }
@@ -507,6 +534,270 @@ impl Drop for SidecarStream {
         if let Ok(handle) = tokio::runtime::Handle::try_current() {
             handle.spawn(async move {
                 let _ = process.call(&Request::CloseStream { stream }).await;
+            });
+        }
+    }
+}
+
+#[async_trait]
+impl DocumentConn for SidecarConnection {
+    fn language(&self) -> QueryLanguage {
+        self.language
+            .expect("document() requires a Document manifest")
+    }
+
+    async fn run(&self, database: Option<&str>, text: &str) -> Result<DocExecution, DriverError> {
+        match self
+            .call(Request::DocRun {
+                conn: self.conn,
+                database: database.map(str::to_owned),
+                text: text.to_owned(),
+            })
+            .await?
+        {
+            Response::Docs { stream } => Ok(DocExecution::Docs(Box::new(SidecarDocStream {
+                process: self.process.clone(),
+                inflight: self.inflight.clone(),
+                conn: self.conn,
+                stream,
+                ready: VecDeque::new(),
+                notices: Vec::new(),
+                exhausted: false,
+                closed: false,
+            }))),
+            Response::Rows { stream, columns } => Ok(DocExecution::Rows(Box::new(SidecarStream {
+                process: self.process.clone(),
+                inflight: self.inflight.clone(),
+                stream,
+                columns: Arc::from(columns),
+                ready: VecDeque::new(),
+                exhausted: false,
+                closed: false,
+            }))),
+            Response::Written {
+                matched,
+                modified,
+                inserted,
+                deleted,
+                ids,
+            } => Ok(DocExecution::Written {
+                matched,
+                modified,
+                inserted,
+                deleted,
+                ids: ids.decode()?,
+            }),
+            Response::DocValue(values) => {
+                let [value] = values.exactly()?;
+                Ok(DocExecution::Value(value))
+            }
+            other => Err(unexpected(&other)),
+        }
+    }
+
+    async fn replace_doc(
+        &self,
+        target: &DocTarget,
+        id: &DocValue,
+        doc: &DocValue,
+    ) -> Result<u64, DriverError> {
+        match self
+            .call(Request::DocReplace {
+                conn: self.conn,
+                target: target.clone(),
+                values: DocValues::new(&[id.clone(), doc.clone()]),
+            })
+            .await?
+        {
+            Response::Affected(n) => Ok(n),
+            other => Err(unexpected(&other)),
+        }
+    }
+
+    async fn insert_doc(
+        &self,
+        target: &DocTarget,
+        doc: &DocValue,
+    ) -> Result<DocValue, DriverError> {
+        match self
+            .call(Request::DocInsert {
+                conn: self.conn,
+                target: target.clone(),
+                values: DocValues::new(std::slice::from_ref(doc)),
+            })
+            .await?
+        {
+            Response::DocValue(values) => {
+                let [id] = values.exactly()?;
+                Ok(id)
+            }
+            other => Err(unexpected(&other)),
+        }
+    }
+
+    async fn delete_doc(&self, target: &DocTarget, id: &DocValue) -> Result<u64, DriverError> {
+        match self
+            .call(Request::DocDelete {
+                conn: self.conn,
+                target: target.clone(),
+                values: DocValues::new(std::slice::from_ref(id)),
+            })
+            .await?
+        {
+            Response::Affected(n) => Ok(n),
+            other => Err(unexpected(&other)),
+        }
+    }
+
+    async fn is_view(&self, target: &DocTarget) -> Result<bool, DriverError> {
+        match self
+            .call(Request::DocIsView {
+                conn: self.conn,
+                target: target.clone(),
+            })
+            .await?
+        {
+            Response::DocIsView(on) => Ok(on),
+            other => Err(unexpected(&other)),
+        }
+    }
+
+    async fn indexes(&self, target: &DocTarget) -> Result<Vec<DocValue>, DriverError> {
+        match self
+            .call(Request::DocIndexes {
+                conn: self.conn,
+                target: target.clone(),
+            })
+            .await?
+        {
+            Response::DocIndexes(values) => values.decode(),
+            other => Err(unexpected(&other)),
+        }
+    }
+
+    fn open_target_text(&self, target: &DocTarget, page: usize) -> String {
+        self.language().open_document_text(target, page)
+    }
+
+    fn node_target(&self, path: &NodePath) -> Option<DocTarget> {
+        self.targets.lock().get(path).cloned().flatten()
+    }
+
+    fn classify(&self, text: &str) -> StatementClass {
+        self.language().classify_document(text)
+    }
+
+    fn set_read_only(&self, on: bool) {
+        // Enqueue synchronously: the server applies this in wire order before later writes.
+        let _ = self.process.begin(&Request::DocSetReadOnly {
+            conn: self.conn,
+            on,
+        });
+    }
+}
+
+struct SidecarDocStream {
+    process: Arc<Process>,
+    inflight: Arc<Inflight>,
+    conn: u64,
+    stream: u64,
+    ready: VecDeque<DocChunk>,
+    notices: Vec<String>,
+    exhausted: bool,
+    closed: bool,
+}
+
+impl SidecarDocStream {
+    fn pop_ready(&mut self, max: usize) -> Option<DocChunk> {
+        let chunk = self.ready.pop_front()?;
+        if chunk.len() <= max {
+            return Some(chunk);
+        }
+        let docs: Vec<_> = chunk.docs().collect();
+        self.ready.push_front(DocChunk::from_docs(&docs[max..]));
+        Some(DocChunk::from_docs(&docs[..max]))
+    }
+}
+
+#[async_trait]
+impl DocStream for SidecarDocStream {
+    async fn next_chunk(&mut self, max: usize) -> Result<Option<DocChunk>, DriverError> {
+        if self.closed {
+            return Ok(None);
+        }
+        if let Some(chunk) = self.pop_ready(max.max(1)) {
+            return Ok(Some(chunk));
+        }
+        if self.exhausted {
+            return Ok(None);
+        }
+        let _inflight = InflightGuard::enter(&self.inflight);
+        let mut pending = self.process.begin(&Request::DocFetch {
+            conn: self.conn,
+            stream: self.stream,
+            max: u32::try_from(max.max(1)).unwrap_or(u32::MAX),
+        })?;
+        loop {
+            match pending.next().await? {
+                Event::DocChunk(bytes) => {
+                    let chunk = decode_doc_chunk(&bytes)
+                        .map_err(|e| protocol_error(format!("malformed document chunk: {e}")))?;
+                    self.ready.push_back(chunk);
+                }
+                Event::Control(response) => match *response {
+                    Response::DocFetchDone { exhausted, notices } => {
+                        self.exhausted = exhausted;
+                        self.notices.extend(notices);
+                        return Ok(self.pop_ready(max.max(1)));
+                    }
+                    Response::Error(e) => {
+                        self.ready.clear();
+                        return Err(e);
+                    }
+                    other => return Err(unexpected(&other)),
+                },
+                Event::Chunk(_) => return Err(protocol_error("row frame in a document stream")),
+                Event::Closed(e) => return Err(e),
+            }
+        }
+    }
+
+    async fn close(&mut self) -> Result<(), DriverError> {
+        if self.closed {
+            return Ok(());
+        }
+        self.closed = true;
+        self.ready.clear();
+        if self.exhausted || !self.process.alive() {
+            return Ok(());
+        }
+        self.process
+            .call(&Request::DocClose {
+                conn: self.conn,
+                stream: self.stream,
+            })
+            .await
+            .map(|_| ())
+    }
+
+    fn take_notices(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.notices)
+    }
+}
+
+impl Drop for SidecarDocStream {
+    fn drop(&mut self) {
+        if self.closed || self.exhausted || !self.process.alive() {
+            return;
+        }
+        let process = self.process.clone();
+        let request = Request::DocClose {
+            conn: self.conn,
+            stream: self.stream,
+        };
+        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+            handle.spawn(async move {
+                let _ = process.call(&request).await;
             });
         }
     }

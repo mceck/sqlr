@@ -20,9 +20,13 @@ struct Rig {
 
 impl Rig {
     async fn new() -> Self {
+        Self::with_protocol(PROTOCOL).await
+    }
+
+    async fn with_protocol(protocol: &str) -> Self {
         let (client, server_end) = tokio::io::duplex(1 << 20);
         let (sr, sw) = split(server_end);
-        let server = tokio::spawn(serve_io(SqliteDriver::new(), PROTOCOL.to_string(), sr, sw));
+        let server = tokio::spawn(serve_io(SqliteDriver::new(), protocol.to_string(), sr, sw));
         let (rx, tx) = split(client);
         Self {
             tx,
@@ -298,4 +302,68 @@ async fn a_corrupt_frame_ends_the_server_with_an_error() {
     let err = rig.server.await.unwrap().unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     let _ = Arc::new(());
+}
+
+#[tokio::test]
+async fn relational_driver_rejects_document_requests_as_unsupported() {
+    let mut rig = Rig::new().await;
+    rig.connect(1).await;
+    let target = sqlr_core::DocTarget {
+        database: None,
+        collection: "c".into(),
+    };
+    let values = sqlr_sidecar::messages::DocValues::new(&[sqlr_core::DocValue::Null]);
+    for request in [
+        Request::DocRun {
+            conn: 1,
+            database: None,
+            text: "db.c.find({})".into(),
+        },
+        Request::DocFetch {
+            conn: 1,
+            stream: 1,
+            max: 1,
+        },
+        Request::DocClose { conn: 1, stream: 1 },
+        Request::DocInsert {
+            conn: 1,
+            target: target.clone(),
+            values: values.clone(),
+        },
+        Request::DocReplace {
+            conn: 1,
+            target: target.clone(),
+            values: values.clone(),
+        },
+        Request::DocDelete {
+            conn: 1,
+            target: target.clone(),
+            values,
+        },
+        Request::DocIsView {
+            conn: 1,
+            target: target.clone(),
+        },
+        Request::DocIndexes { conn: 1, target },
+        Request::DocSetReadOnly { conn: 1, on: true },
+    ] {
+        assert_eq!(error_kind(rig.ok(request).await), ErrorKind::Unsupported);
+    }
+}
+
+#[tokio::test]
+async fn a_1_0_client_and_relational_driver_interoperate() {
+    let mut rig = Rig::with_protocol("1.0.0").await;
+    let response = rig
+        .ok(Request::Hello {
+            protocol: "1.0.0".into(),
+            sqlr_version: "old".into(),
+        })
+        .await;
+    assert!(matches!(response, Response::Welcome { protocol, .. } if protocol == "1.0.0"));
+    rig.connect(1).await;
+    assert!(matches!(
+        rig.ok(exec(1, "select 1", None)).await,
+        Response::Rows { .. }
+    ));
 }

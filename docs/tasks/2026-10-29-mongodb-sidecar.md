@@ -1,5 +1,5 @@
 ---
-status: to-do
+status: done
 ---
 
 # MongoDB as a Sidecar driver
@@ -84,16 +84,16 @@ MongoDB becomes a Sidecar driver, installed from the Driver Manager like DuckDB,
 
 ## Acceptance Criteria
 
-- [ ] The sidecar protocol is 1.1.0 and the spec documents the Document requests, the document chunk frame, and the negotiation rules.
-- [ ] A Document driver written with the SDK serves Document requests; a relational driver answers them with `Unsupported`.
-- [ ] A 1.0 driver and a 1.0 client still interoperate; a Document driver is refused when the Welcome is below 1.1.
-- [ ] The conformance suite has a Document section and the MongoDB driver passes it in process and through the sidecar client with identical results.
-- [ ] `sqlr-driver-mongo` lives in `drivers/`, is no dependency of `sqlr-app`, and is not registered at startup.
-- [ ] MongoDB statements, paging, editing by `_id`, views, indexes, cancellation, Database tools, Data transfer and MCP tools work on a Connection served by the installed sidecar.
-- [ ] A saved MongoDB Connection without the driver installed offers the install, and nothing downloads until the user clicks.
-- [ ] The `mongodb` Known database is installable; the release workflow and packaging scripts publish `sqlr-driver-mongodb_<version>_<os>-<arch>.tar.gz` with checksums.
-- [ ] `cargo tree -d | grep egui` prints nothing, `cargo tree -i openssl-sys` finds no match, clippy passes with `-D warnings`, and the full suite passes with the container services.
-- [ ] `docs/specs/drivers.md` and `docs/specs/architecture.md` describe what was built, `CLAUDE.md`'s crate table is current, and the measured release size before and after is recorded.
+- [x] The sidecar protocol is 1.1.0 and the spec documents the Document requests, the document chunk frame, and the negotiation rules.
+- [x] A Document driver written with the SDK serves Document requests; a relational driver answers them with `Unsupported`.
+- [x] A 1.0 driver and a 1.0 client still interoperate; a Document driver is refused when the Welcome is below 1.1.
+- [x] The conformance suite has a Document section and the MongoDB driver passes it in process and through the sidecar client with identical results.
+- [x] `sqlr-driver-mongo` lives in `drivers/`, is no dependency of `sqlr-app`, and is not registered at startup.
+- [x] MongoDB statements, paging, editing by `_id`, views, indexes, cancellation, Database tools, Data transfer and MCP tools work on a Connection served by the installed sidecar.
+- [x] A saved MongoDB Connection without the driver installed offers the install, and nothing downloads until the user clicks.
+- [x] The `mongodb` Known database is installable; the release workflow and packaging scripts publish `sqlr-driver-mongodb_<version>_<os>-<arch>.tar.gz` with checksums.
+- [x] `cargo tree -d --depth 0 | grep egui` prints nothing, `cargo tree -i openssl-sys` finds no match, clippy passes with `-D warnings`, and the full suite passes with the container services.
+- [x] `docs/specs/drivers.md` and `docs/specs/architecture.md` describe what was built, `CLAUDE.md`'s crate table is current, and the measured release size before and after is recorded.
 
 ## Out of Scope
 
@@ -108,3 +108,38 @@ MongoDB becomes a Sidecar driver, installed from the Driver Manager like DuckDB,
 - No other task is a dependency. The three milestones are delivered in order, because the driver needs the protocol and the app change needs the installable driver.
 - The protocol extension is deliberately general (Document, not Mongo) so Elasticsearch can follow as a sidecar without another protocol change.
 - The size saving was only estimated from rlib sizes before this task; the real figure comes from the measurement in the acceptance criteria.
+
+## Validation notes
+
+The dependency check inspects duplicate package roots with `cargo tree -d --depth 0`.
+Without the depth limit, Cargo also prints reverse dependents of unrelated duplicate
+packages, so grepping that whole tree for egui produces false positives even with a
+single egui version. The dependency checker also verifies the exact pinned versions and
+that MongoDB is absent from the app's production dependency graph.
+
+The Standards review found one duplicated Elasticsearch path validator, now shared by
+execution and local statement classification. The Task review found a buffered
+read-only toggle/write race and imprecise wording for MessagePack unit variants. Both
+were corrected. Regression tests reproduce the read-only race and the case where a
+split document frame is followed by a smaller page request.
+
+Verification completed:
+
+- `cargo nextest run --workspace --profile containers`: 2,384 passed, 21 ignored
+  tests skipped, against all shared Docker services.
+- `cargo clippy --workspace --all-targets -- -D warnings`: passed.
+- `python3 scripts/check-dependencies.py`: passed; one pinned egui version,
+  rustls only, and no MongoDB dependency in the production app graph.
+- Protocol tests cover both 1.0 handshake directions, Document refusal below 1.1,
+  all Document request types, oversized pages, request redaction, local language
+  operations, typed ids and read-only ordering.
+- MongoDB Document conformance reports identical passes in process and via sidecar.
+  Engine integration covers editing, Database tools and collection transfers;
+  MCP tests query and page through a sidecar connection. UI tests package/install
+  MongoDB and verify saved connections and explicit download intent.
+- Seven Python tooling tests passed, manual links and generated HTML validated,
+  and the Driver Manager screenshot was recaptured from the app UI.
+
+Release size measurement: A macOS arm64 release built with Rust 1.98.1 using `cargo build --release -p sqlr-app --bin sqlr` measures 51,585,408 bytes (51.59 MB) with MongoDB bundled and 48,622,368 bytes (48.62 MB) with the MongoDB sidecar. The saving is 2,963,040 bytes (2.96 MB, 5.74%). Both use the same stripped release profile with fat LTO and one codegen unit; the app remains below the 75 MB budget.
+
+The local macOS arm64 MongoDB release archive was built and inspected: its id is `mongodb`, version `0.1.3`, and executable `sqlr-driver-mongodb`. The release workflow includes the archive in the platform artifacts and `SHA256SUMS.txt`.

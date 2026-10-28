@@ -13,7 +13,7 @@
 # bridge jar.
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
-id=${1:?usage: package-driver.sh <hana|duckdb|jdbc|jdbc-NAME> <out.tar.gz> [--bin PATH] [--bridge PATH] [--jar PATH]...}
+id=${1:?usage: package-driver.sh <hana|duckdb|mongodb|jdbc|jdbc-NAME> <out.tar.gz> [--bin PATH] [--bridge PATH] [--jar PATH]...}
 out=${2:?missing output file}
 shift 2
 bin=""
@@ -29,13 +29,16 @@ while [ $# -gt 0 ]; do
 done
 
 case "$id" in
+    mongodb) package=sqlr-driver-mongo; dir=drivers/$package; args='[]' ;;
     hana|duckdb) package=sqlr-driver-$id; dir=drivers/$package; args='[]' ;;
     jdbc|jdbc-*) package=sqlr-driver-jdbc; dir=crates/$package; args="[\"--preset\", \"$id\"]" ;;
     *) echo "unknown driver $id" >&2; exit 2 ;;
 esac
+binary=$package
+[ "$id" != mongodb ] || binary=sqlr-driver-mongodb
 case "$(uname -s)" in
-    MINGW* | MSYS* | CYGWIN*) exe=$package.exe ;;
-    *) exe=$package ;;
+    MINGW* | MSYS* | CYGWIN*) exe=$binary.exe ;;
+    *) exe=$binary ;;
 esac
 version=$(sed -n 's/^version *= *"\(.*\)"/\1/p' "$root/$dir/Cargo.toml" | head -1)
 

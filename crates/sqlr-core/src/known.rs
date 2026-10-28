@@ -196,14 +196,6 @@ static KNOWN: &[KnownDatabase] = &[
         "SQL API over HTTPS, token authentication",
     ),
     bundled(
-        "mongodb",
-        "MongoDB",
-        Document,
-        "mongodb",
-        Some(27017),
-        "Document store",
-    ),
-    bundled(
         "elasticsearch",
         "Elasticsearch",
         Document,
@@ -307,6 +299,14 @@ static KNOWN: &[KnownDatabase] = &[
         Some(3306),
         "MySQL wire protocol",
     ),
+    KnownDatabase {
+        id: "mongodb",
+        name: "MongoDB",
+        family: Document,
+        status: KnownStatus::Installable { driver: "mongodb" },
+        default_port: Some(27017),
+        notes: "Document sidecar, downloaded from the sqlr release",
+    },
     installable(
         "sap-hana",
         "SAP HANA",
@@ -352,17 +352,24 @@ mod tests {
     use super::*;
 
     /// The driver ids sqlr ships.
-    const DRIVERS: [&str; 9] = [
+    const DRIVERS: [&str; 8] = [
         "postgres",
         "mysql",
         "sqlite",
         "sqlserver",
         "oracle",
-        "mongodb",
         "elasticsearch",
         "redis",
         "snowflake",
     ];
+
+    #[test]
+    fn mongodb_installs_as_a_document_sidecar() {
+        let mongo = known_database("mongodb").unwrap();
+        assert_eq!(mongo.status, KnownStatus::Installable { driver: "mongodb" });
+        assert_eq!(mongo.family, Family::Document);
+        assert!(mongo.notes.contains("downloaded"));
+    }
 
     #[test]
     fn snowflake_is_built_in_and_duckdb_installs_from_a_file() {

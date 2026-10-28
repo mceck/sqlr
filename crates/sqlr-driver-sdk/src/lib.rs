@@ -15,6 +15,10 @@
 //! }
 //! ```
 //!
+//! Document drivers implement [`DocumentConn`] and return [`DocExecution`]: a [`DocStream`],
+//! a [`RowStream`], a write outcome or a [`DocValue`]. Targets use [`DocTarget`]; pages use
+//! [`DocChunk`]. Protocol 1.1 carries these operations through the same serve loop.
+//!
 //! The process talks to sqlr over stdin and stdout; never print to stdout. Log to stderr —
 //! sqlr shows it in its log, prefixed with the driver id.
 
