@@ -1,6 +1,6 @@
 # sqlr manual
 
-*Last updated: 27 October 2026.*
+*Last updated: 29 October 2026.*
 
 sqlr is a desktop database client for people who query databases, maintain their structure and move data between systems. You can use relational databases, MongoDB, Elasticsearch and Redis from the same window. Saved connections keep the details you need to return to your work; drivers determine which tools each database offers.
 

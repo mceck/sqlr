@@ -9,8 +9,8 @@ A driver connects sqlr to a database. Bundled drivers are ready to use; sidecar 
 | Database | Driver setup |
 |---|---|
 | PostgreSQL, MySQL, MariaDB, SQL Server, Oracle, SQLite | Included with sqlr |
-| Snowflake, MongoDB, Elasticsearch, Redis | Included with sqlr |
-| DuckDB, SAP HANA | Install their native sidecar driver |
+| Snowflake, Elasticsearch, Redis | Included with sqlr |
+| MongoDB, DuckDB, SAP HANA | Install their native sidecar driver |
 | Db2, ClickHouse, H2 or another JDBC database | Install a JDBC bridge and Java 17 or newer; supply the database's JDBC jar |
 
 SQL Server and Oracle use native bundled drivers, so you do not need Java or Oracle Instant Client for those connections. Database compatibility entries in **New connection** may use an existing PostgreSQL or MySQL driver with appropriate defaults.
@@ -24,9 +24,9 @@ SQL Server and Oracle use native bundled drivers, so you do not need Java or Ora
 
 The download comes from the GitHub release matching your sqlr version and your computer's platform. sqlr checks its SHA-256 before installing and starts it once to verify that it can answer. If the release has no archive for your platform, the error identifies the missing build.
 
-Picking a database whose driver is missing opens the manager for that driver. After installation, the connection form opens. A saved connection with a missing driver shows **Install…** in the explorer.
+Picking a database whose driver is missing opens the manager for that driver. After installation, the connection form opens. A saved connection with a missing driver shows **Install…** in the explorer. Opening the manager starts no download; choose **Download and install** when you are ready.
 
-![Driver Manager listing installed, built-in and available drivers](images/drivers/manager.png)
+![Driver Manager showing MongoDB available for download](images/drivers/manager.png)
 
 ## Install an archive from disk
 
@@ -54,6 +54,14 @@ The manager groups entries into **Installed**, **Built in** and **Available**. S
 Changing the active version stops the previous process. Reconnect affected connections to use the selected version. Removing the last version makes its saved connections unavailable until you install the driver again. Bundled drivers cannot be removed or replaced through this window.
 
 A sidecar starts when first needed and stops after its idle timeout, five minutes by default. Change that timeout under **Drivers** in Preferences. A crash affects that driver's connections; reconnect to start a fresh process.
+
+## Connect to MongoDB
+
+1. Select **MongoDB** under **Available** in the Driver Manager, then choose **Download and install**.
+2. Create a MongoDB connection with the host, port, database and credentials, and choose the TLS settings your server requires.
+3. Open the connection and [query or edit documents](nosql.md#query-mongodb).
+
+If you already have saved MongoDB connections, their settings and saved credentials stay in place. **Driver MongoDB is not installed** means this computer needs the separate driver. Choose **Install…**, install **mongodb**, then connect again. Collection browsing, paging, document editing, indexes, Data transfer and agent queries use the installed driver.
 
 ## Connect to DuckDB or SAP HANA
 

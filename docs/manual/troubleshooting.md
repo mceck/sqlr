@@ -8,6 +8,7 @@ Start with the error shown beside your query or connection. Use Diagnostics for 
 
 | Problem | Cause to check | What to do |
 |---|---|---|
+| **Driver MongoDB is not installed** | MongoDB needs its separate sidecar driver on this computer | Choose **Install…**, then **Download and install** in the Driver Manager. Reconnect after installation; keep your saved connection |
 | Connection fails or times out | Address, credentials, SSH, TLS or server availability | Edit the connection and use **Test**. Check the server and tunnel settings, then use **Retry** |
 | Connection drops during work | Network interruption or server closed the session | Use **Reconnect** in the tab banner. Review transaction state before repeating a write |
 | Query fails with a position or hint | SQL syntax, permissions or database context | Read the error and hint, correct the statement, then rerun it. Use **Copy details** to preserve the error |

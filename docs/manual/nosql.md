@@ -6,6 +6,8 @@ MongoDB and Elasticsearch use document results. Redis uses a key browser and com
 
 ## Query MongoDB
 
+Install the MongoDB driver from the [Driver Manager](drivers.md#connect-to-mongodb) before connecting. Saved MongoDB connections keep their existing fields, TLS settings and credentials.
+
 Open an editor on a MongoDB connection. Write Mongo shell syntax, then run the current statement with ⌘↵ or the script with ⌘⇧↵.
 
 sqlr parses a subset of shell syntax without running JavaScript. You can use collection reads such as `find`, `findOne`, `aggregate`, `countDocuments`, `estimatedDocumentCount` and `distinct`; writes such as `insertOne`, `insertMany`, `updateOne`, `updateMany`, `replaceOne`, `findOneAndUpdate`, `deleteOne` and `deleteMany`; and index operations such as `createIndex`, `dropIndex` and `getIndexes`.

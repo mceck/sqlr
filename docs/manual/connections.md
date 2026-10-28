@@ -8,8 +8,8 @@ A saved connection records where your database is and how to reach it. Opening i
 
 | Available with the app | Install a sidecar driver first |
 | --- | --- |
-| PostgreSQL, MySQL/MariaDB, SQLite, SQL Server, Oracle, Snowflake | DuckDB, SAP HANA |
-| MongoDB, Elasticsearch, Redis | JDBC databases through the JDBC bridge, requiring Java 17+ |
+| PostgreSQL, MySQL/MariaDB, SQLite, SQL Server, Oracle, Snowflake | MongoDB, DuckDB, SAP HANA |
+| Elasticsearch, Redis | JDBC databases through the JDBC bridge, requiring Java 17+ |
 
 The database picker also includes compatible services with preset ports and options. An entry marked as planned does not provide a working connection. See [Drivers](drivers.md) for installation and database-specific requirements.
 
