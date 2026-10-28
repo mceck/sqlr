@@ -23,7 +23,7 @@ sqlr is one native app for relational, document and key-value databases, with a 
 | Resident memory at idle, two connected databases | under 150 MB |
 | Result grid scrolling, 1,000,000 rows loaded | 60 fps (frame p99 under 16.7 ms) |
 | Autocomplete popup and opening a table | under 50 ms perceived |
-| Release binary, Bundled drivers included, no external runtime | under 75 MB |
+| Release binary, Bundled drivers included (MongoDB, DuckDB, SAP HANA and the JDBC bridge are Sidecar drivers and stay out), no external runtime | under 75 MB |
 
 These targets rule out Electron, any webview and the JVM, and are why the UI is native Rust. The app collects no telemetry; diagnostics stay local (see [Diagnostics](diagnostics.md)).
 
@@ -226,7 +226,7 @@ Security and privacy rules that hold everywhere: secrets never reach `connection
 - **Engine reads through shared state, not message replies.** The UI reads Results, the Catalog cache and Operations through cheap snapshots each frame. This keeps the UI code free of callback plumbing and makes a repaint the only signal it needs.
 - **A store worker thread for connections and the vault.** Keychain authorization dialogs can block for as long as the user takes; running them on a worker keeps the window alive.
 - **Our own columnar chunk format instead of Arrow.** The Arrow crate brings far more dependencies than sqlr needs; a small format with typed columns, validity bitmaps and one byte arena covers every Driver, and the same bytes cross the sidecar protocol without transcoding.
-- **Sidecar processes for third-party drivers** (rather than dynamic libraries or WASM): Rust has no stable ABI and an in-process crash would take the app down; WASI sockets are immature and a WASM runtime adds 15 to 20 MB. A sidecar is isolated and can be written in any language. Details in [Drivers](drivers.md).
+- **Sidecar processes for heavy and third-party drivers**, Document drivers included since protocol 1.1 (MongoDB is the first), keeping the app small (rather than dynamic libraries or WASM): Rust has no stable ABI and an in-process crash would take the app down; WASI sockets are immature and a WASM runtime adds 15 to 20 MB. A sidecar is isolated and can be written in any language. Details in [Drivers](drivers.md).
 - **rustls only.** One TLS stack across every Driver, no system OpenSSL to find or ship. Servers that only speak TLS 1.0 or 1.1 cannot be reached, and this is documented.
 - **Panics contained per command task.** A bug in one Driver path fails one Operation and leaves an Incident, instead of taking down the session or the app.
 - **Workspace lints enforced by the existing Clippy gate.** Declaring the rules once in the workspace and denying them through the Clippy command CI already runs means drifting back fails the build with no extra tooling. Turning on the whole pedantic group was rejected: most of its findings (`must_use` candidates, numeric casts, function length) are noise for this codebase.

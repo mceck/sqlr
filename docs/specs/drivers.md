@@ -156,7 +156,7 @@ A property name starts with a letter and holds letters, digits, `_` and `.`; val
 | SQL Server | Relational | Bundled | `sqlserver` |
 | Oracle | Relational | Bundled, pure Rust, no Oracle client libraries | `oracle` |
 | Snowflake | Relational | Bundled, HTTPS SQL API | `snowflake` |
-| MongoDB | Document | Bundled | `mongodb` |
+| MongoDB | Document | Sidecar, downloaded from the release | `mongodb` |
 | Elasticsearch | Document, with tabular queries | Bundled | `elasticsearch` |
 | Redis | Key-value | Bundled | `redis` |
 | SAP HANA | Relational | Sidecar, downloaded from the release | `hana` |
@@ -244,7 +244,7 @@ Every Bundled driver is registered at startup. Installed Sidecar drivers are reg
 
 #### MongoDB
 
-- Official driver over rustls with the `ring` provider. Connection form: host (`localhost`), port (27017), database (`test`), user, password; TLS group: TLS (`disabled` (default), `required` (verify certificate), `allow_invalid` (skip verification)), CA certificate; Advanced: auth database, replica set, direct connection (on), read-only (off). URL scheme `mongodb`. Connect times out after 15 seconds.
+- Sidecar driver downloaded from the release. It is a sidecar because the official MongoDB client is the heaviest database dependency of the app and most users never connect to MongoDB; the driver is the first Document driver served over protocol 1.1. A saved Connection whose driver is not installed offers its install when connected (see "The Driver Manager"); the Connection stays as it was saved. Built on the official driver over rustls with the `ring` provider. Connection form: host (`localhost`), port (27017), database (`test`), user, password; TLS group: TLS (`disabled` (default), `required` (verify certificate), `allow_invalid` (skip verification)), CA certificate; Advanced: auth database, replica set, direct connection (on), read-only (off). URL scheme `mongodb`. Connect times out after 15 seconds.
 - Capabilities: `server_cancel`, `editable_results`, `ssh`; no `transactions`, so the commit mode does not apply.
 - Every statement runs as a raw command built from document values, so documents keep their key order and repeated keys. Write replies are checked for `writeErrors` and `writeConcernError`. A Doc chunk holds at most 32 MiB.
 - Every command is tagged with a comment. Cancel finds the operations carrying the session's tags with `$currentOp` and stops each with `killOp`.
@@ -362,9 +362,9 @@ Variables (`const x = 1`), functions, arrow functions, unknown `db.` methods (`d
 
 ### The sidecar protocol
 
-The sidecar protocol, version **1.0.0**, is the contract between the app and a Sidecar driver. A driver written in Rust gets it from the driver SDK; a driver in any other language implements it from this section.
+The sidecar protocol, version **1.1.0**, is the contract between the app and a Sidecar driver. A driver written in Rust gets it from the driver SDK; a driver in any other language implements it from this section.
 
-**Scope.** Protocol 1 serves relational drivers: the requests below carry the relational operations, ping, browse and cancel. A Sidecar driver therefore belongs to the Relational Family.
+**Scope.** Protocol 1 serves Relational and Document drivers: the requests below carry the relational operations, the Document operations, ping, browse and cancel. A Sidecar driver therefore belongs to the Relational or the Document Family. Version 1.1 added the Document operations, additively; the Key-value Family has no protocol operations yet.
 
 #### Transport and framing
 
@@ -385,7 +385,7 @@ A frame holds at most **64 MiB** (`length` ≤ 67,108,864). A reader never alloc
 |---|---|
 | `0x01` control | MessagePack, with named fields, of a request (app to driver) or a response (driver to app) |
 | `0x02` result chunk | A Result chunk in the binary encoding below, sent before the control reply of a `Fetch` |
-| `0x03` document chunk | A Doc chunk in the binary encoding below; reserved, protocol 1 sends none and the app ignores it with a warning |
+| `0x03` document chunk | A Doc chunk in the binary encoding below, sent before the control reply of a document fetch (protocol 1.1) |
 | `0x04` log line | UTF-8 text, written to the app log with the driver id prefix |
 
 Every request carries a fresh id, and every frame answering it carries the same id. Requests are served concurrently, so a `Cancel` can arrive while an `Execute` is running. A request whose payload does not decode is answered with a `Protocol` error.
@@ -406,6 +406,8 @@ sequenceDiagram
 
 The app sends `Hello { protocol, sqlr_version }`; the driver answers `Welcome { protocol, manifest }` with its Driver manifest. Protocol versions are semver: a different **major** version makes the app kill the process and refuse the driver with "Driver <id> speaks protocol X, sqlr speaks Y". The handshake must complete within **10 seconds**; otherwise the process is killed and the driver fails with a `Timeout` error. Any other answer to `Hello` is a protocol error.
 
+**Minor versions.** Within major version 1 a driver and the app interoperate whatever their minor versions are. A driver that answers `Welcome` with protocol 1.0 never receives a Document request, and a relational driver of any minor version works as before. A driver whose manifest declares the Document Family must answer with protocol 1.1 or newer; the app refuses a Document driver that answers lower with "Driver <id> speaks protocol X, sqlr needs 1.1 for a Document driver".
+
 #### Requests
 
 | Request | Answer |
@@ -422,18 +424,27 @@ The app sends `Hello { protocol, sqlr_version }`; the driver answers `Welcome { 
 | `Describe { conn, table }` | `Table(…)` |
 | `Catalog { conn, schema }` | `Catalog(…)` |
 | `TakeNotices { conn }` | `Notices([…])` |
+| `Run { conn, database?, text }` | A Document driver's statement: `DocStream { stream }` (documents), `Rows { stream, columns }` (tabular), `Written { matched, modified, inserted, deleted, ids }` or `Value(doc)` |
+| `FetchDocs { stream, max }` | zero or more document chunk frames, then `FetchDone { exhausted }` |
+| `CloseDocStream { stream }` | `Ok` |
+| `ReplaceDoc { conn, target, id, doc }`, `InsertDoc { conn, target, doc }`, `DeleteDoc { conn, target, id }` | `Written` for a replace, `Value(id)` for an insert, `Affected(n)` for a delete |
+| `IsView { conn, target }` | `Bool` |
+| `Indexes { conn, target }` | `Docs([…])` |
+| `SetReadOnly { conn, on }` | `Ok`; later writes of the connection obey the flag |
 | `Disconnect { conn }` | `Ok`; closes the connection's streams |
 | `Shutdown` | `Ok`; the driver then exits |
 
 Connection ids (`conn`) are chosen by the app. `Connected` answers after the driver pinged the new connection; `dialect` is present for relational drivers. `Disconnect` also aborts a `Connect` of the same id that is still pending.
 
-Any request may be answered by `Error { kind, message, position, hint }`, which carries a driver error with the kinds listed above. A request a driver without a relational interface receives is answered with `Unsupported`; a request naming an unknown connection or stream with `Protocol`.
+Any request may be answered by `Error { kind, message, position, hint }`, which carries a driver error with the kinds listed above. A relational request sent to a driver without a relational interface, and a Document request sent to a driver without a document interface, are answered with `Unsupported`; a request naming an unknown connection or stream with `Protocol`.
 
-**Secrets cross the pipe only inside `Connect`.** The app's protocol log prints their keys, never their values, and the readable form of an `Execute` shows the SQL length and parameter count, never the SQL or the values.
+**Secrets cross the pipe only inside `Connect`.** The app's protocol log prints their keys, never their values, and the readable form of an `Execute` shows the SQL length and parameter count, never the SQL or the values, and the readable form of a `Run`, `ReplaceDoc`, `InsertDoc` or `DeleteDoc` shows the statement length or the target, never the text, ids or documents.
 
 #### Streams
 
 `Execute` of a query returns a stream id and the result's columns. `Fetch { stream, max }` asks for up to `max` rows: the driver answers with result chunk frames and then `FetchDone`. A chunk that would pass the frame limit is split in halves until every part fits; a single row larger than a frame fails the fetch with "a row is larger than the 64 MiB frame limit of the sidecar protocol; select fewer or smaller columns". `exhausted: true` means no more rows, and the app then sends no `Fetch` or `CloseStream` for that stream. A chunk whose columns differ from the stream's columns is a protocol violation: the app kills the process.
+
+**Document streams.** `Run` of a Document driver returns a document stream, a row stream (read with `Fetch` like a relational stream), a write outcome or a single value. `FetchDocs { stream, max }` answers with document chunk frames and then `FetchDone`; the frame limit, the halving of an oversized chunk and `exhausted` work as for result chunks, and a single document larger than a frame fails the fetch with "a document is larger than the 64 MiB frame limit of the sidecar protocol". Documents, ids and values cross the pipe in the Doc value encoding. Statement splitting, statement classification, the text a new query tab opens with and the target a Node stands for are computed by the app from the manifest's query language and the Node returned by `Browse`; they cost no request.
 
 #### Dialect over the wire
 
@@ -533,7 +544,9 @@ The optional operations (describe, catalog, bound parameters, introspection, adm
 - `type_matrix` (when type cases are given);
 - `describe_for_editing` (when `editable_results` is declared): the table's description lists its columns.
 
-A driver passes when nothing failed. It runs the suite in process first, then through the sidecar client, which must report the same passes. The Bundled relational drivers run it in their tests against the shared test services.
+A Document driver runs the document section of the suite against a target holding documents with known `_id`s: `run_each_outcome` (a statement that returns documents, one that returns rows, a write and a single value), `page_documents`, `write_by_id` (insert returns the id, replace changes the document, delete removes it), `is_view`, `indexes`, `read_only` (writes fail once it is on) and `cancel` (when `server_cancel` is declared).
+
+A driver passes when nothing failed. It runs the suite in process first, then through the sidecar client, which must report the same passes. The Bundled relational drivers run it in their tests against the shared test services, and the MongoDB driver runs the document section against the MongoDB service.
 
 **Packing and installing.** A release build is packed into a Driver archive (see below) and installed with **Install from file…** in the Driver Manager.
 
@@ -560,7 +573,7 @@ Installs run as jobs with progress ("Installing… N%"), a failure message with 
 
 ### Release downloads
 
-The primary install source is the sqlr GitHub release of the running app's version (tag `v<version>`). The release workflow builds and packs every installable driver of the Known databases (`hana`, `duckdb`, `jdbc`, `jdbc-db2`, `jdbc-clickhouse`, `jdbc-h2`) for every platform, as `sqlr-driver-<id>_<version>_<os>-<arch>.tar.gz` (for example `macos-aarch64`, `linux-x86_64`, `windows-x86_64`), listed in the release's `SHA256SUMS.txt`. Every packed driver has the release's version. The app reads no remote index and runs no background check: nothing is fetched until the user clicks **Download and install** or **Update to <version>**.
+The primary install source is the sqlr GitHub release of the running app's version (tag `v<version>`). The release workflow builds and packs every installable driver of the Known databases (`hana`, `duckdb`, `mongodb`, `jdbc`, `jdbc-db2`, `jdbc-clickhouse`, `jdbc-h2`) for every platform, as `sqlr-driver-<id>_<version>_<os>-<arch>.tar.gz` (for example `macos-aarch64`, `linux-x86_64`, `windows-x86_64`), listed in the release's `SHA256SUMS.txt`. Every packed driver has the release's version. The app reads no remote index and runs no background check: nothing is fetched until the user clicks **Download and install** or **Update to <version>**.
 
 A download:
 
@@ -652,6 +665,7 @@ flowchart LR
 - **Nothing is kept unless the driver answers its handshake.** An archive that unpacks but does not start is worse than none.
 - **Several versions on disk with an `active` pointer.** Rollback is instant and needs no download.
 - **No sandbox for Sidecar drivers.** A driver needs network and file access and receives passwords anyway; the review step and the release's provenance are the trust boundary.
+- **MongoDB is a sidecar, and the protocol grew to carry the Document Family.** The official MongoDB client is the heaviest database dependency of the app, and most users never use MongoDB. Protocol 1.1 adds the Document operations additively, so a 1.0 driver and a 1.0 app keep working and a later Document driver (Elasticsearch) can follow without another protocol change. The synchronous parts of the Document interface (splitting, classifying, the target of a Node) run in the app from the manifest's query language, because a request per keystroke would cost more than the logic it moves. A saved Connection of an uninstalled driver offers the install and the download starts only on a click, as for every other Sidecar driver.
 - **DuckDB and SAP HANA are sidecars.** DuckDB's engine alone would break the 75 MB size budget. HANA's `hdbconnect` has essentially one maintainer and a slow release cadence: as a sidecar it can be replaced transparently by a driver built on `SAP/go-hdb` if maintenance stalls.
 - **DuckDB results containing nanosecond times use fallible Arrow batches.** The native row decoder lacks this temporal type. Reading batches directly preserves nanoseconds and returns fetch errors, including cancellation, through the Driver interface; other results retain native row decoding.
 - **Snowflake is bundled over its SQL API.** It needs no Java, JDBC or ODBC and works over HTTPS with rustls; the price is independent auto-commit requests with no durable session.
