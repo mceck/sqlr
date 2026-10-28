@@ -87,7 +87,7 @@ Quitting sqlr also stops the terminal process group. A shell that has exited sho
 | Paste | ⌘V | Ctrl+Shift+V |
 | Interrupt command | Ctrl+C | Ctrl+C |
 
-In **Settings… → Terminal**, an empty **Shell command** uses your login shell. An empty **Working directory** uses sqlr's configuration `terminal` folder, containing an `AGENTS.md` that is yours to edit and the sqlr skills, which sqlr keeps current. **Font size** applies immediately; restart the shell for the remaining terminal changes.
+In **Settings… → Terminal**, an empty **Shell command** uses your login shell. An empty **Working directory** uses sqlr's configuration `terminal` folder, containing an `AGENTS.md` and the sqlr skills. sqlr keeps the skills and the marked section of `AGENTS.md` current; add your own instructions outside the markers. **Font size** applies immediately; restart the shell for the remaining terminal changes.
 
 Terminal output and the configured shell command are excluded from logging. MCP cannot read or control this terminal. sqlr does not start an agent automatically or put the MCP token in the shell environment. An agent you launch there reaches sqlr through its installation from **Settings → Agents**, and uses the same connection access rules as any other MCP client.
 

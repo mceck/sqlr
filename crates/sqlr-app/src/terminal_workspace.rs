@@ -102,22 +102,42 @@ fn prepare(config_dir: &Path, skills: &[Skill]) -> std::io::Result<PathBuf> {
         builder.mode(0o700);
     }
     builder.create(&directory)?;
-    match std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(directory.join("AGENTS.md"))
-    {
-        Ok(mut file) => {
-            use std::io::Write;
-            file.write_all(include_str!("terminal_agents.md").as_bytes())?;
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-        Err(error) => return Err(error),
-    }
+    sync_agents_file(&directory.join("AGENTS.md"))?;
     link_claude_guidance(&directory)?;
     sync_skills(&directory, skills)?;
     remove_generated_mcp_config(&directory);
     Ok(directory)
+}
+
+const AGENTS_BEGIN: &str = "<!-- sqlr:begin -->";
+const AGENTS_END: &str = "<!-- sqlr:end -->";
+
+/// Keeps the section between the sqlr markers current. A missing file gets the template, a
+/// file without the section gets it on top, and everything outside the markers is the
+/// person's and stays untouched.
+fn sync_agents_file(path: &Path) -> std::io::Result<()> {
+    let section = include_str!("terminal_agents.md").trim_end();
+    let current = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return std::fs::write(path, format!("{section}\n"));
+        }
+        Err(error) => return Err(error),
+    };
+    let marked = current.find(AGENTS_BEGIN).and_then(|start| {
+        Some((
+            start,
+            start + current[start..].find(AGENTS_END)? + AGENTS_END.len(),
+        ))
+    });
+    let updated = match marked {
+        Some((start, end)) => format!("{}{section}{}", &current[..start], &current[end..]),
+        None => format!("{section}\n\n{current}"),
+    };
+    if updated != current {
+        std::fs::write(path, updated)?;
+    }
+    Ok(())
 }
 
 /// Claude Code reads `CLAUDE.md`, not `AGENTS.md`: keep one guide, linked under both names.
@@ -339,10 +359,7 @@ mod tests {
         second.start(config_dir.path(), &ctx);
         let second_path = wait_ready(&mut second);
         assert_eq!(first_path, second_path);
-        assert_eq!(
-            std::fs::read_to_string(second_path.join("AGENTS.md")).unwrap(),
-            "user additions"
-        );
+        assert!(agents_file(&second_path).ends_with("\nuser additions"));
         assert_eq!(
             std::fs::read_to_string(second_path.join("scratch.sql")).unwrap(),
             "select 1"
@@ -355,12 +372,57 @@ mod tests {
         let directory = prepare(config_dir.path(), SKILLS).unwrap();
         let guide = std::fs::read_to_string(directory.join("AGENTS.md")).unwrap();
         assert_eq!(guide, include_str!("terminal_agents.md"));
-        for required in ["Settings → Agents", "Install", "sqlr-*", "never rewrites"] {
+        for required in [
+            "Settings → Agents",
+            "Install",
+            "sqlr-*",
+            "outside the markers",
+        ] {
             assert!(guide.contains(required), "missing {required}: {guide}");
         }
         for stale in ["get_guide", ".mcp.json", "Bearer"] {
             assert!(!guide.contains(stale), "stale {stale}: {guide}");
         }
+    }
+
+    fn agents_file(directory: &Path) -> String {
+        std::fs::read_to_string(directory.join("AGENTS.md")).unwrap()
+    }
+
+    #[test]
+    fn the_sqlr_section_is_refreshed_and_the_text_around_it_is_kept() {
+        let config_dir = tempfile::tempdir().unwrap();
+        let directory = config_dir.path().join("terminal");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("AGENTS.md"),
+            format!("before\n\n{AGENTS_BEGIN}\nstale\n{AGENTS_END}\n\nafter\n"),
+        )
+        .unwrap();
+        prepare(config_dir.path(), SKILLS).unwrap();
+        let section = include_str!("terminal_agents.md").trim_end();
+        assert_eq!(
+            agents_file(&directory),
+            format!("before\n\n{section}\n\nafter\n")
+        );
+    }
+
+    #[test]
+    fn a_file_without_the_section_gets_it_on_top_of_the_person_text() {
+        let config_dir = tempfile::tempdir().unwrap();
+        let directory = config_dir.path().join("terminal");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(directory.join("AGENTS.md"), "mine\n").unwrap();
+        prepare(config_dir.path(), SKILLS).unwrap();
+        let text = agents_file(&directory);
+        assert!(text.starts_with(AGENTS_BEGIN), "{text}");
+        assert!(text.ends_with("\nmine\n"), "{text}");
+        prepare(config_dir.path(), SKILLS).unwrap();
+        assert_eq!(
+            agents_file(&directory),
+            text,
+            "a second run changes nothing"
+        );
     }
 
     #[test]

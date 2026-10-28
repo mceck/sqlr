@@ -1,3 +1,4 @@
+<!-- sqlr:begin -->
 # sqlr terminal workspace
 
 This folder is the working directory of sqlr's integrated terminal, inside sqlr's
@@ -19,5 +20,6 @@ are yours.
 
 ## This file
 
-This file belongs to you: sqlr creates it only when it is missing and never rewrites it,
-so add your own instructions here.
+sqlr maintains only the part between the `sqlr:begin` and `sqlr:end` markers and
+rewrites it when it changes. Add your own instructions outside the markers.
+<!-- sqlr:end -->
