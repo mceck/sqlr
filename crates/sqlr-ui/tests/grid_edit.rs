@@ -484,6 +484,30 @@ fn command_z_undoes_an_inline_cell_edit() {
 }
 
 #[test]
+fn command_z_in_the_cell_editor_never_brings_back_another_cell() {
+    let mut h = harness_with(sequential(5), false, Some(editable()));
+    double_click(&mut h, "name 1");
+    h.event(Event::Text("first".into()));
+    h.run_steps(150);
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    double_click(&mut h, "name 2");
+    h.event(Event::Text("second".into()));
+    h.run_steps(150);
+    for _ in 0..5 {
+        press(&mut h, Modifiers::COMMAND, Key::Z);
+        h.run_steps(150);
+    }
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    let app = h.state();
+    let edits = app.state.edits.as_ref().unwrap();
+    // Undo inside the editor stops at the cell's own value.
+    assert_eq!(
+        edits.value(&app.rows, 2, 1),
+        Some(Value::Text("name 2".into()))
+    );
+}
+
+#[test]
 fn invalid_number_keeps_the_editor_open() {
     let mut h = harness_with(sequential(5), false, Some(editable()));
     double_click(&mut h, "2");

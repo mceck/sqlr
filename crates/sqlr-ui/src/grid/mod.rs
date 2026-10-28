@@ -151,6 +151,8 @@ struct CellEditor {
     select_all: bool,
     /// Opened by typing: the caret goes after the typed text instead of selecting it.
     typed: bool,
+    /// Just opened: its text field starts with an empty undo history.
+    fresh: bool,
 }
 
 /// What the grid shows this frame.
@@ -1516,6 +1518,7 @@ fn open_editor_with(
         row,
         col,
         typed: typed.is_some(),
+        fresh: true,
         text: typed.unwrap_or_else(|| edit::edit_text(&value)),
         error: None,
         focus: true,
@@ -1543,6 +1546,10 @@ fn cell_editor(
     let Some(ed) = state.editor.as_mut() else {
         return;
     };
+    if std::mem::take(&mut ed.fresh) {
+        // Every cell shares the field's id: drop the undo history of the previous cell.
+        egui::text_edit::TextEditState::default().store(ui.ctx(), id);
+    }
     let mut edit = TextEdit::singleline(&mut ed.text)
         .id(id)
         .font(font.clone())
