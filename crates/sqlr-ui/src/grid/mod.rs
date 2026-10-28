@@ -483,11 +483,13 @@ impl GridState {
             .map_err(CellEditError::from)
             .and_then(|value| {
                 let edits = self.edits.as_mut().ok_or(EditError::ResultNotEditable)?;
+                let before = edits.clone();
                 edits.set(rows, row, col, value.clone())?;
-                Ok(value)
+                Ok((before, value))
             });
         match outcome {
-            Ok(value) => {
+            Ok((before, value)) => {
+                self.record_edits(before);
                 self.actions.push(GridAction::SetCell { row, col, value });
                 self.editor = None;
                 self.refocus = true;

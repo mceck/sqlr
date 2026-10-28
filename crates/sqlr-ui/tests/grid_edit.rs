@@ -465,6 +465,25 @@ fn typing_on_a_read_only_grid_opens_no_editor() {
 }
 
 #[test]
+fn command_z_undoes_an_inline_cell_edit() {
+    let mut h = harness_with(sequential(5), false, Some(editable()));
+    double_click(&mut h, "name 1");
+    h.event(Event::Text("renamed".into()));
+    h.run_steps(2);
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert_eq!(h.state().state.edits.as_ref().unwrap().pending(), 1);
+    press(&mut h, Modifiers::COMMAND, Key::Z);
+    assert_eq!(h.state().state.edits.as_ref().unwrap().pending(), 0);
+    h.get_by_label("name 1");
+    press(&mut h, Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
+    let app = h.state();
+    assert_eq!(
+        app.state.edits.as_ref().unwrap().value(&app.rows, 1, 1),
+        Some(Value::Text("renamed".into()))
+    );
+}
+
+#[test]
 fn invalid_number_keeps_the_editor_open() {
     let mut h = harness_with(sequential(5), false, Some(editable()));
     double_click(&mut h, "2");
