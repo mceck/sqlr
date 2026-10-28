@@ -168,6 +168,9 @@ The relations, aliases and common-table-expression names of the statement around
 **Palette**:
 The command palette: open object (⌘P) and run command (⌘⇧P).
 
+**Recent object**:
+A relation whose data the user opened lately, listed first by the object Palette even while its Connection is closed. The last 20 are kept.
+
 **Operations panel**:
 The panel that lists every Operation with its state and a Cancel action.
 

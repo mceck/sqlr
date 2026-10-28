@@ -236,6 +236,11 @@ pub trait Dialect: Send + Sync {
     fn default_schemas(&self) -> Vec<String> {
         Vec::new()
     }
+    /// Whether `schema` holds only the server's own objects (PostgreSQL's `pg_catalog` and
+    /// `information_schema`), which the object Palette leaves out.
+    fn is_system_schema(&self, _schema: &str) -> bool {
+        false
+    }
     /// Whether the server keeps databases and schemas at the same level (MySQL), so a
     /// database name is also a schema name.
     fn database_is_schema(&self) -> bool {

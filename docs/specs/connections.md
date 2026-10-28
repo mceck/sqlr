@@ -23,7 +23,7 @@ The connection dialog creates and edits Connections. Its left list shows the sav
 - When the dialog opens an existing Connection, its stored secrets are read on the store worker and fill the empty secret fields when they arrive. If the vault cannot be read, the dialog says so and saving keeps whatever the vault holds: only secrets that were read and then emptied are deleted.
 - Saving an edited Connection that is connected reconnects it with the new settings once the new listing arrives. A changed configuration or secret closes the Connection's Editor sessions opened with the old ones.
 - **Duplicate** saves a copy right after the original, named "`<name>` copy", then "`<name>` copy 2" and so on (compared case-insensitively), with the original's stored secrets when it saves them.
-- **Delete** asks for confirmation, removes the Connection from the explorer at once, disconnects it, drops its Catalog cache and recent entry, then deletes it and its secret fields on the store worker. A failed delete lists it again.
+- **Delete** asks for confirmation, removes the Connection from the explorer at once, disconnects it, drops its Catalog cache, recent entry and recent objects, then deletes it and its secret fields on the store worker. A failed delete lists it again.
 
 When "Save password" is off, connecting asks for the secrets in a "Connect to `<name>`" prompt: the Driver's secret fields, plus the SSH password or key passphrase when the tunnel uses that method. Entered secrets stay in memory until sqlr quits. A run that triggered the connect starts once the prompt is answered; Cancel drops the connect.
 
@@ -128,7 +128,7 @@ Every secret lives in `secrets.vault` in the config directory. One vault instanc
 | `profiles.toml` | config directory | user Connection profiles and overrides of the built-in ones |
 | `secrets.vault`, `secrets.vault.lock` | config directory | the Credential vault and its lock |
 | `known_hosts` | data directory | SSH host keys learned with "Trust new host keys" |
-| `sqlr.db` | data directory | History, Snippets, Catalog cache, layouts, recent Connections |
+| `sqlr.db` | data directory | History, Snippets, Catalog cache, layouts, recent Connections, recent objects |
 | `demo.sqlite` | data directory | the Demo database |
 
 `connections.toml` has a layout version. A file without one is shown sorted by Folder and name until its first write records an explicit order. Every write goes through a uniquely named temporary file and a rename, so concurrent saves leave one whole file. `profiles.toml` stores only user profiles and overrides: the built-in profiles are never written, and resetting a built-in deletes its override. A user profile used by any Connection cannot be deleted. A Connection naming an unknown profile follows Development. The config and data directories default to the platform's application directories and can be set with `--config-dir` and `--data-dir`.

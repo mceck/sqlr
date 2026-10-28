@@ -12,8 +12,8 @@ use parking_lot::{Mutex, RwLock};
 use sqlr_core::{
     CancelHandle, CatalogNeed, Changeset, CommitMode, Connection, ConnectionConfig,
     ConnectionProfile, Driver, DriverError, DriverManifest, DumpOptions, ErrorKind, Execution,
-    HistoryQuery, Node, NodePath, RestoreOptions, RowBuffer, Secrets, Snippet, TableInfo, TableRef,
-    TextFormat,
+    HistoryQuery, Node, NodePath, RecentObject, RestoreOptions, RowBuffer, Secrets, Snippet,
+    TableInfo, TableRef, TextFormat,
 };
 use sqlr_store::Db;
 use tokio::sync::Notify;
@@ -1210,7 +1210,20 @@ impl Engine {
         self.shared.recent()
     }
 
-    /// Forgets a deleted connection's recent use.
+    /// Relations whose data was opened lately, most recent first, at most
+    /// [`sqlr_store::RECENT_OBJECTS_KEEP`]: loaded from `sqlr.db` at startup and updated by
+    /// [`Engine::touch_recent_object`].
+    pub fn recent_objects(&self) -> Arc<Vec<RecentObject>> {
+        self.shared.recent_objects()
+    }
+
+    /// Records that `object`'s data was just opened (its time is set to now); ignored for
+    /// transient sessions.
+    pub fn touch_recent_object(&self, object: RecentObject) {
+        self.shared.touch_recent_object(object);
+    }
+
+    /// Forgets a deleted connection's recent use and its recently opened relations.
     pub fn forget_recent(&self, conn_id: &str) {
         self.shared.forget_recent(conn_id);
     }

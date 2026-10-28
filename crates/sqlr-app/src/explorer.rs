@@ -18,10 +18,8 @@ impl SqlrApp {
             self.notify(format!("Cannot open the data of {}", node.name));
             return;
         };
-        let title = match &database {
-            Some(db) => format!("{} ({db})", node.name),
-            None => node.name.clone(),
-        };
+        self.remember_opened(conn, database.clone(), node);
+        let title = crate::palette::data_tab_title(&node.name, database.as_deref());
         self.open_and_run(title, conn, database, &sql);
     }
 

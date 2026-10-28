@@ -13,6 +13,7 @@ mod layered;
 mod mcp_token;
 mod profiles;
 mod recent;
+mod recent_objects;
 mod secrets;
 mod settings;
 mod snippets;
@@ -29,6 +30,7 @@ pub use mcp_token::{
     KeyringMcpTokenStore, MCP_TOKEN_ACCOUNT, MCP_TOKEN_SERVICE, McpTokenStore, MemoryMcpTokenStore,
 };
 pub use profiles::ProfileRepo;
+pub use recent_objects::RECENT_OBJECTS_KEEP;
 pub use secrets::{KeyringStore, MemorySecretStore, SecretStore};
 pub use settings::{
     CONNECT_TIMEOUTS_S, DEFAULT_MCP_PORT, MCP_PORTS, MONO_FONT_SIZES, PAGE_SIZES,

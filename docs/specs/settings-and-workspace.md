@@ -98,9 +98,16 @@ The quick-start cards open the demo database for someone just exploring, and the
 
 The Palette opens with `⌘P` for objects or `⇧⌘P` for commands, and from the toolbar's search field.
 
-The object Palette searches every Catalog of every connected Connection: relations and document collections. The command Palette searches app commands, snippets and history. Each result shows its group heading, Commands, Snippets or History, its icon, its name and its shortcut when it has one.
+The object Palette lists two kinds of items, in this order:
 
-Matching is case-insensitive fuzzy matching with accents normalized when the query has none. An empty query lists the first 50 items in order. The history search contributes up to 20 matches. The list is capped at 50 rows.
+- **Recent objects**: the last 20 relations whose data opened in an Editor tab, from the Palette, from the Explorer's Open data or from an agent's show in app, most recent first. They stay listed while their Connection is closed; choosing one connects it and opens the data. Only relations of relational Connections are recorded. A deleted Connection's recent objects are forgotten.
+- **Objects of live Connections**: every relation (table, view, materialized view) in every schema of each connected or connecting Connection, sorted by Connection name, then by name, and every document collection the Explorer has loaded. When the Explorer lists the server's databases (PostgreSQL with "Show all databases"), the relations of each other database are listed too. Schemas the Dialect names as system ones are left out: PostgreSQL's `pg_catalog` and `information_schema`, Snowflake's `INFORMATION_SCHEMA`, and the users Oracle creates for its own components (`SYS`, `SYSTEM`, `XDB` and the like). MySQL and SQL Server leave their system schemas out of the schema list already. A relation that is also a recent object is listed once, as a recent object.
+
+Each object shows `schema.name`, or `database.schema.name` for another database, followed by the Connection's name and the object's kind. Opening the Palette, and every change to what it lists while it is open, asks for the pieces it misses: the Explorer root of each live Connection (to learn its databases, asked once like the Explorer does), each database's schema list and the catalog of every schema. A piece that failed stays failed. The list fills in as the pieces arrive. Closed Connections contribute only their recent objects; their cached Catalogs feed autocomplete and are not listed.
+
+The command Palette searches app commands, snippets and history. Each result shows its group heading, Commands, Snippets or History, its icon, its name and its shortcut when it has one. The object Palette shows the Recent and Objects headings while the query is empty and recent objects exist.
+
+Matching is case-insensitive fuzzy matching with accents normalized when the query has none. Equal scores keep the listing order, so recent objects come first. An empty query lists the first 50 items in order. The history search contributes up to 20 matches. The list is capped at 50 rows.
 
 The window is 600 pixels wide, near the top of the screen, with the list at most 420 pixels high. Up and down move the selection, Enter chooses, Escape closes, and a click outside closes. `⌘↵` on an object opens its structure in the Objects editor. The footer names the shortcut that opened the Palette.
 
@@ -324,7 +331,7 @@ The Preferences window is a pure widget over a working copy of the settings. It 
 
 The theme is a palette derived from the theme choice and the accent, applied to the toolkit context every frame, with the spacing scale and font sizes from the settings. Fonts are installed once, with the bundled faces and the lazy system fallbacks.
 
-The command Palette is a widget over a list of items the app rebuilds when the Catalogs or the history change: fuzzy ranking in the interface layer, actions in the app. Commands carry the same Action identifiers as the Keymap, and the native menu builds its accelerators from the Keymap.
+The command Palette is a widget over a list of items the app rebuilds when the Catalogs, the Explorer roots of live Connections, the recent objects or the history change: fuzzy ranking in the interface layer, actions in the app. The engine keeps the recent objects in memory, loads them from `sqlr.db` at startup and writes each change behind on its `sqlr.db` worker. Commands carry the same Action identifiers as the Keymap, and the native menu builds its accelerators from the Keymap.
 
 Updates are a background state machine in the app: idle, checking, offering, downloading, verifying, installing, installed or failed. It owns the network client, the redirect and host checks, the size limits, the checksum verification and the platform install steps, and it writes its state file through the background worker.
 
@@ -338,6 +345,7 @@ Updates are a background state machine in the app: idle, checking, offering, dow
 - **Keymap**: preset name and the bindings that differ from the preset, each an Action identifier with a chord sequence.
 - **Update state**: last check time and skipped version.
 - **Palette item**: identifier, group, label, icon, shortcut and the action it runs.
+- **Recent object**: Connection id, database (empty for the Connection's own), schema, name, kind and when its data was last opened. At most 20 are kept, the oldest dropped first.
 - **Welcome card**: database identifier, name, detail line, install flag and icon.
 
 ## Non-functional requirements
@@ -367,6 +375,9 @@ Updates are a background state machine in the app: idle, checking, offering, dow
 - **Conflicts only when scopes overlap.** The same chord can legitimately mean different things in the Editor, the Result grid and the Explorer (⌘D selects the next occurrence in the editor and duplicates rows in the grid), so conflict detection compares scopes rather than the whole window.
 - **A custom accent with contrast correction.** Users want their own color, and an unreadable button is worse than a slightly adjusted brand color.
 - **Bundled fonts with lazy system fallbacks.** A consistent interface does not depend on what is installed, and CJK or emoji text still renders without loading megabytes of fallback fonts at startup.
+- **The object Palette lists live Connections plus recent objects.** Listing every cached Catalog put tables of Connections the user was not working with at the top in an arbitrary order. A live Connection is what the user is working on, so all of it is listed; the recent objects are what the user is likely to reopen, so they come first and survive closing the Connection.
+- **Recent objects persist in `sqlr.db`, capped at 20.** They are useful right after a restart, before anything connects, and a short list keeps them relevant.
+- **Other databases follow the Explorer.** A Connection reaches other databases of the server only when it is configured to show them, so the Palette lists them exactly when the Explorer does, at the cost of one connection per database.
 - **The Palette over a separate command menu.** Keyboard users reach objects and commands without navigating menus, and fuzzy matching across all Connections is faster than expanding a tree.
 - **Updates verified against the release checksums.** An update replaces the running application, so a truncated or substituted download must be rejected before it is installed.
 - **A daily check that fails silently.** A database client must start without a network, and a failed update check is not something the user needs to act on.

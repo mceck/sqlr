@@ -8,7 +8,8 @@ use egui_kittest::kittest::{By, NodeT, Queryable};
 use sqlr_app::{AppDeps, SqlrApp};
 use sqlr_core::{
     CatalogColumn, CatalogRelation, ConnectionConfig, ConnectionProfile, DriverError, ErrorKind,
-    HistoryEntry, HistoryOutcome, Node, NodeKind, NodePath, RelationKind, SchemaCatalog, Secrets,
+    HistoryEntry, HistoryOutcome, Node, NodeKind, NodePath, RecentObject, RelationKind,
+    SchemaCatalog, Secrets,
 };
 use sqlr_engine::{DriverRegistry, Engine, ReleaseSource};
 use sqlr_store::{ConnectionRepo, Db, MemorySecretStore, Settings};
@@ -546,6 +547,135 @@ fn palette_opens_object() {
         driver.executed().len() == before + 1
     });
     assert_eq!(h.state().tab_titles(), ["Query 1", "orders", "orders"]);
+}
+
+/// A harness whose engine library is backed by `db`, with an empty editor tab open.
+fn harness_on_db(
+    dir: &tempfile::TempDir,
+    script: FakeScript,
+    db: Arc<Db>,
+) -> (Harness<'static, SqlrApp>, Arc<FakeDriver>) {
+    let (deps, driver) = deps_with_db(dir.path(), script, Some(db));
+    let app = SqlrApp::new(deps, &egui::Context::default());
+    let mut h = Harness::builder()
+        .with_size((1400.0, 900.0))
+        .with_step_dt(0.01)
+        .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    h.run_steps(2);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::T);
+    h.run_steps(2);
+    (h, driver)
+}
+
+fn recent_table(schema: &str, name: &str) -> RecentObject {
+    RecentObject {
+        conn_id: "c1".into(),
+        database: None,
+        schema: schema.into(),
+        name: name.into(),
+        kind: RelationKind::Table,
+        used_at_ms: 1,
+    }
+}
+
+#[test]
+fn palette_lists_recent_objects_of_closed_connections_but_not_their_cached_catalog() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = Arc::new(Db::open_in_memory().unwrap());
+    db.save_schema_catalog("c1", &catalog()[0]).unwrap();
+    db.touch_recent_object(&recent_table("s", "archived"))
+        .unwrap();
+    let (mut h, driver) = harness_on_db(&dir, FakeScript::default(), db);
+    press(&mut h, Modifiers::COMMAND, Key::P);
+    // The recent objects load after the catalog cache is restored.
+    wait_for_label(&mut h, "s.archived");
+    h.run_steps(5);
+    h.get_by_label("Recent");
+    assert!(
+        h.query_by_label("s.orders").is_none(),
+        "a closed connection's cached catalog is listed"
+    );
+    // Choosing it connects and opens its data.
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    step_until(&mut h, "the recent object's query to run", |_| {
+        !driver.executed().is_empty()
+    });
+    assert_eq!(h.state().tab_titles(), ["Query 1", "archived"]);
+}
+
+#[test]
+fn palette_opens_a_recent_object_of_another_database_on_that_database() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = Arc::new(Db::open_in_memory().unwrap());
+    db.touch_recent_object(&RecentObject {
+        database: Some("other".into()),
+        ..recent_table("s", "orders")
+    })
+    .unwrap();
+    let script = FakeScript {
+        databases: vec!["other".into()],
+        ..FakeScript::default()
+    };
+    let (mut h, driver) = harness_on_db(&dir, script, db);
+    press(&mut h, Modifiers::COMMAND, Key::P);
+    wait_for_label(&mut h, "other.s.orders");
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    step_until(&mut h, "the recent object's query to run", |_| {
+        !driver.executed_on().is_empty()
+    });
+    assert_eq!(
+        driver.executed_on().last().map(|(db, _)| db.clone()),
+        Some(Some("other".to_string()))
+    );
+    assert_eq!(h.state().tab_titles(), ["Query 1", "orders (other)"]);
+}
+
+#[test]
+fn palette_lists_every_schema_and_other_database_of_a_live_connection() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = NodePath::root();
+    let audit = node(&root, "audit", NodeKind::Schema, true);
+    let other = node(&root, "other", NodeKind::Database, true);
+    let column = CatalogColumn {
+        name: "id".into(),
+        type_name: "int4".into(),
+    };
+    let mut schemas = catalog();
+    schemas.push(SchemaCatalog {
+        schema: "audit".into(),
+        relations: vec![CatalogRelation {
+            name: "events".into(),
+            kind: RelationKind::Table,
+            columns: vec![column],
+        }],
+    });
+    let script = FakeScript {
+        tree: vec![audit, other],
+        catalog: schemas,
+        databases: vec!["other".into()],
+        ..FakeScript::default()
+    };
+    let (mut h, _) = harness_with_script(&dir, script);
+    h.get_by_label("Expand fake-conn").click();
+    wait_for_label(&mut h, "Expand audit");
+    press(&mut h, Modifiers::COMMAND, Key::P);
+    wait_for_label(&mut h, "s.orders");
+    wait_for_label(&mut h, "audit.events");
+    wait_for_label(&mut h, "other.s.orders");
+    wait_for_label(&mut h, "other.audit.events");
+}
+
+#[test]
+fn opening_a_table_remembers_it_for_the_palette() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = Arc::new(Db::open_in_memory().unwrap());
+    let (mut h, _) = harness_on_db(&dir, FakeScript::default(), db.clone());
+    open_orders(&mut h);
+    step_until(&mut h, "the opened table to be remembered", |_| {
+        db.recent_objects().unwrap().first().is_some_and(|o| {
+            (o.conn_id.as_str(), o.schema.as_str(), o.name.as_str()) == ("c1", "s", "orders")
+        })
+    });
 }
 
 #[test]

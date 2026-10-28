@@ -82,7 +82,7 @@ Details per Driver are in [Drivers](drivers.md).
 **Node menu.** Entries appear only where they apply:
 
 - **Open editor**: when the Node stands for an object the Driver edits (not for roles).
-- **Open data**: tables, views and materialized views. On a relational Connection it opens an Editor tab titled with the object (and its database when it is not the Connection's own) running the Dialect's `SELECT * FROM …` without a row limit; results page as usual. Document and key-value Nodes open their own views (see [Results and editing](results-and-editing.md)).
+- **Open data**: tables, views and materialized views. On a relational Connection it opens an Editor tab titled with the object (and its database when it is not the Connection's own) running the Dialect's `SELECT * FROM …` without a row limit; results page as usual, and the object becomes a Recent object in the Palette. Document and key-value Nodes open their own views (see [Results and editing](results-and-editing.md)).
 - **Open DDL**: when the Connection is connected, its Driver has object editing and the Node stands for an object.
 - **Import/Export ▸**: **Export data…** on tables and views (Redis: on databases, prefix groups and keys); **Import data…**, **Generate data…** and **Transfer data…** on relational tables (see [Data and schema tools](data-and-schema-tools.md)).
 - **ER diagram** and **Compare with…** on schema and database Nodes, when the Driver declares `dump`.
@@ -103,11 +103,11 @@ The Connection menu shows its Agent access level as a checked entry. Who may cha
 
 **What it holds.** Per Connection: the schema list (the schema Nodes under the Node path that holds the Connection's schemas) and, per schema, its relations with kind and columns (name and type), sorted by name. Catalogs of other databases of the same server (a tab bound to another database) are held per database too.
 
-**Lazy loading.** Autocomplete, the Palette and catalog pickers ask for the pieces they miss: the schema list, then the catalogs of the schemas an unqualified name resolves in (the Dialect's default schemas and the tab's schema). A load is ignored without a live or connecting explorer session, waits while the session is still connecting, and is a no-op while the same piece is loading or once it is loaded and fresh. A piece that failed is not asked for again automatically, so a missing schema is requested once. Each load is an Operation ("Catalog …") that the Operations panel can cancel. A load for another database opens a connection to that database when needed.
+**Lazy loading.** Autocomplete and catalog pickers ask for the pieces they miss: the schema list, then the catalogs of the schemas an unqualified name resolves in (the Dialect's default schemas and the tab's schema). The object Palette asks for the schema list and every schema's catalog, except the system schemas its Dialect names, of each live Connection and of each other database its Explorer lists (see [Settings and workspace](settings-and-workspace.md)). A load is ignored without a live or connecting explorer session, waits while the session is still connecting, and is a no-op while the same piece is loading or once it is loaded and fresh. A piece that failed is not asked for again automatically, so a missing schema is requested once. Each load is an Operation ("Catalog …") that the Operations panel can cancel. A load for another database opens a connection to that database when needed.
 
 **Persistence.** Loaded schema lists and schema catalogs of the Connection's own database are written to the local database (`sqlr.db`), one row per Connection for the schema list and one per Connection and schema for each catalog, in the order they were loaded, off the UI thread. Catalogs of other databases stay in memory for the current App session. A write failure is only logged. Rows that no longer parse are skipped on reading.
 
-**Startup from the cache.** At startup the stored catalogs are restored into memory before any write or delete can run, and marked as coming from the cache. Autocomplete and the Palette use them at once, before any Connection connects. When a Connection's explorer session comes up, every loaded entry is marked stale and every loaded or failed entry is reloaded in the background; the stale data stays visible until the new data lands.
+**Startup from the cache.** At startup the stored catalogs are restored into memory before any write or delete can run, and marked as coming from the cache. Autocomplete uses them at once, before any Connection connects; the Palette lists a Connection's Catalog once it is live. When a Connection's explorer session comes up, every loaded entry is marked stale and every loaded or failed entry is reloaded in the background; the stale data stays visible until the new data lands.
 
 **Invalidation.** A Connection's Catalog (in memory and in `sqlr.db`, for all its databases; loads in flight are dropped) is forgotten:
 
@@ -307,7 +307,7 @@ flowchart LR
 - Catalog and object queries are always parameterized; identifiers in generated DDL go through the Dialect's quoting, and expression fields (defaults, checks, view queries, routine bodies, partition bounds) are written as typed.
 - Whole-schema reads take a fixed number of queries per Driver whatever the number of objects (SQLite 1, Oracle 5, SQL Server 6, PostgreSQL 9, MySQL 10).
 - Passwords typed in role forms never reach logs, `Debug` output, previews, reports or error messages.
-- Autocomplete and the Palette work from the Catalog cache immediately at startup.
+- Autocomplete works from the Catalog cache immediately at startup, and the Palette lists recent objects immediately at startup.
 
 ## Decisions
 

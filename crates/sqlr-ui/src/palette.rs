@@ -25,6 +25,8 @@ pub enum PaletteMode {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PaletteGroup {
+    /// A recently opened object, listed before the others.
+    Recent,
     Object,
     Command,
     Snippet,
@@ -226,13 +228,16 @@ pub fn palette(
                         .max_height(MAX_LIST_HEIGHT)
                         .auto_shrink([false, true])
                         .show(ui, |ui| {
+                            // Object rows keep their groups together only unranked.
+                            let headed = state.mode == Some(PaletteMode::Commands)
+                                || (state.query.trim().is_empty()
+                                    && items.iter().any(|i| i.group == PaletteGroup::Recent));
                             let mut last_group = None;
                             for (row, &index) in listed.iter().enumerate() {
                                 let item = &items[index];
-                                if state.mode == Some(PaletteMode::Commands)
-                                    && last_group != Some(item.group)
-                                {
+                                if headed && last_group != Some(item.group) {
                                     let title = match item.group {
+                                        PaletteGroup::Recent => "Recent",
                                         PaletteGroup::Command => "Commands",
                                         PaletteGroup::Snippet => "Snippets",
                                         PaletteGroup::History => "History",
@@ -303,6 +308,7 @@ fn item_row(ui: &mut egui::Ui, item: &PaletteItem, colors: &Palette) {
 /// The icon of a palette group and its color.
 fn group_icon(group: PaletteGroup) -> (&'static str, fn(&Palette) -> egui::Color32) {
     match group {
+        PaletteGroup::Recent => (icons::HISTORY, |p| p.icon_table),
         PaletteGroup::Object => (icons::TABLE, |p| p.icon_table),
         PaletteGroup::Command => (icons::COMMAND, |p| p.text_muted),
         PaletteGroup::Snippet => (icons::SNIPPET, |p| p.icon_function),

@@ -1,6 +1,6 @@
 use sqlr_core::library::*;
-use sqlr_core::{CatalogColumn, CatalogRelation, RelationKind, SchemaCatalog};
-use sqlr_store::{Db, MAX_HISTORY_SQL_BYTES, Settings, StoreError};
+use sqlr_core::{CatalogColumn, CatalogRelation, RecentObject, RelationKind, SchemaCatalog};
+use sqlr_store::{Db, MAX_HISTORY_SQL_BYTES, RECENT_OBJECTS_KEEP, Settings, StoreError};
 
 fn entry(conn: &str, sql: &str, at: i64, outcome: HistoryOutcome) -> HistoryEntry {
     HistoryEntry {
@@ -308,6 +308,72 @@ fn recent_survives_reopening_the_file() {
     );
 }
 
+fn recent_object(conn: &str, database: Option<&str>, name: &str, at: i64) -> RecentObject {
+    RecentObject {
+        conn_id: conn.into(),
+        database: database.map(Into::into),
+        schema: "public".into(),
+        name: name.into(),
+        kind: RelationKind::Table,
+        used_at_ms: at,
+    }
+}
+
+#[test]
+fn recent_objects_round_trip_newest_first() {
+    let db = Db::open_in_memory().unwrap();
+    assert!(db.recent_objects().unwrap().is_empty());
+    db.touch_recent_object(&recent_object("a", None, "orders", 1))
+        .unwrap();
+    db.touch_recent_object(&recent_object("a", Some("other"), "orders", 2))
+        .unwrap();
+    db.touch_recent_object(&RecentObject {
+        kind: RelationKind::MaterializedView,
+        ..recent_object("b", None, "totals", 3)
+    })
+    .unwrap();
+    // Opening one again moves it to the front, once.
+    db.touch_recent_object(&recent_object("a", None, "orders", 4))
+        .unwrap();
+    assert_eq!(
+        db.recent_objects().unwrap(),
+        [
+            recent_object("a", None, "orders", 4),
+            RecentObject {
+                kind: RelationKind::MaterializedView,
+                ..recent_object("b", None, "totals", 3)
+            },
+            recent_object("a", Some("other"), "orders", 2),
+        ]
+    );
+    db.forget_recent_objects("a").unwrap();
+    assert_eq!(
+        db.recent_objects().unwrap(),
+        [RecentObject {
+            kind: RelationKind::MaterializedView,
+            ..recent_object("b", None, "totals", 3)
+        }]
+    );
+}
+
+#[test]
+fn recent_objects_keep_the_newest_twenty() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("sqlr.db");
+    {
+        let db = Db::open(&path).unwrap();
+        for i in 0..25 {
+            db.touch_recent_object(&recent_object("a", None, &format!("t{i}"), i))
+                .unwrap();
+        }
+    }
+    let kept = Db::open(&path).unwrap().recent_objects().unwrap();
+    assert_eq!(RECENT_OBJECTS_KEEP, 20);
+    assert_eq!(kept.len(), 20);
+    assert_eq!(kept[0].name, "t24");
+    assert_eq!(kept[19].name, "t5");
+}
+
 #[test]
 fn history_database_column_migrates() {
     let dir = tempfile::tempdir().unwrap();
@@ -351,6 +417,7 @@ fn saved_task_tables_are_dropped_on_upgrade() {
              CREATE TABLE IF NOT EXISTS task_runs (id INTEGER PRIMARY KEY, task_id TEXT NOT NULL,
                started_ms INTEGER NOT NULL, ended_ms INTEGER, outcome TEXT NOT NULL,
                summary TEXT NOT NULL, log TEXT NOT NULL);
+             DROP TABLE recent_objects;
              INSERT INTO tasks VALUES ('t1', 'Copy', 'transfer', '{}', 1, 1);
              INSERT INTO task_runs (task_id, started_ms, outcome, summary, log)
                VALUES ('t1', 1, 'ok', '', '');
@@ -374,7 +441,7 @@ fn saved_task_tables_are_dropped_on_upgrade() {
     let version: i64 = conn
         .query_row("PRAGMA user_version", [], |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 6);
+    assert_eq!(version, 7);
 }
 
 #[test]

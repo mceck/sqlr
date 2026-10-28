@@ -8,8 +8,10 @@ use std::sync::{Arc, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use parking_lot::Mutex;
-use sqlr_core::{DriverError, ErrorKind, HistoryEntry, HistoryOutcome, HistoryQuery, Snippet};
-use sqlr_store::{MAX_HISTORY_SQL_BYTES, StoreError};
+use sqlr_core::{
+    DriverError, ErrorKind, HistoryEntry, HistoryOutcome, HistoryQuery, RecentObject, Snippet,
+};
+use sqlr_store::{MAX_HISTORY_SQL_BYTES, RECENT_OBJECTS_KEEP, StoreError};
 
 use crate::engine::Shared;
 use crate::result::{QueryResult, QueryStatus};
@@ -54,10 +56,17 @@ struct State {
     recent: Arc<Vec<(String, i64)>>,
     /// Connections forgotten before the startup load landed.
     recent_forgotten: HashSet<String>,
+    /// Recently opened relations, most recent first.
+    recent_objects: Arc<Vec<RecentObject>>,
 }
 
 /// Recent connections read at startup.
 const RECENT_KEEP: usize = 50;
+
+/// Whether `a` and `b` name the same relation.
+fn same_object(a: &RecentObject, b: &RecentObject) -> bool {
+    (&a.conn_id, &a.database, &a.schema, &a.name) == (&b.conn_id, &b.database, &b.schema, &b.name)
+}
 
 /// Sessions that are no saved connection: the connection dialog's tests and the demo
 /// database's setup use ids with a `:`, which saved connections (UUIDs) never have.
@@ -240,6 +249,55 @@ impl Shared {
                 Err(e) => shared.notice(format!("Could not load recent connections: {e}")),
             }
         });
+        let weak = Arc::downgrade(self);
+        self.db.push(move |db| {
+            let result = db.recent_objects();
+            let Some(shared) = weak.upgrade() else {
+                return;
+            };
+            match result {
+                Ok(stored) => {
+                    {
+                        let mut st = shared.library.state.lock();
+                        let st = &mut *st;
+                        let list = Arc::make_mut(&mut st.recent_objects);
+                        for object in stored {
+                            if !st.recent_forgotten.contains(&object.conn_id)
+                                && !list.iter().any(|o| same_object(o, &object))
+                            {
+                                list.push(object);
+                            }
+                        }
+                        list.sort_by_key(|o| std::cmp::Reverse(o.used_at_ms));
+                        list.truncate(RECENT_OBJECTS_KEEP);
+                    }
+                    shared.repaint();
+                }
+                Err(e) => shared.notice(format!("Could not load recently opened objects: {e}")),
+            }
+        });
+    }
+
+    pub(crate) fn recent_objects(&self) -> Arc<Vec<RecentObject>> {
+        self.library.state.lock().recent_objects.clone()
+    }
+
+    /// Records that `object` was just opened (not for transient sessions), in memory at once
+    /// and in `sqlr.db` behind. Its `used_at_ms` is set to now.
+    pub(crate) fn touch_recent_object(self: &Arc<Self>, mut object: RecentObject) {
+        if is_transient(&object.conn_id) {
+            return;
+        }
+        object.used_at_ms = now_ms();
+        {
+            let mut st = self.library.state.lock();
+            let list = Arc::make_mut(&mut st.recent_objects);
+            list.retain(|o| !same_object(o, &object));
+            list.insert(0, object.clone());
+            list.truncate(RECENT_OBJECTS_KEEP);
+            self.persist_recent(move |db| db.touch_recent_object(&object));
+        }
+        self.repaint();
     }
 
     pub(crate) fn recent(&self) -> Arc<Vec<(String, i64)>> {
@@ -269,9 +327,14 @@ impl Shared {
         {
             let mut st = self.library.state.lock();
             Arc::make_mut(&mut st.recent).retain(|(c, _)| c != conn_id);
+            Arc::make_mut(&mut st.recent_objects).retain(|o| o.conn_id != conn_id);
             st.recent_forgotten.insert(conn_id.to_string());
             let id = conn_id.to_string();
-            self.persist_recent(move |db| db.forget_recent(&id));
+            self.persist_recent(move |db| {
+                // Both deletes run even when the first fails.
+                let connection = db.forget_recent(&id);
+                connection.and(db.forget_recent_objects(&id))
+            });
         }
         self.repaint();
     }

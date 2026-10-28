@@ -257,6 +257,9 @@ impl Dialect for SnowflakeDialect {
     fn default_schemas(&self) -> Vec<String> {
         vec![self.default_schema.clone()]
     }
+    fn is_system_schema(&self, schema: &str) -> bool {
+        schema == "INFORMATION_SCHEMA"
+    }
 }
 
 struct Api {

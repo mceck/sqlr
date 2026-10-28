@@ -8,6 +8,31 @@ use crate::syntax::oracle_syntax;
 
 pub struct OracleDialect;
 
+/// The users Oracle creates for its own components.
+const SYSTEM_SCHEMAS: &[&str] = &[
+    "ANONYMOUS",
+    "APPQOSSYS",
+    "AUDSYS",
+    "CTXSYS",
+    "DBSFWUSER",
+    "DBSNMP",
+    "DVSYS",
+    "GSMADMIN_INTERNAL",
+    "LBACSYS",
+    "MDSYS",
+    "OJVMSYS",
+    "OLAPSYS",
+    "ORDDATA",
+    "ORDPLUGINS",
+    "ORDSYS",
+    "OUTLN",
+    "SI_INFORMTN_SCHEMA",
+    "SYS",
+    "SYSTEM",
+    "WMSYS",
+    "XDB",
+];
+
 impl Dialect for OracleDialect {
     fn quote_ident(&self, ident: &str) -> String {
         format!("\"{}\"", ident.replace('"', "\"\""))
@@ -34,6 +59,10 @@ impl Dialect for OracleDialect {
 
     fn syntax(&self) -> Arc<SqlSyntax> {
         oracle_syntax()
+    }
+
+    fn is_system_schema(&self, schema: &str) -> bool {
+        SYSTEM_SCHEMAS.contains(&schema)
     }
 
     fn placeholder(&self, index: usize) -> String {

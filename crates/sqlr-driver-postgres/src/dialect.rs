@@ -42,6 +42,10 @@ impl Dialect for PgDialect {
         vec!["public".to_string()]
     }
 
+    fn is_system_schema(&self, schema: &str) -> bool {
+        matches!(schema, "pg_catalog" | "information_schema")
+    }
+
     fn placeholder(&self, index: usize) -> String {
         format!("${index}")
     }

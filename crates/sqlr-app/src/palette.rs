@@ -1,14 +1,18 @@
-//! The palettes: ⌘P over every known catalog's relations, ⌘⇧P over app commands, snippets
-//! and history. Items are rebuilt only when what they list changes.
+//! The palettes: ⌘P over the recently opened relations and every relation of the live
+//! connections, ⌘⇧P over app commands, snippets and history. Items are rebuilt only when
+//! what they list changes.
 
 use sqlr_ui::ToastKind;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
+use std::collections::HashSet;
+
 use sqlr_core::{
-    CatalogNeed, HistoryEntry, HistoryQuery, Node, NodeKind, NodePath, ObjectKind, RelationKind,
+    CatalogNeed, HistoryEntry, HistoryQuery, Node, NodeKind, NodePath, ObjectKind, RecentObject,
+    RelationKind,
 };
-use sqlr_engine::{HistoryChannel, LoadState};
+use sqlr_engine::{ConnCatalog, HistoryChannel, LoadState};
 use sqlr_ui::{
     PaletteGroup, PaletteItem, PaletteMode, PaletteOutput, PaletteState, first_line, format_when,
     palette,
@@ -26,6 +30,8 @@ const HISTORY_LABEL_CHARS: usize = 80;
 pub enum PaletteTarget {
     Object {
         conn: String,
+        /// The server database, when it is not the connection's own.
+        database: Option<String>,
         schema: String,
         name: String,
         kind: RelationKind,
@@ -134,6 +140,23 @@ pub struct AppPalette {
     built: Option<u64>,
 }
 
+/// The title of a tab showing a relation's data: its name, with its database when it is
+/// not the connection's own.
+pub(crate) fn data_tab_title(name: &str, database: Option<&str>) -> String {
+    match database {
+        Some(db) => format!("{name} ({db})"),
+        None => name.to_string(),
+    }
+}
+
+/// A relation's Palette label: `schema.name`, or `database.schema.name` in another database.
+fn relation_label(database: Option<&str>, schema: &str, name: &str) -> String {
+    match database {
+        Some(db) => format!("{db}.{schema}.{name}"),
+        None => format!("{schema}.{name}"),
+    }
+}
+
 fn relation_folder(kind: RelationKind) -> (&'static str, &'static str, NodeKind) {
     match kind {
         RelationKind::Table => ("tables", "table", NodeKind::Table),
@@ -146,11 +169,19 @@ fn relation_folder(kind: RelationKind) -> (&'static str, &'static str, NodeKind)
     }
 }
 
-/// The explorer node of a catalog relation (`<schema>/<folder>/<name>`).
-fn relation_node(schema: String, name: String, kind: RelationKind) -> Node {
+/// The explorer node of a catalog relation (`<schema>/<folder>/<name>`, under
+/// `<database>/` when it is in another database).
+fn relation_node(
+    database: Option<String>,
+    schema: String,
+    name: String,
+    kind: RelationKind,
+) -> Node {
     let (folder, _, node_kind) = relation_folder(kind);
+    let mut path: Vec<String> = database.into_iter().collect();
+    path.extend([schema, folder.to_string(), name.clone()]);
     Node {
-        path: NodePath(vec![schema, folder.to_string(), name.clone()]),
+        path: NodePath(path),
         name,
         kind: node_kind,
         has_children: true,
@@ -194,18 +225,68 @@ impl SqlrApp {
     pub(crate) fn open_palette(&mut self, mode: PaletteMode) {
         self.palette.state.open(mode);
         self.palette.built = None;
-        if mode == PaletteMode::Objects {
-            // Every connected session's default schemas, so they can be listed.
-            for cfg in &self.connections {
-                if !self.is_live(&cfg.id) {
-                    continue;
-                }
-                let Some(dialect) = self.dialects.get(&cfg.id) else {
+    }
+
+    /// The other server databases of a live connection whose explorer lists databases
+    /// (PostgreSQL with "Show all databases"), once its root is loaded.
+    fn palette_databases(&self, conn: &str) -> Vec<String> {
+        match self.engine.children(conn, &NodePath::root()) {
+            Some(LoadState::Ready(nodes)) => nodes
+                .iter()
+                .filter(|n| n.kind == NodeKind::Database)
+                .filter_map(|n| self.engine.database_for_path(conn, &n.path))
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The catalogs ⌘P lists for a live relational connection: its own, then each other
+    /// database's, with that database's name.
+    fn palette_catalogs(&self, conn: &str) -> Vec<(Option<String>, Arc<ConnCatalog>)> {
+        let own = self.engine.catalog(conn).map(|c| (None, c));
+        let others = self.palette_databases(conn).into_iter().filter_map(|db| {
+            let catalog = self.engine.catalog_in(conn, Some(&db))?;
+            Some((Some(db), catalog))
+        });
+        own.into_iter().chain(others).collect()
+    }
+
+    /// Asks for what ⌘P lists and is missing, on every live relational connection: the
+    /// explorer root (for its databases), each database's schema list, and the catalog of
+    /// every schema that is not a system one. Loads already done or running are no-ops.
+    fn palette_load_catalogs(&self) {
+        for cfg in &self.connections {
+            let conn = cfg.id.as_str();
+            if !self.is_live(conn) || self.is_nosql(conn) {
+                continue;
+            }
+            let Some(dialect) = self.dialects.get(conn) else {
+                continue;
+            };
+            // Asked once: a failed root stays failed, as in the Explorer.
+            if self.engine.children(conn, &NodePath::root()).is_none() {
+                self.engine.browse(conn, NodePath::root());
+            }
+            let databases =
+                std::iter::once(None).chain(self.palette_databases(conn).into_iter().map(Some));
+            for database in databases {
+                let database = database.as_deref();
+                self.engine
+                    .load_catalog_in(conn, database, CatalogNeed::Schemas);
+                let Some(catalog) = self.engine.catalog_in(conn, database) else {
                     continue;
                 };
-                for schema in dialect.default_schemas() {
-                    self.engine
-                        .load_catalog(&cfg.id, CatalogNeed::Schema(schema));
+                let Some(LoadState::Ready(schemas)) = &catalog.schemas else {
+                    continue;
+                };
+                for schema in schemas.iter().filter(|s| !dialect.is_system_schema(s)) {
+                    if !catalog.schema.contains_key(schema) {
+                        self.engine.load_catalog_in(
+                            conn,
+                            database,
+                            CatalogNeed::Schema(schema.clone()),
+                        );
+                    }
                 }
             }
         }
@@ -218,6 +299,9 @@ impl SqlrApp {
         let active_conn = self.active_tab().and_then(|t| t.conn.clone());
         let revision = self.palette_revision(mode, active_conn.as_deref());
         if self.palette.built != Some(revision) {
+            if mode == PaletteMode::Objects {
+                self.palette_load_catalogs();
+            }
             let mac = ctx.os() == egui::os::OperatingSystem::Mac;
             let (items, targets) = self.palette_items(mode, active_conn.as_deref(), mac);
             self.palette.items = items;
@@ -246,13 +330,16 @@ impl SqlrApp {
                     if matches!(output, PaletteOutput::EditChosen(_))
                         && let PaletteTarget::Object {
                             conn,
+                            database,
                             schema,
                             name,
                             kind,
                         } = &target
                         && self.editing_for(conn).is_some()
                     {
-                        self.open_object(conn, &relation_node(schema.clone(), name.clone(), *kind));
+                        let node =
+                            relation_node(database.clone(), schema.clone(), name.clone(), *kind);
+                        self.open_object(conn, &node);
                     } else {
                         self.palette_choose(target, ctx);
                     }
@@ -276,6 +363,14 @@ impl SqlrApp {
         self.engine.catalog_revision().hash(&mut h);
         if mode == PaletteMode::Objects {
             self.doc_palette_nodes().len().hash(&mut h);
+            for o in self.engine.recent_objects().iter() {
+                (&o.conn_id, &o.database, &o.schema, &o.name, o.used_at_ms).hash(&mut h);
+            }
+            for cfg in &self.connections {
+                self.engine
+                    .child_count(&cfg.id, &NodePath::root())
+                    .hash(&mut h);
+            }
         }
         for cfg in &self.connections {
             let admin = self.engine.admin_support(&cfg.id).is_some();
@@ -323,28 +418,75 @@ impl SqlrApp {
         };
         match mode {
             PaletteMode::Objects => {
-                for (conn, catalog) in self.engine.all_catalogs() {
-                    let Some(cfg) = self.connection(&conn) else {
+                // The recently opened relations first, even of closed connections.
+                let mut listed = HashSet::new();
+                for recent in self.engine.recent_objects().iter() {
+                    let Some(cfg) = self.connection(&recent.conn_id) else {
                         continue;
                     };
-                    for state in catalog.schema.values() {
-                        let LoadState::Ready(schema) = state else {
-                            continue;
-                        };
-                        for r in &schema.relations {
-                            let (_, kind, _) = relation_folder(r.kind);
-                            push(
-                                format!("{}.{}", schema.schema, r.name),
-                                format!("{} · {kind}", cfg.name),
-                                PaletteGroup::Object,
-                                true,
-                                PaletteTarget::Object {
-                                    conn: conn.clone(),
-                                    schema: schema.schema.clone(),
-                                    name: r.name.clone(),
-                                    kind: r.kind,
-                                },
-                            );
+                    let RecentObject {
+                        conn_id,
+                        database,
+                        schema,
+                        name,
+                        kind,
+                        ..
+                    } = recent.clone();
+                    let (_, kind_label, _) = relation_folder(kind);
+                    push(
+                        relation_label(database.as_deref(), &schema, &name),
+                        format!("{} · {kind_label}", cfg.name),
+                        PaletteGroup::Recent,
+                        true,
+                        PaletteTarget::Object {
+                            conn: conn_id.clone(),
+                            database: database.clone(),
+                            schema: schema.clone(),
+                            name: name.clone(),
+                            kind,
+                        },
+                    );
+                    listed.insert((conn_id, database, schema, name));
+                }
+                // Then every relation of every live connection, sorted below.
+                for cfg in &self.connections {
+                    if !self.is_live(&cfg.id) {
+                        continue;
+                    }
+                    let dialect = self.dialects.get(&cfg.id);
+                    for (database, catalog) in self.palette_catalogs(&cfg.id) {
+                        for state in catalog.schema.values() {
+                            let LoadState::Ready(schema) = state else {
+                                continue;
+                            };
+                            if dialect.is_some_and(|d| d.is_system_schema(&schema.schema)) {
+                                continue;
+                            }
+                            for r in &schema.relations {
+                                let key = (
+                                    cfg.id.clone(),
+                                    database.clone(),
+                                    schema.schema.clone(),
+                                    r.name.clone(),
+                                );
+                                if listed.contains(&key) {
+                                    continue;
+                                }
+                                let (_, kind, _) = relation_folder(r.kind);
+                                push(
+                                    relation_label(database.as_deref(), &schema.schema, &r.name),
+                                    format!("{} · {kind}", cfg.name),
+                                    PaletteGroup::Object,
+                                    true,
+                                    PaletteTarget::Object {
+                                        conn: cfg.id.clone(),
+                                        database: database.clone(),
+                                        schema: schema.schema.clone(),
+                                        name: r.name.clone(),
+                                        kind: r.kind,
+                                    },
+                                );
+                            }
                         }
                     }
                 }
@@ -526,8 +668,14 @@ impl SqlrApp {
             item.shortcut = shortcut;
         }
         if mode == PaletteMode::Objects {
+            // Recent objects keep their order (most recent first); the rest sort by
+            // connection, then name.
             let mut pairs: Vec<_> = items.into_iter().zip(targets).collect();
-            pairs.sort_by(|a, b| {
+            let recent = pairs
+                .iter()
+                .take_while(|p| p.0.group == PaletteGroup::Recent)
+                .count();
+            pairs[recent..].sort_by(|a, b| {
                 a.0.detail
                     .cmp(&b.0.detail)
                     .then_with(|| a.0.label.cmp(&b.0.label))
@@ -541,10 +689,11 @@ impl SqlrApp {
         match target {
             PaletteTarget::Object {
                 conn,
+                database,
                 schema,
                 name,
                 kind,
-            } => self.open_relation(&conn, schema, name, kind),
+            } => self.open_relation(&conn, database, schema, name, kind),
             PaletteTarget::Documents { conn, node } => self.open_doc_node(&conn, &node),
             PaletteTarget::Command(c) => self.run_command(c, ctx),
             PaletteTarget::Snippet(sql) => self.insert_into_active(&sql),
@@ -562,17 +711,64 @@ impl SqlrApp {
         }
     }
 
-    /// Opens a catalog relation's data in a new tab, connecting if needed.
-    fn open_relation(&mut self, conn: &str, schema: String, name: String, kind: RelationKind) {
-        let node = relation_node(schema, name, kind);
+    /// Opens a catalog relation's data in a new tab, connecting if needed, and remembers it
+    /// as recently opened.
+    fn open_relation(
+        &mut self,
+        conn: &str,
+        database: Option<String>,
+        schema: String,
+        name: String,
+        kind: RelationKind,
+    ) {
+        let node = relation_node(database.clone(), schema.clone(), name, kind);
         let sql = self
             .dialects
             .get(conn)
             .and_then(|d| d.select_all(&node, None));
-        match sql {
-            Some(sql) => self.open_and_run(node.name, conn, None, &sql),
-            None => self.notify(format!("Cannot open the data of {}", node.name)),
-        }
+        let Some(sql) = sql else {
+            self.notify(format!("Cannot open the data of {}", node.name));
+            return;
+        };
+        self.remember_relation(conn, database.clone(), schema, node.name.clone(), kind);
+        let title = data_tab_title(&node.name, database.as_deref());
+        self.open_and_run(title, conn, database, &sql);
+    }
+
+    fn remember_relation(
+        &self,
+        conn: &str,
+        database: Option<String>,
+        schema: String,
+        name: String,
+        kind: RelationKind,
+    ) {
+        self.engine.touch_recent_object(RecentObject {
+            conn_id: conn.to_string(),
+            database,
+            schema,
+            name,
+            kind,
+            used_at_ms: 0,
+        });
+    }
+
+    /// Remembers an explorer node whose data was just opened as a recently opened relation
+    /// (tables, views and materialized views of relational connections). `database` is the
+    /// one the data is read from.
+    pub(crate) fn remember_opened(&self, conn: &str, database: Option<String>, node: &Node) {
+        let Some(kind) = RelationKind::of_node(node.kind) else {
+            return;
+        };
+        let Some(dialect) = self.dialects.get(conn) else {
+            return;
+        };
+        let (Some(schema), _) = self.location(conn, Some(node)) else {
+            return;
+        };
+        // Where databases are schemas (MySQL), the schema already names the database.
+        let database = database.filter(|_| !dialect.database_is_schema());
+        self.remember_relation(conn, database, schema, node.name.clone(), kind);
     }
 
     pub(crate) fn run_command(&mut self, command: AppCommand, ctx: &egui::Context) {
