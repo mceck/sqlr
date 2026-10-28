@@ -37,7 +37,7 @@ Drag a rectangle, click row numbers or headers, and use arrow keys to move the s
 ## Make pending edits
 
 1. Open a table's data, or run a query returning its columns and row key.
-2. Double-click a cell, or select it and press Enter.
+2. Double-click a cell, or select it and press Enter. You can also select it and start typing: the editor opens with what you type in place of the value.
 3. Enter a valid value. Long text, JSON and binary values use the value panel's editor.
 4. Use **Add row** (⌘I), **Duplicate row(s)** (⌘D) or **Delete row(s)** (⌘Backspace) for whole rows. ⌥⌘N sets the selected cells to NULL.
 5. Choose **Preview SQL** to inspect generated statements.

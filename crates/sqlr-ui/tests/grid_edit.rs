@@ -436,6 +436,35 @@ fn double_click_edits_cell_and_marks_pending() {
 }
 
 #[test]
+fn typing_on_a_selected_cell_opens_the_editor_with_the_typed_text() {
+    let mut h = harness_with(sequential(5), false, Some(editable()));
+    h.run_steps(100);
+    click(&mut h, "name 1");
+    h.event(Event::Text("r".into()));
+    h.run_steps(2);
+    assert!(h.state().state.editing());
+    // The caret follows the typed text, so the rest of the word is appended to it.
+    h.event(Event::Text("enamed".into()));
+    h.run_steps(2);
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert!(h.state().actions.contains(&GridAction::SetCell {
+        row: 1,
+        col: 1,
+        value: Value::Text("renamed".into())
+    }));
+}
+
+#[test]
+fn typing_on_a_read_only_grid_opens_no_editor() {
+    let mut h = harness(sequential(3));
+    click(&mut h, "name 1");
+    h.event(Event::Text("x".into()));
+    h.run_steps(2);
+    assert!(!h.state().state.editing());
+    assert!(h.state().actions.is_empty(), "{:?}", h.state().actions);
+}
+
+#[test]
 fn invalid_number_keeps_the_editor_open() {
     let mut h = harness_with(sequential(5), false, Some(editable()));
     double_click(&mut h, "2");

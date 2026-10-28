@@ -149,6 +149,8 @@ struct CellEditor {
     focus: bool,
     /// Select its whole text once it has the focus.
     select_all: bool,
+    /// Opened by typing: the caret goes after the typed text instead of selecting it.
+    typed: bool,
 }
 
 /// What the grid shows this frame.
@@ -1267,8 +1269,8 @@ fn pointer(
     false
 }
 
-/// Arrow keys, Home/End, PgUp/PgDn (with ⇧ to extend), ⌘A, ↵ to edit and copy; returns
-/// whether the selection changed.
+/// Arrow keys, Home/End, PgUp/PgDn (with ⇧ to extend), ⌘A, ↵ or typing to edit and copy;
+/// returns whether the selection changed.
 fn keyboard(
     ui: &egui::Ui,
     id: egui::Id,
@@ -1293,7 +1295,7 @@ fn keyboard(
     });
     let page = state.last_visible_rows.len().max(1) as isize;
     let keymap = crate::keymap::ui_keymap(ui.ctx());
-    let (step, extend, all, edit, copy, paste, delete) = ui.input_mut(|i| {
+    let (step, extend, all, edit, typed, copy, paste, delete) = ui.input_mut(|i| {
         let mut step = None;
         let mut extend = false;
         let keys = [
@@ -1316,6 +1318,21 @@ fn keyboard(
         }
         let all = keymap.consume(i, sqlr_core::ActionId::SelectAll);
         let edit = i.consume_key(Modifiers::NONE, Key::Enter);
+        // Typing on an editable selection opens the editor with the typed text.
+        let typed: String = if state.edits.is_some() && state.selected.is_some() {
+            i.events
+                .iter()
+                .filter_map(|e| match e {
+                    Event::Text(t) => Some(t.as_str()),
+                    _ => None,
+                })
+                .collect()
+        } else {
+            String::new()
+        };
+        if !typed.is_empty() {
+            i.events.retain(|e| !matches!(e, Event::Text(_)));
+        }
         let copy = i.events.iter().any(|e| matches!(e, Event::Copy));
         let paste = i.events.iter().find_map(|e| match e {
             Event::Paste(text) => Some(text.clone()),
@@ -1325,7 +1342,7 @@ fn keyboard(
             i.events.retain(|e| !matches!(e, Event::Paste(_)));
         }
         let delete = keymap.consume(i, sqlr_core::ActionId::DeleteRows);
-        (step, extend, all, edit, copy, paste, delete)
+        (step, extend, all, edit, typed, copy, paste, delete)
     });
     let (undo, redo) = ui.input_mut(|i| {
         (
@@ -1388,6 +1405,9 @@ fn keyboard(
     if edit && state.selected.is_some() {
         let (r, c) = state.selection.cursor;
         open_editor(state, input, r, c);
+    } else if !typed.is_empty() {
+        let (r, c) = state.selection.cursor;
+        open_editor_with(state, input, r, c, Some(typed));
     }
     if copy && state.selected.is_some() {
         copy_selection(ui.ctx(), state, input, CopyFormat::Tsv);
@@ -1455,6 +1475,18 @@ fn copy_selection(
 /// Opens the inline editor on a view cell, or asks for the value panel when the value is
 /// multi-line, long, JSON, XML or binary. Ignored when the cell cannot be edited.
 fn open_editor(state: &mut GridState, input: &GridInput<'_>, view_row: usize, col: usize) {
+    open_editor_with(state, input, view_row, col, None);
+}
+
+/// Opens the editor holding `typed` instead of the cell's value; a cell edited in the Value
+/// panel ignores the typed text.
+fn open_editor_with(
+    state: &mut GridState,
+    input: &GridInput<'_>,
+    view_row: usize,
+    col: usize,
+    typed: Option<String>,
+) {
     let Some(row) = state.source(view_row) else {
         return;
     };
@@ -1473,13 +1505,16 @@ fn open_editor(state: &mut GridState, input: &GridInput<'_>, view_row: usize, co
     } || matches!(meta.hint, DisplayHint::Json | DisplayHint::Xml)
         || meta.kind == ColumnKind::Bytes;
     if panel {
-        state.actions.push(GridAction::EditCell { row, col });
+        if typed.is_none() {
+            state.actions.push(GridAction::EditCell { row, col });
+        }
         return;
     }
     state.editor = Some(CellEditor {
         row,
         col,
-        text: edit::edit_text(&value),
+        typed: typed.is_some(),
+        text: typed.unwrap_or_else(|| edit::edit_text(&value)),
         error: None,
         focus: true,
         select_all: false,
@@ -1522,11 +1557,14 @@ fn cell_editor(
         ed.select_all = true;
     }
     if ed.select_all {
-        // Once focused, the whole value is selected so typing replaces it.
+        // Once focused, the whole value is selected so typing replaces it; text typed to
+        // open the editor keeps the caret after it.
         let mut te = egui::text_edit::TextEditState::load(ui.ctx(), id).unwrap_or_default();
+        let end = ed.text.chars().count();
+        let start = if ed.typed { end } else { 0 };
         te.cursor.set_char_range(Some(CCursorRange::two(
-            CCursor::new(0),
-            CCursor::new(ed.text.chars().count()),
+            CCursor::new(start),
+            CCursor::new(end),
         )));
         te.store(ui.ctx(), id);
         // Kept until the editor holds the focus, so text typed right away replaces it.
