@@ -39,9 +39,11 @@ Drag a rectangle, click row numbers or headers, and use arrow keys to move the s
 1. Open a table's data, or run a query returning its columns and row key.
 2. Double-click a cell, or select it and press Enter.
 3. Enter a valid value. Long text, JSON and binary values use the value panel's editor.
-4. Use **Add row**, **Duplicate row(s)** or **Delete row(s)** for whole rows.
+4. Use **Add row** (⌘I), **Duplicate row(s)** (⌘D) or **Delete row(s)** (⌘Backspace) for whole rows. ⌥⌘N sets the selected cells to NULL.
 5. Choose **Preview SQL** to inspect generated statements.
-6. Choose **Apply** to execute the changes, or **Discard** to abandon them.
+6. Choose **Apply** or press ⌘S to execute the changes, or **Discard** to abandon them. ⌘S also commits a cell you are still typing in.
+
+Press F5 or ⌘R to run the result's query again. When edits are pending, sqlr asks before discarding them.
 
 Edits are tinted; new and deleted rows have distinct colours. **Set NULL** requires nullable writable cells. **Revert selected cells** and **Revert row(s)** remove pending changes. Undo and redo work before applying, including for a whole paste; they do not reverse committed database writes.
 

@@ -41,7 +41,9 @@ An unavailable action can mean the driver does not support it, the object has th
 2. Select the relevant sub-tab, such as **Columns**, **Indexes**, **Constraints** or **Foreign keys**.
 3. Make your changes. They remain in the schema change list.
 4. Choose **Preview DDL** to inspect the generated statements.
-5. Choose **Apply** to execute them, or **Revert** to remove the pending changes.
+5. Choose **Apply** or press ⌘S to execute them, or **Revert** to remove the pending changes.
+
+⌘S applies what the open page holds: the row edits on **Data**, the grants on **Permissions**, and the schema change list on the other pages. F5 or ⌘R loads the object again and asks first when changes are pending.
 
 A table editor can also provide **Triggers**, **Permissions**, **DDL**, **Data** and **Properties**. Views, routines, sequences and other supported objects have their own pages. The driver determines which pages and fields can be changed.
 

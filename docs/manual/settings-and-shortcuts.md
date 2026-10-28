@@ -85,26 +85,65 @@ The tables show the default **sqlr** preset on macOS. On Windows and Linux use C
 | New editor tab | ⌘T |
 | New editor tab on current connection | ⌘N |
 | Close tab | ⌘W |
+| Reopen closed tab | ⇧⌘T |
 | Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab |
+| Go to tab 1 to 8 / the last tab | ⌘1 to ⌘8 / ⌘9 |
 | Open object | ⌘P |
 | Commands | ⇧⌘P |
 | Operations | ⇧⌘O |
 | Terminal | Ctrl+Backtick on all platforms |
 | Rename explorer item | F2 |
 
-| Editing action | Shortcut |
+| Pending changes action | Shortcut |
 |---|---|
-| Apply edits | ⌘S |
+| Apply pending changes | ⌘S |
+| Discard pending changes | No default; run it from ⇧⌘P or bind a chord |
+| Refresh | F5 or ⌘R |
+
+**Apply pending changes** does what the screen's own **Apply** or **Save** button does, with the same confirmations:
+
+| Active screen | ⌘S applies | F5 or ⌘R |
+|---|---|---|
+| Result of a query | The result's pending edits; a cell you are typing in is committed first | Runs the result's query again; asks first when edits are pending |
+| Object editor | The **Data** page's row edits, the **Permissions** page's grants, or the schema changes on the other pages | Loads the object again; asks first when edits are pending |
+| **Users and roles** | The role's changes | Reloads the roles; asks first when edits are pending |
+| **Sessions and locks**, **Server properties** | Nothing | Loads a new snapshot |
+| Redis key | The edited value or the element you are editing | Scans the keys again and reloads the value |
+| MongoDB or Elasticsearch documents | The document in the JSON editor | Runs the last request again |
+| DDL viewer | Nothing | Loads the DDL again |
+
+These shortcuts wait while a dialog is open. Refresh repeats only queries that read: a result of a statement that writes, such as `DELETE … RETURNING`, is left as it is.
+
+**Reopen closed tab** brings back the tabs you closed during this session, the most recent first, up to 20. A reopened tab gets back its connection, database and text, or its object, but nothing runs until you run it.
+
+| Editor action | Shortcut |
+|---|---|
 | Save snippet | ⇧⌘S |
 | Format SQL | ⌥⌘L |
 | Toggle line comment | ⌘/ |
-| Duplicate line or selection | ⌘D |
 | Find / replace | ⌘F / ⌥⌘F |
 | Find next / previous | ⌘G / ⇧⌘G |
 | Complete | Ctrl+Space |
 | Undo / redo | ⌘Z / ⇧⌘Z |
 | Indent / outdent | Tab / Shift+Tab |
-| Delete selected result rows | ⌘Backspace |
+| Select the next occurrence / every occurrence | ⌘D / ⇧⌘L |
+| Undo the last cursor operation | ⌘U |
+| Add a cursor above / below | ⌥⌘↑ / ⌥⌘↓ |
+| Add cursors at the ends of the selected lines | ⇧⌥I |
+| Move line up / down | ⌥↑ / ⌥↓ |
+| Copy line up / down | ⇧⌥↑ / ⇧⌥↓ |
+| Delete line | ⇧⌘K |
+| Select line | ⌘L |
+| Outdent / indent line | ⌘[ / ⌘] |
+
+| Result grid action | Shortcut |
+|---|---|
+| Add row | ⌘I |
+| Duplicate rows | ⌘D |
+| Set NULL | ⌥⌘N |
+| Delete selected rows | ⌘Backspace |
+
+The editor shortcuts follow VS Code. In a result grid, ⌘D duplicates rows instead of selecting text.
 
 To customize a shortcut:
 
@@ -114,7 +153,7 @@ To customize a shortcut:
 4. Press the replacement chord, or Escape to cancel recording.
 5. Resolve any conflict marked in red before saving.
 
-Commands can also be unbound or reset individually; **Reset all** restores the preset. A binding may be reused when its command scopes do not overlap.
+Commands can also be unbound or reset individually; **Reset all** restores the preset. A binding may be reused when its command scopes do not overlap: the same chord can mean one thing in the editor and another in the result grid, as ⌘D does.
 
 ![Keymap editor with shortcut presets and grouped action bindings](images/settings-and-shortcuts/keymap.png)
 

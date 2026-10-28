@@ -11,7 +11,7 @@ Open administration tabs from a connected database's explorer menu. The driver d
 3. Review its name, attributes, membership and database-specific fields. MySQL accounts also have a host.
 4. Select the relevant schema and object kind under **Privileges**, then change the grant checkboxes.
 5. Choose **Preview** to inspect the SQL.
-6. Choose **Apply** to write the changes, or **Revert** to discard them.
+6. Choose **Apply** or press ⌘S to write the changes, or **Revert** to discard them.
 
 The panel keeps edits pending until Apply. A new password is hidden in SQL previews and diagnostic output. Password fields do not reveal a role's current password.
 
@@ -25,7 +25,7 @@ Administrative writes require a writable session. If a transaction is open on th
 
 Open **Sessions and locks** to see server-side sessions, including their user, database, client, state, wait reason, running time and current query when the server provides them.
 
-1. Use **Refresh** for a current snapshot, or leave automatic updates running while the panel is visible.
+1. Use **Refresh** (F5 or ⌘R) for a current snapshot, or leave automatic updates running while the panel is visible.
 2. Enable **Hide idle** to focus on active work.
 3. Select a session to inspect its details and locks.
 4. Follow the **Blocking** tree to identify the session other work is waiting for.

@@ -41,12 +41,41 @@ Press ⌥⌘L to format the selection or the whole editor. Configure keyword cas
 | Replace | ⌥⌘F |
 | Next / previous match | ⌘G / ⌘Shift+G |
 | Comment or uncomment lines | ⌘/ |
-| Duplicate line or selection | ⌘D |
+| Move line up / down | ⌥↑ / ⌥↓ |
+| Copy line up / down | ⇧⌥↑ / ⇧⌥↓ |
+| Delete line | ⇧⌘K |
+| Select line, again to extend | ⌘L |
+| Outdent / indent line | ⌘[ / ⌘] |
 | Undo / redo | ⌘Z / ⌘Shift+Z |
 | Indent / outdent | Tab / Shift+Tab |
 | Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab |
 
-The editor supports multiple carets, bracket pairing and automatic indentation. Set line numbers and soft wrap in **Editor** preferences. Soft wrap is also available through the command palette.
+The line shortcuts work on every line your selections touch, and each press undoes in one step.
+
+## Edit several places at once
+
+The editor can hold several carets, and typing, deleting and pasting happen at each of them. The shortcuts follow VS Code.
+
+| Action | Shortcut |
+| --- | --- |
+| Select the word at the caret, then each next occurrence | ⌘D |
+| Select every occurrence | ⇧⌘L |
+| Undo the last cursor operation | ⌘U |
+| Add a caret | ⌥-click |
+| Add a caret above / below | ⌥⌘↑ / ⌥⌘↓ |
+| Add a caret at the end of each selected line | ⇧⌥I |
+| Back to one caret | Esc |
+
+To rename an alias in a statement:
+
+1. Put the caret on the alias and press ⌘D. sqlr selects the word.
+2. Press ⌘D again for each further occurrence. The search wraps to the top of the text and skips what is already selected.
+3. Press ⌘U if you went one occurrence too far.
+4. Type the new name.
+
+Starting from a word, ⌘D matches the whole word with the same case, so `id` does not match `order_id` or `ID`. Starting from a selection, it follows the **Match case** and **Whole word** options of the find bar.
+
+The editor also supports bracket pairing and automatic indentation. Set line numbers and soft wrap in **Editor** preferences. Soft wrap is also available through the command palette.
 
 When the server reports a syntax-error position, sqlr underlines it. Hover or read the error details to see what the database rejected.
 

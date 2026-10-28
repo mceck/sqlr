@@ -29,7 +29,7 @@ Table columns come from the top-level keys found in the first page. Choose **Fet
 1. Select the document you want to change.
 2. Open its edit action. The JSON editor shows the full document.
 3. Change the fields while preserving the identity and typed values.
-4. Choose **Save** and answer any confirmation.
+4. Choose **Save**, or press ⌘S, and answer any confirmation.
 5. Check the outcome. sqlr rereads the result after successful changes.
 
 MongoDB uses `_id` to identify a document. Extended JSON preserves values such as dates, `ObjectId`, `Int64` and `Decimal128` when edited and saved. A read-only reason appears when the result cannot be edited.
@@ -52,11 +52,11 @@ Large search results page using a point in time and `search_after`. If the resul
 2. Enter a key pattern, for example `customer:*`, and choose **Scan**.
 3. Expand prefix groups to find a key. The default grouping separator is `:`.
 4. Select a key to open the value view.
-5. Choose **Load more** to continue scanning, or **Refresh** to restart.
+5. Choose **Load more** to continue scanning, or **Refresh** (F5 or ⌘R) to restart.
 
 Scanning uses `SCAN`, so the browser does not issue a blocking `KEYS` request. A scan is incremental: keys can change while you browse. A group action such as **Delete loaded keys…** affects the keys already loaded into that group, so check the confirmation count.
 
-The selected key shows its type and a matching view for strings, hashes, lists, sets, sorted sets or streams. Large collections load in pages. Use the value editor's **Save** or member actions to write changes.
+The selected key shows its type and a matching view for strings, hashes, lists, sets, sorted sets or streams. Large collections load in pages. Use the value editor's **Save**, or press ⌘S, or the member actions to write changes.
 
 ## Create, rename or expire a key
 

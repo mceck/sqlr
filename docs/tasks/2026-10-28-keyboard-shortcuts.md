@@ -280,7 +280,7 @@ Every new action appears in the Shortcuts dialog and the Keymap editor and can b
 - [x] Duplicate line is now Copy line down on ⇧⌥↓, and old `duplicate_line` bindings still load.
 - [x] The commands work in the SQL, Mongo shell, Elasticsearch console and JSON editors.
 - [x] Both presets are conflict-free on macOS and elsewhere, with ⌘D in both the Editor and Grid scopes.
-- [ ] The specs are updated, and the manual's shortcuts page lists the new chords.
+- [x] The specs are updated, and the manual's shortcuts page lists the new chords.
 - [x] `cargo clippy --workspace --all-targets -- -D warnings` and the focused tests pass.
 
 ## Out of Scope
