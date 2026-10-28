@@ -20,6 +20,10 @@ impl eframe::App for Shell {
         self.app.logic(ctx);
     }
 
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        sqlr_app::window_focus::hook(raw_input);
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.app.observe_graphics("glow");
         egui::CentralPanel::no_frame().show(ui, |ui| self.app.ui(ui));

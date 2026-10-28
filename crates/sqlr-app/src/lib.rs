@@ -52,6 +52,7 @@ mod transfer_wizard;
 mod tree_snapshot;
 mod updates;
 mod welcome;
+pub mod window_focus;
 
 pub use app::{AppDeps, SqlrApp, production_deps, production_deps_in, production_deps_with};
 pub use diagnostics::{

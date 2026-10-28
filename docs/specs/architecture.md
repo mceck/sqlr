@@ -185,6 +185,7 @@ The Rust code follows one set of rules, declared once for the whole workspace an
 | egui's text editor re-lays out the whole text and lacks multi-cursor, completion and serious undo | sqlr has its own query editor widget with a per-line lexer and layout cache that limit work to changed and visible lines (see [Query editor](query-editor.md)) |
 | Non-native look; egui's fonts lack CJK and emoji | curated light and dark themes; system fallback fonts load on a background thread the first time such text is painted |
 | Accessibility and IME | AccessKit and egui's IME support, verified per platform |
+| On macOS egui can miss the window becoming key (winit#4371): a window that becomes key after winit's focus event, as on the first launch of a newly installed bundle, stays unfocused for egui, with no caret and no widget focus | before each frame, while egui believes the window unfocused, the app asks AppKit whether sqlr is active with its main window key and, if so, marks the frame's input focused |
 | GPU-dependent rendering on old or virtualized machines | the app renders through OpenGL (glow), the most widely available backend |
 | A single-maintainer SAP HANA driver library | the HANA Driver is a sidecar, so another implementation can replace it transparently |
 | Mongo shell expectations beyond the supported subset | the subset is documented and a raw-command mode covers the rest |

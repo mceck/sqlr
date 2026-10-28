@@ -433,6 +433,20 @@ fn cmd_shift(code: Code) -> Accelerator {
     Accelerator::new(Modifiers::META | Modifiers::SHIFT, code)
 }
 
+/// Whether sqlr is the active app and its main window is the key window (not a panel
+/// such as a file dialog).
+pub fn main_window_is_key() -> bool {
+    let Some(mtm) = MainThreadMarker::new() else {
+        return false;
+    };
+    let app = NSApplication::sharedApplication(mtm);
+    app.isActive()
+        && app
+            .keyWindow()
+            .zip(app.mainWindow())
+            .is_some_and(|(key, main)| Retained::as_ptr(&key) == Retained::as_ptr(&main))
+}
+
 /// Shows the standard AppKit About panel with sqlr's icon, version and credits.
 pub fn show_about() {
     let Some(mtm) = MainThreadMarker::new() else {

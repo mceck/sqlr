@@ -82,7 +82,7 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls-no-p
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 muda = { version = "0.21", default-features = false }
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["NSApplication", "NSImage", "NSResponder"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSApplication", "NSImage", "NSResponder", "NSWindow"] }
 objc2-foundation = { version = "0.3", default-features = false, features = ["NSAttributedString", "NSData", "NSDictionary", "NSString", "NSObject"] }
 
 # Rust best-practice gates (Architecture spec, "Code quality gates").
