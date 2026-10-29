@@ -116,6 +116,14 @@ impl SqlrApp {
                 HistoryAction::Open(e) => self.open_history_entry(&e),
                 HistoryAction::Insert(e) => self.insert_into_active(&e.sql),
                 HistoryAction::Copy(e) => ctx.copy_text(e.sql),
+                HistoryAction::SaveSnippet(e) => {
+                    self.library.draft = Some(SnippetDraft {
+                        name: suggest_snippet_name(&e.sql),
+                        conn_id: self.connection(&e.conn_id).map(|c| c.id.clone()),
+                        sql: e.sql,
+                        ..SnippetDraft::default()
+                    });
+                }
                 HistoryAction::Clear { conn_id } => self.clear_history_pending = Some(conn_id),
             }
         }

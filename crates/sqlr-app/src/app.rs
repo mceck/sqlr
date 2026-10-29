@@ -571,7 +571,7 @@ impl SqlrApp {
         if self.terminal.is_open() {
             egui::Panel::bottom("terminal")
                 .resizable(true)
-                .default_size(400.0)
+                .default_size(340.0)
                 .min_size(120.0)
                 .frame(
                     egui::Frame::side_top_panel(ui.style())

@@ -35,6 +35,8 @@ pub enum HistoryAction {
     Insert(HistoryEntry),
     /// Put the entry's SQL on the clipboard.
     Copy(HistoryEntry),
+    /// Open a new snippet draft with the entry's SQL.
+    SaveSnippet(HistoryEntry),
     /// Delete stored history, for one connection or (`None`) every connection.
     Clear {
         conn_id: Option<String>,
@@ -208,6 +210,10 @@ fn entry_row(
         }
         if icons::menu_item(ui, icons::COPY, "Copy SQL").clicked() {
             actions.push(HistoryAction::Copy(entry.clone()));
+            ui.close();
+        }
+        if icons::menu_item(ui, icons::SNIPPET, "Save as snippet…").clicked() {
+            actions.push(HistoryAction::SaveSnippet(entry.clone()));
             ui.close();
         }
     });

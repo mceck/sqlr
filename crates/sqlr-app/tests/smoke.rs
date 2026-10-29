@@ -2709,6 +2709,43 @@ fn open_history(h: &mut Harness<'static, SqlrApp>) {
 }
 
 #[test]
+fn history_context_menu_saves_the_query_as_a_snippet() {
+    let dir = tempfile::tempdir().unwrap();
+    let db = Arc::new(Db::open_in_memory().unwrap());
+    let sql = "select 42\n-- saved from history";
+    db.add_history(&history_entry("c1", sql, Some("analytics")))
+        .unwrap();
+    let (deps, _) = deps_with_db(dir.path(), FakeScript::default(), Some(db.clone()));
+    let app = SqlrApp::new(deps, &egui::Context::default());
+    let mut h = Harness::builder()
+        .with_size((1400.0, 900.0))
+        .with_step_dt(0.01)
+        .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    h.run_steps(2);
+    open_history(&mut h);
+    wait_for_label(&mut h, "select 42");
+    h.get_by_label("select 42").click_secondary();
+    wait_for_label(&mut h, "Save as snippet…");
+    h.run_steps(2);
+    h.get_by_label("Save as snippet…").click();
+    wait_for_label(&mut h, "Save snippet");
+    h.get(text_field("select 42"));
+    h.get(By::new().role(Role::MultilineTextInput).value(sql));
+    h.get(By::new().role(Role::ComboBox).value("fake-conn"));
+    type_text(&mut h, "History snippet");
+    h.get_by_label("Save").click();
+    step_until(&mut h, "the snippet is saved", |_| {
+        !db.list_snippets().unwrap().is_empty()
+    });
+    let snippets = db.list_snippets().unwrap();
+    assert_eq!(snippets.len(), 1);
+    assert_eq!(snippets[0].name, "History snippet");
+    assert_eq!(snippets[0].sql, sql);
+    assert_eq!(snippets[0].conn_id.as_deref(), Some("c1"));
+    assert!(h.state().tab_titles().is_empty());
+}
+
+#[test]
 fn history_open_restores_database() {
     let dir = tempfile::tempdir().unwrap();
     let db = Arc::new(Db::open_in_memory().unwrap());

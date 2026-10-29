@@ -127,6 +127,7 @@ The Query language follows the tab, not the Connection text. A SQL tab lexes and
 - **Search** is a case-insensitive substring match over the stored SQL, `%` and `_` matched literally. **Filter** narrows to one Connection or shows all. A search returns at most 200 entries. The panel and the command palette each keep their own search and results.
 - **Reopen** (double-click or "Open in new tab") opens a new tab with the entry's SQL, on its original Connection and, for a SQL tab, its original server database, without running it. When the Connection is no longer saved the tab opens unbound with a notice. A document or key-value Connection opens the matching tab kind.
 - **Insert** puts the SQL at the active editor's carets; **Copy SQL** puts it on the clipboard. **Clear history** asks first and deletes the entries of the filtered Connection, or of every Connection when no filter is set; Snippets are kept. History outlives the Connection it names; after a Connection is deleted its entries show the stored connection id in place of a name.
+- **Save as snippet…** in an entry's context menu opens the snippet dialog with its full stored SQL and a suggested name, even with every Editor tab closed. Scope starts at the entry's Connection when it is still saved, or Global otherwise. The user can edit the draft and save or cancel it.
 - A newly stored entry refreshes every open search, so a run appears in the panel immediately.
 
 ### Snippets
