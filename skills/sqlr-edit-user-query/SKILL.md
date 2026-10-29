@@ -2,7 +2,7 @@
 name: sqlr-edit-user-query
 description: Work in the user's open sqlr editor tabs through the sqlr MCP tools - read, fix, rewrite and run the query the user has open, read the result or error of their last run, explain the rows they selected, open a new tab with a proposed query, show objects and plans in the app, find past queries in History and manage Snippets. Use when the user refers to "my query", "this tab", "the error I got", "these rows", asks to open or show something in sqlr, or to save or reuse a snippet.
 metadata:
-  sqlr-version: 0.1.3
+  sqlr-version: 0.1.4
 ---
 
 # Work in the user's sqlr tabs

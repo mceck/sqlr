@@ -2,7 +2,7 @@
 name: sqlr-query-database
 description: Explore and query the user's databases on your own through the sqlr MCP tools - find tables, read columns, keys, indexes and DDL, run SQL or native commands (MongoDB, Elasticsearch, Redis), page results, modify data under the user's safety rules, and read Explain plans. Use when the user asks a question about their data, wants to find a table or collection, inspect a schema, run or change something in a database exposed in sqlr, or understand why a query is slow.
 metadata:
-  sqlr-version: 0.1.3
+  sqlr-version: 0.1.4
 ---
 
 # Query databases through sqlr

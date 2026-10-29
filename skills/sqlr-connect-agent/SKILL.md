@@ -2,7 +2,7 @@
 name: sqlr-connect-agent
 description: Connect this agent to sqlr, the desktop database client, and fix a missing or failing sqlr MCP connection. Use when the sqlr tools are not available, when a sqlr tool call fails with connection refused, 401, not_exposed, secret_required or an empty connection list, or when the user asks how to use sqlr from an agent.
 metadata:
-  sqlr-version: 0.1.3
+  sqlr-version: 0.1.4
 ---
 
 # Connect to sqlr

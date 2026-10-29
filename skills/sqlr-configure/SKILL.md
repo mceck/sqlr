@@ -2,7 +2,7 @@
 name: sqlr-configure
 description: Change sqlr's settings, Connection profiles, keyboard shortcuts and connection folders through the sqlr MCP tools. Use when the user asks to change how sqlr looks or behaves (theme, fonts, page size, date formats, timeouts, confirmations, read-only, commit mode), to create or edit a profile, to rebind a shortcut, or to organise connections into folders.
 metadata:
-  sqlr-version: 0.1.3
+  sqlr-version: 0.1.4
 ---
 
 # Configure sqlr

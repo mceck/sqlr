@@ -2,7 +2,7 @@
 name: sqlr-create-connection
 description: Create a new database Connection in sqlr through the sqlr MCP tools and make sure it works. Use when the user asks to add, set up or register a database, server or file in sqlr (PostgreSQL, MySQL, MariaDB, SQLite, SQL Server, Oracle, MongoDB, Redis, Elasticsearch, DuckDB and others), gives a connection URL, or when a Connection you created answers secret_required or fails its test.
 metadata:
-  sqlr-version: 0.1.3
+  sqlr-version: 0.1.4
 ---
 
 # Create a Connection in sqlr
