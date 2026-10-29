@@ -279,6 +279,8 @@ Results, pending edits and transactions belong to the closed tab and end with it
 
 The themes are System, Light and Dark. System follows the operating system's setting and uses the dark theme when the operating system reports none. Each theme defines the background and surface colors, text at several emphasis levels, borders, the accent and its soft variant, semantic colors for success, warning and error, editor syntax colors, and a spacing scale that sets the toolbar, tab, status bar and control heights.
 
+Scrollable dialog bodies and form panes, including Connections, Preferences and Connection profiles, keep 4 logical pixels of padding above and below their content. At either end of the scroll range, the first and last controls and their focus borders remain fully visible.
+
 The accent color is configurable. Text and icons on the accent are chosen for contrast, and a custom accent that is too light for the surface is adjusted toward readable contrast.
 
 The interface uses the bundled Inter typeface, with a semibold cut for headings, and the bundled Phosphor icon font. The editor and the result grid use the monospace typeface built into the interface toolkit, at the configured size. The terminal uses the same monospace family at its own size.

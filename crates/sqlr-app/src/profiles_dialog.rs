@@ -213,73 +213,69 @@ impl SqlrApp {
                         .fill(p.bg_raised)
                         .inner_margin(Margin::symmetric(24, 20))
                         .show(ui, |ui| {
-                            egui::ScrollArea::vertical()
-                                .id_salt("profile_form")
-                                .auto_shrink(false)
-                                .show(ui, |ui| {
-                                    let d = &mut dialog.draft;
-                                    theme::section_title(ui, "Profile");
-                                    theme::hint(
+                            let height = ui.available_height();
+                            theme::scroll_body(ui, "profile_form", height, height, |ui| {
+                                let d = &mut dialog.draft;
+                                theme::section_title(ui, "Profile");
+                                theme::hint(
+                                    ui,
+                                    "Color and transaction behavior of its connections.",
+                                );
+                                ui.add_space(Spacing::L);
+                                setting_row(ui, "Name", |ui| {
+                                    text_edit(
                                         ui,
-                                        "Color and transaction behavior of its connections.",
+                                        TextEdit::singleline(&mut d.name)
+                                            .desired_width(f32::INFINITY),
                                     );
-                                    ui.add_space(Spacing::L);
-                                    setting_row(ui, "Name", |ui| {
-                                        text_edit(
-                                            ui,
-                                            TextEdit::singleline(&mut d.name)
-                                                .desired_width(f32::INFINITY),
-                                        );
-                                    });
-                                    setting_row(ui, "Color", |ui| color_row(ui, &mut d.color));
-                                    ui.add_space(Spacing::M);
-                                    theme::hairline(ui);
-                                    ui.add_space(Spacing::M);
-                                    theme::section_title(ui, "Behavior");
-                                    ui.add_space(Spacing::S);
-                                    setting_row(ui, "Commit mode", |ui| {
-                                        for (m, label) in [
-                                            (CommitMode::Auto, "Auto"),
-                                            (CommitMode::Manual, "Manual"),
-                                            (CommitMode::Smart, "Smart"),
-                                        ] {
-                                            if theme::segment(ui, d.commit_mode == m, label)
-                                                .clicked()
-                                            {
-                                                d.commit_mode = m;
-                                            }
+                                });
+                                setting_row(ui, "Color", |ui| color_row(ui, &mut d.color));
+                                ui.add_space(Spacing::M);
+                                theme::hairline(ui);
+                                ui.add_space(Spacing::M);
+                                theme::section_title(ui, "Behavior");
+                                ui.add_space(Spacing::S);
+                                setting_row(ui, "Commit mode", |ui| {
+                                    for (m, label) in [
+                                        (CommitMode::Auto, "Auto"),
+                                        (CommitMode::Manual, "Manual"),
+                                        (CommitMode::Smart, "Smart"),
+                                    ] {
+                                        if theme::segment(ui, d.commit_mode == m, label).clicked() {
+                                            d.commit_mode = m;
                                         }
-                                    });
-                                    theme::hint(ui, crate::transaction::mode_help(d.commit_mode));
-                                    setting_row(ui, "Safety", |ui| {
-                                        ui.vertical(|ui| {
-                                            ui.checkbox(
-                                                &mut d.confirm_writes,
-                                                "Confirm statements that modify data",
-                                            );
-                                            ui.checkbox(
-                                                &mut d.confirm_destructive,
-                                                "Confirm destructive statements",
-                                            );
-                                            ui.checkbox(&mut d.read_only, "Read-only sessions");
-                                        });
-                                    });
-                                    let mut timeout = d.idle_tx_timeout_min.is_some();
-                                    setting_row(ui, "Idle transactions", |ui| {
-                                        ui.checkbox(&mut timeout, "Ask after");
-                                        let mut minutes = d.idle_tx_timeout_min.unwrap_or(10);
-                                        ui.add_enabled(
-                                            timeout,
-                                            DragValue::new(&mut minutes).range(1..=1440),
-                                        );
-                                        ui.label("min");
-                                        d.idle_tx_timeout_min = timeout.then_some(minutes);
-                                    });
-                                    if let Some(error) = &dialog.error {
-                                        ui.add_space(Spacing::S);
-                                        ui.colored_label(p.error, error);
                                     }
                                 });
+                                theme::hint(ui, crate::transaction::mode_help(d.commit_mode));
+                                setting_row(ui, "Safety", |ui| {
+                                    ui.vertical(|ui| {
+                                        ui.checkbox(
+                                            &mut d.confirm_writes,
+                                            "Confirm statements that modify data",
+                                        );
+                                        ui.checkbox(
+                                            &mut d.confirm_destructive,
+                                            "Confirm destructive statements",
+                                        );
+                                        ui.checkbox(&mut d.read_only, "Read-only sessions");
+                                    });
+                                });
+                                let mut timeout = d.idle_tx_timeout_min.is_some();
+                                setting_row(ui, "Idle transactions", |ui| {
+                                    ui.checkbox(&mut timeout, "Ask after");
+                                    let mut minutes = d.idle_tx_timeout_min.unwrap_or(10);
+                                    ui.add_enabled(
+                                        timeout,
+                                        DragValue::new(&mut minutes).range(1..=1440),
+                                    );
+                                    ui.label("min");
+                                    d.idle_tx_timeout_min = timeout.then_some(minutes);
+                                });
+                                if let Some(error) = &dialog.error {
+                                    ui.add_space(Spacing::S);
+                                    ui.colored_label(p.error, error);
+                                }
+                            });
                         });
                 });
             });

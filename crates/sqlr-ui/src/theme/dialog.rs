@@ -632,7 +632,7 @@ pub fn confirm(
 
 /// A vertical scroll area for a dialog body or a dialog pane: it shrinks to its content,
 /// stops at `max_height`, keeps its scroll bar visible while it overflows and fades the
-/// edge where more content hides.
+/// edge where more content hides. Vertical padding keeps field borders inside the clip.
 pub fn scroll_body<R>(
     ui: &mut Ui,
     id: impl Hash + std::fmt::Debug,
@@ -654,7 +654,12 @@ pub fn scroll_body<R>(
                 .min_scrolled_height(min_height)
                 .max_height(max_height)
                 .auto_shrink([false, true])
-                .show(ui, add_contents)
+                .show(ui, |ui| {
+                    egui::Frame::new()
+                        .inner_margin(Margin::symmetric(0, Spacing::S as i8))
+                        .show(ui, add_contents)
+                        .inner
+                })
         })
         .inner;
     let view = output.inner_rect;
