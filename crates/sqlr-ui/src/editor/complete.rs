@@ -105,6 +105,15 @@ const CLAUSE_KEYWORDS: [&str; 10] = [
 /// What the caret at the end of `before_caret` completes; `before_caret` starts at a line
 /// start in state `start`.
 pub fn caret_context(syntax: &SqlSyntax, before_caret: &str, start: LexState) -> CaretContext {
+    analyze_context(syntax, before_caret, start).0
+}
+
+/// Context plus whether a relation here can receive an automatic alias.
+pub(crate) fn analyze_context(
+    syntax: &SqlSyntax,
+    before_caret: &str,
+    start: LexState,
+) -> (CaretContext, bool) {
     let off = CaretContext {
         prefix: String::new(),
         kind: ContextKind::Off,
@@ -112,7 +121,7 @@ pub fn caret_context(syntax: &SqlSyntax, before_caret: &str, start: LexState) ->
     let mut tokens = Vec::new();
     let end = syntax.lex(before_caret, start, &mut tokens);
     if end.state != LexState::Normal {
-        return off;
+        return (off, false);
     }
     let text = |t: &Token| &before_caret[t.start..t.end];
     if let Some(t) = tokens.last()
@@ -122,7 +131,7 @@ pub fn caret_context(syntax: &SqlSyntax, before_caret: &str, start: LexState) ->
         && text(t).starts_with(syntax.line_comment)
     {
         // A line comment runs to the caret.
-        return off;
+        return (off, false);
     }
     tokens.retain(|t| t.kind != TokenKind::Comment);
     let prefix = match tokens.last() {
@@ -161,7 +170,25 @@ pub fn caret_context(syntax: &SqlSyntax, before_caret: &str, start: LexState) ->
         }
         _ => ContextKind::General,
     };
-    CaretContext { prefix, kind }
+    // Strip schema qualifiers to find the keyword introducing this relation.
+    let mut relation_tokens = tokens.as_slice();
+    while let [rest @ .., q, dot] = relation_tokens {
+        if text(dot) != "."
+            || !matches!(
+                q.kind,
+                TokenKind::Ident | TokenKind::QuotedIdent | TokenKind::Keyword
+            )
+        {
+            break;
+        }
+        relation_tokens = rest;
+    }
+    let alias = match relation_tokens {
+        [.., last] if is_keyword(last, &["FROM", "JOIN"]) => true,
+        [rest @ .., last] if text(last) == "," => clause_is_from(rest, &text, &is_keyword),
+        _ => false,
+    };
+    (CaretContext { prefix, kind }, alias)
 }
 
 /// Whether the nearest clause keyword before the end of `tokens`, at paren depth 0, is FROM.
@@ -388,6 +415,49 @@ impl<'a> Builder<'a> {
             needs: self.needs,
         }
     }
+}
+
+/// Initials of word segments, with a suffix to avoid names already in the statement.
+pub(crate) fn relation_alias(name: &str, scope: &StatementScope, syntax: &SqlSyntax) -> String {
+    let mut base = String::new();
+    let mut boundary = true;
+    let mut previous_lower = false;
+    for c in name.chars() {
+        if !c.is_alphanumeric() {
+            boundary = true;
+            previous_lower = false;
+            continue;
+        }
+        if (boundary || (previous_lower && c.is_uppercase())) && c.is_alphabetic() {
+            base.extend(c.to_lowercase());
+        }
+        boundary = false;
+        previous_lower = c.is_lowercase();
+    }
+    if base.is_empty() {
+        base.push('t');
+    }
+    let used = |alias: &str| {
+        scope.ctes.iter().any(|n| n.eq_ignore_ascii_case(alias))
+            || scope.relations.iter().any(|r| {
+                r.name.eq_ignore_ascii_case(alias)
+                    || r.alias
+                        .as_deref()
+                        .is_some_and(|a| a.eq_ignore_ascii_case(alias))
+            })
+            || syntax
+                .reserved
+                .iter()
+                .any(|k| k.eq_ignore_ascii_case(alias))
+            || name.eq_ignore_ascii_case(alias)
+    };
+    let mut alias = base.clone();
+    let mut suffix = 2;
+    while used(&alias) {
+        alias = format!("{base}{suffix}");
+        suffix += 1;
+    }
+    syntax.quote_if_needed(&alias).into_owned()
 }
 
 /// `Some(0)` for a case-insensitive prefix match, `Some(1)` for a substring match.

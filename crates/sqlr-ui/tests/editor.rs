@@ -482,7 +482,129 @@ fn popup_updates_when_catalog_arrives() {
         h.state().0.completion_labels()
     );
     key(&mut h, Modifiers::NONE, Key::Tab);
-    assert_eq!(text(&h), "select * from public.orders");
+    assert_eq!(text(&h), "select * from public.orders AS o");
+}
+
+fn alias_source(name: &str, kind: RelationKind) -> StubSource {
+    StubSource {
+        available: true,
+        schemas: Some(vec!["public".into()]),
+        defaults: vec!["public".into()],
+        catalogs: HashMap::from([(
+            "public".into(),
+            SchemaCatalog {
+                schema: "public".into(),
+                relations: vec![CatalogRelation {
+                    name: name.into(),
+                    kind,
+                    columns: Vec::new(),
+                }],
+            },
+        )]),
+        ..StubSource::default()
+    }
+}
+
+#[test]
+fn table_completion_adds_short_unique_aliases() {
+    for (before, name, kind, expected) in [
+        (
+            "select * from ",
+            "mia_tabella",
+            RelationKind::Table,
+            "mia_tabella AS mt",
+        ),
+        (
+            "select * from ",
+            "OrderItems",
+            RelationKind::Table,
+            "\"OrderItems\" AS oi",
+        ),
+        (
+            "select * from ",
+            "Order Items",
+            RelationKind::View,
+            "\"Order Items\" AS oi",
+        ),
+        ("select * from ", "123", RelationKind::Table, "\"123\" AS t"),
+        (
+            "select * from ",
+            "état_commandes",
+            RelationKind::Table,
+            "\"état_commandes\" AS \"éc\"",
+        ),
+        (
+            "select * from ",
+            "account_status",
+            RelationKind::Table,
+            "account_status AS as2",
+        ),
+        (
+            "select * from old mt join ",
+            "mia_tabella",
+            RelationKind::Table,
+            "mia_tabella AS mt2",
+        ),
+        (
+            "select * from old MT, second mt2, ",
+            "mia_tabella",
+            RelationKind::Table,
+            "mia_tabella AS mt3",
+        ),
+        (
+            "with mt as (select 1) select * from ",
+            "mia_tabella",
+            RelationKind::Table,
+            "mia_tabella AS mt2",
+        ),
+        (
+            "insert into ",
+            "mia_tabella",
+            RelationKind::Table,
+            "mia_tabella",
+        ),
+        ("update ", "mia_tabella", RelationKind::Table, "mia_tabella"),
+        (
+            "create table ",
+            "mia_tabella",
+            RelationKind::Table,
+            "mia_tabella",
+        ),
+    ] {
+        let mut h = harness_with("", alias_source(name, kind));
+        click_pos(&mut h, p(0, 0), Modifiers::NONE);
+        if name == "123" {
+            type_text(&mut h, before);
+            key(&mut h, Modifiers::CTRL, Key::Space);
+        } else {
+            type_text(
+                &mut h,
+                &format!("{before}{}", name.chars().take(3).collect::<String>()),
+            );
+        }
+        key(&mut h, Modifiers::NONE, Key::Tab);
+        assert_eq!(text(&h), format!("{before}{expected}"), "{before}{name}");
+    }
+}
+
+#[test]
+fn table_completion_preserves_existing_alias_and_following_clauses() {
+    for (after, expected) in [
+        (" as custom", "mia_tabella as custom"),
+        (" custom", "mia_tabella custom"),
+        (" /* alias */ custom", "mia_tabella /* alias */ custom"),
+        (" WHERE true", "mia_tabella AS mt WHERE true"),
+        (";", "mia_tabella AS mt;"),
+    ] {
+        let mut h = harness_with(
+            &format!("select * from {after}"),
+            alias_source("mia_tabella", RelationKind::Table),
+        );
+        click_pos(&mut h, p(0, 14), Modifiers::NONE);
+        type_text(&mut h, "mia");
+        key(&mut h, Modifiers::NONE, Key::Tab);
+        assert_eq!(text(&h), format!("select * from {expected}"));
+    }
 }
 
 #[test]

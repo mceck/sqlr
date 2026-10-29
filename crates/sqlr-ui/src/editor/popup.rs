@@ -18,7 +18,7 @@ use sqlr_core::{CatalogNeed, LexState, Token, TokenKind};
 use crate::editor::buffer::TextBuffer;
 use crate::editor::complete::{
     CONTEXT_CLIP_BYTES, CaretContext, CompletionItem, CompletionSource, ContextKind, ItemKind,
-    candidates, caret_context,
+    analyze_context, candidates, relation_alias,
 };
 use crate::editor::model::EditorModel;
 use crate::editor::scope::{STRUCTURE_SYNC_LIMIT, ScopeWorker, StatementScope, statement_scope};
@@ -63,6 +63,7 @@ const VISIBLE_ROWS: usize = 10;
 pub(crate) struct Analysis {
     key: (u64, usize),
     pub(crate) ctx: CaretContext,
+    alias_allowed: bool,
 }
 
 impl Analysis {
@@ -172,8 +173,12 @@ impl CompletionPopup {
         let caret = buf.char_index(model.primary().head);
         let key = (model.revision(), caret);
         if self.analysis.as_ref().is_none_or(|a| a.key != key) {
-            let ctx = context_at(model, layer, caret);
-            self.analysis = Some(Analysis { key, ctx });
+            let (ctx, alias_allowed) = context_at(model, layer, caret);
+            self.analysis = Some(Analysis {
+                key,
+                ctx,
+                alias_allowed,
+            });
         }
         self.analysis.as_ref().expect("set above")
     }
@@ -215,6 +220,15 @@ impl CompletionPopup {
         }
         let found = candidates(&a.ctx, &self.scope, layer.syntax(), source);
         self.items = found.items;
+        if a.alias_allowed {
+            for item in &mut self.items {
+                if matches!(item.kind, ItemKind::Table | ItemKind::View) {
+                    let alias = relation_alias(&item.label, &self.scope, layer.syntax());
+                    item.insert.push_str(&format!(" AS {alias}"));
+                    item.detail.push_str(&format!(" AS {alias}"));
+                }
+            }
+        }
         self.selected = self.selected.min(self.items.len().saturating_sub(1));
         self.loading = self.items.is_empty() && !found.needs.is_empty();
         if self.items.is_empty() && found.needs.is_empty() {
@@ -356,7 +370,7 @@ fn badge(kind: ItemKind) -> &'static str {
 /// The caret context at char `caret`: the text before it, clipped to [`CONTEXT_CLIP_BYTES`]
 /// at a line start (or, in a long line, at a token start), lexed from the state known there.
 /// It reads only the clipped text, never a whole long line.
-fn context_at(model: &EditorModel, layer: &SyntaxLayer, caret: usize) -> CaretContext {
+fn context_at(model: &EditorModel, layer: &SyntaxLayer, caret: usize) -> (CaretContext, bool) {
     let buf = model.buffer();
     let rope = buf.rope();
     let caret_byte = rope.char_to_byte(caret);
@@ -372,10 +386,14 @@ fn context_at(model: &EditorModel, layer: &SyntaxLayer, caret: usize) -> CaretCo
         // offered rather than guessed.
         let known = |line: usize| layer.line_state(line);
         if rope.line_to_byte(l0) == lo {
-            let Some(st) = known(l0) else { return off };
+            let Some(st) = known(l0) else {
+                return (off, false);
+            };
             (lo, st)
         } else if l0 < caret_line {
-            let Some(st) = known(l0 + 1) else { return off };
+            let Some(st) = known(l0 + 1) else {
+                return (off, false);
+            };
             (rope.line_to_byte(l0 + 1), st)
         } else {
             // The caret's own line is long: cut at a token start inside the window.
@@ -383,7 +401,7 @@ fn context_at(model: &EditorModel, layer: &SyntaxLayer, caret: usize) -> CaretCo
             let (w0, w1) = (lo - line_start, caret_byte - line_start);
             let mut tokens: Vec<Token> = Vec::new();
             if !layer.tokens(buf, caret_line, w0..w1, &mut tokens) {
-                return off;
+                return (off, false);
             }
             if let Some(t) = tokens.first()
                 && t.start < w0
@@ -393,7 +411,7 @@ fn context_at(model: &EditorModel, layer: &SyntaxLayer, caret: usize) -> CaretCo
                     TokenKind::String | TokenKind::Comment | TokenKind::QuotedIdent
                 )
             {
-                return off;
+                return (off, false);
             }
             let cut = tokens
                 .iter()
@@ -403,7 +421,22 @@ fn context_at(model: &EditorModel, layer: &SyntaxLayer, caret: usize) -> CaretCo
         }
     };
     let before: String = rope.byte_slice(from..caret_byte).into();
-    caret_context(layer.syntax(), &before, state)
+    let (ctx, mut alias_allowed) = analyze_context(layer.syntax(), &before, state);
+    if alias_allowed {
+        // Bounded lookahead preserves a user-written alias and table/column suffixes.
+        let end = (caret + CONTEXT_CLIP_BYTES).min(rope.len_chars());
+        let after = rope.slice(caret..end).to_string();
+        let mut tokens = Vec::new();
+        layer.syntax().lex(&after, LexState::Normal, &mut tokens);
+        if let Some(t) = tokens.iter().find(|t| t.kind != TokenKind::Comment) {
+            alias_allowed = !matches!(t.kind, TokenKind::Ident | TokenKind::QuotedIdent)
+                && !after[t.start..t.end].eq_ignore_ascii_case("AS")
+                && !matches!(&after[t.start..t.end], "." | "(");
+        } else if end < rope.len_chars() {
+            alias_allowed = false;
+        }
+    }
+    (ctx, alias_allowed)
 }
 
 #[cfg(test)]
@@ -434,10 +467,10 @@ mod tests {
             },
         );
         let caret = model.buffer().char_index(model.primary().head);
-        assert_eq!(context_at(&model, &layer, caret).kind, ContextKind::Off);
+        assert_eq!(context_at(&model, &layer, caret).0.kind, ContextKind::Off);
         layer.ensure(model.buffer(), 1000, None);
         assert_eq!(
-            context_at(&model, &layer, caret),
+            context_at(&model, &layer, caret).0,
             CaretContext {
                 prefix: "us".into(),
                 kind: ContextKind::Relation { schema: None }
@@ -449,10 +482,10 @@ mod tests {
         let col = long.lines().nth(1).map_or(0, str::len);
         let (model, mut layer) = setup(&long, Pos { line: 1, col });
         let caret = model.buffer().char_index(model.primary().head);
-        assert_eq!(context_at(&model, &layer, caret).kind, ContextKind::Off);
+        assert_eq!(context_at(&model, &layer, caret).0.kind, ContextKind::Off);
         layer.ensure(model.buffer(), 1, None);
         assert_eq!(
-            context_at(&model, &layer, caret).kind,
+            context_at(&model, &layer, caret).0.kind,
             ContextKind::Relation { schema: None }
         );
     }
