@@ -11,7 +11,7 @@
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 # The drivers of sqlr_core's known databases that do not ship with the app.
-DRIVERS="hana duckdb mongodb jdbc jdbc-db2 jdbc-clickhouse jdbc-h2"
+DRIVERS="hana duckdb mongodb jdbc jdbc-db2 jdbc-h2"
 
 out=${1:?usage: package-release-drivers.sh OUT_DIR [--target TRIPLE] [--platform KEY]}
 shift

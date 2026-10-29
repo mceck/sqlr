@@ -72,6 +72,7 @@ else
         SQLR_TEST_ELASTIC_AUTH=127.0.0.1:59202 \
         SQLR_TEST_MSSQL=127.0.0.1:51433 \
         SQLR_TEST_ORACLE=127.0.0.1:51521 \
+        SQLR_TEST_CLICKHOUSE=127.0.0.1:58123 \
         SQLR_TEST_CA="$PWD/.test-services/certs/ca.crt"
 fi
 

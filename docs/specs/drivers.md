@@ -156,6 +156,7 @@ A property name starts with a letter and holds letters, digits, `_` and `.`; val
 | SQL Server | Relational | Bundled | `sqlserver` |
 | Oracle | Relational | Bundled, pure Rust, no Oracle client libraries | `oracle` |
 | Snowflake | Relational | Bundled, HTTPS SQL API | `snowflake` |
+| ClickHouse | Relational | Bundled, pure Rust HTTP client | `clickhouse` |
 | MongoDB | Document | Sidecar, downloaded from the release | `mongodb` |
 | Elasticsearch | Document, with tabular queries | Bundled | `elasticsearch` |
 | Redis | Key-value | Bundled | `redis` |
@@ -241,6 +242,16 @@ Every Bundled driver is registered at startup. Installed Sidecar drivers are reg
 - Exact decimals and integers outside the signed 64-bit range are text. The driver declares no transactions and no editable results, so imports and transfers into Snowflake are unavailable (they need transactional loading); exports work.
 - The explorer lists schemas, tables, views and columns of the configured database; catalogs feed autocomplete.
 - Statement errors show Snowflake's own message with the token removed should the server echo it; authentication, permission and service failures show a fixed message.
+
+#### ClickHouse
+
+- Bundled Driver using the official pure Rust client over HTTP, or HTTPS with rustls and the operating system's trusted certificates. Connection fields are host (`localhost`), port (8123), database (`default`), user (`default`), password (secret), and TLS (off). HTTPS commonly uses port 8443, selected explicitly. The Connection URL scheme is `clickhouse`. SSH tunnelling uses the standard host and port fields.
+- The welcome card opens the native connection form immediately. New Connections use the `clickhouse` Driver; saved `jdbc-clickhouse` Connections continue through their installed JDBC bridge.
+- Opening a Connection authenticates and reads the server version within 15 seconds. Each request carries the configured database and query settings. Statements run in auto-commit. Explicit transaction and session commands return an unsupported-operation error pointing to Connection settings and per-query `SETTINGS`. The read-only switch sends the server's readonly setting with each subsequent request.
+- Results stream in JSONCompactEachRowWithNamesAndTypes, preserving column metadata for empty results. The driver reads at most the requested page of rows and retains only the current row plus the transport buffer between reads. Int8 through Int64 and UInt8 through UInt32 use signed 64-bit storage. UInt64, wider integers and decimals remain exact text; floats, booleans and SQL NULL retain their kinds. Dates and timestamps retain their server representation, UUIDs have a UUID display hint, and arrays, tuples, maps and JSON use text. Nullable and LowCardinality wrappers preserve the underlying display kind.
+- Each statement gets a unique query identifier. Cancel uses a separate request to kill that identifier synchronously, with a five-second timeout. Closing or dropping an unfinished result also kills its query. The cancel handle targets the request currently being read. Paused result streams retain their query identifiers and allow catalog reads or other statements on the same Connection between pages.
+- The explorer treats databases as schemas, then lists tables, views, materialized views and their columns. The system catalogs supply completion, types, nullability and default or generated expressions. Catalog filters use typed server parameters. A ClickHouse primary key describes sorting rather than unique row identity, so the Driver reports empty row keys and offers read-only result grids. SQL in the editor can write data and create objects; affected counts use the server's written-row summary.
+- Server errors retain their category and message with an echoed password redacted. Upstream diagnostics that can contain server values are suppressed; the engine records failures under the global SQL diagnostics preference.
 
 #### MongoDB
 
@@ -355,7 +366,7 @@ Variables (`const x = 1`), functions, arrow functions, unknown `db.` methods (`d
 | `jdbc-duckdb` | DuckDB | file |
 | `jdbc-h2` | H2 | file or `mem:` URL part, user, password |
 
-- The release publishes `jdbc`, `jdbc-db2`, `jdbc-clickhouse` and `jdbc-h2` (the launcher and the bridge jar, without database jars). The other presets remain for existing Connections; SQL Server, Oracle, Snowflake and DuckDB have their own drivers. Database jars are picked in the connection form or packed into a Driver archive.
+- The release publishes `jdbc`, `jdbc-db2` and `jdbc-h2` (the launcher and the bridge jar, without database jars). The other presets remain for existing Connections; SQL Server, Oracle, Snowflake, ClickHouse and DuckDB have their own drivers. Database jars are picked in the connection form or packed into a Driver archive.
 - Capabilities: `server_cancel`, `editable_results`, `schemas`; no `transactions`: statements run in auto-commit with one connection per Session. A typed `BEGIN` turns auto-commit off, and `COMMIT` or `ROLLBACK` ends that transaction and turns it back on. Cancel uses the JDBC statement cancel; a driver that ignores it gets its process killed after 5 seconds.
 - Browsing and describing use JDBC metadata; a database that reports little there shows little.
 - Values arrive as the right column kind or as text, never as a Java object's `toString()`: decimals beyond a double are exact text with the decimal hint, `TIMESTAMP WITH TIME ZONE` keeps its offset as ISO text, `BLOB` is bytes, `CLOB` is text cut at 16 MiB with the cut shown, `ARRAY` is `[1, 2, NULL]`-style text, `UUID`, `JSON` and `INTERVAL` use the driver's text, and an object the bridge cannot show is `‹unsupported TYPE›`.
@@ -539,11 +550,11 @@ The optional operations (describe, catalog, bound parameters, introspection, adm
 - Honour cancel: once the cancel handle returns, the running statement stops within a few seconds, or the app kills the process.
 - Lengths and counts read from the database are untrusted: no allocation is sized from them without a bound.
 
-**Testing with the Conformance suite.** The suite is a reusable library of checks parameterized by a connection factory and a target description: setup statements that create `sqlr_conformance(n integer, t text)` holding rows `n = 1..25` with `t = 'row <n>'`, the Capabilities to check, the table as `describe` names it, an optional slow statement and type cases (one-value queries with the value each must return). It runs these checks and reports passes, failures and skips by name:
+**Testing with the Conformance suite.** The suite is a reusable library of checks parameterized by a connection factory and a target description: setup statements that create `sqlr_conformance(n integer, t text)` holding rows `n = 1..25` with `t = 'row <n>'`, the Capabilities to check, the table as `describe` names it, an optional write statement affecting three rows, an optional slow statement and type cases (one-value queries with the value each must return). It runs these checks and reports passes, failures and skips by name:
 
 - `connect`, `setup`, `ping` (a non-empty product name), `browse`;
 - `execute_and_stream` (pages of 10, 10 and 5 rows) and `fetch_more` (pages of 7, 7, 7 and 4);
-- `affected_rows` (an `UPDATE` of 3 rows reports 3);
+- `affected_rows` (a write of three rows reports three; the default is an `UPDATE`, and databases with asynchronous mutations use a target-supplied `INSERT`);
 - `syntax_error_is_an_error` (`SELEKT 1 FROM` fails with `Syntax`);
 - `quote_ident_round_trips` (an identifier holding a quote is escaped);
 - `cancel` (when `server_cancel` is declared and a slow statement is given): the statement stops within 15 seconds of the cancel, with an error or a normal end;
@@ -579,7 +590,7 @@ Installs run as jobs with progress ("Installing… N%"), a failure message with 
 
 ### Release downloads
 
-The primary install source is the sqlr GitHub release of the running app's version (tag `v<version>`). The release workflow builds and packs every installable driver of the Known databases (`hana`, `duckdb`, `mongodb`, `jdbc`, `jdbc-db2`, `jdbc-clickhouse`, `jdbc-h2`) for every platform, as `sqlr-driver-<id>_<version>_<os>-<arch>.tar.gz` (for example `macos-aarch64`, `linux-x86_64`, `windows-x86_64`), listed in the release's `SHA256SUMS.txt`. Every packed driver has the release's version. The app reads no remote index and runs no background check: nothing is fetched until the user clicks **Download and install** or **Update to <version>**.
+The primary install source is the sqlr GitHub release of the running app's version (tag `v<version>`). The release workflow builds and packs every installable driver of the Known databases (`hana`, `duckdb`, `mongodb`, `jdbc`, `jdbc-db2`, `jdbc-h2`) for every platform, as `sqlr-driver-<id>_<version>_<os>-<arch>.tar.gz` (for example `macos-aarch64`, `linux-x86_64`, `windows-x86_64`), listed in the release's `SHA256SUMS.txt`. Every packed driver has the release's version. The app reads no remote index and runs no background check: nothing is fetched until the user clicks **Download and install** or **Update to <version>**.
 
 A download:
 
@@ -674,6 +685,7 @@ flowchart LR
 - **MongoDB is a sidecar, and the protocol grew to carry the Document Family.** The official MongoDB client is the heaviest database dependency of the app, and most users never use MongoDB. Protocol 1.1 adds the Document operations additively, so a 1.0 driver and a 1.0 app keep working and a later Document driver (Elasticsearch) can follow without another protocol change. The synchronous parts of the Document interface (splitting, classifying, the target of a Node) run in the app from the manifest's query language, because a request per keystroke would cost more than the logic it moves. A saved Connection of an uninstalled driver offers the install and the download starts only on a click, as for every other Sidecar driver.
 - **DuckDB and SAP HANA are sidecars.** DuckDB's engine alone would break the 75 MB size budget. HANA's `hdbconnect` has essentially one maintainer and a slow release cadence: as a sidecar it can be replaced transparently by a driver built on `SAP/go-hdb` if maintenance stalls.
 - **DuckDB results containing nanosecond times use fallible Arrow batches.** The native row decoder lacks this temporal type. Reading batches directly preserves nanoseconds and returns fetch errors, including cancellation, through the Driver interface; other results retain native row decoding.
+- **ClickHouse is bundled through the official Rust HTTP client.** Dynamic result metadata and streaming JSON rows support arbitrary editor queries while rustls keeps the app independent of Java and native TLS libraries. Each request carries its own context, and sorting keys are kept separate from unique row identity.
 - **Snowflake is bundled over its SQL API.** It needs no Java, JDBC or ODBC and works over HTTPS with rustls; the price is independent auto-commit requests with no durable session.
 - **The JDBC bridge is one generic sidecar with presets.** Any database with a JDBC driver works without a native driver; Java is required only by users of the bridge, so the app itself stays JVM-free.
 - **Mongo statements are a parsed subset of the shell syntax, without a JavaScript engine.** A JS engine would cost size and attack surface; the subset covers everyday queries, and `db.runCommand` covers everything else.

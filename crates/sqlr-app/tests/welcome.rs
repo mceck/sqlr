@@ -36,6 +36,7 @@ fn harness_with_drivers(dir: &Path, theme: ThemePref, all: bool) -> Harness<'sta
         ..Default::default()
     }));
     drivers.register(SqliteDriver::new());
+    drivers.register(sqlr_driver_clickhouse::ClickHouseDriver::new());
     drivers.register(sqlr_driver_mysql::MysqlDriver::new());
     drivers.register(PostgresDriver::new());
     if all {
@@ -435,14 +436,12 @@ fn value_sidebar_starts_closed_and_can_be_opened() {
 }
 
 #[test]
-fn welcome_clickhouse_card_offers_driver_installation() {
+fn welcome_clickhouse_card_opens_the_native_connection_form() {
     let dir = tempfile::tempdir().unwrap();
     let mut h = harness(dir.path());
     h.get_by_label("ClickHouse").click();
     h.run_steps(3);
-    // The Drivers window opens on the driver and offers its download; a local file stays
-    // the alternative. Nothing is fetched before the user asks.
-    h.get_by_label("Download and install");
-    h.get_by_label("Install from file…");
-    assert!(h.state().conn_dialog_form().is_none());
+    let form = h.state().conn_dialog_form().unwrap();
+    assert_eq!(form.0, "clickhouse");
+    assert!(h.query_by_label("Download and install").is_none());
 }

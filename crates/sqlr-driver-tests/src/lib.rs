@@ -45,6 +45,9 @@ pub struct Target {
     /// lowercase, so a dialect quotes them) holding the rows `n = 1..=25` with
     /// `t = 'row <n>'`, dropping any previous copy.
     pub setup_sql: Vec<String>,
+    /// A write that affects exactly three rows. Defaults to an UPDATE of the fixture.
+    /// Databases with asynchronous mutations can use an INSERT instead.
+    pub affected_sql: Option<String>,
     pub capabilities: Capabilities,
     /// The conformance table as the driver's `describe` names it.
     pub table: TableRef,
@@ -59,6 +62,7 @@ impl Target {
             name: name.into(),
             connect,
             setup_sql: Vec::new(),
+            affected_sql: None,
             capabilities: Capabilities::default(),
             table: TableRef {
                 database: None,

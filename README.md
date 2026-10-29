@@ -66,7 +66,8 @@ To connect an agent, open **Settings → Agents** in sqlr and choose **Install**
 | MongoDB | `mongodb` (rustls) | [Mongo shell subset](docs/specs/drivers.md), TLS, SSH tunnel |
 | Elasticsearch 7.17 / 8.x | `reqwest` (rustls) | Kibana-console requests, ES\|QL and SQL, SSH tunnel |
 | Redis (standalone) | `redis` (rustls) | key browser, console, TLS, SSH tunnel |
-| Db2, ClickHouse, H2, any JDBC | JDBC bridge sidecar (downloaded in the Driver Manager, Java 17+) | [docs/drivers/jdbc.md](docs/drivers/jdbc.md) |
+| ClickHouse | Official `clickhouse` Rust client (rustls), included | HTTP/HTTPS, streaming results, server cancel, [connection notes](docs/drivers/clickhouse.md) |
+| Db2, H2, any JDBC | JDBC bridge sidecar (downloaded in the Driver Manager, Java 17+) | [docs/drivers/jdbc.md](docs/drivers/jdbc.md) |
 
 A connection can be pasted as a URL (`postgresql://user@host:5432/db`, `sqlite:/path`, …); a password inside a URL is refused.
 

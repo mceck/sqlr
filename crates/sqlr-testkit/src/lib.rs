@@ -52,6 +52,7 @@ pub fn service(name: &str) -> (String, u16) {
         return (host.to_string(), port);
     }
     let port = match name {
+        "CLICKHOUSE" => 58123,
         "POSTGRES" => 55432,
         "POSTGRES_GLOBAL" => 55433,
         "MYSQL" => 53306,

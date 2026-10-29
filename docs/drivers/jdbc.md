@@ -4,7 +4,7 @@ Any database with a JDBC driver — SQL Server, Oracle, Db2, ClickHouse, Snowfla
 anything else — through one sidecar: a small Java 17 program (`drivers/jdbc-bridge`, built with
 `javac` and `jar`, no build tool) started by a Rust launcher (`crates/sqlr-driver-jdbc`).
 
-Snowflake also has a built-in native driver and DuckDB a native sidecar driver; these JDBC presets remain available for existing profiles. See [Snowflake](snowflake.md) and [DuckDB](duckdb.md).
+ClickHouse and Snowflake also have built-in native drivers and DuckDB a native sidecar driver; these JDBC presets remain available for existing profiles. See [ClickHouse](clickhouse.md), [Snowflake](snowflake.md) and [DuckDB](duckdb.md).
 
 ## Requirements
 
@@ -32,7 +32,7 @@ longer need the bridge.
 
 ## Install
 
-Every sqlr release publishes `jdbc`, `jdbc-db2`, `jdbc-clickhouse` and `jdbc-h2` (the launcher and
+Every sqlr release publishes `jdbc`, `jdbc-db2` and `jdbc-h2` (the launcher and
 the bridge jar, without database jars) for each platform: choose **Download and install** in the
 Driver Manager. To bundle a JDBC jar, or for another preset, pack the driver yourself:
 

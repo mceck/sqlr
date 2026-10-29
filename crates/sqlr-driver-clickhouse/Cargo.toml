@@ -1,0 +1,24 @@
+[package]
+name = "sqlr-driver-clickhouse"
+version = "0.1.4"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+sqlr-core = { path = "../sqlr-core" }
+async-trait.workspace = true
+clickhouse = { version = "0.15.3", default-features = false, features = ["lz4", "rustls-tls-ring", "rustls-tls-native-roots"] }
+parking_lot.workspace = true
+tracing.workspace = true
+serde_json.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "rt"] }
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+sqlr-driver-tests = { path = "../sqlr-driver-tests" }
+sqlr-testkit = { path = "../sqlr-testkit" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

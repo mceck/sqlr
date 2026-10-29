@@ -7,6 +7,20 @@
 name: sqlr-tests
 
 services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.8-alpine
+    environment:
+      CLICKHOUSE_USER: sqlr
+      CLICKHOUSE_PASSWORD: sqlr-test
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ports:
+      - "127.0.0.1:58123:8123"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8123/ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 90
+
   postgres:
     image: postgres:17-alpine
     environment:

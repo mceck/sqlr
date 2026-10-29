@@ -40,6 +40,7 @@ encoding_rs = "0.8.42"
 libc = "0.2"
 
 [dev-dependencies]
+sqlr-driver-clickhouse = { path = "../sqlr-driver-clickhouse" }
 minisign = "0.7"
 tar = "0.4"
 flate2 = "1"

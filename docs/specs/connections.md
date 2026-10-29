@@ -54,7 +54,7 @@ Each Driver's manifest declares its form fields: key, label, type (text, passwor
 The form's URL box accepts `scheme://[user@]host[:port][/database][?key=value&…]` for server databases and `sqlite:/path`, `sqlite:///path` or `sqlite://localhost/path` for file databases (also `sqlite3`, `duckdb` and `file`). Pasting or typing a URL fills the fields it names:
 
 - `host`, `port`, `database`, `user` and `path`, then each query parameter whose name matches a non-secret field key, ignoring case, `_` and `-` (`sslmode` fills `ssl_mode`); `dbname` means `database` and `username` means `user`. A choice takes the option matching the value the same way; an unknown option is ignored.
-- The scheme must be one the Driver declares (`postgresql` or `postgres`, `mysql` or `mariadb`, `sqlserver` or `mssql`, `oracle`, `sqlite`, `mongodb`, `elasticsearch`, `redis` or `rediss`, `snowflake`); another scheme shows which ones the Connection takes.
+- The scheme must be one the Driver declares (`postgresql` or `postgres`, `mysql` or `mariadb`, `sqlserver` or `mssql`, `oracle`, `sqlite`, `mongodb`, `elasticsearch`, `redis` or `rediss`, `snowflake`, `clickhouse`); another scheme shows which ones the Connection takes.
 - A URL holding a password is refused with "Remove the password from the URL; enter it in the Password field": a `user:password@` part, or a parameter whose name is `pass`, `apikey` or contains `password`, `passwd`, `pwd`, `secret` or `token`. The box then keeps only the redacted URL, so a typed password does not stay on screen.
 - Redaction replaces a password with `***`: the part after `user:`, password-like parameters, and the whole authority while it could still be a half-typed `user:password` (no `@` yet and text after the last `:` that is not a port). Error messages never echo the port text or an unbracketed IPv6 address, since either may be a password being typed.
 - IPv6 hosts go in brackets (`[::1]:5432`). A file URL with another host (`sqlite://foo.db`) is refused, because it would name a file on another host or a path relative to the working directory.
@@ -91,10 +91,12 @@ Per-Driver TLS behaviour is detailed in [Drivers](drivers.md). Servers that only
 
 The new-connection catalog ("More databases…") and the Databases matrix list every Known database with its Family, default port, status and a note:
 
-- **Bundled**: PostgreSQL, MySQL, MariaDB (through the MySQL Driver), SQL Server, Oracle, SQLite, Snowflake, MongoDB, Elasticsearch, Redis.
+- **Bundled**: PostgreSQL, MySQL, MariaDB (through the MySQL Driver), SQL Server, Oracle, SQLite, Snowflake, ClickHouse, Elasticsearch, Redis.
 - **Compatible**, opening the PostgreSQL Driver's form with presets: CockroachDB (port 26257, database `defaultdb`), YugabyteDB (5433, `yugabyte`), Amazon Redshift (5439, `dev`), Greenplum, TimescaleDB, Neon and Supabase (SSL mode `require`), Amazon Aurora PostgreSQL. Through the MySQL Driver: TiDB (port 4000), SingleStore, Amazon Aurora MySQL. A compatible database also names a new Connection after itself.
-- **Installable**: SAP HANA, DuckDB, and through the JDBC bridge (Java 17 or later) Generic JDBC, Db2, ClickHouse and H2.
+- **Installable**: MongoDB, SAP HANA, DuckDB, and through the JDBC bridge (Java 17 or later) Generic JDBC, Db2 and H2.
 - **Planned**: BigQuery and Cassandra.
+
+ClickHouse uses the bundled Rust Driver for new Connections. Its welcome card opens the connection form directly. Saved Connections using `jdbc-clickhouse` retain that Driver and its settings.
 
 Only what works is listed as working.
 

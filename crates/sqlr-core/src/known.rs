@@ -211,6 +211,14 @@ static KNOWN: &[KnownDatabase] = &[
         Some(6379),
         "Key-value store",
     ),
+    bundled(
+        "clickhouse",
+        "ClickHouse",
+        Relational,
+        "clickhouse",
+        Some(8123),
+        "Pure Rust driver over HTTP or HTTPS",
+    ),
     compatible(
         "cockroachdb",
         "CockroachDB",
@@ -323,13 +331,6 @@ static KNOWN: &[KnownDatabase] = &[
     ),
     installable("jdbc", "Generic JDBC", "jdbc", None, JDBC),
     installable("db2", "Db2", "jdbc-db2", Some(50000), JDBC),
-    installable(
-        "clickhouse",
-        "ClickHouse",
-        "jdbc-clickhouse",
-        Some(8123),
-        JDBC,
-    ),
     installable("h2", "H2", "jdbc-h2", None, JDBC),
     planned("bigquery", "BigQuery", Relational, "later", None),
     planned("cassandra", "Cassandra", Document, "later", Some(9042)),
@@ -352,7 +353,7 @@ mod tests {
     use super::*;
 
     /// The driver ids sqlr ships.
-    const DRIVERS: [&str; 8] = [
+    const DRIVERS: [&str; 9] = [
         "postgres",
         "mysql",
         "sqlite",
@@ -361,7 +362,20 @@ mod tests {
         "elasticsearch",
         "redis",
         "snowflake",
+        "clickhouse",
     ];
+
+    #[test]
+    fn clickhouse_is_bundled_without_a_java_runtime() {
+        let database = known_database("clickhouse").unwrap();
+        assert_eq!(
+            database.status,
+            KnownStatus::Bundled {
+                driver: "clickhouse"
+            }
+        );
+        assert_eq!(database.default_port, Some(8123));
+    }
 
     #[test]
     fn mongodb_installs_as_a_document_sidecar() {

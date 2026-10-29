@@ -172,7 +172,10 @@ pub async fn relational_suite(target: &Target) -> SuiteReport {
             d.quote_ident("n"),
             d.quote_ident("t"),
         );
-        let sql = format!("UPDATE {table} SET {t} = {t} WHERE {n} <= 3");
+        let sql = target
+            .affected_sql
+            .clone()
+            .unwrap_or_else(|| format!("UPDATE {table} SET {t} = {t} WHERE {n} <= 3"));
         match relational.execute(&sql).await? {
             Execution::Affected(3) => Ok(()),
             Execution::Affected(n) => Err(CheckFailure::WrongAffected(n)),

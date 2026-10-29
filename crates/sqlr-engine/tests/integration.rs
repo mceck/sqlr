@@ -4,6 +4,7 @@ mod admin;
 mod agent_sessions;
 mod apply;
 mod catalog;
+mod clickhouse;
 mod compare;
 mod datagen;
 mod docs;

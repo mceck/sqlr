@@ -34,6 +34,7 @@ sqlr-driver-mysql = { path = "../sqlr-driver-mysql" }
 sqlr-driver-oracle = { path = "../sqlr-driver-oracle" }
 sqlr-driver-postgres = { path = "../sqlr-driver-postgres" }
 sqlr-driver-redis = { path = "../sqlr-driver-redis" }
+sqlr-driver-clickhouse = { path = "../sqlr-driver-clickhouse" }
 sqlr-driver-snowflake = { path = "../sqlr-driver-snowflake" }
 sqlr-driver-sqlite = { path = "../sqlr-driver-sqlite" }
 sqlr-engine = { path = "../sqlr-engine" }

@@ -36,7 +36,7 @@ cargo run --release -p sqlr-app
 ```
 
 `make test` starts every server in `docker-compose.test.yml` (PostgreSQL, MySQL, MariaDB,
-MongoDB, Redis, Elasticsearch, SQL Server and Oracle) on the fixed test ports and runs the
+MongoDB, Redis, Elasticsearch, SQL Server, Oracle and ClickHouse) on the fixed test ports and runs the
 nextest `containers` profile. No test starts a server per test: per-test databases isolate
 the parallel tests, and the server-global tests take a cross-process
 `sqlr_testkit::TestLock`. The support modules read `SQLR_TEST_*` variables (or

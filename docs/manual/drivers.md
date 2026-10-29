@@ -9,9 +9,11 @@ A driver connects sqlr to a database. Bundled drivers are ready to use; sidecar 
 | Database | Driver setup |
 |---|---|
 | PostgreSQL, MySQL, MariaDB, SQL Server, Oracle, SQLite | Included with sqlr |
-| Snowflake, Elasticsearch, Redis | Included with sqlr |
+| Snowflake, ClickHouse, Elasticsearch, Redis | Included with sqlr |
 | MongoDB, DuckDB, SAP HANA | Install their native sidecar driver |
-| Db2, ClickHouse, H2 or another JDBC database | Install a JDBC bridge and Java 17 or newer; supply the database's JDBC jar |
+| Db2, H2 or another JDBC database | Install a JDBC bridge and Java 17 or newer; supply the database's JDBC jar |
+
+ClickHouse uses the included Rust driver over HTTP or HTTPS. Choose **ClickHouse** in **New connection**, fill in the host, port, database, user and password, and enable **TLS** for HTTPS (usually port 8443). Java and JDBC jars are unnecessary. Existing JDBC connections keep using their installed bridge.
 
 SQL Server and Oracle use native bundled drivers, so you do not need Java or Oracle Instant Client for those connections. Database compatibility entries in **New connection** may use an existing PostgreSQL or MySQL driver with appropriate defaults.
 

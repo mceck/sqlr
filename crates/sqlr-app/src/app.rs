@@ -123,6 +123,7 @@ pub fn production_deps_with(
     drivers.register(OracleDriver::new());
     drivers.register(SqliteDriver::new());
     drivers.register(SnowflakeDriver::new());
+    drivers.register(sqlr_driver_clickhouse::ClickHouseDriver::new());
     drivers.register(ElasticDriver::new());
     drivers.register(RedisDriver::new());
     let db_path = data_dir.as_ref().map(|d| d.join("sqlr.db"));

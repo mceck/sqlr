@@ -2890,14 +2890,15 @@ fn an_available_driver_downloads_only_when_asked() {
         .with_step_dt(0.01)
         .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
     h.run_steps(2);
-    h.get_by_label("ClickHouse").click();
+    h.get_by_label("MongoDB").click();
     wait_for_label(&mut h, "Download and install");
     h.get_by_label("Download and install").click_accesskit();
     // The download ran and its failure reached the user.
     step_until(&mut h, "the download to fail", |h| {
-        h.state().toast_texts().iter().any(|t| {
-            t.contains("Could not install the jdbc-clickhouse driver") && t.contains("no build")
-        })
+        h.state()
+            .toast_texts()
+            .iter()
+            .any(|t| t.contains("Could not install the mongodb driver") && t.contains("no build"))
     });
 }
 
@@ -3367,6 +3368,7 @@ fn mongodb_driver_manager_manual_screenshot() {
     drivers.register(sqlr_driver_oracle::OracleDriver::new());
     drivers.register(sqlr_driver_sqlite::SqliteDriver::new());
     drivers.register(sqlr_driver_snowflake::SnowflakeDriver::new());
+    drivers.register(sqlr_driver_clickhouse::ClickHouseDriver::new());
     drivers.register(sqlr_driver_elastic::ElasticDriver::new());
     drivers.register(sqlr_driver_redis::RedisDriver::new());
     deps.engine = Engine::new(drivers, Arc::new(|| {}));
