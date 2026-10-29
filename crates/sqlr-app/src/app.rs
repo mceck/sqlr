@@ -571,13 +571,17 @@ impl SqlrApp {
         if self.terminal.is_open() {
             egui::Panel::bottom("terminal")
                 .resizable(true)
-                .default_size(300.0)
+                .default_size(400.0)
                 .min_size(120.0)
                 .frame(
                     egui::Frame::side_top_panel(ui.style())
                         .inner_margin(Margin::same(Spacing::M as i8)),
                 )
-                .show(ui, |ui| self.terminal_ui(ui));
+                .show(ui, |ui| {
+                    // Keep the panel's chosen height while the workspace is preparing.
+                    ui.set_min_height(ui.available_height());
+                    self.terminal_ui(ui);
+                });
         }
         if self.show_history {
             egui::Panel::bottom("history")

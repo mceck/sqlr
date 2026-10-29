@@ -299,6 +299,10 @@ fn terminal_toggles_starts_lazily_and_keeps_running_when_hidden() {
     harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Backtick);
     wait_for_terminal_canvas(&mut harness);
     harness.run_steps(2);
+    assert!(
+        harness.state().terminal_rect_for_tests().height() >= 340.0,
+        "the default terminal should leave room for a larger output canvas"
+    );
     assert!(harness.state().terminal_visible_for_tests());
     assert_eq!(
         harness.state().terminal_shell_for_tests(),

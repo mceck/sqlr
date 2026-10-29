@@ -381,7 +381,7 @@ States are computed on a background worker when Settings → Agents opens and af
 
 ### The integrated terminal
 
-The Integrated terminal is a real PTY, not a command runner. It sits at the bottom of the workspace, directly above the status bar, and history sits above it when both are open. The panel has a default height of about 300 px, a minimum of 120 px and the standard splitter.
+The Integrated terminal is a real PTY, not a command runner. It sits at the bottom of the workspace, directly above the status bar, and history sits above it when both are open. The panel has a default height of 400 px, a minimum of 120 px and the standard splitter. Preparing the Terminal workspace keeps the panel at its chosen height.
 
 It starts hidden. First opening the panel creates its first tab and starts the shell at the canvas cell size once the layout has settled, so the child's first size query is already correct. Each tab owns an independent PTY, shell, screen, scrollback and selection. Panel resizes update the active PTY size; selecting another tab resizes its PTY to the current canvas. Hiding the panel keeps every shell running, so a long Agent task continues. Reopening restores the selected tab and its screen. Terminal tabs, selection, visibility and height are session-only.
 

@@ -31,7 +31,7 @@ flowchart TB
   R[Value panel<br/>right, 280 px]
   O[Operations panel<br/>bottom, 200 px]
   H[History panel<br/>bottom, 220 px]
-  X[Terminal<br/>bottom, 300 px]
+  X[Terminal<br/>bottom, 400 px]
   S[Status bar, 26 px]
   T --> B
   B --> L
@@ -43,7 +43,7 @@ flowchart TB
   O --> S
 ```
 
-The toolbar is 44 pixels high, tabs are 34 pixels, and the status bar is 26 pixels. The Connections panel sits on the left, resizable, with a default width of 20% of the window clamped between 200 and 270 pixels and a minimum of 160. The value panel sits on the right at 280 pixels when it is open and the active tab is not a document or key-value tab, which have their own inspector. The Operations panel opens above the status bar at 200 pixels; the history panel at 220 pixels and the terminal at 300 pixels, when they are open, share the bottom edge.
+The toolbar is 44 pixels high, tabs are 34 pixels, and the status bar is 26 pixels. The Connections panel sits on the left, resizable, with a default width of 20% of the window clamped between 200 and 270 pixels and a minimum of 160. The value panel sits on the right at 280 pixels when it is open and the active tab is not a document or key-value tab, which have their own inspector. The Operations panel opens above the status bar at 200 pixels; the history panel at 220 pixels and the terminal at 400 pixels, when they are open, share the bottom edge.
 
 The central area is a dockable tab area. Tabs can be reordered and split into side-by-side or stacked groups inside it by dragging, and each group holds a tab bar. A new window starts from this default arrangement, and the panels the user opens keep their size for the session.
 
