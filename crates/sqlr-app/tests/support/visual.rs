@@ -7,6 +7,8 @@ pub fn set_theme(h: &mut Harness<'static, SqlrApp>, light: bool) {
     h.run_steps(3);
     h.get_by_label_contains("Settings…").click();
     h.run_steps(5);
+    h.get_by_label("Appearance").click();
+    h.run_steps(3);
     h.get_by_label(if light { "Light" } else { "Dark" }).click();
     h.run_steps(3);
     h.get_by_label("Save").click();

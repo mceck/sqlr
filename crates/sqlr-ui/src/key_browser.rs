@@ -233,14 +233,15 @@ pub fn badge_text(ty: &KeyType) -> String {
 pub fn type_badge(ui: &mut egui::Ui, ty: &KeyType) {
     let p = theme::palette(ui.ctx());
     let color = badge_color(ty, &p);
-    ui.add_sized(
-        vec2(BADGE_WIDTH, Spacing::ROW_TREE),
-        egui::Label::new(
-            RichText::new(badge_text(ty))
-                .small()
-                .monospace()
-                .color(color),
-        ),
+    let (rect, _) = ui.allocate_exact_size(vec2(BADGE_WIDTH, 18.0), Sense::hover());
+    ui.painter()
+        .rect_filled(rect, 4.0, color.gamma_multiply(0.12));
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        badge_text(ty),
+        egui::FontId::monospace(10.0),
+        color,
     );
 }
 
@@ -265,13 +266,24 @@ pub fn key_browser(
     let mut action = None;
     let sep = separator.as_bytes();
 
-    // The pattern, then the buttons.
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Key browser").strong());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if icons::row_button(ui, icons::REFRESH, "Refresh").clicked() {
+                action = Some(KeyBrowserAction::Refresh);
+            }
+            if icons::button(ui, true, icons::ADD, Some(p.accent), "New key").clicked() {
+                action = Some(KeyBrowserAction::NewKey);
+            }
+        });
+    });
+    ui.add_space(Spacing::M);
     ui.horizontal(|ui| {
         let width = (ui.available_width() - 30.0).max(60.0);
         let field = crate::text_menu::text_edit(
             ui,
             TextEdit::singleline(&mut state.pattern)
-                .hint_text("Match pattern, e.g. user:*")
+                .hint_text("Filter keys, e.g. user:*")
                 .desired_width(width),
         );
         name_edit(&field, "Key pattern");
@@ -284,23 +296,9 @@ pub fn key_browser(
             action = Some(KeyBrowserAction::SetPattern(state.pattern.clone()));
         }
     });
-    ui.horizontal(|ui| {
-        if icons::row_button(ui, icons::ADD, "New key").clicked() {
-            action = Some(KeyBrowserAction::NewKey);
-        }
-        if icons::row_button(ui, icons::REFRESH, "Refresh").clicked() {
-            action = Some(KeyBrowserAction::Refresh);
-        }
-        let n = state.selected.len();
-        if ui
-            .add_enabled(n > 0, egui::Button::new(delete_label(n.max(1))))
-            .clicked()
-        {
-            state.confirm = Some(state.selected.iter().cloned().collect());
-        }
-    });
-    ui.add_space(Spacing::XS);
+    ui.add_space(Spacing::M);
     theme::hairline(ui);
+    ui.add_space(Spacing::S);
 
     // The tree is rebuilt only when the key list changed.
     let print = fingerprint(keys, sep);
@@ -320,7 +318,7 @@ pub fn key_browser(
     rows(&tree, &[], sep, 0, &state.expanded, &mut visible);
     state.tree = Some((print, tree));
 
-    let footer = Spacing::STATUS + Spacing::S;
+    let footer = Spacing::STATUS + Spacing::L;
     let height = (ui.available_height() - footer).max(Spacing::ROW_TREE);
     let mut toggled: Option<(Vec<u8>, bool)> = None;
     let mut clicked: Option<(usize, egui::Modifiers)> = None;
@@ -354,7 +352,7 @@ pub fn key_browser(
                         if response.clicked() {
                             clicked = Some((i, ui.input(|i| i.modifiers)));
                         }
-                        theme::context_menu(&response, |ui| {
+                        theme::row_context_menu(&response, |ui| {
                             if icons::menu_item(ui, icons::OPEN, "Open").clicked() {
                                 clicked = Some((i, egui::Modifiers::NONE));
                                 ui.close();
@@ -417,8 +415,10 @@ pub fn key_browser(
     }
 
     // The footer: how much is loaded, and "Load more".
-    ui.add_space(Spacing::XS);
-    ui.horizontal(|ui| {
+    ui.add_space(Spacing::S);
+    theme::hairline(ui);
+    ui.add_space(Spacing::S);
+    ui.horizontal_wrapped(|ui| {
         let loaded = if keys.is_empty() {
             "No keys".to_string()
         } else if keys.len() == 1 {
@@ -429,6 +429,15 @@ pub fn key_browser(
         ui.label(RichText::new(loaded).small().color(p.text_muted));
         if more && ui.button("Load more").clicked() {
             action = Some(KeyBrowserAction::LoadMore);
+        }
+        let n = state.selected.len();
+        if n > 0 {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if icons::button(ui, true, icons::DELETE, Some(p.error), &delete_label(n)).clicked()
+                {
+                    state.confirm = Some(state.selected.iter().cloned().collect());
+                }
+            });
         }
     });
 
@@ -508,18 +517,36 @@ fn key_row(
     selected: bool,
     p: &Palette,
 ) -> egui::Response {
-    ui.horizontal(|ui| {
-        ui.set_min_height(Spacing::ROW_TREE);
-        ui.add_space(depth as f32 * INDENT + ARROW_WIDTH);
-        type_badge(ui, &key.ty);
-        let response = ui.selectable_label(selected, leaf);
-        if let Some(ttl) = key.ttl_ms {
-            ui.label(RichText::new(format_ttl(ttl)).small().color(p.text_muted))
-                .on_hover_text("Time to live");
-        }
-        response
-    })
-    .inner
+    theme::list_row(
+        ui,
+        ui.make_persistent_id(("redis_key", &key.name)),
+        selected,
+        Spacing::ROW_TREE,
+        Sense::click(),
+        |ui| {
+            ui.add_space(depth as f32 * INDENT + Spacing::S);
+            type_badge(ui, &key.ty);
+            let ttl_width = if key.ttl_ms.is_some() { 44.0 } else { 0.0 };
+            let size = vec2(
+                (ui.available_width() - ttl_width).max(20.0),
+                Spacing::ROW_TREE,
+            );
+            ui.allocate_ui_with_layout(
+                size,
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.set_min_size(size);
+                    ui.add(egui::Label::new(leaf).selectable(false).truncate())
+                        .on_hover_text(display_key(&key.name));
+                },
+            );
+            if let Some(ttl) = key.ttl_ms {
+                ui.label(RichText::new(format_ttl(ttl)).small().color(p.text_muted))
+                    .on_hover_text("Time to live");
+            }
+        },
+    )
+    .response
 }
 
 /// The delete confirmation; the keys once the user confirms.

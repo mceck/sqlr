@@ -5,7 +5,7 @@ use std::sync::Arc;
 use egui::accesskit::Role;
 use egui::{Event, Key, Modifiers, vec2};
 use egui_kittest::Harness;
-use egui_kittest::kittest::{NodeT, Queryable};
+use egui_kittest::kittest::Queryable;
 use sqlr_core::{KeyInfo, KeyType, KvEdit, KvPage, RespValue};
 use sqlr_ui::theme::{self, Palette};
 use sqlr_ui::{
@@ -60,6 +60,26 @@ fn sample() -> Vec<KeyInfo> {
         key("order:7", KeyType::List),
         key("plain", KeyType::String),
     ]
+}
+
+#[test]
+fn key_browser_opens_a_key_from_the_empty_part_of_its_row() {
+    let mut h = browser(sample(), false);
+    let y = h.get_by_label("plain").rect().center().y;
+    h.event(Event::PointerMoved(egui::pos2(350.0, y)));
+    for pressed in [true, false] {
+        h.event(Event::PointerButton {
+            pos: egui::pos2(350.0, y),
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        });
+        h.run_steps(2);
+    }
+    assert_eq!(
+        h.state().actions,
+        vec![KeyBrowserAction::Open(b"plain".to_vec())]
+    );
 }
 
 #[test]
@@ -480,6 +500,64 @@ fn console_harness(
 }
 
 #[test]
+fn console_input_stays_at_the_bottom_when_output_changes() {
+    let mut h = console_harness(&[], Vec::new());
+    let empty = h
+        .get_by_role_and_label(Role::TextInput, "Console input")
+        .rect();
+    assert!(
+        empty.top() > 300.0,
+        "the empty console keeps its input at the bottom: {empty:?}"
+    );
+    assert!(
+        empty.bottom() < 380.0,
+        "the input leaves room below it: {empty:?}"
+    );
+    h.state_mut()
+        .output
+        .push(Arc::new(("PING".into(), RespValue::Simple("PONG".into()))));
+    h.run_steps(3);
+    let populated = h
+        .get_by_role_and_label(Role::TextInput, "Console input")
+        .rect();
+    assert_eq!(empty, populated, "output must not move the command input");
+    h.state_mut()
+        .output
+        .extend((0..200).map(|i| Arc::new((format!("GET key:{i}"), RespValue::Nil))));
+    h.run_steps(3);
+    assert_eq!(
+        empty,
+        h.get_by_role_and_label(Role::TextInput, "Console input")
+            .rect()
+    );
+    h.state_mut().output.clear();
+    h.run_steps(3);
+    assert_eq!(
+        empty,
+        h.get_by_role_and_label(Role::TextInput, "Console input")
+            .rect()
+    );
+}
+
+#[test]
+fn console_run_button_submits_the_input_and_restores_focus() {
+    let mut h = console_harness(&[], Vec::new());
+    h.get_by_role_and_label(Role::TextInput, "Console input")
+        .type_text("PING");
+    h.run_steps(2);
+    h.get_by_label("Run command").click();
+    h.run_steps(2);
+    assert_eq!(h.state().lines, ["PING"]);
+    assert!(h.state().state.input.is_empty());
+    h.get_by_role_and_label(Role::TextInput, "Console input")
+        .type_text("DBSIZE");
+    h.run_steps(2);
+    h.key_press(Key::Enter);
+    h.run_steps(2);
+    assert_eq!(h.state().lines, ["PING", "DBSIZE"]);
+}
+
+#[test]
 fn console_history_navigation() {
     let mut h = console_harness(&["GET a", "SET b 1"], Vec::new());
     h.key_press(Key::ArrowUp);
@@ -625,7 +703,9 @@ fn console_renders_replies_by_resp_type() {
             ]),
         ),
     ];
-    let h = console_harness(&[], output);
+    let mut h = console_harness(&[], output);
+    h.set_size(vec2(600.0, 600.0));
+    h.run_steps(3);
     h.get_by_label("(integer) 5");
     h.get_by_label("(nil)");
     h.get_by_label("\"v\"");
@@ -701,10 +781,7 @@ fn selection_follows_the_key_list() {
     h.state_mut().keys.retain(|k| k.name != b"plain");
     h.run_steps(3);
     assert!(h.state().state.selected.is_empty());
-    assert!(
-        h.query_by_label("Delete 1 key")
-            .is_some_and(|n| n.accesskit_node().is_disabled())
-    );
+    assert!(h.query_by_label("Delete 1 key").is_none());
 }
 
 #[test]

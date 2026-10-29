@@ -125,19 +125,32 @@ pub(crate) fn redis_ui(
     commands: &mut Vec<TabCommand>,
 ) {
     let p = theme::palette(ui.ctx());
-    ui.horizontal(|ui| {
-        for (mode, label) in [(Mode::Keys, "Keys"), (Mode::Console, "Console")] {
-            if theme::dialog_tab(ui, r.mode == mode, label).clicked() {
-                r.mode = mode;
-            }
-        }
-        ui.label(
-            RichText::new(format!("db{}", r.db))
-                .small()
-                .monospace()
-                .color(p.text_muted),
-        );
-    });
+    egui::Frame::NONE
+        .inner_margin(Margin::symmetric(Spacing::L as i8, Spacing::M as i8))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let db = if r.mode == Mode::Console {
+                    engine.kv_console(conn, tab).db
+                } else {
+                    r.db
+                };
+                icons::paint(ui, icons::DATABASE, p.text_muted);
+                ui.label(
+                    RichText::new(format!("db{db}"))
+                        .small()
+                        .monospace()
+                        .color(p.text_muted),
+                );
+                ui.add_space(Spacing::L);
+                ui.separator();
+                ui.add_space(Spacing::M);
+                for (mode, label) in [(Mode::Keys, "Keys"), (Mode::Console, "Console")] {
+                    if theme::dialog_tab(ui, r.mode == mode, label).clicked() {
+                        r.mode = mode;
+                    }
+                }
+            })
+        });
     theme::hairline(ui);
     match engine.session_status(conn) {
         Some(SessionStatus::Connected(_)) => {}
@@ -185,7 +198,11 @@ fn keys_ui(
         .resizable(true)
         .default_size(320.0)
         .min_size(220.0)
-        .frame(egui::Frame::NONE.inner_margin(Margin::same(Spacing::M as i8)))
+        .frame(
+            egui::Frame::NONE
+                .fill(p.bg_subtle)
+                .inner_margin(Margin::same(Spacing::L as i8)),
+        )
         .show(ui, |ui| {
             if let Some(e) = &keys.error {
                 ui.colored_label(p.error, &e.message);
@@ -233,7 +250,7 @@ fn keys_ui(
         });
     }
     egui::Frame::NONE
-        .inner_margin(Margin::same(Spacing::M as i8))
+        .inner_margin(Margin::same(16))
         .show(ui, |ui| value_ui(ui, tab, conn, r, engine, commands));
 }
 
@@ -331,7 +348,7 @@ fn console_ui(
                             ui.label(RichText::new(text).small().monospace().color(color));
                         });
                 };
-                chip(ui, format!("db{}", snapshot.db), p.text_muted);
+                ui.label(RichText::new("Command history").strong());
                 if let Some(n) = snapshot.queued {
                     chip(ui, format!("MULTI · {n} queued"), p.warning);
                 }

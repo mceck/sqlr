@@ -1185,10 +1185,10 @@ impl ConsoleState {
 
 fn kind_color(kind: Option<RespLineKind>, p: &Palette) -> egui::Color32 {
     match kind {
-        None => p.text_muted,
+        None => p.text,
         Some(RespLineKind::Plain) => p.text,
         Some(RespLineKind::Number) => p.icon_table,
-        Some(RespLineKind::Nil) => p.null_text,
+        Some(RespLineKind::Nil) => p.text_muted,
         Some(RespLineKind::Error) => p.error,
         Some(RespLineKind::Status) => p.success,
     }
@@ -1336,12 +1336,33 @@ pub fn console(
             rows: rows_of(output),
         });
     }
-    let input_height = ui.text_style_height(&egui::TextStyle::Monospace) + 18.0;
-    let height = (ui.available_height() - input_height - Spacing::S).max(40.0);
+    // Reserve the composer before drawing output so empty, short and long replies share
+    // the same input position. Its footer also keeps the input clear of the window edge.
+    let submitted = egui::Panel::bottom(ui.make_persistent_id("kv_console_composer"))
+        .resizable(false)
+        .frame(Frame::NONE.inner_margin(Margin {
+            top: 12,
+            bottom: 8,
+            left: 0,
+            right: 0,
+        }))
+        .show(ui, |ui| {
+            let submitted = console_input(ui, state, &p);
+            ui.add_space(Spacing::M);
+            ui.label(
+                RichText::new("Enter run  ·  ↑ ↓ history  ·  Tab complete")
+                    .small()
+                    .color(p.text_muted),
+            );
+            submitted
+        })
+        .inner;
+    let height = ui.available_height().max(0.0);
     let rows = state.cache.as_ref().map_or(&[][..], |c| &c.rows[..]);
     if rows.is_empty() {
         ui.allocate_ui(egui::vec2(ui.available_width(), height), |ui| {
-            let top = (height / 3.0).max(0.0);
+            ui.set_min_height(height);
+            let top = (height / 3.0 - 30.0).max(0.0);
             ui.vertical_centered(|ui| {
                 ui.add_space(top);
                 ui.label(
@@ -1354,12 +1375,11 @@ pub fn console(
                 ui.label(RichText::new("Redis console").strong());
                 ui.add_space(Spacing::XS);
                 theme::hint(ui, "Type a command, for example PING or GET key.");
-                theme::hint(ui, "↑ ↓ history · Tab complete · Enter run");
             });
         });
     } else {
         let row_height = ui.text_style_height(&egui::TextStyle::Monospace);
-        ScrollArea::vertical()
+        ScrollArea::both()
             .id_salt("kv_console_output")
             .auto_shrink([false, false])
             .stick_to_bottom(true)
@@ -1367,15 +1387,21 @@ pub fn console(
             .show_rows(ui, row_height, rows.len(), |ui, range| {
                 for i in range {
                     let row = &rows[i];
-                    ui.label(
-                        RichText::new(&row.text)
-                            .monospace()
-                            .color(kind_color(row.kind, &p)),
+                    ui.add(
+                        egui::Label::new(
+                            RichText::new(&row.text)
+                                .monospace()
+                                .color(kind_color(row.kind, &p)),
+                        )
+                        .extend(),
                     );
                 }
             });
     }
-    ui.add_space(Spacing::S);
+    submitted
+}
+
+fn console_input(ui: &mut egui::Ui, state: &mut ConsoleState, p: &Palette) -> Option<String> {
     let mut submitted = None;
     ui.horizontal(|ui| {
         let id = ui.make_persistent_id("kv_console_input");
@@ -1439,8 +1465,20 @@ pub fn console(
                 .lock_focus(true)
                 .frame(frame)
                 .margin(Margin::ZERO)
-                .desired_width(f32::INFINITY),
+                .desired_width((ui.available_width() - 68.0).max(40.0)),
         );
+        let run = ui.add_enabled(
+            !state.input.trim().is_empty(),
+            theme::primary_button(ui.ctx(), "Run").min_size(egui::vec2(56.0, 34.0)),
+        );
+        run.widget_info(|| {
+            egui::WidgetInfo::labeled(
+                egui::WidgetType::Button,
+                !state.input.trim().is_empty(),
+                "Run command",
+            )
+        });
+        let run = run.clicked();
         name_edit(&response, "Console input");
         if state.focus || refocus {
             response.request_focus();
@@ -1452,8 +1490,8 @@ pub fn console(
             state.completion.refresh(&state.input, caret, explicit);
         }
         let enter = ui.input(|i| i.key_pressed(Key::Enter));
-        if response.lost_focus() && enter {
-            if state.completion.open && !state.completion.exact() {
+        if run || (response.lost_focus() && enter) {
+            if !run && state.completion.open && !state.completion.exact() {
                 if let Some(caret) = state.completion.accept(&mut state.input) {
                     set_caret(ui.ctx(), id, caret);
                 }

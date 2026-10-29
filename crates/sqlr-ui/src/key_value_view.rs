@@ -283,66 +283,99 @@ fn header(
 ) -> Option<KvViewAction> {
     let mut action = None;
     ui.horizontal(|ui| {
-        type_badge(ui, &key.ty);
-        ui.label(RichText::new(display_key(&key.name)).monospace().strong());
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if icons::row_button(ui, icons::REFRESH, "Refresh").clicked() {
-                action = Some(KvViewAction::Refresh);
-            }
-        });
+        let name = display_key(&key.name);
+        left_label(
+            ui,
+            vec2((ui.available_width() - 64.0).max(80.0), 28.0),
+            RichText::new(&name).monospace().strong().size(17.0),
+        )
+        .on_hover_text(&name);
+        if icons::row_button(ui, icons::COPY, "Copy key name").clicked() {
+            ui.ctx().copy_text(name);
+        }
+        if icons::row_button(ui, icons::REFRESH, "Refresh").clicked() {
+            action = Some(KvViewAction::Refresh);
+        }
     });
-    let mut parts = Vec::new();
-    if let Some(n) = key.length {
-        parts.push(format!("{n} {}", unit_of(&key.ty)));
-    }
-    if let Some(size) = key.size {
-        parts.push(format!("{} in memory", format_size(size)));
-    }
-    parts.push(match key.ttl_ms {
-        Some(ms) => format!("expires in {}", format_ttl(ms)),
-        None => "no expiry".to_string(),
-    });
-    ui.label(
-        RichText::new(parts.join("  ·  "))
-            .small()
-            .color(p.text_muted),
-    );
-    ui.add_space(Spacing::XS);
+    ui.add_space(Spacing::S);
     ui.horizontal_wrapped(|ui| {
-        ui.label(RichText::new("TTL").small().color(p.text_muted));
-        let ttl = field(ui, &mut state.ttl, "TTL", "90, 5m, 2h, 1d", 110.0);
-        let apply = ui.button("Set TTL").clicked()
-            || (ttl.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)));
-        if apply && !state.ttl.trim().is_empty() {
-            match parse_ttl(&state.ttl) {
-                Some(ms) => {
-                    state.error = None;
-                    action = Some(KvViewAction::Edit(KvEdit::Expire(Some(ms))));
-                }
-                None => {
-                    state.error =
-                        Some("The TTL is a positive duration: 90, 500ms, 5m, 2h, 1d".into());
-                }
-            }
+        type_badge(ui, &key.ty);
+        if let Some(n) = key.length {
+            let unit = unit_of(&key.ty);
+            let unit = if n == 1 && unit != "bytes" {
+                unit.trim_end_matches('s')
+            } else {
+                unit
+            };
+            ui.label(
+                RichText::new(format!("{n} {unit}"))
+                    .small()
+                    .color(p.text_muted),
+            );
         }
-        if ui
-            .add_enabled(key.ttl_ms.is_some(), egui::Button::new("Persist"))
-            .clicked()
-        {
-            action = Some(KvViewAction::Edit(KvEdit::Expire(None)));
+        if let Some(size) = key.size {
+            ui.label(
+                RichText::new(format!("·  {} in memory", format_size(size)))
+                    .small()
+                    .color(p.text_muted),
+            );
         }
-        ui.separator();
-        if ui.button("Rename").clicked() {
+        let ttl = match key.ttl_ms {
+            Some(ms) => format!("·  expires in {}", format_ttl(ms)),
+            None => "·  no expiry".to_string(),
+        };
+        ui.label(RichText::new(ttl).small().color(p.text_muted));
+    });
+    ui.add_space(Spacing::M);
+    ui.horizontal(|ui| {
+        if icons::button(ui, true, icons::EDIT, None, "Rename").clicked() {
             state.rename = match state.rename {
                 Some(_) => None,
                 None => Some(quote_bytes(&key.name)),
             };
         }
-        let delete = egui::Button::new(RichText::new("Delete key").color(p.error));
-        if ui.add(delete).clicked() {
+        if icons::button(ui, true, icons::DELETE, Some(p.error), "Delete key").clicked() {
             state.confirm_delete = true;
         }
     });
+    ui.add_space(Spacing::M);
+    egui::Frame::NONE
+        .fill(p.bg_subtle)
+        .corner_radius(6.0)
+        .inner_margin(egui::Margin::same(8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| {
+                icons::paint(ui, icons::TIMER, p.text_muted);
+                ui.label(RichText::new("Expiration").small().color(p.text_muted));
+                let ttl = field(ui, &mut state.ttl, "TTL", "e.g. 5m or 1d", 110.0);
+                let apply = ui
+                    .add_enabled(!state.ttl.trim().is_empty(), egui::Button::new("Set TTL"))
+                    .clicked()
+                    || (ttl.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)));
+                if apply && !state.ttl.trim().is_empty() {
+                    match parse_ttl(&state.ttl) {
+                        Some(ms) => {
+                            state.error = None;
+                            action = Some(KvViewAction::Edit(KvEdit::Expire(Some(ms))));
+                        }
+                        None => {
+                            state.error = Some(
+                                "The TTL is a positive duration: 90, 500ms, 5m, 2h, 1d".into(),
+                            );
+                        }
+                    }
+                }
+                if key.ttl_ms.is_some()
+                    && ui
+                        .button("Persist")
+                        .on_hover_text("Remove expiration and keep this key")
+                        .clicked()
+                {
+                    action = Some(KvViewAction::Edit(KvEdit::Expire(None)));
+                }
+            });
+        });
     if let Some(name) = state.rename.as_mut() {
         let mut done = false;
         ui.horizontal(|ui| {
@@ -601,10 +634,23 @@ fn value_width(ui: &egui::Ui) -> f32 {
 
 /// A table cell of `width`.
 fn cell(ui: &mut egui::Ui, width: f32, text: &str) {
-    ui.add_sized(
+    left_label(
+        ui,
         vec2(width, Spacing::ROW_GRID),
-        egui::Label::new(RichText::new(text).monospace()).truncate(),
+        RichText::new(text).monospace(),
     );
+}
+
+fn left_label(ui: &mut egui::Ui, size: egui::Vec2, text: RichText) -> egui::Response {
+    ui.allocate_ui_with_layout(
+        size,
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.set_min_size(size);
+            ui.add(egui::Label::new(text).truncate())
+        },
+    )
+    .inner
 }
 
 /// Whether an element can be edited inline: text that is not too long.
@@ -690,19 +736,26 @@ fn table(
     count: usize,
     mut row: impl FnMut(&mut egui::Ui, usize),
 ) {
-    ui.horizontal(|ui| {
-        for (label, width) in header {
-            let width = if *width == 0.0 {
-                value_width(ui)
-            } else {
-                *width
-            };
-            ui.add_sized(
-                vec2(width, 18.0),
-                egui::Label::new(RichText::new(*label).small().color(p.text_muted)),
-            );
-        }
-    });
+    egui::Frame::NONE
+        .fill(p.bg_subtle)
+        .corner_radius(4.0)
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.set_min_width(ui.available_width());
+                for (label, width) in header {
+                    let width = if *width == 0.0 {
+                        value_width(ui)
+                    } else {
+                        *width
+                    };
+                    left_label(
+                        ui,
+                        vec2(width, 28.0),
+                        RichText::new(*label).small().strong().color(p.text_muted),
+                    );
+                }
+            })
+        });
     let height = (ui.available_height() - 74.0).max(Spacing::ROW_GRID * 3.0);
     egui::ScrollArea::vertical()
         .id_salt(id)
@@ -710,6 +763,13 @@ fn table(
         .max_height(height)
         .show_rows(ui, Spacing::ROW_GRID, count, |ui, range| {
             for i in range {
+                let rect = egui::Rect::from_min_size(
+                    ui.cursor().min,
+                    vec2(ui.available_width(), Spacing::ROW_GRID),
+                );
+                if i % 2 == 1 {
+                    ui.painter().rect_filled(rect, 0.0, p.bg_subtle);
+                }
                 ui.horizontal(|ui| {
                     ui.set_min_height(Spacing::ROW_GRID);
                     row(ui, i);
@@ -727,6 +787,7 @@ fn footer(
     has_more: bool,
     more: &mut bool,
 ) {
+    ui.add_space(Spacing::M);
     ui.horizontal(|ui| {
         let text = match total {
             Some(total) => format!("{loaded} of {total} loaded"),
@@ -747,6 +808,7 @@ fn add_row<const N: usize>(
     button: &str,
 ) -> Option<[String; N]> {
     let mut done = None;
+    ui.add_space(Spacing::M);
     ui.horizontal(|ui| {
         let width = ((ui.available_width() - 90.0) / N as f32 - 8.0).max(60.0);
         for (i, (label, hint)) in fields.iter().enumerate() {
