@@ -2,6 +2,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use egui_kittest::Harness;
+#[cfg(unix)]
+use egui_kittest::kittest::NodeT as _;
+use egui_kittest::kittest::Queryable;
 use sqlr_app::{AppDeps, SqlrApp};
 use sqlr_core::{ConnectionConfig, Secrets};
 use sqlr_engine::{DriverRegistry, Engine};
@@ -17,6 +20,15 @@ fn app_with_shell(dir: &std::path::Path, shell: &str) -> SqlrApp {
 }
 
 fn app_with_terminal_settings(dir: &std::path::Path, shell: &str, cwd: &str) -> SqlrApp {
+    app_with_terminal_launcher(dir, shell, cwd, "")
+}
+
+fn app_with_terminal_launcher(
+    dir: &std::path::Path,
+    shell: &str,
+    cwd: &str,
+    launcher: &str,
+) -> SqlrApp {
     let mut drivers = DriverRegistry::default();
     drivers.register(FakeDriver::new(Default::default()));
     let engine = Engine::new(drivers, Arc::new(|| {}));
@@ -37,6 +49,7 @@ fn app_with_terminal_settings(dir: &std::path::Path, shell: &str, cwd: &str) -> 
     repo.save(&cfg, &Secrets::default()).unwrap();
     let settings = Settings {
         terminal_shell: shell.into(),
+        terminal_launcher: launcher.into(),
         terminal_cwd: cwd.into(),
         agents_port: {
             let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -532,4 +545,267 @@ fn mouse_motion_reaches_an_application_that_enables_mouse_reports() {
         );
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+#[cfg(unix)]
+fn shell_name() -> String {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+    std::path::Path::new(&shell)
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned()
+}
+
+#[cfg(unix)]
+#[test]
+fn terminal_tabs_create_independent_shells_and_can_be_selected_and_closed() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = app_with_shell(dir.path(), "printf 'session-%s\\n' $$; cat");
+    let mut h = Harness::builder()
+        .with_size((1100.0, 760.0))
+        .with_step_dt(0.01)
+        .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    h.run_steps(3);
+    h.get_by_label("Terminal").click();
+    wait_for_terminal_canvas(&mut h);
+    let wait_for_output = |h: &mut Harness<'_, SqlrApp>| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            h.step();
+            let text = h.state().terminal_text_for_tests();
+            if text.contains("session-") {
+                return text;
+            }
+            assert!(Instant::now() < deadline, "terminal output: {text:?}");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    };
+    let first = wait_for_output(&mut h);
+    h.run_steps(2);
+    let title = shell_name();
+    let close_title = format!("Close {title}");
+    h.get_by_label(&title);
+    assert!(h.query_by_label("New shell terminal").is_none());
+    h.get_by_label("New terminal").click();
+    wait_for_terminal_canvas(&mut h);
+    let second = wait_for_output(&mut h);
+    assert_ne!(first, second, "each tab owns a separate process");
+    assert!(h.state().terminal_focused_for_tests());
+
+    h.get_all_by_label(&title).next().unwrap().click();
+    h.run_steps(3);
+    assert_eq!(h.state().terminal_text_for_tests(), first);
+    assert!(h.state().terminal_focused_for_tests());
+
+    let tab_rect = h.get_all_by_label(&title).next().unwrap().rect();
+    let canvas = h.state().terminal_rect_for_tests();
+    assert!(
+        tab_rect.bottom() < canvas.top(),
+        "tabs belong in the panel header"
+    );
+    assert!(tab_rect.top() > 100.0);
+    // The chevron hides every shell; reopening restores the selected tab.
+    h.get_by_label("Hide terminal").click();
+    h.run_steps(2);
+    assert!(!h.state().terminal_visible_for_tests());
+    h.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Backtick);
+    h.run_steps(2);
+    assert_eq!(h.state().terminal_text_for_tests(), first);
+    h.get_all_by_label(&title).nth(1).unwrap().click();
+    h.run_steps(3);
+    assert_eq!(h.state().terminal_text_for_tests(), second);
+
+    // An inactive tab can be closed without changing the selected shell.
+    h.get_all_by_label(&close_title).next().unwrap().click();
+    h.run_steps(3);
+    assert_eq!(h.get_all_by_label(&title).count(), 1);
+    assert_eq!(h.state().terminal_text_for_tests(), second);
+    h.get_by_label("New terminal").click();
+    wait_for_terminal_canvas(&mut h);
+    wait_for_output(&mut h);
+    h.get_all_by_label(&close_title).nth(1).unwrap().click();
+    h.run_steps(3);
+    assert_eq!(h.state().terminal_text_for_tests(), second);
+    h.get_by_label(&close_title).click();
+    h.run_steps(3);
+    assert!(!h.state().terminal_visible_for_tests());
+    assert!(h.state().terminal_text_for_tests().is_empty());
+    h.get_by_label("Terminal").click();
+    wait_for_terminal_canvas(&mut h);
+    assert_ne!(wait_for_output(&mut h), second);
+}
+
+#[cfg(unix)]
+#[test]
+fn new_terminal_tabs_stay_visible_when_the_header_overflows() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = Harness::builder()
+        .with_size((1100.0, 760.0))
+        .with_step_dt(0.01)
+        .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app(dir.path()));
+    sqlr_ui::theme::install_fonts(&h.ctx, &[]);
+    h.run_steps(3);
+    h.get_by_label("Terminal").click();
+    wait_for_terminal_canvas(&mut h);
+    h.run_steps(5);
+    let title = shell_name();
+    for _ in 2..=12 {
+        h.get_by_label("New terminal").click();
+        h.run_steps(3);
+        let canvas = h.state().terminal_rect_for_tests();
+        let tab = h
+            .get_all_by_label("Terminal")
+            .chain(h.get_all_by_label(&title))
+            .find(|node| {
+                node.rect().bottom() < canvas.top()
+                    && node.rect().top() > 100.0
+                    && node.accesskit_node().toggled() == Some(egui::accesskit::Toggled::True)
+            })
+            .expect("the selected terminal tab is visible")
+            .rect();
+        let restart = h.get_by_label("Restart").rect();
+        let new_tab = h.get_by_label("New terminal").rect();
+        let canvas = h.state().terminal_rect_for_tests();
+        assert!(
+            tab.left() >= canvas.left(),
+            "selected tab is clipped: {tab:?}"
+        );
+        assert!(
+            tab.right() < new_tab.left(),
+            "selected tab is clipped: {tab:?}"
+        );
+        assert!(new_tab.right() < restart.left());
+        assert!(new_tab.right() <= canvas.right());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn an_agent_preset_also_offers_a_plain_shell_and_orders_the_header_actions() {
+    let dir = tempfile::tempdir().unwrap();
+    let launcher = serde_json::json!({
+        "kind": "claude-code",
+        "executable": "/bin/sh",
+        "arguments": "-c 'printf agent-ready; cat'",
+        "return_to_shell": false,
+    });
+    let app = app_with_terminal_launcher(dir.path(), "", "", &launcher.to_string());
+    let mut h = Harness::builder()
+        .with_size((1100.0, 760.0))
+        .with_step_dt(0.01)
+        .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    sqlr_ui::theme::install_fonts(&h.ctx, &[]);
+    h.run_steps(3);
+    h.get_by_label("Terminal").click();
+    wait_for_terminal_canvas(&mut h);
+    h.run_steps(8);
+    let new_agent = h.get_by_label("New terminal").rect();
+    let new_shell = h.get_by_label("New shell terminal").rect();
+    let restart = h.get_by_label("Restart").rect();
+    let hide = h.get_by_label("Hide terminal").rect();
+    assert!(new_agent.right() < new_shell.left());
+    assert!(new_shell.right() < restart.left());
+    assert!(restart.right() < hide.left());
+    h.get_by_label("New shell terminal").click();
+    wait_for_terminal_canvas(&mut h);
+    assert!(h.state().terminal_shell_for_tests().is_empty());
+    h.run_steps(10);
+    h.event(egui::Event::Paste(
+        "printf 'plain-%s\\n' shell-ready\n".into(),
+    ));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !h
+        .state()
+        .terminal_text_for_tests()
+        .contains("plain-shell-ready")
+    {
+        h.step();
+        assert!(
+            Instant::now() < deadline,
+            "the plain shell did not accept input"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    h.get_by_label("Restart").click();
+    h.run_steps(3);
+    assert!(h.state().terminal_shell_for_tests().is_empty());
+    h.get_by_label("New terminal").click();
+    wait_for_terminal_canvas(&mut h);
+    assert!(h.state().terminal_shell_for_tests().contains("agent-ready"));
+}
+
+#[cfg(unix)]
+#[test]
+fn terminal_tab_context_menu_closes_the_clicked_tab_or_its_neighbours() {
+    let dir = tempfile::tempdir().unwrap();
+    let launcher = serde_json::json!({
+        "kind": "claude-code",
+        "executable": "/bin/sh",
+        "arguments": "-c 'sleep 30'",
+        "return_to_shell": false,
+    });
+    let app = app_with_terminal_launcher(dir.path(), "", "", &launcher.to_string());
+    let mut h = Harness::builder()
+        .with_size((1100.0, 760.0))
+        .with_step_dt(0.01)
+        .build_ui_state(|ui, app: &mut SqlrApp| app.ui(ui), app);
+    h.run_steps(3);
+    h.get_by_label("Terminal").click();
+    wait_for_terminal_canvas(&mut h);
+    h.run_steps(5);
+    for _ in 0..3 {
+        h.get_by_label("New terminal").click();
+        h.run_steps(3);
+    }
+    h.get_all_by_label("sh").next().unwrap().click_secondary();
+    h.run_steps(3);
+    assert!(
+        h.get_by_label("Close tabs to the left")
+            .accesskit_node()
+            .is_disabled()
+    );
+    h.key_press(egui::Key::Escape);
+    h.run_steps(2);
+
+    // The second tab is the reference, even though the fourth one is selected.
+    h.get_all_by_label("sh").nth(1).unwrap().click_secondary();
+    h.run_steps(3);
+    h.get_by_label("Close tabs to the left").click();
+    h.run_steps(3);
+    assert_eq!(h.get_all_by_label("sh").count(), 3);
+    assert_eq!(
+        h.get_all_by_label("sh")
+            .nth(2)
+            .unwrap()
+            .accesskit_node()
+            .toggled(),
+        Some(egui::accesskit::Toggled::True)
+    );
+
+    h.get_all_by_label("sh").next().unwrap().click_secondary();
+    h.run_steps(3);
+    h.get_by_label("Close tabs to the right").click();
+    h.run_steps(3);
+    assert_eq!(h.get_all_by_label("sh").count(), 1);
+    assert_eq!(
+        h.get_by_label("sh").accesskit_node().toggled(),
+        Some(egui::accesskit::Toggled::True)
+    );
+
+    h.get_by_label("sh").click_secondary();
+    h.run_steps(3);
+    assert!(
+        h.get_by_label("Close tabs to the left")
+            .accesskit_node()
+            .is_disabled()
+    );
+    assert!(
+        h.get_by_label("Close tabs to the right")
+            .accesskit_node()
+            .is_disabled()
+    );
+    h.get_by_label("Close").click();
+    h.run_steps(3);
+    assert!(!h.state().terminal_visible_for_tests());
 }

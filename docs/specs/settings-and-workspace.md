@@ -59,7 +59,7 @@ Next is the connection chip, between 96 and 220 pixels wide, tinted with the Con
 
 The run controls are Run, Run script and Stop. Stop is shown while something runs and is also reachable with Escape. Transaction controls (commit, rollback, commit mode) sit next to them while a transaction is open, or under a More tools menu when space is short.
 
-The right side of the toolbar holds, in order, the Operations toggle with a count and a spinner while work runs, Preferences, the agent access quick toggle, the value panel toggle, history, the terminal toggle when the window is wide enough, a divider, and a search field that opens the Palette. A hairline separates the toolbar from the content.
+The right side of the toolbar holds, in order, the Operations toggle with a count and a spinner while work runs, Preferences, the value panel toggle, history, the terminal toggle when the window is wide enough, a divider, and a search field that opens the Palette. A hairline separates the toolbar from the content.
 
 #### Connection chip and breadcrumb
 
@@ -80,7 +80,9 @@ The status bar is one line of segments. On the left:
 - The fetch size as a combo with presets 100, 500, 1,000 and 5,000 plus a custom value, and Load all rows when the Result has more rows.
 - A progress entry for a running export or copy, with a Cancel action.
 
-On the right: the command palette shortcut hint, the agent server status and session count, the terminal toggle, the encoding (`UTF-8`), the caret's line and column, and a Not saved marker for an unsaved script.
+On the right: the command palette shortcut hint, the MCP status and session count, the terminal toggle, the encoding (`UTF-8`), the caret's line and column, and a Not saved marker for an unsaved script. The MCP segment stays visible when disabled with a grey dot. Clicking the dot toggles the server; clicking the text opens Settings → Agents. Each control reserves its own space. Below 700 logical pixels the terminal toggle uses its icon with the same tooltip and action, leaving room for the Connection, transaction and Result segments.
+
+The terminal toggle shows or hides the panel while its shells keep running. The terminal header holds selectable, closable tabs in place of the shell status and path summary. Each tab has a context menu to close it or the tabs to its left or right, using the clicked tab as the reference. Tab labels use the launched executable's name without numbering, and keep that name while the session runs. A + creates a new tab with the configured launcher; selecting a coding agent in Settings adds a second + with a terminal icon for a plain login shell. The actions appear in the order +, + shell when available, Restart, downward chevron. The chevron hides the panel while every shell keeps running. Closing the final tab hides the panel; reopening it starts a fresh tab.
 
 Segments are dropped by priority as the window narrows, keeping the Connection state, the running state and the caret position last.
 
@@ -206,7 +208,7 @@ The effective value of a setting comes from the most specific level that sets it
 
 Global values live in the settings file. Overrides live in an overrides file, grouped by profile and by Connection. A Connection belongs to the Development profile unless another profile is chosen.
 
-A setting declares the levels it accepts. Some settings are global only because they describe the whole app or carry privacy weight: theme, UI scale, editor options, memory budgets, the update check, SQL in diagnostics, terminal shell and working directory, and the Sidecar idle timeout. Others accept every level: page size, row cap, NULL text, data formats, per-tab sessions, connect timeout, Driver properties and the Safety flags.
+A setting declares the levels it accepts. Some settings are global only because they describe the whole app or carry privacy weight: theme, UI scale, editor options, memory budgets, the update check, SQL in diagnostics, terminal launch configuration, shell and working directory, and the Sidecar idle timeout. Others accept every level: page size, row cap, NULL text, data formats, per-tab sessions, connect timeout, Driver properties and the Safety flags.
 
 When a settings file has an older flat layout, it is read with the key mapping of the modern identifiers, rewritten in the current layout, and the old file is kept as a backup. A corrupt settings file is kept aside with a marker and the defaults are used, with a notice.
 
@@ -364,6 +366,8 @@ Updates are a background state machine in the app: idle, checking, offering, dow
 - A release tag that does not match the application version fails the build.
 
 ## Decisions
+
+- **Terminal launch controls use the existing settings lifecycle.** The agent picker, executable, arguments and return option participate in Apply, Save, Cancel and search, and take effect at the next terminal start.
 
 - **One settings catalogue as the source of truth.** Labels, defaults, types and levels live beside the code that reads them, so the Preferences window, search, Agent interface and defaults cannot drift apart.
 - **Three levels with a strict override order.** A user wants the same editor preferences everywhere but different safety rules per environment, so values resolve Connection, then profile, then global, then default.

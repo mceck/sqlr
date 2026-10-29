@@ -2031,7 +2031,10 @@ async fn write_setting(
         .iter()
         .find(|entry| entry.id == id)
         .ok_or_else(|| ToolError::invalid(format!("Unknown setting \"{id}\"")))?;
-    if !entry.agent_writable || matches!(id, "terminal.shell") || id.starts_with("agents.") {
+    if !entry.agent_writable
+        || matches!(id, "terminal.shell" | "terminal.launcher")
+        || id.starts_with("agents.")
+    {
         return Err(ToolError::invalid(format!(
             "\"{id}\" is human-only and cannot be written by an agent"
         )));

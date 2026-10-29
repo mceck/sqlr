@@ -9,7 +9,6 @@ use sqlr_engine::SessionStatus;
 use sqlr_ui::theme::{self, Spacing, icons, menu};
 use sqlr_ui::{ChipAction, ChipItem, ChipState, PaletteMode, connection_chip};
 
-use crate::agents::McpStatus;
 use crate::app::{SqlrApp, tab_mut};
 use crate::palette::AppCommand;
 
@@ -441,39 +440,6 @@ impl SqlrApp {
                     icons::toolbar_button(ui, true, icons::SETTINGS, None, false, "Settings");
                 if theme::tooltip_for(settings, "Settings", ActionId::Settings, None).clicked() {
                     self.open_preferences(sqlr_core::Level::Global);
-                }
-                // The quick toggle for the loopback MCP server, next to the workspace toggles.
-                let mcp_on = self.settings.agents_enabled;
-                let mcp_color = match self.mcp.status {
-                    McpStatus::Running => Some(palette.success),
-                    McpStatus::Starting => Some(palette.warning),
-                    McpStatus::PortBusy | McpStatus::KeychainError | McpStatus::Error => {
-                        Some(palette.error)
-                    }
-                    McpStatus::Stopped => None,
-                };
-                let mcp_title = if mcp_on {
-                    format!("Agent access (MCP): {}", self.mcp.status.label())
-                } else {
-                    "Agent access (MCP): off".to_string()
-                };
-                let mcp_detail = if mcp_on {
-                    "AI assistants on this computer can query the connections you chose. \
-                     Click to turn it off."
-                } else {
-                    "Let AI assistants on this computer query the connections you choose. \
-                     Click to turn it on."
-                };
-                let mcp = icons::toolbar_button(
-                    ui,
-                    true,
-                    icons::MCP,
-                    mcp_color,
-                    mcp_on,
-                    "Toggle agent access (MCP)",
-                );
-                if theme::tooltip(mcp, &mcp_title, None, Some(mcp_detail)).clicked() {
-                    self.set_agents_enabled(!mcp_on, ui.ctx());
                 }
                 let value = icons::toolbar_button(
                     ui,

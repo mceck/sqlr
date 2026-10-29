@@ -10,6 +10,7 @@ pub mod pty;
 pub mod screen;
 pub mod session;
 pub mod shell;
+mod tabs;
 pub mod widget;
 
 pub use screen::{
@@ -19,4 +20,5 @@ pub use screen::{
 pub use session::{
     BackendFactory, BackendParts, PtyError, SessionConfig, TerminalSession, TerminalStatus,
 };
+pub use tabs::TerminalTabs;
 pub use widget::{Selection, TerminalAction, TerminalPanel, TerminalTheme};

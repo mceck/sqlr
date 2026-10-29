@@ -295,7 +295,7 @@ pub struct SqlrApp {
     pub(crate) pending_connection_writes:
         HashMap<String, Vec<crate::agents::PendingConnectionWrite>>,
     /// The integrated terminal (session-only visibility and height).
-    pub(crate) terminal: sqlr_terminal::TerminalPanel,
+    pub(crate) terminal: sqlr_terminal::TerminalTabs,
     /// Persistent terminal directory and background MCP configuration writer.
     pub(crate) terminal_workspace: crate::terminal_workspace::TerminalWorkspace,
     /// Agent installations: the background worker and the endpoint they were last synced to.
@@ -941,21 +941,19 @@ impl SqlrApp {
             storage_warning: self.storage_warning.as_deref(),
             job: job.as_ref().map(|(text, _)| text.as_str()),
             terminal_open: self.terminal.is_open(),
-            mcp: self
-                .settings
-                .agents_enabled
-                .then(|| crate::shell::status::McpView {
-                    running: self.mcp.status.is_running(),
-                    sessions: self.mcp.sessions(),
-                    detail: format!(
-                        "{}: {} active session(s){}",
-                        self.mcp.status.label(),
-                        self.mcp.sessions(),
-                        self.mcp
-                            .url()
-                            .map_or(String::new(), |url| format!(" · {url}"))
-                    ),
-                }),
+            mcp: Some(crate::shell::status::McpView {
+                enabled: self.settings.agents_enabled,
+                running: self.mcp.status.is_running(),
+                sessions: self.mcp.sessions(),
+                detail: format!(
+                    "{}: {} active session(s){}",
+                    self.mcp.status.label(),
+                    self.mcp.sessions(),
+                    self.mcp
+                        .url()
+                        .map_or(String::new(), |url| format!(" · {url}"))
+                ),
+            }),
         };
         let action = status_bar(ui, &mut self.status_bar, &view);
         match action {
@@ -976,6 +974,9 @@ impl SqlrApp {
                 if let Some((_, id)) = job {
                     self.engine.cancel_job(id);
                 }
+            }
+            Some(StatusAction::ToggleMcp) => {
+                self.set_agents_enabled(!self.settings.agents_enabled, ui.ctx());
             }
             Some(StatusAction::OpenAgents) => {
                 self.open_preferences_section("Agents");

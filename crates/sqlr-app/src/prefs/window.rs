@@ -80,6 +80,8 @@ pub struct PrefsWindow {
     agent_confirm: Option<AgentConfirm>,
     /// Whether the Agents section was on screen last frame: opening it recomputes states.
     agents_shown: bool,
+    terminal_shown: bool,
+    terminal: super::terminal::TerminalPrefs,
     pub open_terminal: bool,
     /// "Check for updates now" was clicked; the app starts the check.
     pub check_updates: bool,
@@ -133,6 +135,8 @@ impl PrefsWindow {
             agent_requests: Vec::new(),
             agent_confirm: None,
             agents_shown: false,
+            terminal_shown: false,
+            terminal: Default::default(),
             open_terminal: false,
             check_updates: false,
         }
@@ -163,6 +167,18 @@ impl PrefsWindow {
             self.agent_requests.push(AgentRequest::Refresh);
         }
         self.agents_shown = agents_open;
+        let terminal_open = self.scope == Level::Global
+            && if self.query.trim().is_empty() {
+                self.section == "Terminal"
+            } else {
+                search_settings(&self.query)
+                    .iter()
+                    .any(|d| matches!(d.id, "terminal.shell" | "terminal.launcher"))
+            };
+        if terminal_open && !self.terminal_shown {
+            self.agent_requests.push(AgentRequest::Refresh);
+        }
+        self.terminal_shown = terminal_open;
         if let Some(pending) = &self.saving {
             ctx.request_repaint_after(std::time::Duration::from_millis(20));
             if ctx.cumulative_frame_nr() > pending.frame {
@@ -333,25 +349,22 @@ impl PrefsWindow {
         let searching = !self.query.trim().is_empty();
         if searching {
             let found = search_settings(&self.query);
-            let mut editing = Editing {
-                live,
-                scope: &self.scope,
-                scopes,
-                error: &mut self.error,
-            };
             let mut any = false;
             for section in SECTIONS {
                 let defs: Vec<&'static SettingDef> = found
                     .iter()
                     .copied()
-                    .filter(|d| d.section == *section && editing.applies(d))
+                    .filter(|d| {
+                        d.section == *section
+                            && (self.scope == Level::Global || d.levels == sqlr_core::Levels::All)
+                    })
                     .collect();
                 if defs.is_empty() {
                     continue;
                 }
                 any = true;
                 theme::section_title(ui, section);
-                editing.rows(ui, &defs);
+                self.settings_rows(ui, live, scopes, &defs);
                 ui.add_space(Spacing::M);
             }
             if !any {
@@ -395,6 +408,38 @@ impl PrefsWindow {
             });
             return;
         }
+        self.settings_rows(ui, live, scopes, &defs);
+        if self.scope == Level::Global {
+            self.section_actions(ui);
+            self.agents_actions(ui);
+        }
+    }
+
+    fn settings_rows(
+        &mut self,
+        ui: &mut egui::Ui,
+        live: &mut LayeredSettings,
+        scopes: &Scopes,
+        defs: &[&'static SettingDef],
+    ) {
+        if self.scope == Level::Global
+            && defs
+                .iter()
+                .any(|d| matches!(d.id, "terminal.shell" | "terminal.launcher"))
+        {
+            self.terminal.show(
+                ui,
+                live,
+                &self.agents,
+                &mut self.agent_requests,
+                &mut self.error,
+            );
+        }
+        let defs: Vec<_> = defs
+            .iter()
+            .copied()
+            .filter(|d| !matches!(d.id, "terminal.shell" | "terminal.launcher"))
+            .collect();
         let mut editing = Editing {
             live,
             scope: &self.scope,
@@ -402,10 +447,6 @@ impl PrefsWindow {
             error: &mut self.error,
         };
         editing.rows(ui, &defs);
-        if self.scope == Level::Global {
-            self.section_actions(ui);
-            self.agents_actions(ui);
-        }
     }
 
     /// "Applies to": the level the values below are edited at.

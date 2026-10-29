@@ -30,6 +30,8 @@ pub struct TerminalTheme {
     pub icon_font: egui::FontId,
     pub restart_icon: &'static str,
     pub close_icon: &'static str,
+    pub hide_icon: &'static str,
+    pub shell_icon: &'static str,
 }
 
 impl TerminalTheme {
@@ -92,8 +94,14 @@ pub struct Selection {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TerminalAction {
+    NewTab,
+    NewShellTab,
+    SelectTab(u64),
+    CloseTab(u64),
+    CloseTabsLeft(u64),
+    CloseTabsRight(u64),
     Restart,
-    Close,
+    Hide,
     OpenSettings,
 }
 
@@ -252,10 +260,32 @@ impl TerminalPanel {
         theme: &TerminalTheme,
         repaint: Arc<dyn Fn() + Send + Sync>,
     ) -> Vec<TerminalAction> {
+        self.show_tabs(ui, theme, repaint, &[], false, false)
+    }
+
+    pub(crate) fn show_tabs(
+        &mut self,
+        ui: &mut egui::Ui,
+        theme: &TerminalTheme,
+        repaint: Arc<dyn Fn() + Send + Sync>,
+        tabs: &[crate::tabs::TabView],
+        reveal_active: bool,
+        show_shell_button: bool,
+    ) -> Vec<TerminalAction> {
         let mut actions = Vec::new();
-        self.header(ui, theme, &mut actions);
+        self.header(
+            ui,
+            theme,
+            &mut actions,
+            tabs,
+            reveal_active,
+            show_shell_button,
+        );
         ui.add_space(4.0);
-        self.canvas(ui, theme, repaint);
+        let active_id = tabs.iter().find(|tab| tab.selected).map(|tab| tab.id);
+        ui.push_id(("terminal_canvas", active_id), |ui| {
+            self.canvas(ui, theme, repaint);
+        });
         actions
     }
 
@@ -264,44 +294,25 @@ impl TerminalPanel {
         ui: &mut egui::Ui,
         theme: &TerminalTheme,
         actions: &mut Vec<TerminalAction>,
+        tabs: &[crate::tabs::TabView],
+        reveal_active: bool,
+        show_shell_button: bool,
     ) {
         let status = self.status();
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             ui.label(egui::RichText::new(">_").monospace().strong());
             ui.label(egui::RichText::new("Terminal").strong());
-            let (dot, label) = match &status {
-                Some(TerminalStatus::Starting) => (Color32::YELLOW, "starting"),
-                Some(TerminalStatus::Running { .. }) => {
-                    (Color32::from_rgb(0x4c, 0xaf, 0x50), "running")
-                }
-                Some(TerminalStatus::Exited { code }) => {
-                    (Color32::GRAY, if *code == 0 { "exited" } else { "failed" })
-                }
-                Some(TerminalStatus::Failed { .. }) => {
-                    (Color32::from_rgb(0xe0, 0x4f, 0x4f), "failed")
-                }
-                None => (Color32::GRAY, "not started"),
-            };
-            ui.painter()
-                .circle_filled(ui.cursor().left_center() + vec2(3.0, 0.0), 3.0, dot);
-            ui.add_space(8.0);
-            ui.label(egui::RichText::new(label).small().weak());
-            let summary = crate::shell::summary(&crate::shell::resolve_current(
-                &self.config.shell,
-                &self.config.cwd,
-            ));
-            ui.label(egui::RichText::new(summary).small().weak());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let close = egui::RichText::new(theme.close_icon).font(theme.icon_font.clone());
-                let close = ui
-                    .add(egui::Button::new(close).small())
-                    .on_hover_text("Close the terminal");
-                close.widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Close")
+                let hide = egui::RichText::new(theme.hide_icon).font(theme.icon_font.clone());
+                let hide = ui
+                    .add(egui::Button::new(hide).small())
+                    .on_hover_text("Hide the terminal (shells keep running)");
+                hide.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Hide terminal")
                 });
-                if close.clicked() {
-                    actions.push(TerminalAction::Close);
+                if hide.clicked() {
+                    actions.push(TerminalAction::Hide);
                 }
                 let restart = egui::RichText::new(theme.restart_icon).font(theme.icon_font.clone());
                 let restart = ui
@@ -313,6 +324,108 @@ impl TerminalPanel {
                 if restart.clicked() {
                     actions.push(TerminalAction::Restart);
                 }
+                if show_shell_button {
+                    let mut label = egui::text::LayoutJob::default();
+                    let color = ui.visuals().text_color();
+                    label.append(
+                        "+ ",
+                        0.0,
+                        egui::TextFormat::simple(egui::FontId::proportional(13.0), color),
+                    );
+                    label.append(
+                        theme.shell_icon,
+                        0.0,
+                        egui::TextFormat::simple(theme.icon_font.clone(), color),
+                    );
+                    let shell = ui
+                        .add(egui::Button::new(label).small())
+                        .on_hover_text("New shell terminal");
+                    shell.widget_info(|| {
+                        egui::WidgetInfo::labeled(
+                            egui::WidgetType::Button,
+                            true,
+                            "New shell terminal",
+                        )
+                    });
+                    if shell.clicked() {
+                        actions.push(TerminalAction::NewShellTab);
+                    }
+                }
+                let new = ui.small_button("+").on_hover_text("New terminal");
+                new.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "New terminal")
+                });
+                if new.clicked() {
+                    actions.push(TerminalAction::NewTab);
+                }
+                egui::ScrollArea::horizontal()
+                    .id_salt("terminal_tab_strip")
+                    .animated(false)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            ui.add_space(4.0);
+                            for (index, tab) in tabs.iter().enumerate() {
+                                ui.push_id(tab.id, |ui| {
+                                    let title = &tab.name;
+                                    let label = ui.selectable_label(tab.selected, title);
+                                    if label.clicked() {
+                                        actions.push(TerminalAction::SelectTab(tab.id));
+                                    }
+                                    let close = egui::RichText::new(theme.close_icon)
+                                        .font(theme.icon_font.clone());
+                                    let close = ui
+                                        .add(egui::Button::new(close).small().frame(false))
+                                        .on_hover_text(format!("Close {title}"));
+                                    close.widget_info(|| {
+                                        egui::WidgetInfo::labeled(
+                                            egui::WidgetType::Button,
+                                            true,
+                                            format!("Close {title}"),
+                                        )
+                                    });
+                                    if close.clicked() {
+                                        actions.push(TerminalAction::CloseTab(tab.id));
+                                    }
+                                    let response = label | close;
+                                    response.context_menu(|ui| {
+                                        if ui.button("Close").clicked() {
+                                            actions.push(TerminalAction::CloseTab(tab.id));
+                                            ui.close();
+                                        }
+                                        if ui
+                                            .add_enabled(
+                                                index > 0,
+                                                egui::Button::new("Close tabs to the left"),
+                                            )
+                                            .clicked()
+                                        {
+                                            actions.push(TerminalAction::CloseTabsLeft(tab.id));
+                                            ui.close();
+                                        }
+                                        if ui
+                                            .add_enabled(
+                                                index + 1 < tabs.len(),
+                                                egui::Button::new("Close tabs to the right"),
+                                            )
+                                            .clicked()
+                                        {
+                                            actions.push(TerminalAction::CloseTabsRight(tab.id));
+                                            ui.close();
+                                        }
+                                    });
+                                    if tab.selected && reveal_active {
+                                        ui.scroll_to_rect(
+                                            response.rect.expand2(vec2(4.0, 0.0)),
+                                            Some(egui::Align::Center),
+                                        );
+                                    }
+                                    ui.separator();
+                                });
+                            }
+                            ui.add_space(4.0);
+                        });
+                    });
             });
         });
         if let Some(TerminalStatus::Exited { code }) = &status {
@@ -922,6 +1035,8 @@ mod tests {
             icon_font: egui::FontId::proportional(14.0),
             restart_icon: "R",
             close_icon: "X",
+            hide_icon: "v",
+            shell_icon: "S",
         }
     }
 

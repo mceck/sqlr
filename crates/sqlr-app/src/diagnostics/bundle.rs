@@ -322,7 +322,7 @@ fn tail_by_bytes(lines: &[String], budget: usize) -> (Vec<String>, usize) {
 fn sensitive_setting(id: &str) -> bool {
     let id = id.to_lowercase();
     // The terminal command can embed credentials; it is never logged or reported.
-    id == "terminal.shell"
+    matches!(id.as_str(), "terminal.shell" | "terminal.launcher")
         || id.contains("password")
         || id.contains("passphrase")
         || id.contains("secret")
@@ -588,6 +588,11 @@ mod tests {
                     "terminal.shell".into(),
                     json!("sh -c 'password=hunter2'"),
                 ),
+                (
+                    "global".into(),
+                    "terminal.launcher".into(),
+                    json!("{\"arguments\":\"--secret launcher-secret-value\"}"),
+                ),
             ],
             connections: vec![ConnectionInfo {
                 id: "c1".into(),
@@ -646,8 +651,9 @@ mod tests {
             assert!(value.get(key).is_some(), "missing {key}");
         }
         assert!(outline.bytes > 0);
-        assert!(value["settings"]["omitted"].as_u64() == Some(1));
+        assert!(value["settings"]["omitted"].as_u64() == Some(2));
         assert!(!text.contains("hunter2"));
+        assert!(!text.contains("launcher-secret-value"));
     }
 
     #[test]

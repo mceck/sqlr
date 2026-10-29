@@ -974,6 +974,24 @@ fn build_defs() -> Vec<SettingDef> {
             V::Int(47821),
         ),
         human_only(
+            "terminal.launcher",
+            "Terminal",
+            "Open with",
+            "Open the system shell, a detected command-line agent, or a custom command.",
+            &[
+                "agent",
+                "claude",
+                "codex",
+                "gemini",
+                "opencode",
+                "arguments",
+                "preset",
+                "executable",
+            ],
+            K::Text,
+            text(""),
+        ),
+        human_only(
             "terminal.shell",
             "Terminal",
             "Shell command",
@@ -1185,8 +1203,10 @@ mod tests {
 
     #[test]
     fn agent_visibility_of_settings() {
-        let shell = setting_def("terminal.shell").unwrap();
-        assert!(!shell.agent_readable && !shell.agent_writable);
+        for id in ["terminal.shell", "terminal.launcher"] {
+            let def = setting_def(id).unwrap();
+            assert!(!def.agent_readable && !def.agent_writable, "{id}");
+        }
         for id in ["agents.enabled", "agents.port", "updates.check_on_start"] {
             let def = setting_def(id).unwrap();
             assert!(def.agent_readable && !def.agent_writable, "{id}");

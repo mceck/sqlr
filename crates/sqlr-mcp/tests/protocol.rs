@@ -1164,9 +1164,11 @@ async fn setting_writes_parse_types_levels_and_reject_unsafe_changes() {
         let mut restricted = setting_entry("global-only", json!({"type":"bool"}));
         restricted.allowed_levels = vec!["global".into()];
         state.setting_entries.push(restricted);
-        state
-            .setting_entries
-            .push(setting_entry("terminal.shell", json!({"type":"text"})));
+        for id in ["terminal.shell", "terminal.launcher"] {
+            state
+                .setting_entries
+                .push(setting_entry(id, json!({"type":"text"})));
+        }
     }
     let mut client = Client::new(port, &token);
     client.initialize().await;
@@ -1220,6 +1222,7 @@ async fn setting_writes_parse_types_levels_and_reject_unsafe_changes() {
         json!({"id":"safe","level":{"name":"global"},"value":false}),
         json!({"id":"safe","level":{"name":"global"},"reset":true}),
         json!({"id":"terminal.shell","level":{"name":"global"},"value":"sh"}),
+        json!({"id":"terminal.launcher","level":{"name":"global"},"value":"{}"}),
         json!({"id":"global-only","level":{"name":"connection","id":"c1"},"value":true}),
         json!({"id":"text","level":false,"value":"x"}),
         json!({"id":"text","level":{"name":"profile"},"value":"x"}),

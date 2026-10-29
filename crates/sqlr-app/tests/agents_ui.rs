@@ -233,7 +233,7 @@ fn enabling_mcp_starts_the_listener_and_disabling_removes_the_discovery_file() {
 }
 
 #[test]
-fn the_toolbar_toggle_switches_agent_access() {
+fn the_status_dot_switches_agent_access_and_the_label_opens_settings() {
     let dir = tempfile::tempdir().unwrap();
     let port = {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -274,6 +274,12 @@ fn the_toolbar_toggle_switches_agent_access() {
     assert!(!harness.state().agents_enabled_for_tests());
     assert!(harness.state().mcp_stopped_for_tests());
 
+    let dot = harness.get_by_label("Toggle agent access (MCP)").rect();
+    let label = harness.get_by_label("MCP 0").rect();
+    let terminal = harness.get_by_label("Terminal").rect();
+    assert!(dot.top() > 780.0, "MCP toggle belongs in the status bar");
+    assert!(terminal.right() < dot.left());
+    assert!(dot.right() < label.left());
     harness.get_by_label("Toggle agent access (MCP)").click();
     harness.run_steps(3);
     assert!(harness.state().agents_enabled_for_tests());
@@ -282,6 +288,10 @@ fn the_toolbar_toggle_switches_agent_access() {
     harness.run_steps(3);
     assert!(!harness.state().agents_enabled_for_tests());
     assert!(harness.state().mcp_stopped_for_tests());
+    harness.get_by_label("MCP 0").click();
+    harness.run_steps(3);
+    harness.get_by_label("Enable agent access (MCP)");
+    assert!(!harness.state().agents_enabled_for_tests());
 }
 
 #[test]

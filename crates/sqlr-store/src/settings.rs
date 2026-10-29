@@ -51,6 +51,8 @@ pub struct Settings {
     pub agents_port: u16,
     /// The terminal's shell command; empty uses the login shell.
     pub terminal_shell: String,
+    /// Structured, human-only terminal agent launch preferences.
+    pub terminal_launcher: String,
     /// The terminal's working directory; empty uses the home directory.
     pub terminal_cwd: String,
     /// Lines the terminal keeps in its scrollback, within [`TERMINAL_SCROLLBACK`].
@@ -90,6 +92,7 @@ impl Default for Settings {
             agents_enabled: false,
             agents_port: DEFAULT_MCP_PORT,
             terminal_shell: String::new(),
+            terminal_launcher: String::new(),
             terminal_cwd: String::new(),
             terminal_scrollback: 2000,
             terminal_font_size: DEFAULT_TERMINAL_FONT_SIZE,
@@ -125,6 +128,7 @@ impl Settings {
             agents_enabled: get("agents.enabled").as_bool(),
             agents_port: get("agents.port").as_i64().clamp(1024, 65535) as u16,
             terminal_shell: get("terminal.shell").as_str().to_string(),
+            terminal_launcher: get("terminal.launcher").as_str().to_string(),
             terminal_cwd: get("terminal.cwd").as_str().to_string(),
             terminal_scrollback: (get("terminal.scrollback").as_i64() as usize)
                 .clamp(*TERMINAL_SCROLLBACK.start(), *TERMINAL_SCROLLBACK.end()),
@@ -187,6 +191,10 @@ impl Settings {
             (
                 "terminal.shell",
                 SettingValue::Text(self.terminal_shell.clone()),
+            ),
+            (
+                "terminal.launcher",
+                SettingValue::Text(self.terminal_launcher.clone()),
             ),
             (
                 "terminal.cwd",

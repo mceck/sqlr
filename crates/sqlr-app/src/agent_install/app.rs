@@ -27,6 +27,7 @@ pub(crate) struct AgentInstallUi {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct AgentsView {
     pub rows: Vec<AgentRow>,
+    pub executables: Vec<super::AgentExecutable>,
     /// A command is still running; actions wait.
     pub busy: bool,
     /// The home directory is unknown, so no agent can be installed.
@@ -138,6 +139,7 @@ impl SqlrApp {
             .unwrap_or_default();
         AgentsView {
             rows: snapshot.rows,
+            executables: snapshot.executables,
             busy: snapshot.pending > 0,
             unavailable: installs.unavailable,
         }

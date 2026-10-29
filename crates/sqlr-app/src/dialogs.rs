@@ -967,7 +967,7 @@ impl SqlrApp {
         } else {
             Vec::new()
         };
-        let agents_view = agents_shown.then(|| self.agents_view());
+        let agents_view = self.prefs.is_some().then(|| self.agents_view());
         let mut access_changes = Vec::new();
         let mut agent_requests = Vec::new();
         if let Some(window) = &mut self.prefs {

@@ -5,7 +5,7 @@ use std::sync::{Arc, mpsc};
 
 use parking_lot::Mutex;
 
-use super::{AgentKind, AgentRow, Endpoint, Installations};
+use super::{AgentExecutable, AgentKind, AgentRow, Endpoint, Installations};
 
 /// What the UI asks of the worker. Each command carries the endpoint states are computed
 /// against.
@@ -33,6 +33,7 @@ pub enum InstallOutcome {
 #[derive(Clone, Debug, Default)]
 pub struct InstallSnapshot {
     pub rows: Vec<AgentRow>,
+    pub executables: Vec<AgentExecutable>,
     /// Commands sent and not yet done.
     pub pending: usize,
 }
@@ -132,8 +133,10 @@ fn run(installations: &Installations, command: InstallCommand, shared: &Mutex<Sh
         }
     };
     let rows = installations.rows(&endpoint);
+    let executables = installations.env.terminal_executables();
     let mut shared = shared.lock();
     shared.snapshot.rows = rows;
+    shared.snapshot.executables = executables;
     shared.snapshot.pending = shared.snapshot.pending.saturating_sub(1);
     shared.outcomes.extend(outcome);
 }

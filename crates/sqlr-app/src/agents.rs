@@ -1545,9 +1545,13 @@ impl SqlrApp {
             icon_font: sqlr_ui::theme::fonts::icons(ui.ctx(), sqlr_ui::theme::icons::SIZE),
             restart_icon: sqlr_ui::theme::icons::REFRESH,
             close_icon: sqlr_ui::theme::icons::CLOSE,
+            hide_icon: sqlr_ui::theme::icons::CARET_DOWN,
+            shell_icon: sqlr_ui::theme::icons::TERMINAL,
         };
+        self.terminal
+            .set_agent_name(crate::prefs::terminal::agent_name(&self.settings));
         self.terminal.set_config(sqlr_terminal::SessionConfig {
-            shell: self.settings.terminal_shell.clone(),
+            shell: crate::prefs::terminal::command(&self.settings),
             cwd,
             scrollback: self.settings.terminal_scrollback,
             ..Default::default()
@@ -1559,6 +1563,16 @@ impl SqlrApp {
         let actions = self.terminal.show(ui, &theme, repaint);
         for action in actions {
             match action {
+                sqlr_terminal::TerminalAction::NewTab => self.terminal.new_tab(),
+                sqlr_terminal::TerminalAction::NewShellTab => self.terminal.new_shell_tab(),
+                sqlr_terminal::TerminalAction::SelectTab(id) => self.terminal.select(id),
+                sqlr_terminal::TerminalAction::CloseTab(id) => self.terminal.close_tab(id),
+                sqlr_terminal::TerminalAction::CloseTabsLeft(id) => {
+                    self.terminal.close_tabs_left(id)
+                }
+                sqlr_terminal::TerminalAction::CloseTabsRight(id) => {
+                    self.terminal.close_tabs_right(id)
+                }
                 sqlr_terminal::TerminalAction::Restart => {
                     let repaint: Arc<dyn Fn() + Send + Sync> = {
                         let ctx = ui.ctx().clone();
@@ -1566,7 +1580,7 @@ impl SqlrApp {
                     };
                     self.terminal.restart(repaint);
                 }
-                sqlr_terminal::TerminalAction::Close => self.terminal.close(),
+                sqlr_terminal::TerminalAction::Hide => self.terminal.close(),
                 sqlr_terminal::TerminalAction::OpenSettings => {
                     self.prefs = Some(crate::prefs::PrefsWindow::new_for_section(
                         &self.layered,

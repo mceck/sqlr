@@ -101,7 +101,7 @@ pub struct StatusView<'a> {
     pub storage_warning: Option<&'a str>,
     /// A running export or copy: its progress line.
     pub job: Option<&'a str>,
-    /// The MCP server's state while it is enabled.
+    /// The MCP server's state, including when it is disabled.
     pub mcp: Option<McpView>,
     /// Whether the terminal panel is open.
     pub terminal_open: bool,
@@ -110,6 +110,7 @@ pub struct StatusView<'a> {
 /// What the status bar shows of the MCP server.
 #[derive(Clone, Debug, PartialEq)]
 pub struct McpView {
+    pub enabled: bool,
     pub running: bool,
     pub sessions: usize,
     pub detail: String,
@@ -122,6 +123,7 @@ pub enum StatusAction {
     /// Cancel the running job.
     CancelJob,
     OpenAgents,
+    ToggleMcp,
     /// Open the command palette.
     OpenCommands,
     ToggleTerminal,
@@ -166,7 +168,7 @@ fn left_group(
 ) {
     // Priority: the state word, the row count, the transaction line, then the connection's
     // name. The earlier segments leave room for the more important later ones.
-    let reserve = if view.info.is_some() { 150.0 } else { 0.0 };
+    let reserve = if view.info.is_some() { 130.0 } else { 0.0 };
     let tx_reserve = reserve
         + if view.transaction.is_some() {
             140.0
@@ -294,24 +296,35 @@ pub fn status_bar(
             ui.separator();
         }
         if let Some(mcp) = view.mcp.as_ref().filter(|_| fits(ui, 90.0)) {
-            let (dot, word) = if mcp.running {
-                (palette.success, "MCP")
+            let color = if mcp.enabled && mcp.running {
+                palette.success
             } else {
-                (palette.text_disabled, "MCP off")
+                palette.text_disabled
             };
             let response = ui
                 .add(
-                    Button::new(RichText::new(format!("{word} {}", mcp.sessions)).small())
+                    Button::new(RichText::new(format!("MCP {}", mcp.sessions)).small())
                         .frame(false),
                 )
                 .on_hover_text(&mcp.detail);
-            let rect = egui::Rect::from_center_size(
-                response.rect.left_center() + egui::vec2(-8.0, 0.0),
-                egui::vec2(6.0, 6.0),
-            );
-            ui.painter().circle_filled(rect.center(), 3.0, dot);
             if response.clicked() {
                 action = Some(StatusAction::OpenAgents);
+            }
+            // Allocate the dot's own hit area so its paint stays inside its segment.
+            let (rect, toggle) = ui.allocate_exact_size(egui::vec2(16.0, 20.0), Sense::click());
+            ui.painter().circle_filled(rect.center(), 3.0, color);
+            toggle.widget_info(|| {
+                egui::WidgetInfo::labeled(
+                    egui::WidgetType::Button, true, "Toggle agent access (MCP)",
+                )
+            });
+            let detail = if mcp.enabled {
+                "AI assistants on this computer can query the connections you chose. Click to turn it off."
+            } else {
+                "Let AI assistants on this computer query the connections you choose. Click to turn it on."
+            };
+            if toggle.on_hover_text(detail).clicked() {
+                action = Some(StatusAction::ToggleMcp);
             }
             ui.separator();
         }
@@ -321,19 +334,34 @@ pub fn status_bar(
         } else {
             palette.text_muted
         };
-        let terminal = ui
-            .add(
+        let compact = ui.max_rect().width() < 700.0;
+        let terminal = if compact {
+            let response = ui.add(
+                Button::new(RichText::new(icons::TERMINAL)
+                    .font(sqlr_ui::theme::fonts::icons(ui.ctx(), icons::SIZE))
+                    .color(color))
+                    .frame(false)
+                    .selected(view.terminal_open),
+            );
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Terminal")
+            });
+            response
+        } else {
+            let response = ui.add(
                 Button::new(RichText::new("Terminal").small().color(color))
                     .frame(false)
                     .selected(view.terminal_open),
-            )
-            .on_hover_text(
-                match sqlr_ui::keymap::shortcut(ui.ctx(), sqlr_core::ActionId::ToggleTerminal) {
-                    Some(keys) => format!("Show or hide the terminal ({keys})"),
-                    None => "Show or hide the terminal".to_string(),
-                },
             );
-        icons::paint(ui, icons::TERMINAL, color);
+            icons::paint(ui, icons::TERMINAL, color);
+            response
+        };
+        let terminal = terminal.on_hover_text(
+            match sqlr_ui::keymap::shortcut(ui.ctx(), sqlr_core::ActionId::ToggleTerminal) {
+                Some(keys) => format!("Show or hide the terminal ({keys})"),
+                None => "Show or hide the terminal".to_string(),
+            },
+        );
         if terminal.clicked() {
             action = Some(StatusAction::ToggleTerminal);
         }

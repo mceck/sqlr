@@ -41,6 +41,13 @@ pub enum AgentKind {
 }
 
 impl AgentKind {
+    pub const TERMINAL: [Self; 4] = [
+        Self::ClaudeCode,
+        Self::CodexCli,
+        Self::OpenCode,
+        Self::GeminiCli,
+    ];
+
     pub const ALL: [Self; 6] = [
         Self::ClaudeCode,
         Self::CodexCli,
@@ -89,7 +96,7 @@ impl AgentKind {
     }
 
     /// The executable's name.
-    fn executable(self) -> &'static str {
+    pub(crate) fn executable(self) -> &'static str {
         match self {
             Self::ClaudeCode => "claude",
             Self::CodexCli => "codex",
@@ -195,6 +202,66 @@ impl AgentEnvironment {
         }
     }
 
+    /// Launchable command-line agents in the known installation directories.
+    pub fn terminal_executables(&self) -> Vec<AgentExecutable> {
+        let home_bins = [
+            self.home.join(".local/bin"),
+            self.home.join(".npm-global/bin"),
+            self.home.join(".bun/bin"),
+            self.home.join(".volta/bin"),
+            self.home.join(".cargo/bin"),
+            self.home.join("bin"),
+        ];
+        let mut node_bins = Vec::new();
+        for (root, suffix) in [
+            (self.home.join(".nvm/versions/node"), "bin"),
+            (
+                self.home.join(".local/share/fnm/node-versions"),
+                "installation/bin",
+            ),
+            (
+                self.config_dir.join("fnm/node-versions"),
+                "installation/bin",
+            ),
+        ] {
+            let mut versions: Vec<_> = std::fs::read_dir(root)
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok)
+                .filter_map(|entry| {
+                    let name = entry.file_name();
+                    let name = name.to_str()?;
+                    let version =
+                        semver::Version::parse(name.strip_prefix('v').unwrap_or(name)).ok()?;
+                    Some((version, entry.path().join(suffix)))
+                })
+                .collect();
+            versions.sort_by(|a, b| b.0.cmp(&a.0));
+            node_bins.extend(versions.into_iter().map(|(_, path)| path));
+        }
+        AgentKind::TERMINAL
+            .iter()
+            .filter_map(|&kind| {
+                let names = if cfg!(windows) {
+                    vec![
+                        format!("{}.exe", kind.executable()),
+                        format!("{}.cmd", kind.executable()),
+                    ]
+                } else {
+                    vec![kind.executable().to_string()]
+                };
+                kind.own_bin_dirs(self)
+                    .iter()
+                    .chain(&home_bins)
+                    .chain(&self.bin_dirs)
+                    .chain(&node_bins)
+                    .flat_map(|dir| names.iter().map(move |name| dir.join(name)))
+                    .find(|path| executable_file(path))
+                    .map(|path| AgentExecutable { kind, path })
+            })
+            .collect()
+    }
+
     /// Whether the agent's configuration or installation is present. No process runs and
     /// `PATH` is not read: an app started from the desktop has a minimal one.
     pub fn detects(&self, kind: AgentKind) -> bool {
@@ -232,6 +299,31 @@ impl AgentEnvironment {
                 .app_dirs
                 .iter()
                 .any(|dir| kind.applications().iter().any(|app| dir.join(app).exists()))
+    }
+}
+
+/// An installed CLI that can be opened in the terminal.
+#[derive(Clone, Debug)]
+pub struct AgentExecutable {
+    pub kind: AgentKind,
+    pub path: PathBuf,
+}
+
+fn executable_file(path: &Path) -> bool {
+    let Ok(metadata) = path.metadata() else {
+        return false;
+    };
+    if !metadata.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        metadata.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
     }
 }
 

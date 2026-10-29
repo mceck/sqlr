@@ -77,6 +77,7 @@ impl Default for SessionConfig {
 }
 
 pub struct TerminalSession {
+    program_name: String,
     emulator: Arc<Emulator>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     resize_fn: Box<dyn Fn(u16, u16) + Send + Sync>,
@@ -101,6 +102,10 @@ impl TerminalSession {
         config: &SessionConfig,
         repaint: Arc<dyn Fn() + Send + Sync>,
     ) -> Self {
+        let program_name = std::path::Path::new(&spec.program).file_name().map_or_else(
+            || spec.program.clone(),
+            |name| name.to_string_lossy().into_owned(),
+        );
         let status = Arc::new(Mutex::new(TerminalStatus::Starting));
         let emulator = Arc::new(Emulator::new(config.rows, config.cols, config.scrollback));
         let parts = match factory.start(spec, config.rows, config.cols) {
@@ -110,6 +115,7 @@ impl TerminalSession {
                     message: error.to_string(),
                 };
                 return Self {
+                    program_name,
                     emulator,
                     writer: Arc::new(Mutex::new(Box::new(std::io::sink()))),
                     resize_fn: Box::new(|_, _| {}),
@@ -207,6 +213,7 @@ impl TerminalSession {
             kill();
         }
         Self {
+            program_name,
             emulator,
             writer,
             resize_fn: parts.resize,
@@ -217,6 +224,11 @@ impl TerminalSession {
             size: (config.rows, config.cols),
             killed,
         }
+    }
+
+    /// The executable name captured when this session was launched.
+    pub fn program_name(&self) -> &str {
+        &self.program_name
     }
 
     pub fn status(&self) -> TerminalStatus {

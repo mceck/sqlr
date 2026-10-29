@@ -21,7 +21,7 @@ sqlr exposes a local MCP server while it runs, so AI agents can inspect the conn
 
 ### Enabling and server lifecycle
 
-The MCP server is off by default. Settings → Agents turns it on, and a toolbar toggle next to the workspace toggles does the same. Enabling the server exposes no Connection: exposure is a separate per-Connection decision.
+The MCP server is off by default. Settings → Agents turns it on, and clicking the MCP status dot in the status bar toggles it. Enabling the server exposes no Connection: exposure is a separate per-Connection decision.
 
 The server binds `127.0.0.1` on a configurable port, default `47821`, in the range 1024 to 65535. It speaks MCP Streamable HTTP at `/mcp`. There is no wildcard binding, no IPv6 wildcard and no Unix socket option, and no TLS: the listener is loopback-only and authenticated.
 
@@ -106,7 +106,7 @@ The following are human-only:
 - installing, removing or rolling back drivers;
 - `agents.enabled` and `agents.port`, and the token lifecycle;
 - application updates;
-- `terminal.shell`, which stays outside the Agent surface;
+- `terminal.shell` and `terminal.launcher`, which stay outside the Agent surface;
 - the update-check and diagnostics privacy settings, which Agents may read but not write.
 
 Safety flags are tighten-only for Agents:
@@ -134,7 +134,7 @@ The server exposes 24 tools with flat names. The tool catalogue is generated fro
 
 | Tool | Request | Response and semantics |
 | --- | --- | --- |
-| `config_list` | `target`: `connections`, `folders`, `profiles`, `settings`, `keymap`, `drivers`; optional `driver_id` | Configuration metadata. Connections are exposed Connections only, with names, drivers, folders, profile, exposure and secret presence and no values. Settings carry definition, default, allowed levels, safety, and stored values by global, profile and exposed Connection level; `terminal.shell` has no value. Drivers are manifests. Secrets stay in the vault. |
+| `config_list` | `target`: `connections`, `folders`, `profiles`, `settings`, `keymap`, `drivers`; optional `driver_id` | Configuration metadata. Connections are exposed Connections only, with names, drivers, folders, profile, exposure and secret presence and no values. Settings carry definition, default, allowed levels, safety, and stored values by global, profile and exposed Connection level; `terminal.shell` and `terminal.launcher` have no values. Drivers are manifests. Secrets stay in the vault. |
 | `config_write` | `target`: `connection`, `folder`, `profile`, `setting`, `keymap`; target payload | Create or patch. Connections create or update, patch values, remove values, write and remove secrets and set `save_secrets`, for exposed Connections and those created by the session; `agent_access`, a changed `driver` and protected keys are rejected. Folders create, rename or move. Profiles create or update with tighten-only safety. Settings set or reset at global, profile or Connection level, validated against the setting definition and its allowed levels. Keymap sets or resets one action. |
 | `config_delete` | `target`: `connection`, `folder`, `profile`; `id` | Deletes after an Approval. A Connection, exposed or created by the session, is disconnected and its secrets removed. A folder is removed and its Connections and subfolders move to the parent. A profile in use is rejected before the dialog. |
 | `test_connection` | `connection_id` | Opens a temporary test Session, as the connection dialog's Test does, and closes it. Answers `{ok: true, server_version, product}` or `{ok: false, error}` with `auth`, `connection`, `tls` or `timeout`, or `secret_required` with the missing field keys. Accepts exposed Connections and those created by the session. |
@@ -383,11 +383,27 @@ States are computed on a background worker when Settings → Agents opens and af
 
 The Integrated terminal is a real PTY, not a command runner. It sits at the bottom of the workspace, directly above the status bar, and history sits above it when both are open. The panel has a default height of about 300 px, a minimum of 120 px and the standard splitter.
 
-It starts hidden, and no shell starts until the person first opens it. Opening the panel starts the shell at the canvas cell size once the layout has settled, so the child's first size query is already correct. Panel resizes update the PTY size. Hiding the panel keeps the shell running, so a long Agent task continues; closing the panel and reopening it from the toggle returns to the same session. Terminal visibility and height are session-only.
+It starts hidden. First opening the panel creates its first tab and starts the shell at the canvas cell size once the layout has settled, so the child's first size query is already correct. Each tab owns an independent PTY, shell, screen, scrollback and selection. Panel resizes update the active PTY size; selecting another tab resizes its PTY to the current canvas. Hiding the panel keeps every shell running, so a long Agent task continues. Reopening restores the selected tab and its screen. Terminal tabs, selection, visibility and height are session-only.
 
 The toggle is available in the toolbar next to the value-panel and history toggles, in the View menu, the command palette, the shortcuts dialog and the keymap. Its default is `Ctrl+Backtick` on every platform, and it is remappable like every action. Toggling the panel focuses the terminal.
 
-The panel header shows a terminal icon, the title, a status dot and label, and a shell and directory summary, with icon-only Restart and Close actions on the right. The status is one of not started, starting, running, exited, failed. A shell that exits keeps its final screen and shows the exit code with a Restart action; a shell that fails to start shows the reason with Retry and a link to Terminal settings. Restart creates a new session with the current settings and kills the previous process; on Unix the child is signalled and its process group is killed with `SIGKILL` after a 150 ms grace period. On application quit the process group is killed and no shell or Agent process is left behind.
+The panel header shows a terminal icon, the title and a horizontally scrollable strip of tabs. Each tab uses the launched executable's name, such as `claude`, `codex` or `zsh`, captured at launch and kept while that session runs. Tabs with the same executable share the same label and remain separate sessions. The strip reserves 4 px of padding on both ends so selected tab backgrounds fit inside its clip area. The selected tab is highlighted and scrolls into view on creation or selection; clicking another tab selects it and focuses its shell. Each tab has a × action that closes it and ends its process. Closing an inactive tab keeps the selected tab; closing the selected tab selects its neighbour to the right, or the preceding tab when it was the last in the strip. Closing the final tab hides the panel; opening it again creates a fresh tab.
+
+Right-clicking a tab opens Close, Close tabs to the left and Close tabs to the right. The clicked tab is the reference even when another tab is selected. Closing a side keeps the reference tab and every tab on the opposite side. A selected surviving tab stays selected; when the selected tab belongs to the closed side, the reference tab becomes selected. A side with zero tabs has its menu action disabled. Each closed tab ends its own process through the same background cleanup as its × action.
+
+The header's right side holds, from left to right, +, an additional + with a terminal icon when a coding agent is selected, Restart and a downward chevron. The chevron hides the panel while every shell keeps running. The first + creates and selects a new tab using the current terminal launch preferences. The additional + opens a plain platform login shell with the same working directory and scrollback preferences. That tab keeps its plain shell choice on Restart even while an agent remains selected in Settings. Restart replaces only the selected tab's session with the current settings and kills its previous process. A shell that exits keeps its final screen and shows the exit code with a Restart action; a shell that fails to start shows the reason with Retry and a link to Terminal settings. On Unix the child is signalled and its process group is killed with `SIGKILL` after a 150 ms grace period. On application quit every terminal process group is killed.
+
+#### Terminal launch preferences
+
+Settings → Terminal offers five directly selectable Open with options, in order: Claude Code, Codex CLI, OpenCode, Gemini CLI and Custom. All five remain visible regardless of discovery results. A new configuration selects Custom with an empty command, which uses the default login shell. An existing shell command opens as Custom with its text preserved.
+
+Discovery runs on the background agent worker when the Terminal section or its launch settings appear, and when the person clicks Detect again. It searches the known installation directories for an executable file, following symbolic links and checking execution permissions on Unix. The search includes local, system, npm, Bun, Volta and Cargo bin directories, followed by nvm and fnm Node installations in descending version order. Configuration files alone qualify an agent for MCP setup; terminal discovery requires an executable. Selecting an agent fills its executable from discovery, falling back to its command name when discovery finds none. Browse lets the person select an executable in another location. A saved agent remains selected when discovery no longer finds it, with its saved executable available for correction.
+
+Selecting an agent shows its executable, free-form shell arguments, and Return to shell when the agent exits, enabled initially. The executable is quoted for the platform shell; arguments keep their shell syntax. The generated command is available in a collapsed preview. On Unix, returning to the shell starts the login shell after the agent exits, including an unsuccessful exit. On Windows it opens the available PowerShell, falling back to the command prompt. Turning the option off leaves the terminal's normal exited state when the agent ends.
+
+Custom clears the agent launch override and exposes the existing shell command editor, preserving the person's custom command. An empty custom command uses the default login shell. Agent launches store the selected agent, executable, arguments and return option separately from the custom shell command, so reopening preferences restores the controls. Launch configuration is human-only and omitted from Agent settings values and diagnostics, like the custom shell command.
+
+Apply and Save persist the launch configuration; Cancel restores the configuration from the last save. Changes take effect on the next terminal start or Restart. Selecting a preset keeps an already running terminal session intact.
 
 #### Shell and workspace
 
@@ -418,6 +434,7 @@ The terminal settings are global:
 
 | Key | Type | Default | Notes |
 | --- | --- | --- | --- |
+| `terminal.launcher` | text | empty | Structured agent launch configuration; human-only, unreadable and unwritable by Agents, omitted from diagnostics |
 | `terminal.shell` | text | empty | Empty uses the login shell; human-only, unreadable and unwritable by Agents, never logged |
 | `terminal.cwd` | text | empty | Empty uses the `terminal` folder in the configuration directory; readable and writable by Agents |
 | `terminal.font_size` | float, 10 to 24 | 12 | Applied immediately |
@@ -480,10 +497,10 @@ The MCP surface excludes the terminal entirely: no tool reads, writes, starts or
 - Deny is focused when the request appears, Escape and close deny, Allow is visually primary but not preselected, and the countdown keeps the layout steady.
 - No remember option is offered.
 
-**Status bar and toolbar**
+**Status bar**
 
-- While MCP is enabled, a discreet status segment shows a dot, "MCP" and the active session count; clicking it opens Settings → Agents. It takes no space from the Connection and transaction segments on narrow windows.
-- A toolbar toggle next to the workspace toggles enables and disables the server, with a tooltip naming its status.
+- The MCP segment remains visible while the server is enabled or disabled. It shows a dot, "MCP" and the active session count. Clicking the dot enables or disables the server; clicking the text opens Settings → Agents. The dot is green while the server runs and grey while disabled, and its own hit area reserves space between the text and the adjacent terminal toggle. The text tooltip gives the server status, session count and endpoint when available.
+- The Terminal toggle shows or hides the terminal panel and restores the selected tab when reopening it.
 
 **Terminal panel**
 
@@ -528,7 +545,7 @@ sequenceDiagram
   U-->>M: allow, denied or timeout
 ```
 
-The terminal session owns the PTY master, the child process, a reader thread that feeds the parser and answers terminal queries, and a monitor thread that waits for the exit. The UI reads a screen snapshot and sends input, resize and control messages; the PTY work stays on its threads.
+Each terminal tab owns a terminal panel and session. Its session owns the PTY master, the child process, a reader thread that feeds the parser and answers terminal queries, and a monitor thread that waits for the exit. The UI reads the selected tab’s screen snapshot and sends input, resize and control messages; the PTY work stays on its threads. Closing a tab reaps its session on a background worker.
 
 ## Data model
 
@@ -538,13 +555,13 @@ The terminal session owns the PTY master, the child process, a reader thread tha
 - `AGENTS.md`, `CLAUDE.md` and the sqlr skills are files in the Terminal workspace and persist across launches.
 - The installation registry lists each Agent installation by agent and configuration file, and carries no token. Each Agent installation holds the URL and token inside the agent's own file.
 - Results are held in memory for the server and keyed by an opaque id that belongs to one MCP session.
-- Terminal settings are ordinary global settings; terminal visibility and height are session state.
+- Terminal settings are ordinary global settings; terminal tabs, the selected tab, visibility and height are session state.
 - Agent queries are ordinary History entries, and the rotating application log is the audit record.
 
 ## Non-functional requirements
 
 - A disabled MCP server and an unopened terminal start no process, listener or shell, so cold start and idle memory stay within the product budgets.
-- The terminal keeps at most the configured scrollback in memory; the default is 2000 lines within a 100 to 10000 range.
+- Each terminal tab keeps at most the configured scrollback in memory; the default is 2000 lines within a 100 to 10000 range.
 - At most eight MCP sessions run at once; results expire after five minutes of inactivity; a page is capped at 1000 rows and 256 KiB.
 - The token has 256 bits of entropy and is compared in constant time. The discovery file is owner-only, the Terminal workspace is owner-only on Unix, and an agent configuration file sqlr creates is owner-only on Unix while an existing one keeps its permissions.
 - The listener works with no network beyond loopback.
@@ -552,6 +569,11 @@ The terminal session owns the PTY master, the child process, a reader thread tha
 - Errors returned to Agents are structured and sanitized.
 
 ## Decisions
+
+- **Each terminal tab owns its complete panel state and PTY.** Switching tabs preserves the shell, scrollback, selection and terminal protocol state. Only the selected canvas is rendered and receives keyboard input. Closing a tab reaps its PTY on a background worker so process shutdown keeps the UI responsive.
+
+- **Agent launches keep structured preferences beside the custom command.** The executable, arguments and return option restore directly when preferences reopen. Existing commands retain their exact text, and the terminal launch configuration shares their human-only visibility.
+- **Terminal discovery requires an executable.** An agent configuration can survive an uninstall, so the terminal offers presets only for launchable CLI installations and keeps Browse available for other locations.
 
 - **Loopback Streamable HTTP with a bearer token instead of an OS socket or no authentication.** Local clients of every kind, including browser-based tooling, already speak HTTP; a Unix socket would not work on Windows and an unauthenticated loopback port would be reachable by any page or process. Loopback binding, a token, and Host and Origin validation together keep the endpoint to local tools the person configured. TLS on loopback adds certificate management with no threat it addresses.
 - **The token lives in the shared Credential vault.** One keychain-protected vault means at most one keychain authorization per App session shared with Connection credentials, and rotation is a single explicit action. A separate keychain item would prompt separately and could drift from the vault's key.
@@ -572,7 +594,7 @@ The terminal session owns the PTY master, the child process, a reader thread tha
 - **Configuration writes follow exposure.** A write reaches only exposed Connections and those the session created. Otherwise an Agent could repoint a non-exposed Connection that has a saved password at a host it controls, and receive that password on the person's next connect.
 - **Tab Results belong to the tab.** An Agent reads the person's Results through the same envelope as its own, but releasing them stays with the tab, so an Agent never clears the person's grid.
 - **A cap on tabs an Agent opens.** Opening tabs lets an Agent propose queries and show objects. Five tabs per MCP session is enough for that and bounds the workspace an Agent can fill. Only the app knows whether a DDL viewer or ER diagram is already open, so at the cap the MCP layer asks it to show the view without opening a tab, and the app answers `busy` only for a view that needs a new one. A check made before the call would race with the person closing the tab.
-- **The terminal is a PTY and is human-only.** A command runner would not run TUIs or login shells. Keeping the terminal off the MCP surface, and `terminal.shell` unreadable, means a writable shell command could not be turned into arbitrary code execution chosen by an Agent. `terminal.cwd`, font size and scrollback remain ordinary settings.
+- **The terminal is a PTY and is human-only.** A command runner would not run TUIs or login shells. Keeping the terminal off the MCP surface, and the terminal launch settings unreadable, means a writable shell command could not be turned into arbitrary code execution chosen by an Agent. `terminal.cwd`, font size and scrollback remain ordinary settings.
 - **The shell process group dies with the app.** An Agent running in the terminal must not outlive sqlr; the process group is killed on quit and on Restart after a short grace period.
 
 ## Related specs
