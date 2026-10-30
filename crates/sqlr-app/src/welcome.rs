@@ -26,7 +26,7 @@ const CARDS: [&str; 8] = [
 /// How long ago `at_ms` was, from `now_ms`: "just now", "5 min ago", "3 h ago",
 /// "yesterday", "4 days ago", then the date.
 pub(crate) fn relative_time(at_ms: i64, now_ms: i64) -> String {
-    let minutes = (now_ms - at_ms).max(0) / 60_000;
+    let minutes = now_ms.saturating_sub(at_ms).max(0) / 60_000;
     match minutes {
         0 => "just now".into(),
         1..=59 => format!("{minutes} min ago"),
@@ -251,6 +251,12 @@ mod tests {
         let tab = app.active_tab().expect("a document tab");
         assert_eq!(tab.conn.as_deref(), Some("m"));
         assert!(tab.doc.is_some(), "the tab runs document statements");
+    }
+
+    #[test]
+    fn a_minimum_timestamp_does_not_overflow() {
+        // A corrupted `used_at_ms` can be any i64; the subtraction must not panic in debug.
+        assert!(relative_time(i64::MIN, 0).contains('-'));
     }
 
     #[test]

@@ -27,7 +27,7 @@ diagnostics checkbox toggles through accesskit instead of a pointer click after 
 [ ] drivers: SQL Server / Oracle
 [ ] drivers: Elasticsearch / Snowflake / ClickHouse / JDBC
 [ ] sidecar drivers: MongoDB / DuckDB / HANA
-[ ] sqlr-app: application logic (workers, actions, messages, cli, tabs, pending)
+[x] sqlr-app: application logic (workers, actions, messages, cli, tabs, pending)
 [ ] sqlr-ui: grid and editor
 [ ] sqlr-ui: forms, trees, dialogs and keymap
 
@@ -316,3 +316,9 @@ Fixed:
 - A nonconforming server that answered `FetchDone { exhausted: false }` (or `DocFetchDone`) without sending a chunk made the client return `Ok(None)`, which the engine reports as an exhausted result. It is now a protocol error that also stops the process, so the missing rows are not silently hidden.
 
 Tests added in `client.rs`; 5 lib + 9 server + 22 sidecar tests and clippy pass.
+
+# sqlr-app: application logic
+Fixed:
+- The welcome screen's relative time subtracted `now - used_at_ms` unchecked: a corrupted or extreme `used_at_ms` (`i64::MIN`) panicked in debug builds (and wrapped in release). The difference is now saturating.
+
+Test added in `welcome.rs`; app lib tests and clippy pass.
