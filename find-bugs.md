@@ -14,7 +14,7 @@ first try and passed on retry; worth a deterministic look in this cycle).
 [ ] sqlr-sidecar: protocol, client and process
 [ ] sqlr-registry: driver install, index and verification
 [x] sqlr-mcp: server, policy, tokens and results
-[ ] sqlr-terminal: PTY, screen, input and tabs
+[x] sqlr-terminal: PTY, screen, input and tabs
 [ ] drivers: PostgreSQL
 [ ] drivers: MySQL / MariaDB
 [ ] drivers: SQLite
@@ -235,3 +235,9 @@ Fixed:
 - A colour setting accepted an array with a fourth invalid element: `[1,2,3,256]` dropped the 256 and stored `[1,2,3]`. The parser now requires exactly three byte channels and rejects any invalid one.
 
 Tests added in `results.rs` and `policy.rs`; 26 lib + 29 protocol tests and clippy pass.
+
+# sqlr-terminal: PTY, screen, input and tabs
+Fixed:
+- The terminal's Clear action rebuilt the vt100 parser with zero scrollback, so after clearing the screen the configured scrollback stopped being kept for the rest of the session. The emulator now remembers the configured size and recreates the parser with it.
+
+Test added in `screen.rs`; 48 terminal lib tests and clippy pass.

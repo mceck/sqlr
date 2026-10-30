@@ -167,6 +167,8 @@ fn ordered(a: (u16, u16), b: (u16, u16)) -> ((u16, u16), (u16, u16)) {
 /// The parser plus its lock: the reader thread feeds it and the UI snapshots it.
 pub struct Emulator {
     parser: Mutex<vt100::Parser>,
+    /// The scrollback rows the session was configured with; `clear` rebuilds the parser.
+    scrollback: usize,
     kitty: Mutex<KittyKeyboard>,
     bell: std::sync::atomic::AtomicBool,
     bell_scan: Mutex<BellScan>,
@@ -176,6 +178,7 @@ impl Emulator {
     pub fn new(rows: u16, cols: u16, scrollback: usize) -> Self {
         Self {
             parser: Mutex::new(vt100::Parser::new(nz(rows), nz(cols), scrollback)),
+            scrollback,
             kitty: Mutex::new(KittyKeyboard::default()),
             bell: std::sync::atomic::AtomicBool::new(false),
             bell_scan: Mutex::new(BellScan::default()),
@@ -212,7 +215,7 @@ impl Emulator {
     pub fn clear(&self) {
         let mut parser = self.parser.lock();
         let (rows, cols) = parser.screen().size();
-        *parser = vt100::Parser::new(rows, cols, 0);
+        *parser = vt100::Parser::new(rows, cols, self.scrollback);
     }
 
     /// A snapshot at `scrollback_offset` (0 is the live screen), without disturbing the
@@ -424,6 +427,23 @@ mod tests {
 
     fn emulator() -> Emulator {
         Emulator::new(4, 20, 100)
+    }
+
+    #[test]
+    fn clearing_keeps_the_scrollback_capacity() {
+        let em = Emulator::new(2, 10, 100);
+        for _ in 0..10 {
+            em.feed(b"line\r\n");
+        }
+        assert!(em.scrollback_len() > 0);
+        em.clear();
+        for _ in 0..10 {
+            em.feed(b"line\r\n");
+        }
+        assert!(
+            em.scrollback_len() > 0,
+            "clear must not disable the configured scrollback"
+        );
     }
 
     #[test]
