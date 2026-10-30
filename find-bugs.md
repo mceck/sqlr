@@ -5,26 +5,31 @@ Cycle 1 completed on 2026-10-30: all 19 sections checked. The full workspace sui
 (`sqlr-app::smoke history_context_menu_saves_the_query_as_a_snippet` timed out on the
 first try and passed on retry; worth a deterministic look in this cycle).
 
-## Cycle 2 sections:
-[x] sqlr-core: values, encoding and documents (`value`, `encode`, `read`, `rows`, `chunk`, `doc*`, `formats`)
-[x] sqlr-core: SQL and text utilities (`classify`, `syntax`, `format_sql`, `generate`, `schema_change`, `compare`, `datagen`, `transfer`, `url`, `wire`, `es_request`, `mongo_shell`, `er`)
-[x] sqlr-store: persistence and secrets (connections, vault, settings, history, snippets, keymap, recents, profiles, layered)
-[x] sqlr-engine: sessions, transactions and results (`engine`, `session`, `tx`, `script`, `apply`, `result`, `result_memory`, `result_spill`, `job`)
-[x] sqlr-engine: transfer and imports (`transfer/*`)
-[x] sqlr-sidecar: protocol, client and process
-[x] sqlr-registry: driver install, index and verification
-[x] sqlr-mcp: server, policy, tokens and results
-[x] sqlr-terminal: PTY, screen, input and tabs
-[x] drivers: PostgreSQL
-[x] drivers: MySQL / MariaDB
-[x] drivers: SQLite
-[x] drivers: Redis
-[x] drivers: SQL Server / Oracle
-[x] drivers: Elasticsearch / Snowflake / ClickHouse / JDBC
-[x] sidecar drivers: MongoDB / DuckDB / HANA
-[x] sqlr-app: application logic (workers, actions, messages, cli, tabs, pending)
-[x] sqlr-ui: grid and editor
-[x] sqlr-ui: forms, trees, dialogs and keymap
+Cycle 2 completed on 2026-10-30: all 19 sections checked again. The full suite ran
+2493 tests: 2493 passed, 22 skipped. Two UI tests found in the gate runs were made
+deterministic (the database-drop retry now waits for the second `DROP DATABASE`, and the
+diagnostics checkbox toggles through accesskit instead of a pointer click after scrolling).
+
+## Cycle 3 sections:
+[ ] sqlr-core: values, encoding and documents (`value`, `encode`, `read`, `rows`, `chunk`, `doc*`, `formats`)
+[ ] sqlr-core: SQL and text utilities (`classify`, `syntax`, `format_sql`, `generate`, `schema_change`, `compare`, `datagen`, `transfer`, `url`, `wire`, `es_request`, `mongo_shell`, `er`)
+[ ] sqlr-store: persistence and secrets (connections, vault, settings, history, snippets, keymap, recents, profiles, layered)
+[ ] sqlr-engine: sessions, transactions and results (`engine`, `session`, `tx`, `script`, `apply`, `result`, `result_memory`, `result_spill`, `job`)
+[ ] sqlr-engine: transfer and imports (`transfer/*`)
+[ ] sqlr-sidecar: protocol, client and process
+[ ] sqlr-registry: driver install, index and verification
+[ ] sqlr-mcp: server, policy, tokens and results
+[ ] sqlr-terminal: PTY, screen, input and tabs
+[ ] drivers: PostgreSQL
+[ ] drivers: MySQL / MariaDB
+[ ] drivers: SQLite
+[ ] drivers: Redis
+[ ] drivers: SQL Server / Oracle
+[ ] drivers: Elasticsearch / Snowflake / ClickHouse / JDBC
+[ ] sidecar drivers: MongoDB / DuckDB / HANA
+[ ] sqlr-app: application logic (workers, actions, messages, cli, tabs, pending)
+[ ] sqlr-ui: grid and editor
+[ ] sqlr-ui: forms, trees, dialogs and keymap
 
 ## Cycle 1 findings:
 # sqlr-core: values, encoding and documents
@@ -303,3 +308,5 @@ Fixed:
 - A query cancelled or closed before its turn still cut the previous result short: `start_query` marked earlier results superseded at once, and the blocked fetch stopped before the queued query was known to run. The mark now names the superseding query, and a fetch only yields while that query is still viable (not cancelled, still present); `execute` also checks a queued cancellation before it closes the previous stream. The regression test blocks the first fetch, queues a second query, cancels it, and checks the first result still has its remaining page.
 
 Tests added in `tests/engine.rs` with a `block_after_chunks`/`fetch_release` hook in `sqlr-testkit`; 40 engine integration tests and clippy pass.
+
+## Cycle 3 findings:
