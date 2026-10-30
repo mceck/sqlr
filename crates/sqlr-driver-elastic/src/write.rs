@@ -97,6 +97,27 @@ pub(crate) fn written_of(resp: &Json) -> Result<Option<DocExecution>, DriverErro
         return Ok(Some(c.done()));
     }
     if resp.get("batches").is_some() && resp.get("total").is_some() {
+        if let Some(failures) = resp["failures"].as_array()
+            && let Some(first) = failures.first()
+        {
+            let cause = &first["cause"];
+            let ty = cause["type"]
+                .as_str()
+                .or_else(|| first["error"]["type"].as_str())
+                .unwrap_or("unknown");
+            let reason = cause["reason"]
+                .as_str()
+                .or_else(|| first["error"]["reason"].as_str())
+                .unwrap_or("no reason given");
+            return Err(DriverError::new(
+                ErrorKind::Other,
+                format!(
+                    "{} of {} documents failed; the first: {ty}: {reason}",
+                    failures.len(),
+                    resp["total"].as_u64().unwrap_or(0)
+                ),
+            ));
+        }
         let n = |k: &str| resp[k].as_u64().unwrap_or(0);
         return Ok(Some(DocExecution::Written {
             matched: n("total"),
@@ -289,6 +310,37 @@ mod tests {
         let e = written_of(&odd).err().expect("an error");
         assert!(e.message.contains("bulk"), "{}", e.message);
         assert!(written_of(&json!({"errors": true, "items": []})).is_err());
+    }
+
+    #[test]
+    fn by_query_failures_are_errors_not_counts() {
+        // `_update_by_query`, `_delete_by_query` and `_reindex` report partial
+        // failures in `failures`; the counts must not hide them.
+        let resp = json!({
+            "took": 1,
+            "total": 3,
+            "updated": 2,
+            "deleted": 0,
+            "batches": 1,
+            "failures": [{
+                "index": "i",
+                "id": "1",
+                "cause": {"type": "mapper_parsing_exception", "reason": "failed to parse"},
+                "status": 400
+            }]
+        });
+        let Err(e) = written_of(&resp) else {
+            panic!("a partial failure must be an error");
+        };
+        assert!(
+            e.message.contains("mapper_parsing_exception"),
+            "{}",
+            e.message
+        );
+        assert!(e.message.contains("1 of 3"), "{}", e.message);
+        // An empty failures list is a successful by-query response.
+        let ok = json!({"total": 1, "updated": 1, "batches": 1, "failures": []});
+        assert!(written_of(&ok).unwrap().is_some());
     }
 
     #[test]

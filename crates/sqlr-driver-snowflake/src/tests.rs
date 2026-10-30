@@ -222,6 +222,22 @@ async fn maps_errors_without_server_message_sql_or_token() {
 }
 
 #[tokio::test]
+async fn connection_and_unsupported_sqlstates_keep_their_kind() {
+    for (state, kind) in [
+        ("08006", ErrorKind::Connection),
+        ("0A000", ErrorKind::Unsupported),
+    ] {
+        let fixture = Fixture::new(vec![(
+            422,
+            json!({"sqlState":state, "message":"server detail", "code":"1"}),
+        )]);
+        let conn = fixture.connection().await;
+        let error = err(conn.relational().unwrap().execute("select 1").await);
+        assert_eq!(error.kind, kind, "{state}: {error:?}");
+    }
+}
+
+#[tokio::test]
 async fn statement_errors_keep_the_server_message_without_the_token() {
     for (state, kind) in [("42000", ErrorKind::Syntax), ("22018", ErrorKind::Other)] {
         let fixture = Fixture::new(vec![(

@@ -76,7 +76,10 @@ pub fn java_major(java: &Path) -> Option<u32> {
 }
 
 fn parse_major(text: &str) -> Option<u32> {
-    let version = text.split('"').nth(1)?;
+    // The JVM may print `Picked up JAVA_TOOL_OPTIONS: "…"` (or `_JAVA_OPTIONS`)
+    // before the banner, so look for the quoted string after `version`, not merely
+    // the first quoted string.
+    let version = text.split("version \"").nth(1)?.split('"').next()?;
     let mut parts = version.split(['.', '_', '-', '+']);
     let first: u32 = parts.next()?.parse().ok()?;
     if first == 1 {
@@ -327,6 +330,23 @@ mod tests {
             Some(22)
         );
         assert_eq!(parse_major("not java"), None);
+    }
+
+    #[test]
+    fn version_banners_ignore_picked_up_options() {
+        // `JAVA_TOOL_OPTIONS` and `_JAVA_OPTIONS` make the JVM print a banner before the
+        // version, so the first quoted string is an option rather than the version.
+        assert_eq!(
+            parse_major(
+                "Picked up JAVA_TOOL_OPTIONS: \"-Dfile.encoding=UTF-8\"\n\
+                 openjdk version \"21.0.1\" 2023-10-17"
+            ),
+            Some(21)
+        );
+        assert_eq!(
+            parse_major("Picked up _JAVA_OPTIONS: \"-Xmx512m\"\njava version \"1.8.0_292\""),
+            Some(8)
+        );
     }
 
     #[test]

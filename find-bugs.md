@@ -15,7 +15,7 @@
 [x] drivers: SQLite
 [x] drivers: Redis
 [x] drivers: SQL Server / Oracle
-[] drivers: Elasticsearch / Snowflake / ClickHouse / JDBC
+[x] drivers: Elasticsearch / Snowflake / ClickHouse / JDBC
 [x] sidecar drivers: MongoDB / DuckDB / HANA
 [x] sqlr-app: application logic (workers, actions, messages, cli, tabs, pending)
 [x] sqlr-ui: grid and editor
@@ -167,7 +167,14 @@ Fixed:
 Tests added in `types.rs` and `execute.rs`; 20 SQL Server + 31 Oracle unit tests and clippy pass.
 
 # drivers: Elasticsearch / Snowflake / ClickHouse / JDBC
-[to fill]
+Fixed:
+- Elasticsearch `_update_by_query`/`_delete_by_query`/`_reindex` responses with a non-empty `failures` list were reported as successful counts; the first failure is now an error naming its type and reason.
+- Snowflake materialized views were listed and catalogued as ordinary tables; `MATERIALIZED VIEW` now maps to `MaterializedView` in both the explorer and the catalog.
+- Snowflake SQLSTATE classes `08` (connection) and `0A` (unsupported) fell through to `Other`; they now map to `Connection`/`Unsupported`.
+- The JDBC Java-version parser took the first quoted string, so a `Picked up JAVA_TOOL_OPTIONS: "…"` banner made it miss the version; it now reads the string after `version "`.
+- ClickHouse needed no change in this pass.
+
+Tests added in `write.rs`, `catalog.rs`, `tests.rs` and `java.rs`; 14 Elastic + 27 Snowflake + 11 JDBC unit tests and clippy pass.
 
 # sidecar drivers: MongoDB / DuckDB / HANA
 Fixed:

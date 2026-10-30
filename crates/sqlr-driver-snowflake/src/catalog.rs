@@ -5,6 +5,20 @@ pub(super) fn text(rows: &[Vec<Value>], r: usize, c: usize) -> Result<&str, Driv
         _ => Err(protocol::invalid()),
     }
 }
+fn relation_kind(table_type: &str) -> RelationKind {
+    match table_type {
+        "VIEW" => RelationKind::View,
+        "MATERIALIZED VIEW" => RelationKind::MaterializedView,
+        _ => RelationKind::Table,
+    }
+}
+fn node_kind(table_type: &str) -> NodeKind {
+    match relation_kind(table_type) {
+        RelationKind::Table => NodeKind::Table,
+        RelationKind::View => NodeKind::View,
+        RelationKind::MaterializedView => NodeKind::MaterializedView,
+    }
+}
 impl SnowflakeConnection {
     pub(super) async fn rows(
         &self,
@@ -56,11 +70,7 @@ impl SnowflakeConnection {
                     nodes.push(Node {
                         path: path.child(&name),
                         name,
-                        kind: if ty == "VIEW" {
-                            NodeKind::View
-                        } else {
-                            NodeKind::Table
-                        },
+                        kind: node_kind(ty),
                         has_children: true,
                         detail: Some(ty.into()),
                     });
@@ -108,11 +118,7 @@ impl SnowflakeConnection {
         let mut relations = Vec::new();
         for r in 0..tables.len() {
             let name = text(&tables, r, 0)?.to_owned();
-            let kind = if text(&tables, r, 1)? == "VIEW" {
-                RelationKind::View
-            } else {
-                RelationKind::Table
-            };
+            let kind = relation_kind(text(&tables, r, 1)?);
             relations.push(CatalogRelation {
                 columns: by_table.remove(name.as_str()).unwrap_or_default(),
                 name,
@@ -163,5 +169,21 @@ impl SnowflakeConnection {
             primary_key: Vec::new(),
             unique_keys: Vec::new(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn materialized_views_keep_their_kind() {
+        assert_eq!(relation_kind("VIEW"), RelationKind::View);
+        assert_eq!(
+            relation_kind("MATERIALIZED VIEW"),
+            RelationKind::MaterializedView
+        );
+        assert_eq!(relation_kind("BASE TABLE"), RelationKind::Table);
+        assert_eq!(node_kind("MATERIALIZED VIEW"), NodeKind::MaterializedView);
     }
 }

@@ -78,10 +78,14 @@ impl Api {
                 ErrorKind::Cancelled
             } else if state.starts_with("28") {
                 ErrorKind::Auth
+            } else if state.starts_with("08") {
+                ErrorKind::Connection
             } else if state == "42501" {
                 ErrorKind::Permission
             } else if state.starts_with("42") {
                 ErrorKind::Syntax
+            } else if state.starts_with("0A") {
+                ErrorKind::Unsupported
             } else if status >= 500 {
                 ErrorKind::Connection
             } else {
@@ -92,6 +96,7 @@ impl Api {
                 ErrorKind::Syntax => "Snowflake SQL compilation failed",
                 ErrorKind::Auth => "Snowflake authentication failed",
                 ErrorKind::Permission => "Snowflake access denied",
+                ErrorKind::Unsupported => "Snowflake feature is not supported",
                 ErrorKind::Connection => "Snowflake service unavailable",
                 _ => "Snowflake statement failed",
             };
