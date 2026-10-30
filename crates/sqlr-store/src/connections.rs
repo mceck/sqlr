@@ -379,14 +379,16 @@ impl ConnectionRepo {
 
     /// Removes the config and its secret fields.
     pub fn delete(&self, id: &str, manifest: &DriverManifest) -> Result<(), StoreError> {
-        let mut file = self.read()?;
-        file.connection.retain(|c| c.id != id);
-        materialize_folders(&mut file);
-        self.write(file)?;
+        // Remove the credentials first: if the vault is locked or fails, the config still
+        // exists and the user can retry. Writing the config first would make the deletion
+        // irreversible while leaving the secrets unreachable under a now-unknown id.
         for f in manifest.fields.iter().filter(|f| f.secret) {
             self.secrets.delete(id, &f.key)?;
         }
-        Ok(())
+        let mut file = self.read()?;
+        file.connection.retain(|c| c.id != id);
+        materialize_folders(&mut file);
+        self.write(file)
     }
 
     /// Stored values of the manifest's secret fields.

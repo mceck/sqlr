@@ -174,6 +174,27 @@ fn old_password_rows_are_scrubbed_on_trim() {
 }
 
 #[test]
+fn trim_keeps_sql_the_write_filter_allows() {
+    let db = Db::open_in_memory().unwrap();
+    db.add_history(&entry(
+        "a",
+        "select passwd from pg_shadow",
+        1,
+        HistoryOutcome::Rows(1),
+    ))
+    .unwrap();
+    let mut s = snippet("s", "shadow", "");
+    s.sql = "select passwd from pg_shadow".into();
+    db.save_snippet(&s).unwrap();
+    db.trim_history().unwrap();
+    assert_eq!(
+        db.search_history(&HistoryQuery::default()).unwrap().len(),
+        1
+    );
+    assert_eq!(db.list_snippets().unwrap().len(), 1);
+}
+
+#[test]
 fn snippets_upsert_and_delete() {
     let db = Db::open_in_memory().unwrap();
     db.save_snippet(&snippet("1", "zeta", "b")).unwrap();

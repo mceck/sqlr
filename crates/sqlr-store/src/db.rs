@@ -132,7 +132,6 @@ impl Db {
         // Old builds recorded password-bearing SQL verbatim. Remove those rows and old
         // snippets on startup; new writes are filtered before they reach the store.
         const SECRET_SQL: &str = "lower(sql) LIKE '%password%' \
-             OR lower(sql) LIKE '%passwd%' \
              OR lower(sql) LIKE '%pwd%' \
              OR lower(sql) LIKE '%api_key%' \
              OR lower(sql) LIKE '%identified by%'";

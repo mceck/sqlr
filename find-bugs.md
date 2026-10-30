@@ -3,7 +3,7 @@
 ## Sections:
 [x] sqlr-core: values, encoding and documents (`value`, `encode`, `read`, `rows`, `chunk`, `doc*`, `formats`)
 [x] sqlr-core: SQL and text utilities (`classify`, `syntax`, `format_sql`, `generate`, `schema_change`, `compare`, `datagen`, `transfer`, `url`, `wire`, `es_request`, `mongo_shell`, `er`)
-[] sqlr-store: persistence and secrets (connections, vault, settings, history, snippets, keymap, recents, profiles, layered)
+[x] sqlr-store: persistence and secrets (connections, vault, settings, history, snippets, keymap, recents, profiles, layered)
 [] sqlr-engine: sessions, transactions and results (`engine`, `session`, `tx`, `script`, `apply`, `result`, `result_memory`, `result_spill`, `job`)
 [] sqlr-engine: transfer and imports (`transfer/*`)
 [] sqlr-sidecar: protocol, client and process
@@ -52,7 +52,11 @@ Fixed:
 Tests added across the affected modules plus `tests/format_sql.rs`; `cargo test -p sqlr-core`, `cargo test -p sqlr-driver-elastic --lib` and clippy for both crates pass.
 
 # sqlr-store: persistence and secrets
-[to fill]
+Fixed:
+- Startup `trim_history` deleted history rows and snippets containing `passwd`, although the write-time rule documented in the query-editor spec (and implemented by `may_hold_secret`) only excludes `pwd`, `password`, `api_key` and `identified by`. Such entries were accepted and then silently lost on the next launch. The trim now uses the same rule.
+- `ConnectionRepo::delete` wrote `connections.toml` before deleting the vault entries. If the keychain/vault delete failed, the connection was already gone (no retry) and its secrets stayed unreachable under an unknown id. Secrets are now deleted first, so a failure leaves the config intact and retryable.
+
+Tests added in `crates/sqlr-store/tests/db.rs` and `tests/store.rs`; `cargo nextest run -p sqlr-store` and clippy pass.
 
 # sqlr-engine: sessions, transactions and results
 [to fill]

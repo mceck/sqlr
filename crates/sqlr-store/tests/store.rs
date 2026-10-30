@@ -393,6 +393,35 @@ impl SecretStore for DenyingStore {
     }
 }
 
+struct FailingDeleteStore(MemorySecretStore);
+
+impl SecretStore for FailingDeleteStore {
+    fn get(&self, conn_id: &str, field: &str) -> Result<Option<String>, StoreError> {
+        self.0.get(conn_id, field)
+    }
+    fn set(&self, conn_id: &str, field: &str, value: &str) -> Result<(), StoreError> {
+        self.0.set(conn_id, field, value)
+    }
+    fn delete(&self, _: &str, _: &str) -> Result<(), StoreError> {
+        Err(StoreError::Secret("denied".into()))
+    }
+}
+
+#[test]
+fn delete_with_failing_secret_store_keeps_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let repo = ConnectionRepo::open(
+        dir.path(),
+        Box::new(FailingDeleteStore(MemorySecretStore::default())),
+    )
+    .unwrap();
+    let c = cfg("1", "A", None);
+    repo.save(&c, &secrets("pw")).unwrap();
+    let err = repo.delete("1", &manifest()).unwrap_err();
+    assert!(matches!(err, StoreError::Secret(_)));
+    assert_eq!(repo.list().unwrap(), vec![c]);
+}
+
 #[test]
 fn save_with_failing_secret_store_keeps_config() {
     let dir = tempfile::tempdir().unwrap();
