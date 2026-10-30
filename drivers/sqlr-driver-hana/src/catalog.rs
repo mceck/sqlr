@@ -47,6 +47,19 @@ pub(crate) async fn catalog(
     })
 }
 
+/// Whether a HANA `GENERATION_TYPE` makes a column `(generated, automatic)`.
+///
+/// `ALWAYS AS` (computed and row-start/end columns) and `ALWAYS AS IDENTITY` refuse
+/// written values; `BY DEFAULT AS IDENTITY` accepts them. Both identity kinds supply a
+/// value when it is omitted, so both are automatic.
+fn generation_flags(generation_type: &str) -> (bool, bool) {
+    let generation_type = generation_type.trim();
+    (
+        generation_type.starts_with("ALWAYS AS"),
+        generation_type.ends_with("AS IDENTITY"),
+    )
+}
+
 pub(crate) async fn describe(
     conn: &HdbConnection,
     table: &TableRef,
@@ -66,13 +79,16 @@ pub(crate) async fn describe(
         if !found.is_empty() {
             columns = found
                 .into_iter()
-                .map(|r| TableColumn {
-                    automatic: false,
-                    name: r[0].clone(),
-                    type_name: r[1].clone(),
-                    nullable: r[2] == "TRUE",
-                    default: Some(r[3].clone()).filter(|d| !d.is_empty()),
-                    generated: !r[4].is_empty() && r[4] != "NONE" && r[4] != "NULL",
+                .map(|r| {
+                    let (generated, automatic) = generation_flags(&r[4]);
+                    TableColumn {
+                        automatic,
+                        name: r[0].clone(),
+                        type_name: r[1].clone(),
+                        nullable: r[2] == "TRUE",
+                        default: Some(r[3].clone()).filter(|d| !d.is_empty()),
+                        generated,
+                    }
                 })
                 .collect();
             break;
@@ -113,4 +129,23 @@ pub(crate) async fn describe(
         primary_key,
         unique_keys,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identity_columns_are_automatic_and_only_always_generated() {
+        // SYS.TABLE_COLUMNS.GENERATION_TYPE: NULL (an empty cell here) for plain columns.
+        assert_eq!(generation_flags(""), (false, false));
+        assert_eq!(generation_flags("NONE"), (false, false));
+        assert_eq!(generation_flags("ALWAYS AS"), (true, false));
+        assert_eq!(generation_flags("ALWAYS AS ROW START"), (true, false));
+        assert_eq!(generation_flags("ALWAYS AS ROW END"), (true, false));
+        // An ALWAYS identity refuses written values; a BY DEFAULT one accepts them but
+        // still supplies a value when it is omitted.
+        assert_eq!(generation_flags("ALWAYS AS IDENTITY"), (true, true));
+        assert_eq!(generation_flags("BY DEFAULT AS IDENTITY"), (false, true));
+    }
 }

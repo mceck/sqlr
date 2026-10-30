@@ -45,6 +45,10 @@ pub(crate) fn columns(stmt: &Statement<'_>) -> Arc<[ColumnMeta]> {
                 Date | Time | TimeNs | TimeTZ | Timestamp | TimestampS | TimestampMs
                 | TimestampNs | TimestampTZ => (ColumnKind::Text, DisplayHint::Temporal),
                 Blob => (ColumnKind::Bytes, DisplayHint::Binary),
+                // A bit string is shown as its 1s and 0s, like DuckDB's own shell.
+                Bit => (ColumnKind::Text, DisplayHint::Plain),
+                // BIGNUM arrives as DuckDB's opaque storage bytes; show them as binary.
+                Bignum => (ColumnKind::Bytes, DisplayHint::Binary),
                 Geometry => (ColumnKind::Bytes, DisplayHint::Geometry),
                 Interval => (ColumnKind::Text, DisplayHint::Interval),
                 Uuid => (ColumnKind::Text, DisplayHint::Uuid),
@@ -120,6 +124,7 @@ pub(crate) fn decode(value: ValueRef<'_>, column: &ColumnMeta) -> Result<Value, 
                 &hex[20..]
             ))
         }
+        Blob(bytes) if column.type_name == "BIT" => Value::Text(bit_text(bytes)),
         Blob(bytes) if column.type_name == "TIMETZ" => {
             let bits = u64::from_ne_bytes(fixed(bytes)?);
             // SAFETY: the stable C API only interprets DuckDB's packed local time and UTC
@@ -322,6 +327,21 @@ fn fixed<const N: usize>(bytes: &[u8]) -> Result<[u8; N], DriverError> {
         .try_into()
         .map_err(|_| DriverError::new(ErrorKind::Protocol, "invalid DuckDB fixed-size value"))
 }
+
+/// DuckDB's BIT storage: the first byte is the number of padding bits at the front of
+/// the big-endian data bytes; the rest is the bit string, most significant bit first.
+fn bit_text(bytes: &[u8]) -> String {
+    let Some((&padding, data)) = bytes.split_first() else {
+        return String::new();
+    };
+    let total = data.len() * 8;
+    let mut text = String::with_capacity(total.saturating_sub(usize::from(padding)));
+    for bit in usize::from(padding.min(8))..total {
+        let set = data[bit / 8] >> (7 - bit % 8) & 1;
+        text.push(if set == 1 { '1' } else { '0' });
+    }
+    text
+}
 fn offset(seconds: i32) -> String {
     let sign = if seconds < 0 { '-' } else { '+' };
     let seconds = seconds.unsigned_abs();
@@ -330,4 +350,36 @@ fn offset(seconds: i32) -> String {
         text.push_str(&format!(":{:02}", seconds % 60));
     }
     text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bit_and_bignum_columns_are_not_rejected() {
+        let conn = duckdb::Connection::open_in_memory().unwrap();
+        let mut stmt = conn
+            .prepare(
+                "SELECT '101'::BIT AS bits, \
+                 12345678901234567890123456789012345678901234567890 AS big",
+            )
+            .unwrap();
+        let _ = stmt
+            .stream_arrow(duckdb::params_from_iter(std::iter::empty::<
+                duckdb::types::Value,
+            >()))
+            .unwrap();
+        let columns = columns(&stmt);
+        assert_eq!(columns[0].type_name, "BIT");
+        assert_eq!(columns[0].kind, ColumnKind::Text);
+        assert_eq!(columns[1].type_name, "BIGNUM");
+        assert_eq!(columns[1].kind, ColumnKind::Bytes);
+        let mut rows = stmt.raw_query();
+        let row = rows.next().unwrap().unwrap();
+        let bits = decode(row.get_ref(0).unwrap(), &columns[0]).unwrap();
+        let big = decode(row.get_ref(1).unwrap(), &columns[1]).unwrap();
+        assert_eq!(bits, Value::Text("101".into()));
+        assert!(matches!(big, Value::Bytes(bytes) if !bytes.is_empty()));
+    }
 }

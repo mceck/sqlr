@@ -200,6 +200,21 @@ fn syntax_error(text: &str, e: sqlr_core::ShellError) -> DriverError {
     DriverError::new(ErrorKind::Syntax, e.message).with_position(chars)
 }
 
+/// The `limit` and `singleBatch` fields a shell `limit()` adds: a negative limit asks for
+/// one batch of `|limit|` documents.
+fn find_limit(limit: Option<i64>) -> Result<Option<(i64, bool)>, DriverError> {
+    Ok(match limit {
+        Some(n) if n < 0 => Some((
+            n.checked_neg().ok_or_else(|| {
+                DriverError::new(ErrorKind::Syntax, "find() limit is out of range")
+            })?,
+            true,
+        )),
+        Some(n) if n > 0 => Some((n, false)),
+        _ => None,
+    })
+}
+
 /// The single statement of `text`.
 fn parse_one(text: &str) -> Result<MongoOp, DriverError> {
     let mut ops = parse_mongo_shell(text).map_err(|e| syntax_error(text, e))?;
@@ -279,13 +294,11 @@ impl MongoConnection {
                 if let Some(n) = skip {
                     c.push(("skip", DocValue::Int64(n as i64)));
                 }
-                match limit {
-                    Some(n) if n < 0 => {
-                        c.push(("limit", DocValue::Int64(-n)));
+                if let Some((limit, single_batch)) = find_limit(limit)? {
+                    c.push(("limit", DocValue::Int64(limit)));
+                    if single_batch {
                         c.push(("singleBatch", DocValue::Bool(true)));
                     }
-                    Some(n) if n > 0 => c.push(("limit", DocValue::Int64(n))),
-                    _ => {}
                 }
                 self.docs(db, cmd(c)).await?
             }
@@ -624,5 +637,16 @@ mod tests {
             cell_value(&DocValue::ObjectId([0xab; 12])),
             Value::Text("abababababababababababab".into())
         );
+    }
+
+    #[test]
+    fn find_limits_cover_zero_negative_and_the_i64_minimum() {
+        assert_eq!(find_limit(None).unwrap(), None);
+        assert_eq!(find_limit(Some(0)).unwrap(), None);
+        assert_eq!(find_limit(Some(5)).unwrap(), Some((5, false)));
+        assert_eq!(find_limit(Some(-5)).unwrap(), Some((5, true)));
+        // `limit(NumberLong("-9223372036854775808"))`: |limit| does not fit in an i64.
+        let error = find_limit(Some(i64::MIN)).unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Syntax);
     }
 }

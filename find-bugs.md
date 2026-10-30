@@ -16,7 +16,7 @@
 [x] drivers: Redis
 [x] drivers: SQL Server / Oracle
 [] drivers: Elasticsearch / Snowflake / ClickHouse / JDBC
-[] sidecar drivers: MongoDB / DuckDB / HANA
+[x] sidecar drivers: MongoDB / DuckDB / HANA
 [x] sqlr-app: application logic (workers, actions, messages, cli, tabs, pending)
 [x] sqlr-ui: grid and editor
 [x] sqlr-ui: forms, trees, dialogs and keymap
@@ -170,7 +170,13 @@ Tests added in `types.rs` and `execute.rs`; 20 SQL Server + 31 Oracle unit tests
 [to fill]
 
 # sidecar drivers: MongoDB / DuckDB / HANA
-[to fill]
+Fixed:
+- DuckDB `BIT` and `BIGNUM` columns were mapped to `Text` but delivered as `Blob`, so `ChunkBuilder` rejected every row of the result. `BIT` is now decoded from DuckDB's padding-byte storage into its 1/0 text and `BIGNUM` is shown as opaque binary.
+- HANA identity columns were all described as generated and none as automatic: `BY DEFAULT AS IDENTITY` became read-only in the grid and pasted rows kept their ids. Only `ALWAYS AS …` is generated; both identity kinds are automatic.
+- HANA syntax-error positions are 1-based but `DriverError.position` is 0-based, so the editor highlighted one character to the right. The position is converted and clamped.
+- `find().limit(NumberLong("-9223372036854775808"))` panicked negating `i64::MIN` (and wrapped in release). The limit is negated with `checked_neg` and an unrepresentable magnitude is a syntax error.
+
+Tests added in `types.rs`, `catalog.rs`, `errors.rs` and `query.rs`; 8 Mongo + 1 DuckDB + 13 HANA unit tests, 14 DuckDB native tests and clippy pass.
 
 # sqlr-app: application logic
 Fixed:
