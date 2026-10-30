@@ -1583,8 +1583,8 @@ struct ResultEntry {
     /// Wall-clock time of the `execute`, in Unix milliseconds.
     started_at_ms: i64,
     cancel_requested: bool,
-    /// A later query was issued on the same session.
-    superseded: bool,
+    /// The later query that was issued on the same session and will take its stream.
+    superseded_by: Option<QueryId>,
     /// The query's history entry was recorded (when its status first left `Running`).
     recorded: bool,
     /// Signalled (once, with a stored permit) when the status first leaves `Running`, or
@@ -2040,7 +2040,7 @@ impl Shared {
                     started: Instant::now(),
                     started_at_ms: now_ms(),
                     cancel_requested: false,
-                    superseded: false,
+                    superseded_by: None,
                     recorded: false,
                     settled: Arc::new(Notify::new()),
                     outside_tx: false,
@@ -2164,7 +2164,7 @@ impl Shared {
                 // gives the stream up at its next chunk boundary.
                 for entry in inner.results.values_mut() {
                     if entry.io.as_ref().is_some_and(|i| Arc::ptr_eq(i, io)) {
-                        entry.superseded = true;
+                        entry.superseded_by = Some(q);
                     }
                 }
                 self.send(Command::Execute {
@@ -2183,7 +2183,7 @@ impl Shared {
                     started: Instant::now(),
                     started_at_ms: now_ms(),
                     cancel_requested: false,
-                    superseded: false,
+                    superseded_by: None,
                     recorded: false,
                     settled: settled.clone(),
                     outside_tx,
@@ -2246,13 +2246,25 @@ impl Shared {
     }
 
     /// Whether fetching `q` must stop: cancelled or closed (`Stopped`), or a later query
-    /// wants the stream (`CutShort`).
+    /// that is still going to take the stream (`CutShort`). A later query that was
+    /// cancelled or closed before it started must not cut the earlier result short.
     fn stop(&self, q: QueryId) -> Option<PageEnd> {
-        let inner = self.inner.lock();
-        match inner.results.get(&q) {
+        let mut inner = self.inner.lock();
+        if let Some(superseder) = inner.results.get(&q).and_then(|e| e.superseded_by) {
+            let still_coming = inner
+                .results
+                .get(&superseder)
+                .is_some_and(|e| !e.cancel_requested);
+            if !still_coming
+                && let Some(entry) = inner.results.get_mut(&q)
+            {
+                entry.superseded_by = None;
+            }
+        }
+        match inner.results.get_mut(&q) {
             None => Some(PageEnd::Stopped),
             Some(e) if e.cancel_requested => Some(PageEnd::Stopped),
-            Some(e) if e.superseded => Some(PageEnd::CutShort),
+            Some(e) if e.superseded_by.is_some() => Some(PageEnd::CutShort),
             Some(_) => None,
         }
     }
@@ -2592,13 +2604,23 @@ impl Shared {
         let mut slot = io.stream.lock().await;
         // The next execute may now queue on the stream lock, behind this one.
         drop(turn);
-        let (key, sql) = {
+        let (key, sql, cancelled) = {
             let inner = self.inner.lock();
             let Some(entry) = inner.results.get(&q) else {
                 return;
             };
-            (entry.key.clone(), entry.result.read().sql.clone())
+            (
+                entry.key.clone(),
+                entry.result.read().sql.clone(),
+                entry.cancel_requested,
+            )
         };
+        if cancelled {
+            // The query was stopped before it got its turn: leave the previous result's
+            // stream alone, it is still the one the session shows.
+            self.finish(q, QueryStatus::Cancelled);
+            return;
+        }
         // Review Focus 1: a session holds one open stream, so the previous one is closed.
         if let Some((prev, mut stream)) = slot.take() {
             let _ = stream.close().await;

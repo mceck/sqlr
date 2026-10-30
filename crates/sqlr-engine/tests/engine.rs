@@ -742,6 +742,44 @@ fn new_query_interrupts_fetch_all_of_previous() {
 }
 
 #[test]
+fn a_cancelled_query_does_not_cut_the_previous_result_short() {
+    let release = Arc::new(tokio::sync::Notify::new());
+    let (engine, fake) = connected(FakeScript {
+        rows: 1200,
+        block_on_fetch: true,
+        block_after_chunks: Some(1),
+        fetch_release: Some(release.clone()),
+        ..Default::default()
+    });
+    let first = engine.execute("c", "SELECT 1".into(), 500);
+    assert_eq!(
+        settled(&engine, first),
+        (QueryStatus::Ready { more: true }, 500)
+    );
+
+    // The next fetch blocks on the driver, so the second execute stays queued.
+    engine.fetch_more(first);
+    assert!(
+        wait_until(TIMEOUT, || fake.blocked_fetches() > 0),
+        "the fetch never reached the driver"
+    );
+    let second = engine.execute("c", "SELECT 2".into(), 500);
+    engine.cancel(second);
+    release.notify_one();
+
+    // The cancelled second query never took the stream: the first result still has rows.
+    assert_eq!(
+        settled(&engine, first),
+        (QueryStatus::Ready { more: true }, 1000)
+    );
+    assert!(
+        !cut_short(&engine, first),
+        "a cancelled query must not cut the previous result short"
+    );
+    assert_eq!(status(&engine, second), QueryStatus::Cancelled);
+}
+
+#[test]
 fn back_to_back_executes_run_in_issue_order() {
     // Ordering bugs are races, so repeat to give a wrong order many chances to show up.
     for _ in 0..20 {

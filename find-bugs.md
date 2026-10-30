@@ -9,7 +9,7 @@ first try and passed on retry; worth a deterministic look in this cycle).
 [x] sqlr-core: values, encoding and documents (`value`, `encode`, `read`, `rows`, `chunk`, `doc*`, `formats`)
 [x] sqlr-core: SQL and text utilities (`classify`, `syntax`, `format_sql`, `generate`, `schema_change`, `compare`, `datagen`, `transfer`, `url`, `wire`, `es_request`, `mongo_shell`, `er`)
 [x] sqlr-store: persistence and secrets (connections, vault, settings, history, snippets, keymap, recents, profiles, layered)
-[ ] sqlr-engine: sessions, transactions and results (`engine`, `session`, `tx`, `script`, `apply`, `result`, `result_memory`, `result_spill`, `job`)
+[x] sqlr-engine: sessions, transactions and results (`engine`, `session`, `tx`, `script`, `apply`, `result`, `result_memory`, `result_spill`, `job`)
 [x] sqlr-engine: transfer and imports (`transfer/*`)
 [x] sqlr-sidecar: protocol, client and process
 [x] sqlr-registry: driver install, index and verification
@@ -297,3 +297,9 @@ Fixed:
 - Note: a partition child's own indexes/constraints are still not carried by the parent's create; only the parent-level definition is migrated. That needs a nested partition definition in the core model and is left for a later pass.
 
 Tests added in `tests/snapshot.rs`; 6 container snapshot tests, 12 core compare tests and clippy pass.
+
+# sqlr-engine: sessions, transactions and results
+Fixed:
+- A query cancelled or closed before its turn still cut the previous result short: `start_query` marked earlier results superseded at once, and the blocked fetch stopped before the queued query was known to run. The mark now names the superseding query, and a fetch only yields while that query is still viable (not cancelled, still present); `execute` also checks a queued cancellation before it closes the previous stream. The regression test blocks the first fetch, queues a second query, cancels it, and checks the first result still has its remaining page.
+
+Tests added in `tests/engine.rs` with a `block_after_chunks`/`fetch_release` hook in `sqlr-testkit`; 40 engine integration tests and clippy pass.

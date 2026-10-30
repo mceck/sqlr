@@ -200,6 +200,11 @@ pub struct FakeScript {
     pub affected: Option<u64>,
     /// `next_chunk` waits until cancelled, then returns `ErrorKind::Cancelled`.
     pub block_on_fetch: bool,
+    /// With `block_on_fetch`, wait only after this many chunks have been returned.
+    pub block_after_chunks: Option<usize>,
+    /// With `block_on_fetch`, `next_chunk` also returns after this is notified (for a test
+    /// that must let a blocked fetch continue without cancelling its query).
+    pub fetch_release: Option<Arc<Notify>>,
     /// `next_chunk` returns this error after N successful chunks.
     pub fail_after_chunks: Option<(usize, DriverError)>,
     /// `browse(path)` returns the nodes whose path is a direct child of `path`, in order.
@@ -307,6 +312,8 @@ struct Shared {
     cancel: Notify,
     cancelled: AtomicBool,
     closed: AtomicUsize,
+    /// Fetches that entered a `block_on_fetch` wait.
+    blocked: AtomicUsize,
     browses: AtomicUsize,
     catalogs: AtomicUsize,
     executed: Mutex<Vec<(Option<String>, String)>>,
@@ -661,6 +668,7 @@ impl FakeDriver {
                 cancel: Notify::new(),
                 cancelled: AtomicBool::new(false),
                 closed: AtomicUsize::new(0),
+                blocked: AtomicUsize::new(0),
                 browses: AtomicUsize::new(0),
                 catalogs: AtomicUsize::new(0),
                 executed: Mutex::new(Vec::new()),
@@ -713,6 +721,11 @@ impl FakeDriver {
     /// Number of streams on which `close()` was called (each counted once).
     pub fn closed_streams(&self) -> usize {
         self.shared.closed.load(Ordering::SeqCst)
+    }
+
+    /// Number of fetches that entered a `block_on_fetch` wait.
+    pub fn blocked_fetches(&self) -> usize {
+        self.shared.blocked.load(Ordering::SeqCst)
     }
 
     /// Every SQL string passed to `execute`, in order.
@@ -1047,6 +1060,8 @@ impl RelationalConn for FakeConnection {
             chunks: 0,
             closed: false,
             block,
+            block_after: self.shared.script.block_after_chunks.unwrap_or(0),
+            release: self.shared.script.fetch_release.clone(),
         })))
     }
 
@@ -1379,6 +1394,10 @@ struct FakeStream {
     closed: bool,
     /// `next_chunk` waits until cancelled.
     block: bool,
+    /// Start blocking only after this many chunks.
+    block_after: usize,
+    /// Lets a blocked fetch continue without a cancel.
+    release: Option<Arc<Notify>>,
 }
 
 #[async_trait::async_trait]
@@ -1388,14 +1407,23 @@ impl RowStream for FakeStream {
     }
 
     async fn next_chunk(&mut self, max_rows: usize) -> Result<Option<ResultChunk>, DriverError> {
-        if self.block {
+        if self.block && self.chunks >= self.block_after {
+            self.shared.blocked.fetch_add(1, Ordering::SeqCst);
             // Register before checking the flag so a concurrent cancel is never missed.
             let mut notified = pin!(self.shared.cancel.notified());
             notified.as_mut().enable();
-            if !self.shared.cancelled.load(Ordering::SeqCst) {
-                notified.await;
+            if self.shared.cancelled.load(Ordering::SeqCst) {
+                return Err(DriverError::new(ErrorKind::Cancelled, "cancelled"));
             }
-            return Err(DriverError::new(ErrorKind::Cancelled, "cancelled"));
+            if let Some(release) = &self.release {
+                tokio::select! {
+                    _ = notified => return Err(DriverError::new(ErrorKind::Cancelled, "cancelled")),
+                    _ = release.notified() => {}
+                }
+            } else {
+                notified.await;
+                return Err(DriverError::new(ErrorKind::Cancelled, "cancelled"));
+            }
         }
         if let Some((n, err)) = &self.shared.script.fail_after_chunks
             && self.chunks >= *n
