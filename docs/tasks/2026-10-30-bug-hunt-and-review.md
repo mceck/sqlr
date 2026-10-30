@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 ---
 
 # Verify and complete the workspace bug fixes
@@ -88,9 +88,9 @@ record the evidence and practical limits in this task.
 - [x] Add or strengthen regression tests at the existing public seams and observe the faulty cases fail first.
 - [x] Update the affected living specs alongside the corrections.
 - [x] Formatting, workspace Clippy, single egui version and no-OpenSSL checks pass.
-- [ ] The final workspace suite passes with external-service tests disabled.
-- [ ] PostgreSQL execution and snapshot-migration tests pass on the integrated tree.
-- [ ] This task is marked done and committed before merging the worktree into main.
+- [x] The final workspace suite passes with external-service tests disabled.
+- [x] PostgreSQL execution and snapshot-migration tests pass on the integrated tree.
+- [x] This task is marked done and committed before merging the worktree into main.
 
 ## Out of Scope
 
@@ -147,10 +147,13 @@ loss and the ineffective TLS downgrade restriction.
 
 - Regression cases were run against the faulty code before each correction.
 - The MCP HTTP protocol suite passes all 30 tests.
-- The final workspace, PostgreSQL and quality-gate results are recorded below after
-  verification of the integrated tree. An earlier shared-target run was discarded
-  after concurrent compilation on main replaced a dependency with older code; final
-  verification uses an isolated build target.
+- Final isolated workspace run: 2,505 tests passed, 22 explicitly skipped, with external-service tests disabled.
+- Final isolated PostgreSQL execution and snapshot run: 38 tests passed; 77 other tests were excluded by the selection.
+- Formatting, workspace dependency gates and isolated workspace Clippy (`--all-targets --locked -- -D warnings`) all pass.
+
+An earlier shared-target run was discarded after concurrent compilation on main
+replaced a dependency with older code. The final verification above uses an isolated
+build target with all workspace packages rebuilt from the review worktree.
 
 The fast workspace run disables external-service tests. PostgreSQL execution and
 snapshot migrations additionally run against an isolated PostgreSQL 17 server.
