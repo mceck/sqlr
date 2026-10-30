@@ -43,7 +43,13 @@ impl DocTableState {
     /// The rows of `chunks` (columns named by the first `first_page` documents), updated
     /// for chunks added since the last call.
     pub fn rows(&mut self, chunks: &[DocChunk], first_page: usize) -> &RowBuffer {
-        if chunks.len() < self.chunks_seen || (self.chunks_seen == 0 && !chunks.is_empty()) {
+        let first_documents = chunks.len() > self.chunks_seen
+            && self.rows.columns().is_empty()
+            && chunks[self.chunks_seen..].iter().any(|c| !c.is_empty());
+        if chunks.len() < self.chunks_seen
+            || (self.chunks_seen == 0 && !chunks.is_empty())
+            || first_documents
+        {
             let first: Vec<DocValue> = chunks
                 .iter()
                 .flat_map(DocChunk::docs)
@@ -124,4 +130,28 @@ pub fn doc_table(
     action
         .or(select)
         .or(output.need_more.then_some(DocAction::LoadMore))
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlr_core::{DocChunk, DocValue};
+
+    use super::*;
+
+    fn doc(value: i32) -> DocValue {
+        DocValue::Document(vec![("n".into(), DocValue::Int32(value))])
+    }
+
+    #[test]
+    fn documents_after_an_empty_first_page_are_shown() {
+        let empty = DocChunk::default();
+        let mut state = DocTableState::default();
+        assert_eq!(state.rows(std::slice::from_ref(&empty), 1).row_count(), 0);
+
+        // The next page has documents: the table must pick up its columns and rows.
+        let chunks = vec![empty, DocChunk::from_docs(&[doc(1)])];
+        let rows = state.rows(&chunks, 1);
+        assert_eq!(rows.columns().len(), 1);
+        assert_eq!(rows.row_count(), 1);
+    }
 }

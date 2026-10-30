@@ -768,6 +768,10 @@ impl SyntaxLayer {
             .into_iter()
             .filter_map(|r| {
                 let s = r.start.max(skip);
+                if s >= r.end {
+                    // The statement ends before the selection starts.
+                    return None;
+                }
                 let s = s + (text[s..r.end].len() - text[s..r.end].trim_start().len());
                 (s < r.end).then_some(s..r.end)
             });
@@ -1309,6 +1313,19 @@ mod tests {
         let c = buf.char_index(Pos { line: 1, col: 10 });
         let r = l.statement_at(&buf, c).expect("a statement");
         assert_eq!(text_of(&buf, r), "select 1  \nfrom t");
+    }
+
+    #[test]
+    fn statements_beginning_after_a_statement_on_the_same_line() {
+        // The selection starts at the second statement, after the first one ends on the
+        // same line: the split range before the selection must be skipped, not sliced.
+        let text = "select 1; select 2";
+        let (buf, mut l) = layer(text);
+        let start = text.find("select 2").expect("second statement");
+        let start_char = text[..start].chars().count();
+        let all = l.statements(&buf, start_char..buf.len_chars());
+        assert_eq!(all, vec![start_char..buf.len_chars()]);
+        assert_eq!(text_of(&buf, all[0].clone()), "select 2");
     }
 
     #[test]

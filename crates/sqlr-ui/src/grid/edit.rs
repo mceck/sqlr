@@ -567,7 +567,7 @@ pub fn parse_hex(text: &str) -> Option<Vec<u8>> {
         .chars()
         .filter(|c| !c.is_whitespace())
         .collect();
-    if !digits.len().is_multiple_of(2) {
+    if !digits.len().is_multiple_of(2) || !digits.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
     (0..digits.len())
@@ -753,6 +753,14 @@ mod tests {
         e.revert(INSERTED_ROW_BASE);
         assert_eq!(e.pending(), 2);
         assert_eq!(e.inserted_rows(), 1);
+    }
+
+    #[test]
+    fn non_ascii_hex_is_refused_without_panicking() {
+        assert_eq!(parse_hex("0x€€"), None);
+        assert_eq!(parse_hex("0x😀"), None);
+        assert_eq!(parse_hex("0x12€4"), None);
+        assert_eq!(parse_hex("0x01ff"), Some(vec![1, 255]));
     }
 
     #[test]

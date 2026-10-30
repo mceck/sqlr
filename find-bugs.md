@@ -18,7 +18,7 @@
 [] drivers: Elasticsearch / Snowflake / ClickHouse / JDBC
 [] sidecar drivers: MongoDB / DuckDB / HANA
 [x] sqlr-app: application logic (workers, actions, messages, cli, tabs, pending)
-[] sqlr-ui: grid and editor
+[x] sqlr-ui: grid and editor
 [x] sqlr-ui: forms, trees, dialogs and keymap
 
 ## Findings:
@@ -181,7 +181,13 @@ Fixed:
 Tests added in `transaction.rs`, `ddl_tab.rs` and `welcome.rs`; 242 lib tests and clippy pass.
 
 # sqlr-ui: grid and editor
-[to fill]
+Fixed:
+- `parse_hex` sliced the digit string at byte pairs without checking ASCII, so `0x€€` or `0x😀` panicked on a char boundary. It now rejects non-hex digits before slicing.
+- `SyntaxLayer::statements` could slice `text[s..range.end]` with `s > range.end` when a selection started after a statement on the same line (`select 1; select 2`), panicking. Ranges ending before the selection are skipped.
+- Soft wrap counted the hidden `\r` of CRLF as a visible character, wrapping a line one row early and overstating the total. `\r` before `\n` is skipped.
+- A document table whose first page was empty recorded `chunks_seen` and never picked up the columns of later non-empty pages, leaving it blank. It now rebuilds when the first non-empty page arrives.
+
+Tests added in `grid/edit.rs`, `grid/doc_table.rs`, `editor/syntax.rs` and `editor/wrap.rs`; 167 lib + targeted editor/grid/docs integration tests and clippy pass.
 
 # sqlr-ui: forms, trees, dialogs and keymap
 Fixed:

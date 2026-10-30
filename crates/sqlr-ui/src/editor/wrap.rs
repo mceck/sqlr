@@ -75,13 +75,18 @@ impl WrapIndex {
         let mut x = 0.0;
         let mut rows = 1u32;
         let mut bytes = 0usize;
-        for c in buf.rope().chars() {
+        let mut chars = buf.rope().chars().peekable();
+        while let Some(c) = chars.next() {
             if c == '\n' {
                 // Lines past the long-line threshold are windowed, never wrapped.
                 counts.push(if bytes > LONG_LINE_BYTES { 1 } else { rows });
                 x = 0.0;
                 rows = 1;
                 bytes = 0;
+                continue;
+            }
+            // The `\r` of a CRLF terminator is hidden, like the `\n` above.
+            if c == '\r' && chars.peek() == Some(&'\n') {
                 continue;
             }
             bytes += c.len_utf8();
@@ -255,4 +260,35 @@ fn rows_of(
         x += w;
     }
     rows
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn index_for(text: &str) -> WrapIndex {
+        let ctx = egui::Context::default();
+        let mut index = WrapIndex::default();
+        let mut out = ctx.run_ui(Default::default(), |ui| {
+            let font = egui::FontId::monospace(13.0);
+            let buf = TextBuffer::from_str(text);
+            let cw = ui.ctx().fonts_mut(|f| f.glyph_width(&font, 'M'));
+            ui.ctx()
+                .fonts_mut(|f| index.update(f, &font, &buf, cw * 2.5, &[]));
+        });
+        // No renderer consumes the font atlas upload here.
+        out.textures_delta.clear();
+        index
+    }
+
+    #[test]
+    fn crlf_terminators_do_not_count_toward_wrapping() {
+        // Both lines hold two visible chars: a hidden `\r` must not make the CRLF one wrap.
+        let lf = index_for("ab\ncd");
+        let crlf = index_for("ab\r\ncd");
+        assert_eq!(lf.rows(0), Some(1));
+        assert_eq!(crlf.rows(0), Some(1));
+        assert_eq!(crlf.rows(1), Some(1));
+        assert_eq!(crlf.total(), 2);
+    }
 }
