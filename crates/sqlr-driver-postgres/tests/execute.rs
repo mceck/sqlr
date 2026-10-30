@@ -609,6 +609,37 @@ async fn execute_with_binds_every_value_kind() {
 }
 
 #[tokio::test]
+async fn parameterized_modifying_cte_preserves_the_user_transaction() {
+    sqlr_testkit::skip_container_tests!("POSTGRES");
+    let (_c, conn) = connect().await;
+    affected(&conn, "CREATE TEMP TABLE t(x int)").await;
+    affected(&conn, "INSERT INTO t VALUES (100)").await;
+    affected(&conn, "BEGIN").await;
+    affected(&conn, "INSERT INTO t VALUES (99)").await;
+    let mut stream = rows_with(
+        &conn,
+        "WITH ins AS (INSERT INTO t VALUES ($1) RETURNING x) SELECT x FROM ins",
+        &[Value::Int(1)],
+    )
+    .await;
+    let chunk = stream.next_chunk(10).await.unwrap().unwrap();
+    assert_eq!(chunk.cell(0, 0), Cell::Int(1));
+    stream.close().await.unwrap();
+    let mut stream = rows(&conn, "SELECT count(*) FROM t").await;
+    assert_eq!(
+        stream.next_chunk(10).await.unwrap().unwrap().cell(0, 0),
+        Cell::Int(3)
+    );
+    stream.close().await.unwrap();
+    affected(&conn, "ROLLBACK").await;
+    let mut stream = rows(&conn, "SELECT x FROM t").await;
+    let chunk = stream.next_chunk(10).await.unwrap().unwrap();
+    assert_eq!(chunk.len(), 1);
+    assert_eq!(chunk.cell(0, 0), Cell::Int(100));
+    stream.close().await.unwrap();
+}
+
+#[tokio::test]
 async fn with_prefixed_writes_return_typed_text() {
     sqlr_testkit::skip_container_tests!("POSTGRES");
     let (_c, conn) = connect().await;

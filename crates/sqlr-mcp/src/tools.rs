@@ -1702,7 +1702,15 @@ async fn write_connection(
                 .as_str()
                 .ok_or_else(|| ToolError::invalid(format!("value {key} must be a string")))?;
             validate_value_key(&manifest, key)?;
-            let old = config.values.get(key).map(String::as_str);
+            let old = config.values.get(key).map(String::as_str).or_else(|| {
+                existing.as_ref()?;
+                manifest
+                    .fields
+                    .iter()
+                    .find(|field| field.key == *key)?
+                    .default
+                    .as_deref()
+            });
             policy::transport_security_ok(key, old, value)?;
             config.values.insert(key.clone(), value.to_string());
         }

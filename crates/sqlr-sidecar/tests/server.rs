@@ -10,6 +10,9 @@ use sqlr_sidecar::messages::{decode, encode};
 use sqlr_sidecar::{PROTOCOL, Request, Response, serve_io};
 use tokio::io::{DuplexStream, WriteHalf, split};
 
+#[path = "support/pausing.rs"]
+mod pausing;
+
 struct Rig {
     tx: WriteHalf<DuplexStream>,
     rx: tokio::io::ReadHalf<DuplexStream>,
@@ -24,9 +27,13 @@ impl Rig {
     }
 
     async fn with_protocol(protocol: &str) -> Self {
+        Self::with_driver(SqliteDriver::new(), protocol).await
+    }
+
+    async fn with_driver(driver: Arc<dyn sqlr_core::Driver>, protocol: &str) -> Self {
         let (client, server_end) = tokio::io::duplex(1 << 20);
         let (sr, sw) = split(server_end);
-        let server = tokio::spawn(serve_io(SqliteDriver::new(), protocol.to_string(), sr, sw));
+        let server = tokio::spawn(serve_io(driver, protocol.to_string(), sr, sw));
         let (rx, tx) = split(client);
         Self {
             tx,
@@ -99,6 +106,41 @@ fn exec(conn: u64, sql: &str, params: Option<Vec<Value>>) -> Request {
         sql: sql.into(),
         params,
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn disconnect_during_stream_registration_closes_the_late_stream() {
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+
+    let gate = Arc::new(pausing::Gate::default());
+    let driver = Arc::new(pausing::PausingDriver(gate.clone(), SqliteDriver::new()));
+    let mut rig = Rig::with_driver(driver, PROTOCOL).await;
+    rig.connect(1).await;
+    let execute_id = rig.next;
+    rig.next += 1;
+    write_frame(
+        &mut rig.tx,
+        CONTROL,
+        execute_id,
+        &encode(&exec(1, "SELECT 1", None)),
+    )
+    .await
+    .unwrap();
+    gate.entered.notified().await;
+    let disconnected = tokio::time::timeout(
+        Duration::from_secs(2),
+        rig.ok(Request::Disconnect { conn: 1 }),
+    )
+    .await;
+    gate.release();
+    assert!(matches!(disconnected.unwrap(), Response::Ok));
+    let (_, response) = rig.answer(execute_id).await;
+    let closed = gate.closed.load(Ordering::SeqCst);
+    rig.ok(Request::Shutdown).await;
+    rig.server.await.unwrap().unwrap();
+    assert!(matches!(response, Response::Error(e) if e.kind == ErrorKind::Cancelled));
+    assert_eq!(closed, 1);
 }
 
 #[tokio::test]

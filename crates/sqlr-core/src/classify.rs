@@ -152,7 +152,7 @@ impl SqlSyntax {
                 let planned = self.first_word(body).unwrap_or("");
                 if matches!(
                     planned.to_ascii_uppercase().as_str(),
-                    "SELECT" | "SHOW" | "VALUES" | "TABLE" | "DESCRIBE" | "DESC" | "WITH"
+                    "SELECT" | "SHOW" | "VALUES" | "TABLE" | "DESCRIBE" | "DESC"
                 ) {
                     return self.batch_write(body).unwrap_or(StatementClass::Read);
                 }
@@ -162,8 +162,8 @@ impl SqlSyntax {
         self.batch_write(sql).unwrap_or(StatementClass::Read)
     }
 
-    /// The text of the statement an `EXPLAIN` wraps, from its first verb; `None` when no
-    /// verb follows.
+    /// The main statement an `EXPLAIN` plans, after any CTEs. Their writes are planned
+    /// too; only a write following the planned main query belongs to another statement.
     fn explain_body<'a>(&self, sql: &'a str) -> Option<&'a str> {
         let mut tokens = Vec::new();
         self.lex(sql, LexState::Normal, &mut tokens);
@@ -195,7 +195,7 @@ impl SqlSyntax {
                     t.kind,
                     TokenKind::Keyword | TokenKind::Ident | TokenKind::Function
                 )
-                && EXPLAIN_VERBS.iter().any(|v| text.eq_ignore_ascii_case(v))
+                && STATEMENT_VERBS.iter().any(|v| text.eq_ignore_ascii_case(v))
             {
                 return Some(&sql[t.start..]);
             }
@@ -670,6 +670,23 @@ mod tests {
         for (sql, expected) in cases {
             assert_eq!(syntax.classify(sql), expected, "{sql}");
         }
+    }
+
+    #[test]
+    fn explain_with_writes_only_plans_without_analyze() {
+        let syntax = SqlSyntax::ansi();
+        for sql in [
+            "EXPLAIN WITH x AS (SELECT 1) DELETE FROM t WHERE id = 1",
+            "EXPLAIN WITH x AS (SELECT 1) INSERT INTO t SELECT * FROM x",
+            "EXPLAIN WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x",
+        ] {
+            assert_eq!(syntax.classify_script(sql), StatementClass::Read, "{sql}");
+        }
+        assert!(
+            syntax
+                .classify_script("EXPLAIN WITH x AS (SELECT 1) SELECT * FROM x\nDELETE FROM t")
+                .modifies()
+        );
     }
 
     #[test]

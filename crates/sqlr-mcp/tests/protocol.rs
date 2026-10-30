@@ -1270,6 +1270,41 @@ async fn setting_writes_parse_types_levels_and_reject_unsafe_changes() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn config_write_preserves_transport_security_from_manifest_defaults() {
+    let store = Arc::new(MemoryMcpTokenStore::with_token("t"));
+    let (server, host, _dir, port, token) = setup(AgentAccess::Read, store).await;
+    host.state
+        .lock()
+        .manifest
+        .fields
+        .push(sqlr_core::FieldSpec {
+            key: "ssl_mode".into(),
+            label: "SSL mode".into(),
+            ty: sqlr_core::FieldType::Text,
+            default: Some("preferred".into()),
+            required: false,
+            secret: false,
+            group: "TLS".into(),
+            free_form: false,
+        });
+    let mut client = Client::new(port, &token);
+    client.initialize().await;
+    let result = client
+        .tool(
+            100,
+            "config_write",
+            json!({
+                "target": "connection",
+                "payload": {"id": "c1", "values": {"ssl_mode": "disabled"}}
+            }),
+        )
+        .await;
+    assert_eq!(result["error"]["code"], "invalid", "{result}");
+    assert!(host.state.lock().writes.is_empty());
+    server.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn folder_operations_and_keymap_writes_reach_the_host_after_validation() {
     let store = Arc::new(MemoryMcpTokenStore::with_token("t"));
     let (server, host, _dir, port, token) = setup(AgentAccess::Read, store).await;

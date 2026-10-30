@@ -98,6 +98,8 @@ flowchart LR
 - A set of key-value keys, selected by database and pattern.
 - The Test-data generator.
 
+A UTF-8 byte-order mark is accepted even when the input arrives in separate buffers. For CSV and TSV, blank lines before a header are preamble. Without a header, leading blank lines are rows only when the data has one column; a file consisting entirely of blank lines is one column of blank fields. Every delimited row has the discovered column count, with short records padded by NULLs.
+
 A source on a file, a collection or the generator is probed to discover its columns and types, with up to 100 rows for a preview. A connection-backed source is probed from the live connection. The wizard probes automatically shortly after the source and its connection are complete, and offers a Load preview action otherwise.
 
 #### Targets
@@ -124,7 +126,10 @@ For a new table, the source column types are mapped to the target Driver's own t
 - PostgreSQL to MySQL: a time-zone timestamp becomes `datetime(6)` with its values stored as UTC and the zone dropped; an interval becomes `varchar(64)`; an enum becomes `varchar(255)`; an array becomes `json`.
 - MySQL unsigned integers widen to the next signed type that holds their range, and an unsigned 64-bit integer becomes `decimal(20,0)`.
 - To SQLite: integers become `integer`, small and double floats become `real`, booleans become `boolean`, bytes become `blob`, and a decimal with more than 15 digits stays `text` so its value remains exact.
-- A type unknown to the target maps to text, with a warning naming the original type.
+- SQL Server uses its integer widths, Unicode strings, binary, date, time and timestamp types. Oracle uses numbers, character types, CLOBs and BLOBs. DuckDB, ClickHouse, Snowflake, SAP HANA and the generic JDBC target each use their own type mappings.
+- A sized Unicode string over 4000 units on SQL Server becomes `nvarchar(max)`. Oracle character strings over 4000 units, or fixed strings over 2000, become CLOBs; HANA strings over 5000 units become NCLOBs. Each widening reports a warning.
+- Decimals beyond a destination's precision or scale limits become text with a warning, preserving the source digits. The precision limits are 38 for SQL Server, Oracle, DuckDB, Snowflake and HANA, and 76 for ClickHouse. An unconstrained source decimal also becomes text on those targets.
+- A source type the mapping does not recognize becomes text, with a warning naming the original type. A destination without a mapping keeps the source type and reports that it needs review.
 - Between two Connections of the same Driver the type is kept as written.
 
 The DDL is shown in the Review step with its warnings and is editable; an edited DDL is used instead of the generated one. The target table is created before any row is written.
@@ -162,6 +167,8 @@ The transfer takes its turn on the target Session as any other Operation does.
 
 With Skip bad rows on, a rejected row is written to the chosen CSV file with a header and one line per rejection holding the line number, the reason and the source values, quoted for a spreadsheet. The transfer stops once 1,000 rows have been rejected, with a summary saying so. The first 100 rejections are also listed in the dialog while the transfer runs.
 
+Document targets with Skip bad rows enabled insert each document once, reporting individual failures. A bulk request may have applied part of its batch before an error, so an unsuccessful bulk request is reported without replaying it.
+
 #### Summary and cancellation
 
 The transfer ends with a summary of rows read, written and rejected, and the name of the rejected rows file when one was written. A cancel stops at the next batch boundary and reports what was committed. The dialog keeps a running log and a Stop action.
@@ -176,6 +183,8 @@ Export is offered from a result's status bar, from a table or view in the Explor
 - Markdown writes a table.
 
 A sample of the first rows shows exactly what the file will contain, and the suggested file name combines the source name and the current time. When the source is a result that holds only some rows, the dialog offers the loaded rows alone or a rerun of the whole statement; a rerun is refused for a statement that is not a read. The file is written to a hidden partial name and renamed on success, as a dump is.
+
+Workbook exports keep integers outside the exact double range (absolute value greater than 2^53) as text. A text cell over 32,767 characters fails the export with its row and column. Workbook date imports account for Excel's fictitious leap day before March 1900. Workbook and Parquet exports publish their partial file only after a final cancellation check; cancellation before the first batch also removes the partial file.
 
 #### Import preset
 

@@ -384,6 +384,49 @@ pub fn map_type(from_dialect: &str, type_name: &str, to_dialect: &str) -> (Strin
         class = TypeClass::Float8;
     }
     let mut warning = None;
+    if class == TypeClass::Numeric(None)
+        && matches!(
+            to_dialect,
+            "sqlserver" | "oracle" | "duckdb" | "snowflake" | "hana" | "clickhouse"
+        )
+    {
+        warning = Some(format!(
+            "{type_name} has no declared precision: stored as text to preserve its value on {to_dialect}"
+        ));
+        class = TypeClass::Text;
+    }
+    if let TypeClass::Numeric(Some((precision, scale))) = class {
+        let limits = match to_dialect {
+            "sqlserver" | "duckdb" | "hana" => Some((38, precision)),
+            "oracle" => Some((38, 127)),
+            "snowflake" => Some((38, precision.min(37))),
+            "clickhouse" => Some((76, precision)),
+            _ => None,
+        };
+        if limits.is_some_and(|(max_precision, max_scale)| {
+            precision == 0 || precision > max_precision || scale > max_scale
+        }) {
+            warning = Some(format!(
+                "{type_name} exceeds {to_dialect}'s decimal limits: stored as text to preserve its value"
+            ));
+            class = TypeClass::Text;
+        }
+    }
+    if let TypeClass::Varchar(Some(width)) | TypeClass::Char(Some(width)) = class {
+        let limit = match to_dialect {
+            "sqlserver" => Some(4000),
+            "oracle" if matches!(class, TypeClass::Char(_)) => Some(2000),
+            "oracle" => Some(4000),
+            "hana" => Some(5000),
+            _ => None,
+        };
+        if limit.is_some_and(|limit| width > limit) {
+            warning = Some(format!(
+                "{type_name} exceeds {to_dialect}'s sized string limit: stored as text"
+            ));
+            class = TypeClass::Text;
+        }
+    }
     let mapped = match to_dialect {
         "postgres" => match &class {
             TypeClass::Int2 => "smallint".into(),
@@ -727,6 +770,55 @@ mod tests {
         assert_eq!(ty, "text");
         assert!(warning.unwrap().contains("exact"));
         assert_eq!(map("mysql", "int unsigned", "mysql"), "int unsigned");
+    }
+
+    #[test]
+    fn oversized_native_strings_and_unbounded_decimals_keep_their_values_as_text() {
+        for (source, target, text) in [
+            ("varchar(5000)", "oracle", "clob"),
+            ("char(3000)", "oracle", "clob"),
+            ("varchar(5001)", "hana", "NCLOB"),
+            ("char(5001)", "hana", "NCLOB"),
+            ("numeric", "sqlserver", "nvarchar(max)"),
+            ("numeric", "oracle", "clob"),
+            ("numeric", "duckdb", "varchar"),
+            ("numeric", "hana", "NCLOB"),
+            ("numeric", "snowflake", "VARCHAR"),
+            ("numeric", "clickhouse", "String"),
+        ] {
+            let (ty, warning) = map_type("postgres", source, target);
+            assert_eq!(ty, text, "{source} to {target}");
+            assert!(warning.is_some(), "{source} to {target}");
+        }
+    }
+
+    #[test]
+    fn decimal_precision_beyond_the_target_limit_is_preserved_as_text() {
+        for (target, text) in [
+            ("sqlserver", "nvarchar(max)"),
+            ("oracle", "clob"),
+            ("duckdb", "varchar"),
+            ("snowflake", "VARCHAR"),
+            ("hana", "NCLOB"),
+            ("clickhouse", "String"),
+        ] {
+            let (ty, warning) = map_type("postgres", "numeric(80,2)", target);
+            assert_eq!(ty, text, "{target}");
+            assert!(warning.is_some(), "{target}");
+        }
+    }
+
+    #[test]
+    fn sqlserver_large_strings_use_its_unbounded_unicode_type() {
+        assert_eq!(
+            map_type("postgres", "varchar(4000)", "sqlserver"),
+            ("nvarchar(4000)".into(), None)
+        );
+        for source in ["varchar(5000)", "char(5000)"] {
+            let (target, warning) = map_type("postgres", source, "sqlserver");
+            assert_eq!(target, "nvarchar(max)", "{source}");
+            assert!(warning.is_some(), "{source}");
+        }
     }
 
     #[test]

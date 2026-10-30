@@ -398,7 +398,24 @@ async fn stream_with_params(
     // wrapper works) or a query with a data-modifying CTE, whose DML must stay at the top
     // level (the wrapper is refused). The statement itself already prepared, so a parse
     // error here is the wrapper's: decode its rows from binary instead.
-    match client.prepare(wrapped.as_str()).await {
+    let in_transaction = in_transaction_block(client).await?;
+    if in_transaction {
+        client
+            .simple_query("SAVEPOINT sqlr_wrap")
+            .await
+            .map_err(map_error)?;
+    }
+    let prepared = client.prepare(wrapped.as_str()).await;
+    if in_transaction {
+        // A rejected wrapper must leave the user's earlier work and transaction intact.
+        let undo = if prepared.is_ok() {
+            "RELEASE SAVEPOINT sqlr_wrap"
+        } else {
+            "ROLLBACK TO SAVEPOINT sqlr_wrap; RELEASE SAVEPOINT sqlr_wrap"
+        };
+        client.simple_query(undo).await.map_err(map_error)?;
+    }
+    match prepared {
         Ok(stmt) => client
             .query_raw(&stmt, params.iter().copied())
             .await

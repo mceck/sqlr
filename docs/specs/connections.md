@@ -23,7 +23,7 @@ The connection dialog creates and edits Connections. Its left list shows the sav
 - When the dialog opens an existing Connection, its stored secrets are read on the store worker and fill the empty secret fields when they arrive. If the vault cannot be read, the dialog says so and saving keeps whatever the vault holds: only secrets that were read and then emptied are deleted.
 - Saving an edited Connection that is connected reconnects it with the new settings once the new listing arrives. A changed configuration or secret closes the Connection's Editor sessions opened with the old ones.
 - **Duplicate** saves a copy right after the original, named "`<name>` copy", then "`<name>` copy 2" and so on (compared case-insensitively), with the original's stored secrets when it saves them.
-- **Delete** asks for confirmation, removes the Connection from the explorer at once, disconnects it, drops its Catalog cache, recent entry and recent objects, then deletes it and its secret fields on the store worker. A failed delete lists it again.
+- **Delete** asks for confirmation, removes the Connection from the explorer at once, disconnects it, drops its Catalog cache, recent entry and recent objects, then deletes it and its secret fields on the store worker. A failed delete lists it again. The worker deletes the secret fields before removing the saved Connection; a vault failure keeps its id available for retry.
 
 When "Save password" is off, connecting asks for the secrets in a "Connect to `<name>`" prompt: the Driver's secret fields, plus the SSH password or key passphrase when the tunnel uses that method. Entered secrets stay in memory until sqlr quits. A run that triggered the connect starts once the prompt is answered; Cancel drops the connect.
 
@@ -58,7 +58,7 @@ The form's URL box accepts `scheme://[user@]host[:port][/database][?key=value&â€
 - A URL holding a password is refused with "Remove the password from the URL; enter it in the Password field": a `user:password@` part, or a parameter whose name is `pass`, `apikey` or contains `password`, `passwd`, `pwd`, `secret` or `token`. The box then keeps only the redacted URL, so a typed password does not stay on screen.
 - Redaction replaces a password with `***`: the part after `user:`, password-like parameters, and the whole authority while it could still be a half-typed `user:password` (no `@` yet and text after the last `:` that is not a port). Error messages never echo the port text or an unbracketed IPv6 address, since either may be a password being typed.
 - IPv6 hosts go in brackets (`[::1]:5432`). A file URL with another host (`sqlite://foo.db`) is refused, because it would name a file on another host or a path relative to the working directory.
-- Opening a saved Connection shows its URL rebuilt from its fields, without secrets.
+- Opening a saved Connection shows its URL rebuilt from its fields, without secrets. SQLite and DuckDB file URLs preserve relative paths and encode reserved path characters, so parsing the displayed URL selects the same file. Password redaction also covers malformed URLs whose scheme separator is missing.
 
 ### Test connection
 

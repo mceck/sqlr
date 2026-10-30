@@ -185,6 +185,7 @@ where
         task.abort();
     }
     state.document_queues.lock().clear();
+    let connections: Vec<_> = state.conns.lock().drain().map(|(_, c)| c).collect();
     let streams: Vec<_> = state.streams.lock().drain().map(|(_, s)| s).collect();
     for s in streams {
         let _ = s.stream.lock().await.close().await;
@@ -193,7 +194,7 @@ where
     for s in docs {
         let _ = s.stream.lock().await.close().await;
     }
-    state.conns.lock().clear();
+    drop(connections);
     drop(state);
     let _ = writer.await;
     result
@@ -343,29 +344,7 @@ impl State {
                 };
                 match execution {
                     Execution::Affected(n) => Response::Affected(n),
-                    Execution::Rows(stream) => {
-                        if !self.conns.lock().contains_key(&conn) {
-                            let mut stream = stream;
-                            let _ = stream.close().await;
-                            return Err(DriverError::new(
-                                ErrorKind::Cancelled,
-                                "connection closed while the statement ran",
-                            ));
-                        }
-                        let columns = stream.columns().to_vec();
-                        let stream_id = self.next_stream.fetch_add(1, Ordering::Relaxed);
-                        self.streams.lock().insert(
-                            stream_id,
-                            Arc::new(Stream {
-                                conn,
-                                stream: tokio::sync::Mutex::new(stream),
-                            }),
-                        );
-                        Response::Rows {
-                            stream: stream_id,
-                            columns,
-                        }
-                    }
+                    Execution::Rows(stream) => self.register_rows(conn, stream).await?,
                 }
             }
             Request::Fetch { stream, max } => {
@@ -423,48 +402,8 @@ impl State {
                 let connection = self.conn(conn)?;
                 let doc = connection.document().ok_or_else(document_unsupported)?;
                 match doc.run(database.as_deref(), &text).await? {
-                    DocExecution::Docs(stream) => {
-                        if !self.conns.lock().contains_key(&conn) {
-                            let mut stream = stream;
-                            let _ = stream.close().await;
-                            return Err(DriverError::new(
-                                ErrorKind::Cancelled,
-                                "connection closed while the request ran",
-                            ));
-                        }
-                        let id = self.next_stream.fetch_add(1, Ordering::Relaxed);
-                        self.doc_streams.lock().insert(
-                            id,
-                            Arc::new(DocumentStream {
-                                conn,
-                                stream: tokio::sync::Mutex::new(stream),
-                            }),
-                        );
-                        Response::Docs { stream: id }
-                    }
-                    DocExecution::Rows(stream) => {
-                        if !self.conns.lock().contains_key(&conn) {
-                            let mut stream = stream;
-                            let _ = stream.close().await;
-                            return Err(DriverError::new(
-                                ErrorKind::Cancelled,
-                                "connection closed while the request ran",
-                            ));
-                        }
-                        let columns = stream.columns().to_vec();
-                        let id = self.next_stream.fetch_add(1, Ordering::Relaxed);
-                        self.streams.lock().insert(
-                            id,
-                            Arc::new(Stream {
-                                conn,
-                                stream: tokio::sync::Mutex::new(stream),
-                            }),
-                        );
-                        Response::Rows {
-                            stream: id,
-                            columns,
-                        }
-                    }
+                    DocExecution::Docs(stream) => self.register_docs(conn, stream).await?,
+                    DocExecution::Rows(stream) => self.register_rows(conn, stream).await?,
                     DocExecution::Written {
                         matched,
                         modified,
@@ -580,6 +519,7 @@ impl State {
                 Response::Ok
             }
             Request::Disconnect { conn } => {
+                let _connection = self.conns.lock().remove(&conn);
                 self.document_queues.lock().remove(&conn);
                 let owned: Vec<Arc<Stream>> = {
                     let mut streams = self.streams.lock();
@@ -605,11 +545,67 @@ impl State {
                 for s in owned {
                     let _ = s.stream.lock().await.close().await;
                 }
-                self.conns.lock().remove(&conn);
                 Response::Ok
             }
             Request::Shutdown => Response::Ok,
         })
+    }
+
+    async fn register_rows(
+        &self,
+        conn: u64,
+        mut stream: Box<dyn RowStream>,
+    ) -> Result<Response, DriverError> {
+        let columns = stream.columns().to_vec();
+        {
+            // Registration and disconnect agree on ownership under the same lock.
+            let conns = self.conns.lock();
+            if conns.contains_key(&conn) {
+                let id = self.next_stream.fetch_add(1, Ordering::Relaxed);
+                self.streams.lock().insert(
+                    id,
+                    Arc::new(Stream {
+                        conn,
+                        stream: tokio::sync::Mutex::new(stream),
+                    }),
+                );
+                return Ok(Response::Rows {
+                    stream: id,
+                    columns,
+                });
+            }
+        }
+        let _ = stream.close().await;
+        Err(DriverError::new(
+            ErrorKind::Cancelled,
+            "connection closed while the statement ran",
+        ))
+    }
+
+    async fn register_docs(
+        &self,
+        conn: u64,
+        mut stream: Box<dyn DocStream>,
+    ) -> Result<Response, DriverError> {
+        {
+            let conns = self.conns.lock();
+            if conns.contains_key(&conn) {
+                let id = self.next_stream.fetch_add(1, Ordering::Relaxed);
+                self.doc_streams.lock().insert(
+                    id,
+                    Arc::new(DocumentStream {
+                        conn,
+                        stream: tokio::sync::Mutex::new(stream),
+                    }),
+                );
+                return Ok(Response::Docs { stream: id });
+            }
+        }
+        let _ = stream.close().await;
+        Err(DriverError::new(
+            ErrorKind::Cancelled,
+            "connection closed while the request ran",
+        ))
     }
 
     async fn attach(

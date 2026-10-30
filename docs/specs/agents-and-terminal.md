@@ -45,7 +45,7 @@ Stopping the server stops accepting requests, cancels in-flight tool calls, deni
 
 Changing the port restarts the listener and drops active MCP sessions. Rotating the token replaces its vault value, updates the in-memory verifier, drops every MCP session and Agent Session, and keeps the listener bound. Both actions are explicit Settings actions that state their effect before they run.
 
-The server accepts at most eight MCP sessions at once. A ninth connection receives a structured error. A session is idle when it has no in-flight tool call and no recent Result activity for 30 minutes; an idle sweep runs every 60 seconds, closes idle sessions, and closes Results older than their TTL.
+The server accepts at most eight MCP sessions at once. A ninth connection receives a structured error. Only session identifiers issued by the capped session manager select a managed MCP session; unregistered identifiers share the stateless context and its tab budget. A session is idle when it has no in-flight tool call and no recent Result activity for 30 minutes; an idle sweep runs every 60 seconds, closes idle sessions, and closes Results older than their TTL.
 
 ### Endpoint security
 
@@ -115,10 +115,10 @@ Safety flags are tighten-only for Agents:
 - a profile's `idle_tx_timeout_min` can only decrease;
 - a profile's `commit_mode` can only become stricter, from `auto` to `smart` to `manual`;
 - a `tighten_only` setting that is currently on can be neither turned off nor reset;
-- a Connection can move only to a profile at least as strict on read-only, write confirmation, destructive confirmation, idle transaction timeout and commit mode;
-- driver fields that weaken transport security can only be tightened. Field keys containing `tls_verify`, `verify_cert`, `verify_server`, `check_hostname`, `host_key`, `insecure`, `strict_host` or `validate` are treated this way when their current value is a safe one; removing one of these values is rejected.
+- a Connection can move only to a profile at least as strict on read-only, write confirmation, destructive confirmation, idle transaction timeout and commit mode; clearing the profile selects Development and passes the same comparison;
+- driver fields that weaken transport security can only be tightened. The SSL mode field follows the Driver's ordered modes: PostgreSQL `disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full`, and MySQL `disabled`, `preferred`, `required`, `verify_ca`, `verify_identity`. An existing Connection with an omitted field uses its manifest default for the comparison. Field keys containing `tls_verify`, `verify_cert`, `verify_server`, `check_hostname`, `host_key`, `insecure`, `strict_host` or `validate` are treated this way when their current value is a safe one; removing one of these values is rejected.
 
-A rejected relaxation returns `invalid` with a message naming the flag.
+An SSL mode change accepts the current protection level or a stronger one; removing the field returns `invalid`. A rejected relaxation returns `invalid` with a message naming the flag.
 
 A configuration write or delete reaches an existing Connection when that Connection is exposed, or when the same MCP session created it. Any other id answers `not_exposed`, the same answer an unknown id receives. A setting written at the Connection level follows the same rule. The exception for created Connections lets an Agent finish the Connection it just made, which starts at `None`, by writing its secrets and correcting its fields.
 
@@ -172,10 +172,11 @@ MongoDB and Elasticsearch use the engine's document execution path. Redis reject
 Limits:
 
 - the call waits 30 seconds by default; `timeout_s` accepts 1 to 120 seconds;
-- a page holds at most `max_rows` rows or documents, 200 by default and 1000 at most, and at most 256 KiB of encoded data;
+- a page holds at most `max_rows` rows or documents, 200 by default and 1000 at most, and at most 256 KiB of encoded data, including the first item;
 - reaching either limit sets `truncated` and leaves the `query_id` pageable;
 - a SQL or document query still running at the deadline returns `status: "running"` with the rows fetched so far and a `query_id`;
 - a Redis reply is available immediately and has no pages; a timed-out Redis command returns `running` without an id, and the skills tell the Agent to leave it rather than resubmit it;
+- an Agent reads, refreshes, cancels and closes retained Results owned by its MCP session; another session receives the same response as for an unknown Result;
 - Results stay available for five minutes after the last access, a background sweep closes expired ones, and `close_result` or the end of the MCP session closes them immediately.
 
 The result envelope is a tagged union:

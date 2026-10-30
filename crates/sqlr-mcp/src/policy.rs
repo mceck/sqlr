@@ -256,12 +256,12 @@ pub fn transport_security_ok(key: &str, old: Option<&str>, new: &str) -> ToolRes
     if key.eq_ignore_ascii_case("ssl_mode") {
         // PostgreSQL and MySQL order their TLS modes from disabled to certificate checked.
         let rank = |v: &str| match v.trim().to_ascii_lowercase().as_str() {
-            "disable" => 0,
+            "disable" | "disabled" => 0,
             "allow" => 1,
-            "prefer" => 2,
-            "require" => 3,
+            "prefer" | "preferred" => 2,
+            "require" | "required" => 3,
             "verify-ca" | "verify_ca" => 4,
-            "verify-full" | "verify_full" => 5,
+            "verify-full" | "verify_full" | "verify_identity" => 5,
             _ => 0,
         };
         let weakens = old.is_some_and(|old| rank(old) > rank(new));
@@ -362,6 +362,31 @@ mod tests {
             assert!(
                 parse_setting_value("c", SettingKind::Color, &bad).is_err(),
                 "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn mysql_tls_modes_only_allow_tightening() {
+        for (old, new) in [
+            ("verify_identity", "disabled"),
+            ("required", "preferred"),
+            ("required", "disabled"),
+            ("preferred", "disabled"),
+        ] {
+            assert!(
+                transport_security_ok("ssl_mode", Some(old), new).is_err(),
+                "{old} -> {new}"
+            );
+        }
+        for (old, new) in [
+            ("disabled", "preferred"),
+            ("preferred", "required"),
+            ("verify_ca", "verify_identity"),
+        ] {
+            assert!(
+                transport_security_ok("ssl_mode", Some(old), new).is_ok(),
+                "{old} -> {new}"
             );
         }
     }
