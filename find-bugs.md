@@ -1,27 +1,32 @@
 # Bug hunt
 
-## Sections:
-[x] sqlr-core: values, encoding and documents (`value`, `encode`, `read`, `rows`, `chunk`, `doc*`, `formats`)
-[x] sqlr-core: SQL and text utilities (`classify`, `syntax`, `format_sql`, `generate`, `schema_change`, `compare`, `datagen`, `transfer`, `url`, `wire`, `es_request`, `mongo_shell`, `er`)
-[x] sqlr-store: persistence and secrets (connections, vault, settings, history, snippets, keymap, recents, profiles, layered)
-[x] sqlr-engine: sessions, transactions and results (`engine`, `session`, `tx`, `script`, `apply`, `result`, `result_memory`, `result_spill`, `job`)
-[x] sqlr-engine: transfer and imports (`transfer/*`)
-[x] sqlr-sidecar: protocol, client and process
-[x] sqlr-registry: driver install, index and verification
-[x] sqlr-mcp: server, policy, tokens and results
-[x] sqlr-terminal: PTY, screen, input and tabs
-[x] drivers: PostgreSQL
-[x] drivers: MySQL / MariaDB
-[x] drivers: SQLite
-[x] drivers: Redis
-[x] drivers: SQL Server / Oracle
-[x] drivers: Elasticsearch / Snowflake / ClickHouse / JDBC
-[x] sidecar drivers: MongoDB / DuckDB / HANA
-[x] sqlr-app: application logic (workers, actions, messages, cli, tabs, pending)
-[x] sqlr-ui: grid and editor
-[x] sqlr-ui: forms, trees, dialogs and keymap
+Cycle 1 completed on 2026-10-30: all 19 sections checked. The full workspace suite
+(container profile, `make test`) ran 2487 tests: 2487 passed, 22 skipped, 1 flaky
+(`sqlr-app::smoke history_context_menu_saves_the_query_as_a_snippet` timed out on the
+first try and passed on retry; worth a deterministic look in this cycle).
 
-## Findings:
+## Cycle 2 sections:
+[ ] sqlr-core: values, encoding and documents (`value`, `encode`, `read`, `rows`, `chunk`, `doc*`, `formats`)
+[ ] sqlr-core: SQL and text utilities (`classify`, `syntax`, `format_sql`, `generate`, `schema_change`, `compare`, `datagen`, `transfer`, `url`, `wire`, `es_request`, `mongo_shell`, `er`)
+[ ] sqlr-store: persistence and secrets (connections, vault, settings, history, snippets, keymap, recents, profiles, layered)
+[ ] sqlr-engine: sessions, transactions and results (`engine`, `session`, `tx`, `script`, `apply`, `result`, `result_memory`, `result_spill`, `job`)
+[ ] sqlr-engine: transfer and imports (`transfer/*`)
+[ ] sqlr-sidecar: protocol, client and process
+[ ] sqlr-registry: driver install, index and verification
+[ ] sqlr-mcp: server, policy, tokens and results
+[ ] sqlr-terminal: PTY, screen, input and tabs
+[ ] drivers: PostgreSQL
+[ ] drivers: MySQL / MariaDB
+[ ] drivers: SQLite
+[ ] drivers: Redis
+[ ] drivers: SQL Server / Oracle
+[ ] drivers: Elasticsearch / Snowflake / ClickHouse / JDBC
+[ ] sidecar drivers: MongoDB / DuckDB / HANA
+[ ] sqlr-app: application logic (workers, actions, messages, cli, tabs, pending)
+[ ] sqlr-ui: grid and editor
+[ ] sqlr-ui: forms, trees, dialogs and keymap
+
+## Cycle 1 findings:
 # sqlr-core: values, encoding and documents
 Fixed:
 - A UTF-8 BOM split across `BufRead` buffer reads was not skipped (a one-byte buffer left `\u{feff}` in the first header or made JSON fail). The BOM is now gathered across reads and non-BOM bytes are chained back into the reader.
