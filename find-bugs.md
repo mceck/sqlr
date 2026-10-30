@@ -16,7 +16,7 @@ diagnostics checkbox toggles through accesskit instead of a pointer click after 
 [ ] sqlr-store: persistence and secrets (connections, vault, settings, history, snippets, keymap, recents, profiles, layered)
 [ ] sqlr-engine: sessions, transactions and results (`engine`, `session`, `tx`, `script`, `apply`, `result`, `result_memory`, `result_spill`, `job`)
 [ ] sqlr-engine: transfer and imports (`transfer/*`)
-[ ] sqlr-sidecar: protocol, client and process
+[x] sqlr-sidecar: protocol, client and process
 [ ] sqlr-registry: driver install, index and verification
 [ ] sqlr-mcp: server, policy, tokens and results
 [ ] sqlr-terminal: PTY, screen, input and tabs
@@ -310,3 +310,9 @@ Fixed:
 Tests added in `tests/engine.rs` with a `block_after_chunks`/`fetch_release` hook in `sqlr-testkit`; 40 engine integration tests and clippy pass.
 
 ## Cycle 3 findings:
+
+# sqlr-sidecar: protocol, client and process
+Fixed:
+- A nonconforming server that answered `FetchDone { exhausted: false }` (or `DocFetchDone`) without sending a chunk made the client return `Ok(None)`, which the engine reports as an exhausted result. It is now a protocol error that also stops the process, so the missing rows are not silently hidden.
+
+Tests added in `client.rs`; 5 lib + 9 server + 22 sidecar tests and clippy pass.

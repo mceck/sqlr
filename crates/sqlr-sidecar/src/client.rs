@@ -28,6 +28,37 @@ fn unexpected(response: &Response) -> DriverError {
     protocol_error(format!("unexpected answer from the driver: {response:?}"))
 }
 
+/// The chunk a `FetchDone`/`DocFetchDone` leaves for the caller. A conforming driver sends
+/// a chunk whenever it does not claim exhaustion; a claim of more rows with no chunk would
+/// otherwise look like the end of the result.
+fn fetched_rows(
+    exhausted: bool,
+    chunk: Option<ResultChunk>,
+    driver: &str,
+) -> Result<Option<ResultChunk>, DriverError> {
+    match chunk {
+        Some(chunk) => Ok(Some(chunk)),
+        None if exhausted => Ok(None),
+        None => Err(protocol_error(format!(
+            "driver {driver} finished a fetch with no rows but claims more"
+        ))),
+    }
+}
+
+fn fetched_docs(
+    exhausted: bool,
+    chunk: Option<DocChunk>,
+    driver: &str,
+) -> Result<Option<DocChunk>, DriverError> {
+    match chunk {
+        Some(chunk) => Ok(Some(chunk)),
+        None if exhausted => Ok(None),
+        None => Err(protocol_error(format!(
+            "driver {driver} finished a document fetch with no documents but claims more"
+        ))),
+    }
+}
+
 /// A driver backed by a sidecar process, spawned on the first connection.
 pub struct SidecarDriver {
     spec: SidecarSpec,
@@ -540,7 +571,13 @@ impl RowStream for SidecarStream {
                 Event::Control(response) => match *response {
                     Response::FetchDone { exhausted } => {
                         self.exhausted = exhausted;
-                        return Ok(self.pop_ready(max));
+                        match fetched_rows(exhausted, self.pop_ready(max), self.process.id()) {
+                            Ok(chunk) => return Ok(chunk),
+                            Err(e) => {
+                                self.process.kill(e.clone());
+                                return Err(e);
+                            }
+                        }
                     }
                     Response::Error(e) => return Err(e),
                     other => return Err(unexpected(&other)),
@@ -793,7 +830,17 @@ impl DocStream for SidecarDocStream {
                     Response::DocFetchDone { exhausted, notices } => {
                         self.exhausted = exhausted;
                         self.notices.extend(notices);
-                        return Ok(self.pop_ready(max.max(1)));
+                        match fetched_docs(
+                            exhausted,
+                            self.pop_ready(max.max(1)),
+                            self.process.id(),
+                        ) {
+                            Ok(chunk) => return Ok(chunk),
+                            Err(e) => {
+                                self.process.kill(e.clone());
+                                return Err(e);
+                            }
+                        }
                     }
                     Response::Error(e) => {
                         self.ready.clear();
@@ -852,6 +899,14 @@ impl Drop for SidecarDocStream {
 mod tests {
     use super::*;
     use sqlr_core::{ColumnKind, DisplayHint};
+
+    #[test]
+    fn an_empty_non_exhausted_fetch_is_a_protocol_error() {
+        assert!(fetched_rows(false, None, "x").is_err());
+        assert!(fetched_rows(true, None, "x").unwrap().is_none());
+        assert!(fetched_docs(false, None, "x").is_err());
+        assert!(fetched_docs(true, None, "x").unwrap().is_none());
+    }
 
     #[test]
     fn a_buffered_chunk_is_split_to_the_requested_max() {
