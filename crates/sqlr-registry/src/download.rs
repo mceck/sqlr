@@ -1,5 +1,6 @@
 //! Fetching bytes and files over https, http (tests) and `file://` (mirrors, tests).
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -15,8 +16,9 @@ pub(crate) const MAX_ARTIFACT_BYTES: u64 = 1024 * 1024 * 1024;
 #[derive(Clone)]
 pub struct Fetcher {
     client: reqwest::Client,
-    /// Set by the redirect policy when it refused a hop to another host.
-    refused: Arc<parking_lot::Mutex<Option<String>>>,
+    /// Set by the redirect policy when it refused a hop to another host, keyed by the
+    /// request's original URL so concurrent downloads do not report each other's refusal.
+    refused: Arc<parking_lot::Mutex<HashMap<String, String>>>,
 }
 
 fn tls_config() -> rustls::ClientConfig {
@@ -37,7 +39,7 @@ impl Fetcher {
         // reqwest needs a process-wide provider even for plain HTTP; another crate may have
         // installed it already.
         let _ = rustls::crypto::ring::default_provider().install_default();
-        let refused = Arc::new(parking_lot::Mutex::new(None));
+        let refused = Arc::new(parking_lot::Mutex::new(HashMap::new()));
         let seen = refused.clone();
         // A download may follow redirects inside its own host only (and from GitHub to its
         // release file storage): a registry that bounces elsewhere is refused, not trusted.
@@ -45,10 +47,18 @@ impl Fetcher {
             let from = attempt.previous().first().cloned();
             if attempt.previous().len() > 5 {
                 attempt.error("too many redirects")
-            } else if from.is_some_and(|from| redirect_allowed(&from, attempt.url())) {
+            } else if from
+                .as_ref()
+                .is_some_and(|from| redirect_allowed(from, attempt.url()))
+            {
                 attempt.follow()
             } else {
-                *seen.lock() = attempt.url().host_str().map(str::to_string);
+                if let Some(from) = from {
+                    seen.lock().insert(
+                        from.to_string(),
+                        attempt.url().host_str().unwrap_or("").to_string(),
+                    );
+                }
                 attempt.error("redirect to another host")
             }
         });
@@ -63,7 +73,7 @@ impl Fetcher {
     }
 
     fn error(&self, url: &str, e: impl std::fmt::Display) -> RegistryError {
-        if let Some(to) = self.refused.lock().take() {
+        if let Some(to) = self.refused.lock().remove(url) {
             return RegistryError::RedirectToOtherHost {
                 url: url.to_string(),
                 to,
@@ -219,7 +229,12 @@ impl Default for Fetcher {
 /// Whether a download that started at `from` may continue at `to`: the same host, or a
 /// GitHub release file (github.com) served by GitHub's file storage over https.
 fn redirect_allowed(from: &reqwest::Url, to: &reqwest::Url) -> bool {
-    if from.host_str() == to.host_str() {
+    // Same host, scheme and port: never allow a redirect to downgrade HTTPS to HTTP or to
+    // move the download to another service on the same host.
+    if from.scheme() == to.scheme()
+        && from.host_str() == to.host_str()
+        && from.port_or_known_default() == to.port_or_known_default()
+    {
         return true;
     }
     from.scheme() == "https"
@@ -246,6 +261,12 @@ mod tests {
     fn redirects_stay_on_their_host_or_github_release_storage() {
         assert!(allowed("http://127.0.0.1:1/a", "http://127.0.0.1:1/b"));
         assert!(!allowed("http://127.0.0.1:1/a", "http://localhost:1/b"));
+        // Never downgrade HTTPS or move to another port on the same host.
+        assert!(!allowed("https://example.com/a", "http://example.com/b"));
+        assert!(!allowed(
+            "https://example.com/a",
+            "https://example.com:8443/b"
+        ));
         let release = "https://github.com/mceck/sqlr/releases/download/v1.0.0/x.tar.gz";
         assert!(allowed(
             release,
@@ -261,6 +282,23 @@ mod tests {
         assert!(!allowed(
             "https://example.com/x",
             "https://objects.githubusercontent.com/x"
+        ));
+    }
+
+    #[test]
+    fn a_refused_redirect_is_attributed_to_its_own_url() {
+        let fetcher = Fetcher::new();
+        fetcher
+            .refused
+            .lock()
+            .insert("https://a.example/x".into(), "evil.example".into());
+        assert!(matches!(
+            fetcher.error("https://b.example/x", "500"),
+            RegistryError::Fetch { .. }
+        ));
+        assert!(matches!(
+            fetcher.error("https://a.example/x", "500"),
+            RegistryError::RedirectToOtherHost { .. }
         ));
     }
 }

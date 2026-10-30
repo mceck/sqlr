@@ -353,7 +353,9 @@ impl Registry {
             .filter(|e| e.path().join("driver.toml").is_file())
             .filter_map(|e| semver::Version::parse(&e.file_name().into_string().ok()?).ok())
             .collect();
-        versions.sort();
+        // `semver::Version` ignores build metadata, so break ties by the full spelling to
+        // keep the active version deterministic.
+        versions.sort_by(|a, b| a.cmp(b).then_with(|| a.to_string().cmp(&b.to_string())));
         let Some(newest) = versions.last().map(ToString::to_string) else {
             return Ok(None);
         };
@@ -381,7 +383,10 @@ impl Registry {
 
     /// Makes `version` the one in use (rollback is activating an older one).
     pub fn activate(&self, id: &str, version: &str) -> Result<(), RegistryError> {
-        if !valid_id(id) || !self.version_dir(id, version).join("driver.toml").is_file() {
+        if !valid_id(id)
+            || semver::Version::parse(version).is_err()
+            || !self.version_dir(id, version).join("driver.toml").is_file()
+        {
             return Err(RegistryError::NotInstalled(format!("{id} {version}")));
         }
         self.write_active(id, version)
@@ -404,10 +409,13 @@ impl Registry {
         std::fs::remove_dir_all(dir.join(version))?;
         match self.installed_one(id) {
             Ok(Some(rest)) => self.write_active(id, &rest.active),
-            _ => {
+            // Only a directory with no readable version left is removed wholesale. An
+            // unreadable remaining version must not take the other versions with it.
+            Ok(None) => {
                 std::fs::remove_dir_all(dir)?;
                 Ok(())
             }
+            Err(e) => Err(e),
         }
     }
 }

@@ -439,6 +439,27 @@ async fn rollback_by_activate() {
         Err(RegistryError::NotInstalled(_))
     ));
     assert!(registry.activate("../x", "1.0.0").is_err());
+    // A version is a bare semver, not a path: `./1.0.0` must not activate anything.
+    assert!(registry.activate("echo", "./1.0.0").is_err());
+    assert_eq!(registry.installed().unwrap()[0].active, "1.0.0");
+}
+
+#[tokio::test]
+async fn removing_one_version_keeps_an_unreadable_remaining_version() {
+    let world = World::new().await;
+    for version in ["1.0.0", "1.1.0"] {
+        let registry = world.registry_for(version);
+        let entry = registry.fetch_index().await.unwrap().remove(0);
+        registry.install(&entry, no_progress).await.unwrap();
+    }
+    let registry = world.registry();
+    let remaining = registry.drivers_dir().join("echo/1.1.0");
+    std::fs::remove_file(remaining.join("manifest.json")).unwrap();
+    assert!(registry.remove("echo", Some("1.0.0")).is_err());
+    assert!(
+        remaining.is_dir(),
+        "an unreadable remaining version took the whole driver directory with it"
+    );
 }
 
 #[tokio::test]

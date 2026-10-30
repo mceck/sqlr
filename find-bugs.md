@@ -7,7 +7,7 @@
 [x] sqlr-engine: sessions, transactions and results (`engine`, `session`, `tx`, `script`, `apply`, `result`, `result_memory`, `result_spill`, `job`)
 [x] sqlr-engine: transfer and imports (`transfer/*`)
 [x] sqlr-sidecar: protocol, client and process
-[] sqlr-registry: driver install, index and verification
+[x] sqlr-registry: driver install, index and verification
 [] sqlr-mcp: server, policy, tokens and results
 [] sqlr-terminal: PTY, screen, input and tabs
 [] drivers: PostgreSQL
@@ -96,7 +96,14 @@ Open for the next cycle: `Shutdown` does not abort an in-flight `Execute`/`Fetch
 Tests added in `crates/sqlr-sidecar/tests/server.rs` and `tests/sidecar.rs`, plus the echo test driver's slow-connect/slow-browse hooks; the sidecar test suites and clippy pass.
 
 # sqlr-registry: driver install, index and verification
-[to fill]
+Fixed:
+- Removing one version could delete the whole driver: when the remaining active version had a missing/unreadable `manifest.json` or `driver.toml`, `installed_one` returned `Err` and `remove` treated it like "nothing left", running `remove_dir_all` on the driver directory. Only `Ok(None)` now removes the whole directory; errors propagate.
+- Redirects were allowed to any URL on the same host, so an HTTPS index or artifact could be downgraded to HTTP or moved to another port on the same host. Same-host redirects now require the same scheme and effective port.
+- `activate` checked `version_dir(id, version)/driver.toml` with a raw string, so `./1.0.0` or `../…` could pass the check and then be ignored by `installed_one` (silently activating the newest). The version must now parse as a bare semver.
+- `Fetcher` stored a refused redirect in one shared slot, so concurrent downloads could report another request's redirect refusal for an unrelated error. Refusals are keyed by the request's original URL.
+- Versions that differ only in build metadata (`1.0.0+b1`, `1.0.0+b2`) sorted equal and the active fallback depended on directory order. Ties are broken by the full version string.
+
+Tests added in `crates/sqlr-registry/tests/registry.rs` and `src/download.rs`; the registry test suites and clippy pass.
 
 # sqlr-mcp: server, policy, tokens and results
 [to fill]
