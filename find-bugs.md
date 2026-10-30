@@ -11,25 +11,25 @@ deterministic (the database-drop retry now waits for the second `DROP DATABASE`,
 diagnostics checkbox toggles through accesskit instead of a pointer click after scrolling).
 
 ## Cycle 3 sections:
-[ ] sqlr-core: values, encoding and documents (`value`, `encode`, `read`, `rows`, `chunk`, `doc*`, `formats`)
-[ ] sqlr-core: SQL and text utilities (`classify`, `syntax`, `format_sql`, `generate`, `schema_change`, `compare`, `datagen`, `transfer`, `url`, `wire`, `es_request`, `mongo_shell`, `er`)
-[ ] sqlr-store: persistence and secrets (connections, vault, settings, history, snippets, keymap, recents, profiles, layered)
-[ ] sqlr-engine: sessions, transactions and results (`engine`, `session`, `tx`, `script`, `apply`, `result`, `result_memory`, `result_spill`, `job`)
-[ ] sqlr-engine: transfer and imports (`transfer/*`)
+[x] sqlr-core: values, encoding and documents (`value`, `encode`, `read`, `rows`, `chunk`, `doc*`, `formats`)
+[x] sqlr-core: SQL and text utilities (`classify`, `syntax`, `format_sql`, `generate`, `schema_change`, `compare`, `datagen`, `transfer`, `url`, `wire`, `es_request`, `mongo_shell`, `er`)
+[x] sqlr-store: persistence and secrets (connections, vault, settings, history, snippets, keymap, recents, profiles, layered)
+[x] sqlr-engine: sessions, transactions and results (`engine`, `session`, `tx`, `script`, `apply`, `result`, `result_memory`, `result_spill`, `job`)
+[x] sqlr-engine: transfer and imports (`transfer/*`)
 [x] sqlr-sidecar: protocol, client and process
-[ ] sqlr-registry: driver install, index and verification
-[ ] sqlr-mcp: server, policy, tokens and results
-[ ] sqlr-terminal: PTY, screen, input and tabs
-[ ] drivers: PostgreSQL
-[ ] drivers: MySQL / MariaDB
-[ ] drivers: SQLite
-[ ] drivers: Redis
-[ ] drivers: SQL Server / Oracle
-[ ] drivers: Elasticsearch / Snowflake / ClickHouse / JDBC
-[ ] sidecar drivers: MongoDB / DuckDB / HANA
+[x] sqlr-registry: driver install, index and verification
+[x] sqlr-mcp: server, policy, tokens and results
+[x] sqlr-terminal: PTY, screen, input and tabs
+[x] drivers: PostgreSQL
+[x] drivers: MySQL / MariaDB
+[x] drivers: SQLite
+[x] drivers: Redis
+[x] drivers: SQL Server / Oracle
+[x] drivers: Elasticsearch / Snowflake / ClickHouse / JDBC
+[x] sidecar drivers: MongoDB / DuckDB / HANA
 [x] sqlr-app: application logic (workers, actions, messages, cli, tabs, pending)
-[ ] sqlr-ui: grid and editor
-[ ] sqlr-ui: forms, trees, dialogs and keymap
+[x] sqlr-ui: grid and editor
+[x] sqlr-ui: forms, trees, dialogs and keymap
 
 ## Cycle 1 findings:
 # sqlr-core: values, encoding and documents
@@ -322,3 +322,54 @@ Fixed:
 - The welcome screen's relative time subtracted `now - used_at_ms` unchecked: a corrupted or extreme `used_at_ms` (`i64::MIN`) panicked in debug builds (and wrapped in release). The difference is now saturating.
 
 Test added in `welcome.rs`; app lib tests and clippy pass.
+
+# sqlr-core: values, encoding and documents
+No new bug found in cycle 3. Re-read `read` (the new headerless-blank rule), `encode`, `formats`, `clipboard`, `chunk`/`spill` and `doc*`; existing tests and clippy pass.
+
+# sqlr-core: SQL and text utilities
+No new bug found in cycle 3. Re-read `classify` (the first-word exemption), `syntax`, `format_sql`, `generate`, `compare` (partition retargeting) and `url`/`wire`; existing tests and clippy pass.
+
+# sqlr-store: persistence and secrets
+No new bug found in cycle 3. Re-read connections/vault/settings/history, the layered store and the client-migration import/export parsers; existing tests and clippy pass.
+
+# sqlr-engine: sessions, transactions and results
+No new bug found in cycle 3. Re-read the supersession path, `tx`, `apply`, `script` and result accounting; the new queued-cancel test and the 40 engine integration tests pass.
+
+# sqlr-engine: transfer and imports
+No new bug found in cycle 3. Re-read `xlsx`, `parquet`, `convert`, `pipeline`, `write_table` and `clipboard`; targeted tests and clippy pass.
+
+# sqlr-registry: driver install, index and verification
+No new bug found in cycle 3. Re-read `verify`, archive extraction limits, index parsing/version order and download redirects; existing tests and clippy pass.
+
+# sqlr-mcp: server, policy, tokens and results
+No new bug found in cycle 3. Re-read result paging/ownership, non-finite doubles, colour-setting validation and the tool registry; 26 lib + 29 protocol tests and clippy pass.
+
+# sqlr-terminal: PTY, screen, input and tabs
+No new bug found in cycle 3. Re-read screen snapshots/selection, kitty input and mouse encoding, session shutdown and the clear path; 48 terminal tests and clippy pass.
+
+# drivers: PostgreSQL
+No new bug found in cycle 3. Re-read snapshot/partition retargeting, the compare skip and DDL generation; 6 container snapshot tests and clippy pass.
+
+# drivers: MySQL / MariaDB
+No new bug found in cycle 3. Re-read both protocol decoders, streaming cleanup and DDL generation; 31 unit tests and clippy pass.
+
+# drivers: SQLite
+No new bug found in cycle 3. Re-read `browse` shadow filtering, AUTOINCREMENT DDL validation, snapshots and rebuilds; 20 unit + 60 integration tests and clippy pass.
+
+# drivers: Redis
+No new bug found in cycle 3. Re-read reply conversion, stream/scan parsing, command classification and console cleanup; 21 unit tests and clippy pass.
+
+# drivers: SQL Server / Oracle
+No new bug found in cycle 3. Re-read SQL Server streaming/MERGE handling and Oracle LOB/timestamp decoding; unit tests and clippy pass.
+
+# drivers: Elasticsearch / Snowflake / ClickHouse / JDBC
+No new bug found in cycle 3. Re-read Elasticsearch write responses, Snowflake partition/data decoding, ClickHouse streaming and JDBC Java discovery; unit tests and clippy pass.
+
+# sidecar drivers: MongoDB / DuckDB / HANA
+No new bug found in cycle 3. Re-read DuckDB fixed-size decoders, HANA catalog/error mapping and Mongo query limits; unit/native tests and clippy pass.
+
+# sqlr-ui: grid and editor
+No new bug found in cycle 3. Re-read selection subtraction, edit history/duplicate/set-NULL, hex parsing, diff rows and the JSON view; 167 unit + targeted integration tests and clippy pass.
+
+# sqlr-ui: forms, trees, dialogs and keymap
+No new bug found in cycle 3. Re-read tree folder state, plan reveal, lock cycles, XML/JSON views and the keymap editor; 166 unit + targeted integration tests and clippy pass.
