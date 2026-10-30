@@ -7,7 +7,7 @@ first try and passed on retry; worth a deterministic look in this cycle).
 
 ## Cycle 2 sections:
 [x] sqlr-core: values, encoding and documents (`value`, `encode`, `read`, `rows`, `chunk`, `doc*`, `formats`)
-[ ] sqlr-core: SQL and text utilities (`classify`, `syntax`, `format_sql`, `generate`, `schema_change`, `compare`, `datagen`, `transfer`, `url`, `wire`, `es_request`, `mongo_shell`, `er`)
+[x] sqlr-core: SQL and text utilities (`classify`, `syntax`, `format_sql`, `generate`, `schema_change`, `compare`, `datagen`, `transfer`, `url`, `wire`, `es_request`, `mongo_shell`, `er`)
 [ ] sqlr-store: persistence and secrets (connections, vault, settings, history, snippets, keymap, recents, profiles, layered)
 [ ] sqlr-engine: sessions, transactions and results (`engine`, `session`, `tx`, `script`, `apply`, `result`, `result_memory`, `result_spill`, `job`)
 [ ] sqlr-engine: transfer and imports (`transfer/*`)
@@ -248,3 +248,9 @@ Fixed:
 - A table whose AUTOINCREMENT primary key was changed to a non-`INTEGER` type generated `BIGINT PRIMARY KEY AUTOINCREMENT`, which SQLite rejects on apply, instead of the generator's clear "needs a one-column INTEGER primary key" error. The type is now checked.
 
 Tests added in `browse.rs` and `ddl_gen.rs`; 20 unit + 60 integration tests and clippy pass.
+
+# sqlr-core: SQL and text utilities
+Fixed:
+- `classify_script` flagged a read-only table-valued `PRAGMA` (`PRAGMA table_info(t)`, `PRAGMA main.table_list(t)`) as `Destructive("PRAGMA in a batch of statements")` because the batch scan re-examined the first statement's own verb. The first word is now exempt; a `PRAGMA` hidden after another statement (or inside `BEGIN … END`) is still caught.
+
+Test added in `classify.rs`; 249 sqlr-core lib tests and clippy pass.

@@ -228,6 +228,9 @@ impl SqlSyntax {
         self.lex(sql, LexState::Normal, &mut tokens);
         let mut depth = 0u32;
         let mut seen_word = false;
+        // The first statement's own verb was already classified by the caller; only a
+        // write hidden after it (or inside a `BEGIN … END` block) is news here.
+        let mut first_word = true;
         let mut last_words: Vec<String> = Vec::new();
         for (i, t) in tokens.iter().enumerate() {
             let text = &sql[t.start..t.end];
@@ -254,6 +257,7 @@ impl SqlSyntax {
                 )
             {
                 let upper = text.to_ascii_uppercase();
+                let is_first = std::mem::take(&mut first_word);
                 // `WITH` needs a statement boundary; when it follows another word it
                 // starts a second statement whose CTE may modify data. `WITH (NOLOCK)` is
                 // a T-SQL table hint, not a CTE: its next token is `(`.
@@ -279,18 +283,23 @@ impl SqlSyntax {
                 {
                     // no write; fall through to remember this word
                 } else {
-                    match upper.as_str() {
-                        "DROP" | "TRUNCATE" | "DELETE" | "KILL" | "SHUTDOWN" | "REVOKE"
-                        | "DENY" | "WRITETEXT" | "UPDATETEXT" | "INSERT" | "UPDATE" | "MERGE"
-                        | "REPLACE" | "UPSERT" | "CALL" | "EXEC" | "EXECUTE" | "LOAD" | "SET"
-                        | "USE" | "PRAGMA" | "VACUUM" | "REINDEX" | "ANALYZE" | "CHECKPOINT"
-                        | "RECONFIGURE" | "BACKUP" | "RESTORE" | "DBCC" | "BULK" | "ATTACH"
-                        | "DETACH" | "CREATE" | "ALTER" | "COMMENT" | "GRANT" | "RENAME" => {
-                            // A batch hides the statement from the per-statement
-                            // confirmation; make it destructive so every profile asks.
-                            return Some(Destructive(format!("{upper} in a batch of statements")));
+                    if !is_first {
+                        match upper.as_str() {
+                            "DROP" | "TRUNCATE" | "DELETE" | "KILL" | "SHUTDOWN" | "REVOKE"
+                            | "DENY" | "WRITETEXT" | "UPDATETEXT" | "INSERT" | "UPDATE"
+                            | "MERGE" | "REPLACE" | "UPSERT" | "CALL" | "EXEC" | "EXECUTE"
+                            | "LOAD" | "SET" | "USE" | "PRAGMA" | "VACUUM" | "REINDEX"
+                            | "ANALYZE" | "CHECKPOINT" | "RECONFIGURE" | "BACKUP" | "RESTORE"
+                            | "DBCC" | "BULK" | "ATTACH" | "DETACH" | "CREATE" | "ALTER"
+                            | "COMMENT" | "GRANT" | "RENAME" => {
+                                // A batch hides the statement from the per-statement
+                                // confirmation; make it destructive so every profile asks.
+                                return Some(Destructive(format!(
+                                    "{upper} in a batch of statements"
+                                )));
+                            }
+                            _ => {}
                         }
-                        _ => {}
                     }
                 }
                 seen_word = true;
@@ -760,6 +769,8 @@ mod tests {
             "SELECT 1; WITH x AS (SELECT 1) SELECT * FROM x",
             "SELECT 1\nBEGIN SELECT 2 END",
             "COPY t TO STDOUT",
+            "PRAGMA table_info(t)",
+            "PRAGMA main.table_list(t)",
         ] {
             assert_eq!(syntax.classify_script(sql), Read, "{sql}");
         }
