@@ -1641,19 +1641,7 @@ async fn write_connection(
     if let Some(color) = payload.get("color") {
         config.color = match color {
             Value::Null => None,
-            value => {
-                let array = value
-                    .as_array()
-                    .ok_or_else(|| ToolError::invalid("color must be [r, g, b] or null"))?;
-                let bytes: Vec<u8> = array
-                    .iter()
-                    .filter_map(|v| v.as_u64().and_then(|n| u8::try_from(n).ok()))
-                    .collect();
-                Some(
-                    <[u8; 3]>::try_from(bytes)
-                        .map_err(|_| ToolError::invalid("color must be [r, g, b]"))?,
-                )
-            }
+            value => Some(policy::color_channels(value)?),
         };
     }
     if let Some(profile_id) = payload.get("profile") {
@@ -1894,19 +1882,7 @@ async fn write_profile(state: &Arc<ServerState>, payload: &Args) -> ToolResult<V
     if let Some(color) = payload.get("color") {
         profile.color = match color {
             Value::Null => None,
-            value => {
-                let array = value
-                    .as_array()
-                    .ok_or_else(|| ToolError::invalid("color must be [r, g, b] or null"))?;
-                let bytes: Vec<u8> = array
-                    .iter()
-                    .filter_map(|v| v.as_u64().and_then(|n| u8::try_from(n).ok()))
-                    .collect();
-                Some(
-                    <[u8; 3]>::try_from(bytes)
-                        .map_err(|_| ToolError::invalid("color must be [r, g, b]"))?,
-                )
-            }
+            value => Some(policy::color_channels(value)?),
         };
     }
     if let Some(mode) = payload.opt_str("commit_mode") {
@@ -2167,18 +2143,9 @@ fn parse_setting_json(id: &str, kind: &Value, value: &Value) -> ToolResult<Setti
                 )))
             }
         }
-        "color" => {
-            let array = value
-                .as_array()
-                .ok_or_else(|| ToolError::invalid(format!("{id} expects [r, g, b]")))?;
-            let bytes: Vec<u8> = array
-                .iter()
-                .filter_map(|v| v.as_u64().and_then(|n| u8::try_from(n).ok()))
-                .collect();
-            <[u8; 3]>::try_from(bytes)
-                .map(SettingValue::Color)
-                .map_err(|_| ToolError::invalid(format!("{id} expects [r, g, b]")))
-        }
+        "color" => policy::color_channels(value)
+            .map(SettingValue::Color)
+            .map_err(|_| ToolError::invalid(format!("{id} expects [r, g, b]"))),
         other => Err(ToolError::internal(format!(
             "setting kind \"{other}\" is not writable through MCP"
         ))),

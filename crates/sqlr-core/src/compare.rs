@@ -527,70 +527,21 @@ pub fn compare(
     let source_names = relation_names(source);
     let target_names = relation_names(target);
     let ddl = |def: &ObjectDef| generator.create_ddl(def).ok();
-    // A partition child of a table that is itself being created is created by the
-    // parent's `CREATE TABLE … PARTITION OF`; creating it again would fail.
-    let partition_children_of_added: HashSet<TableRef> = moved
-        .iter()
-        .filter(|(key, _)| !existing.contains_key(*key))
-        .flat_map(|(_, def)| match def {
-            ObjectDef::Table(t) => t
-                .partitions
-                .iter()
-                .map(|p| p.table.clone())
-                .collect::<Vec<_>>(),
-            _ => Vec::new(),
-        })
-        .collect();
     let mut diffs = Vec::new();
     for (key, wanted_def) in &moved {
         let object = wanted_def.object_ref();
         match existing.get(key) {
-            None => {
-                if let ObjectDef::Table(t) = wanted_def
-                    && partition_children_of_added.contains(&t.table)
-                {
-                    continue;
-                }
-                // A partition child that is created by the parent's `PARTITION OF` still
-                // has its own indexes; carry them on the parent's create (as their own
-                // statements on the child) instead of losing them with the child object.
-                let mut create_def = wanted_def.clone();
-                if let ObjectDef::Table(t) = &mut create_def {
-                    let children: Vec<TableRef> =
-                        t.partitions.iter().map(|p| p.table.clone()).collect();
-                    for child in children {
-                        let Some(child_def) = moved.values().find_map(|o| match o {
-                            ObjectDef::Table(cd) if cd.table == child => Some(cd),
-                            _ => None,
-                        }) else {
-                            continue;
-                        };
-                        for index in &child_def.indexes {
-                            let Ok(ddl) = generator.create_ddl(&ObjectDef::Index {
-                                table: child.clone(),
-                                index: index.clone(),
-                            }) else {
-                                continue;
-                            };
-                            let mut index = index.clone();
-                            index.definition =
-                                Some(ddl.trim().trim_end_matches(';').trim_end().to_string());
-                            t.indexes.push(index);
-                        }
-                    }
-                }
-                diffs.push(ObjectDiff {
-                    object,
-                    kind: DiffKind::Added,
-                    source_ddl: ddl(&create_def),
-                    target_ddl: None,
-                    changes: vec![SchemaChange::Create(create_def.clone())],
-                    destructive: false,
-                    source_def: Some(create_def),
-                    target_def: None,
-                    deps: deps_of(wanted_def, &source_names),
-                });
-            }
+            None => diffs.push(ObjectDiff {
+                object,
+                kind: DiffKind::Added,
+                source_ddl: ddl(wanted_def),
+                target_ddl: None,
+                changes: vec![SchemaChange::Create(wanted_def.clone())],
+                destructive: false,
+                source_def: Some(wanted_def.clone()),
+                target_def: None,
+                deps: deps_of(wanted_def, &source_names),
+            }),
             Some(have) => {
                 let (n_have, n_want) = (normalize(have), normalize(wanted_def));
                 if without_dependents(&n_have) == without_dependents(&n_want) {
@@ -745,7 +696,7 @@ fn dependency_order(items: &[&ObjectDiff]) -> Vec<usize> {
 }
 
 /// The migration script for `diffs` minus the `excluded` objects, in an order that applies:
-/// sequences, tables (without foreign keys), table changes, views by dependency, routines,
+/// sequences, tables (without foreign keys), table changes, partition attachments, views, routines,
 /// triggers, foreign keys, then the drops in reverse dependency order. A header line and a
 /// list of the destructive steps come first. The same diffs give the same text.
 pub fn migration_script(
@@ -787,23 +738,49 @@ pub fn migration_script(
     // New tables without their foreign keys and triggers (those come later).
     let mut late_fks = Vec::new();
     let mut late_triggers = Vec::new();
+    let mut late_partitions = Vec::new();
     for d in of_kind(&[ObjectKind::Table], DiffKind::Added) {
         let Some(ObjectDef::Table(table)) = &d.source_def else {
             continue;
         };
+        let parent = active.iter().find_map(|d| match d.source_def.as_ref() {
+            Some(ObjectDef::Table(parent))
+                if parent.partitions.iter().any(|p| p.table == table.table) =>
+            {
+                Some(parent)
+            }
+            _ => None,
+        });
         let mut bare: TableDef = table.clone();
+        // Create each partition from its own full definition, then attach it once every
+        // table exists. This preserves child constraints, indexes and nested partitions.
+        for partition in std::mem::take(&mut bare.partitions) {
+            if !excluded.contains(&ObjectRef::relation(ObjectKind::Table, &partition.table)) {
+                late_partitions.push(SchemaChange::AttachPartition {
+                    table: table.table.clone(),
+                    partition,
+                });
+            }
+        }
         for c in std::mem::take(&mut bare.constraints) {
             if c.is_foreign_key() {
-                late_fks.push(SchemaChange::AddConstraint {
-                    table: table.table.clone(),
-                    constraint: c,
-                });
+                if parent.is_none_or(|parent| !parent.constraints.contains(&c)) {
+                    late_fks.push(SchemaChange::AddConstraint {
+                        table: table.table.clone(),
+                        constraint: c,
+                    });
+                }
             } else {
                 bare.constraints.push(c);
             }
         }
         for tr in std::mem::take(&mut bare.triggers) {
-            late_triggers.push(SchemaChange::Create(ObjectDef::Trigger(tr)));
+            // PostgreSQL clones a parent's trigger onto its attached partitions.
+            let inherited =
+                parent.is_some_and(|parent| parent.triggers.iter().any(|t| t.name == tr.name));
+            if !inherited {
+                late_triggers.push(SchemaChange::Create(ObjectDef::Trigger(tr)));
+            }
         }
         apply(&[SchemaChange::Create(ObjectDef::Table(bare))]);
     }
@@ -842,6 +819,7 @@ pub fn migration_script(
             }
         }
     };
+    apply(&late_partitions);
     // Views, readers after what they read.
     let mut view_diffs = of_kind(&views, DiffKind::Added);
     view_diffs.extend(of_kind(&views, DiffKind::Changed));

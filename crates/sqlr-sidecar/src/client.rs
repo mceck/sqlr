@@ -830,11 +830,8 @@ impl DocStream for SidecarDocStream {
                     Response::DocFetchDone { exhausted, notices } => {
                         self.exhausted = exhausted;
                         self.notices.extend(notices);
-                        match fetched_docs(
-                            exhausted,
-                            self.pop_ready(max.max(1)),
-                            self.process.id(),
-                        ) {
+                        match fetched_docs(exhausted, self.pop_ready(max.max(1)), self.process.id())
+                        {
                             Ok(chunk) => return Ok(chunk),
                             Err(e) => {
                                 self.process.kill(e.clone());

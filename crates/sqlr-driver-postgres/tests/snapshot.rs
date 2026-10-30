@@ -229,6 +229,39 @@ async fn serial_tables_script_runs_and_converges() {
 }
 
 #[tokio::test]
+async fn partition_migrations_preserve_nested_tables_and_child_definitions() {
+    sqlr_testkit::skip_container_tests!("POSTGRES");
+    let env = Env::new(
+        "CREATE SCHEMA a; CREATE SCHEMA b;
+         CREATE TABLE b.refs (id int PRIMARY KEY);
+         CREATE TABLE b.m (id int NOT NULL, at date NOT NULL, ref_id int REFERENCES b.refs(id)) PARTITION BY RANGE (at);
+         CREATE TABLE b.m_2024 PARTITION OF b.m
+             FOR VALUES FROM ('2024-01-01') TO ('2025-01-01') PARTITION BY HASH (id);
+         CREATE TABLE b.m_leaf PARTITION OF b.m_2024 FOR VALUES WITH (MODULUS 1, REMAINDER 0);
+         ALTER TABLE b.m_leaf ADD CONSTRAINT positive_id CHECK (id > 0);
+         CREATE INDEX m_at ON b.m (at);
+         CREATE INDEX leaf_id ON b.m_leaf (id);
+         COMMENT ON TABLE b.m_leaf IS 'leaf partition';
+         CREATE FUNCTION b.on_write() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RETURN NEW; END$$;
+         CREATE TRIGGER parent_write BEFORE INSERT ON b.m FOR EACH ROW EXECUTE FUNCTION b.on_write();
+         CREATE TRIGGER leaf_write BEFORE UPDATE ON b.m_leaf FOR EACH ROW EXECUTE FUNCTION b.on_write();",
+    ).await;
+    let generator = env.conn.relational().unwrap().dialect().ddl_gen().unwrap();
+    let source = env.snapshot("b").await;
+    let diffs = compare(&source, &env.snapshot("a").await, generator);
+    let script = migration_script(&diffs, &HashSet::<ObjectRef>::new(), generator, "-- test");
+    env.raw
+        .batch_execute(&script)
+        .await
+        .unwrap_or_else(|e| panic!("{e:?}\n{script}"));
+    assert_eq!(
+        compare(&source, &env.snapshot("a").await, generator),
+        Vec::new(),
+        "after the script:\n{script}"
+    );
+}
+
+#[tokio::test]
 async fn partitioned_children_are_created_once_by_a_snapshot_migration() {
     sqlr_testkit::skip_container_tests!("POSTGRES");
     let env = Env::new(

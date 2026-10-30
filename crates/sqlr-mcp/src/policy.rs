@@ -132,23 +132,29 @@ pub fn parse_setting_value(id: &str, kind: SettingKind, value: &Value) -> ToolRe
                 )))
             }
         }
-        SettingKind::Color => {
-            let array = value.as_array().ok_or_else(wrong)?;
-            if array.len() != 3 {
-                return Err(wrong());
-            }
-            let channel = |v: &Value| {
-                v.as_u64()
-                    .and_then(|n| u8::try_from(n).ok())
-                    .ok_or_else(wrong)
-            };
-            Ok(SettingValue::Color([
-                channel(&array[0])?,
-                channel(&array[1])?,
-                channel(&array[2])?,
-            ]))
-        }
+        SettingKind::Color => color_channels(value)
+            .map(SettingValue::Color)
+            .map_err(|_| wrong()),
     }
+}
+
+/// Exactly three integer RGB channels, each within the byte range.
+pub(crate) fn color_channels(value: &Value) -> ToolResult<[u8; 3]> {
+    let wrong = || ToolError::invalid("color must be [r, g, b] with three byte channels");
+    let array = value
+        .as_array()
+        .filter(|a| a.len() == 3)
+        .ok_or_else(wrong)?;
+    let channel = |v: &Value| {
+        v.as_u64()
+            .and_then(|n| u8::try_from(n).ok())
+            .ok_or_else(wrong)
+    };
+    Ok([
+        channel(&array[0])?,
+        channel(&array[1])?,
+        channel(&array[2])?,
+    ])
 }
 
 /// Whether a profile safety field would be loosened by `new` from `old`.

@@ -643,10 +643,7 @@ mod tests {
         assert_eq!(names, ["column1", "column2"]);
         assert_eq!(
             rows,
-            [(
-                2,
-                vec![Value::Text("1".into()), Value::Text("2".into())]
-            )]
+            [(2, vec![Value::Text("1".into()), Value::Text("2".into())])]
         );
     }
 

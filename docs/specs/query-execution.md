@@ -96,7 +96,7 @@ The budgets cover retained SQL payload buffers. Chunk metadata, in-flight chunks
 
 Stop cancels the tab's running statement or script; the Operations panel cancels any single Operation, and "Cancel all…" asks once before cancelling every running one.
 
-- **Before it starts**, a cancelled statement is skipped and ends Cancelled.
+- **Before it starts**, a cancelled statement is skipped and ends Cancelled. Cancelling or closing a queued statement leaves the previous Result available; another viable statement already queued on the same Session still takes the stream at the next chunk boundary.
 - **While it runs**, the engine calls the Driver's cancel handle, which cancels on the server where the Driver declares the server cancel Capability: PostgreSQL's cancel request, MySQL `KILL QUERY` on a side connection, SQL Server `KILL` of the session on a side connection, SQLite's interrupt, MongoDB `killOp` of the operations tagged with the query's comment, Elasticsearch task cancellation by the request's opaque id, Redis `CLIENT KILL` from another connection, Snowflake's query cancel. Oracle has no server cancel: its statement runs to the end and then ends Cancelled.
 - **While it fetches**, the fetch stops at the next chunk boundary and closes the stream; the rows already loaded stay and the Result ends Cancelled.
 - A failed cancel leaves the statement running; there is nobody to report it to.

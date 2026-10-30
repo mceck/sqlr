@@ -742,6 +742,42 @@ fn new_query_interrupts_fetch_all_of_previous() {
 }
 
 #[test]
+fn discarding_the_latest_query_keeps_an_earlier_queued_query_runnable() {
+    for close in [false, true] {
+        let release = Arc::new(tokio::sync::Notify::new());
+        let (engine, fake) = connected(FakeScript {
+            rows: 1200,
+            block_on_fetch: true,
+            block_after_chunks: Some(1),
+            fetch_release: Some(release.clone()),
+            ..Default::default()
+        });
+        let first = engine.execute("c", "SELECT 1".into(), 500);
+        settled(&engine, first);
+        engine.fetch_all(first);
+        assert!(wait_until(TIMEOUT, || fake.blocked_fetches() > 0));
+        let second = engine.execute("c", "SELECT 2".into(), 500);
+        let third = engine.execute("c", "SELECT 3".into(), 500);
+        if close {
+            engine.close_result(third);
+        } else {
+            engine.cancel(third);
+        }
+        release.notify_one();
+        let ready = wait_until(TIMEOUT, || {
+            status(&engine, second) == (QueryStatus::Ready { more: true })
+        });
+        // Also release a mistaken extra fetch, so a failing test can shut the engine down.
+        release.notify_one();
+        assert!(
+            ready,
+            "cancelling the third query let fetch-all block the second query"
+        );
+        assert!(cut_short(&engine, first));
+    }
+}
+
+#[test]
 fn a_cancelled_query_does_not_cut_the_previous_result_short() {
     let release = Arc::new(tokio::sync::Notify::new());
     let (engine, fake) = connected(FakeScript {

@@ -1013,6 +1013,7 @@ async fn connection_writes_validate_metadata_and_preserve_exposure() {
         json!({"id":"c1","group":42}),
         json!({"id":"c1","color":"red"}),
         json!({"id":"c1","color":[256,0,0]}),
+        json!({"id":"c1","color":[1,2,3,256]}),
         json!({"id":"c1","profile":42}),
         json!({"id":"c1","profile":"missing"}),
         json!({"id":"c1","save_secrets":"true"}),
@@ -1158,7 +1159,7 @@ async fn setting_writes_parse_types_levels_and_reject_unsafe_changes() {
             json!({"type":"color"}),
             json!([1, 2, 3]),
             SettingValue::Color([1, 2, 3]),
-            json!([1, 2, 300]),
+            json!([1, 2, 3, 256]),
         ),
     ];
     {
@@ -1681,6 +1682,7 @@ async fn profiles_validate_safety_flags_and_commit_modes_before_saving() {
         json!({"id":"missing"}),
         json!({"name":"P","color":"red"}),
         json!({"name":"P","color":[0,0,256]}),
+        json!({"name":"P","color":[1,2,3,256]}),
         json!({"name":"P","commit_mode":"unknown"}),
         json!({"name":"P","read_only":"yes"}),
         json!({"name":"P","idle_tx_timeout_min":-1}),

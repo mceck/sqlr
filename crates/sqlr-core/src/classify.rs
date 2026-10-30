@@ -228,7 +228,7 @@ impl SqlSyntax {
         self.lex(sql, LexState::Normal, &mut tokens);
         let mut depth = 0u32;
         let mut seen_word = false;
-        // The first statement's own verb was already classified by the caller; only a
+        // Each statement's own verb was already classified by the caller; only a
         // write hidden after it (or inside a `BEGIN … END` block) is news here.
         let mut first_word = true;
         let mut last_words: Vec<String> = Vec::new();
@@ -243,6 +243,7 @@ impl SqlSyntax {
                 // statement whose own classification already checked it.
                 last_words.clear();
                 seen_word = false;
+                first_word = true;
                 continue;
             }
             let open = t.kind == TokenKind::Punct && text == "(";
@@ -788,6 +789,7 @@ mod tests {
             "COPY t TO STDOUT",
             "PRAGMA table_info(t)",
             "PRAGMA main.table_list(t)",
+            "SELECT 1; PRAGMA table_info(t)",
         ] {
             assert_eq!(syntax.classify_script(sql), Read, "{sql}");
         }

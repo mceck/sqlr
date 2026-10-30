@@ -163,11 +163,7 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("CREATE VIRTUAL TABLE docs USING fts5(body)")
             .unwrap();
-        let nodes = browse(
-            &conn,
-            &NodePath(vec!["main".into(), "tables".into()]),
-        )
-        .unwrap();
+        let nodes = browse(&conn, &NodePath(vec!["main".into(), "tables".into()])).unwrap();
         let names: Vec<&str> = nodes.iter().map(|n| n.name.as_str()).collect();
         assert!(names.contains(&"docs"), "{names:?}");
         assert!(

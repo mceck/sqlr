@@ -2255,10 +2255,26 @@ impl Shared {
                 .results
                 .get(&superseder)
                 .is_some_and(|e| !e.cancel_requested);
-            if !still_coming
-                && let Some(entry) = inner.results.get_mut(&q)
-            {
-                entry.superseded_by = None;
+            if !still_coming {
+                let io = inner.results.get(&q).and_then(|entry| entry.io.as_ref());
+                let next = inner
+                    .results
+                    .iter()
+                    .filter(|(id, entry)| {
+                        **id > q
+                            && !entry.cancel_requested
+                            && entry
+                                .io
+                                .as_ref()
+                                .zip(io)
+                                .is_some_and(|(a, b)| Arc::ptr_eq(a, b))
+                            && entry.result.read().status == QueryStatus::Running
+                    })
+                    .map(|(id, _)| *id)
+                    .min();
+                if let Some(entry) = inner.results.get_mut(&q) {
+                    entry.superseded_by = next;
+                }
             }
         }
         match inner.results.get_mut(&q) {

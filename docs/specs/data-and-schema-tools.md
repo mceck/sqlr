@@ -228,11 +228,14 @@ The migration script transforms the target into the source:
 3. New tables without foreign keys or triggers.
 4. Removed views first, so their dependents can go.
 5. Changed tables.
-6. Views in dependency order.
-7. Routines.
-8. Triggers.
-9. Foreign keys added last.
-10. Removed objects in reverse dependency order.
+6. Attach partitions after their tables exist and table changes have applied.
+7. Views in dependency order.
+8. Routines.
+9. Triggers.
+10. Foreign keys added last.
+11. Removed objects in reverse dependency order.
+
+A partition is created from its own complete table definition before it is attached. Nested partitions, child checks, indexes, comments and local triggers survive the migration. Parent triggers and foreign keys propagate through attachment or their later creation, so inherited definitions are emitted once. Creating the parent index before attachment lets PostgreSQL reuse the matching child indexes.
 
 Excluded objects are skipped. The script is deterministic for the same pair of snapshots, uses the target Driver's DDL generator, and opens in an editor tab as a new unsaved script. The compare itself changes no database.
 
