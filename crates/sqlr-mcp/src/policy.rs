@@ -134,13 +134,19 @@ pub fn parse_setting_value(id: &str, kind: SettingKind, value: &Value) -> ToolRe
         }
         SettingKind::Color => {
             let array = value.as_array().ok_or_else(wrong)?;
-            let channels: Vec<u8> = array
-                .iter()
-                .filter_map(|v| v.as_u64().and_then(|n| u8::try_from(n).ok()))
-                .collect();
-            <[u8; 3]>::try_from(channels)
-                .map(SettingValue::Color)
-                .map_err(|_| wrong())
+            if array.len() != 3 {
+                return Err(wrong());
+            }
+            let channel = |v: &Value| {
+                v.as_u64()
+                    .and_then(|n| u8::try_from(n).ok())
+                    .ok_or_else(wrong)
+            };
+            Ok(SettingValue::Color([
+                channel(&array[0])?,
+                channel(&array[1])?,
+                channel(&array[2])?,
+            ]))
         }
     }
 }
@@ -342,6 +348,22 @@ mod tests {
         );
         assert!(parse_setting_value("x", SettingKind::Bool, &json!("true")).is_err());
         assert!(parse_setting_value("x", SettingKind::Choice(&[("a", "A")]), &json!("b")).is_err());
+        assert_eq!(
+            parse_setting_value("c", SettingKind::Color, &json!([1, 2, 3])).unwrap(),
+            SettingValue::Color([1, 2, 3])
+        );
+        // Every channel must be a valid byte: an extra element must not be silently dropped.
+        for bad in [
+            json!([1, 2, 3, 4]),
+            json!([1, 2, 3, 256]),
+            json!([1, 2, 3, "x"]),
+            json!([1, 2]),
+        ] {
+            assert!(
+                parse_setting_value("c", SettingKind::Color, &bad).is_err(),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

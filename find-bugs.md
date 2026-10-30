@@ -13,7 +13,7 @@ first try and passed on retry; worth a deterministic look in this cycle).
 [ ] sqlr-engine: transfer and imports (`transfer/*`)
 [ ] sqlr-sidecar: protocol, client and process
 [ ] sqlr-registry: driver install, index and verification
-[ ] sqlr-mcp: server, policy, tokens and results
+[x] sqlr-mcp: server, policy, tokens and results
 [ ] sqlr-terminal: PTY, screen, input and tabs
 [ ] drivers: PostgreSQL
 [ ] drivers: MySQL / MariaDB
@@ -228,3 +228,10 @@ Fixed:
 - A headerless CSV/TSV whose first non-blank record was wider than one column still emitted every leading blank line as a one-cell row (and `decode` padded it to an all-NULL row). Those blanks are file preamble once the width is known to be greater than one, like blank lines after it; they are now dropped, while a genuinely one-column file still keeps them.
 
 Tests added in `read.rs`; 249 sqlr-core lib tests and clippy pass.
+
+# sqlr-mcp: server, policy, tokens and results
+Fixed:
+- MCP document and Redis reply values collapsed every non-finite double to the string `"NaN"`: `Infinity` and `-Infinity` were indistinguishable from NaN. They now map to `"Infinity"`/`"-Infinity"`/`"NaN"` like tabular cells do (spec: agents-and-terminal §JSON numbers).
+- A colour setting accepted an array with a fourth invalid element: `[1,2,3,256]` dropped the 256 and stored `[1,2,3]`. The parser now requires exactly three byte channels and rejects any invalid one.
+
+Tests added in `results.rs` and `policy.rs`; 26 lib + 29 protocol tests and clippy pass.
