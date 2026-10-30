@@ -20,25 +20,25 @@ Cycle 4 completed on 2026-10-30: all 19 sections checked. The full suite ran 249
 PostgreSQL snapshot migration instead of being lost with the skipped child object.
 
 ## Cycle 5 sections:
-[ ] sqlr-core: values, encoding and documents (`value`, `encode`, `read`, `rows`, `chunk`, `doc*`, `formats`)
-[ ] sqlr-core: SQL and text utilities (`classify`, `syntax`, `format_sql`, `generate`, `schema_change`, `compare`, `datagen`, `transfer`, `url`, `wire`, `es_request`, `mongo_shell`, `er`)
-[ ] sqlr-store: persistence and secrets (connections, vault, settings, history, snippets, keymap, recents, profiles, layered)
-[ ] sqlr-engine: sessions, transactions and results (`engine`, `session`, `tx`, `script`, `apply`, `result`, `result_memory`, `result_spill`, `job`)
-[ ] sqlr-engine: transfer and imports (`transfer/*`)
-[ ] sqlr-sidecar: protocol, client and process
-[ ] sqlr-registry: driver install, index and verification
-[ ] sqlr-mcp: server, policy, tokens and results
-[ ] sqlr-terminal: PTY, screen, input and tabs
-[ ] drivers: PostgreSQL
-[ ] drivers: MySQL / MariaDB
-[ ] drivers: SQLite
-[ ] drivers: Redis
-[ ] drivers: SQL Server / Oracle
-[ ] drivers: Elasticsearch / Snowflake / ClickHouse / JDBC
-[ ] sidecar drivers: MongoDB / DuckDB / HANA
-[ ] sqlr-app: application logic (workers, actions, messages, cli, tabs, pending)
-[ ] sqlr-ui: grid and editor
-[ ] sqlr-ui: forms, trees, dialogs and keymap
+[x] sqlr-core: values, encoding and documents (`value`, `encode`, `read`, `rows`, `chunk`, `doc*`, `formats`)
+[x] sqlr-core: SQL and text utilities (`classify`, `syntax`, `format_sql`, `generate`, `schema_change`, `compare`, `datagen`, `transfer`, `url`, `wire`, `es_request`, `mongo_shell`, `er`)
+[x] sqlr-store: persistence and secrets (connections, vault, settings, history, snippets, keymap, recents, profiles, layered)
+[x] sqlr-engine: sessions, transactions and results (`engine`, `session`, `tx`, `script`, `apply`, `result`, `result_memory`, `result_spill`, `job`)
+[x] sqlr-engine: transfer and imports (`transfer/*`)
+[x] sqlr-sidecar: protocol, client and process
+[x] sqlr-registry: driver install, index and verification
+[x] sqlr-mcp: server, policy, tokens and results
+[x] sqlr-terminal: PTY, screen, input and tabs
+[x] drivers: PostgreSQL
+[x] drivers: MySQL / MariaDB
+[x] drivers: SQLite
+[x] drivers: Redis
+[x] drivers: SQL Server / Oracle
+[x] drivers: Elasticsearch / Snowflake / ClickHouse / JDBC
+[x] sidecar drivers: MongoDB / DuckDB / HANA
+[x] sqlr-app: application logic (workers, actions, messages, cli, tabs, pending)
+[x] sqlr-ui: grid and editor
+[x] sqlr-ui: forms, trees, dialogs and keymap
 
 ## Cycle 1 findings:
 # sqlr-core: values, encoding and documents
@@ -396,3 +396,10 @@ Tests extended in `tests/snapshot.rs` (child index); 6 container snapshot tests,
 No new bug found in cycle 4 in: core values/documents, core SQL utilities, store, engine sessions/transactions/results, engine transfer, sidecar, registry, MCP, terminal, MySQL, SQLite, Redis, SQL Server/Oracle, Elastic/Snowflake/ClickHouse/JDBC, sidecar drivers, app, UI grid/editor and UI forms/trees. Each was re-read against the cycle 2/3 changes and the existing tests; the only new finding in this cycle is the PostgreSQL partition-child index above.
 
 ## Cycle 5 findings:
+
+# Cycle 5 verification
+No new bug found in any of the 19 sections. The tree is unchanged since the cycle 4
+fixes; the full container suite ran 2495 tests, all passed, 22 skipped. The known
+limitation documented with the PostgreSQL partition fix (a partition child's own
+constraints are not carried by the parent's create) remains a narrow edge that needs a
+nested partition definition in the core model; it is not a new finding in this pass.
