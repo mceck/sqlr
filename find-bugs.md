@@ -6,7 +6,7 @@
 [x] sqlr-store: persistence and secrets (connections, vault, settings, history, snippets, keymap, recents, profiles, layered)
 [x] sqlr-engine: sessions, transactions and results (`engine`, `session`, `tx`, `script`, `apply`, `result`, `result_memory`, `result_spill`, `job`)
 [x] sqlr-engine: transfer and imports (`transfer/*`)
-[] sqlr-sidecar: protocol, client and process
+[x] sqlr-sidecar: protocol, client and process
 [] sqlr-registry: driver install, index and verification
 [] sqlr-mcp: server, policy, tokens and results
 [] sqlr-terminal: PTY, screen, input and tabs
@@ -83,7 +83,17 @@ Fixed:
 Tests added in the transfer modules and `tests/transfer_engine.rs` / `tests/nosql_transfer.rs`; targeted engine tests and clippy pass.
 
 # sqlr-sidecar: protocol, client and process
-[to fill]
+Fixed:
+- An exhausted row stream was left in the server's stream map: the client sends no `CloseStream` after `exhausted: true`, so every fully read query leaked its cursor until disconnect. The server now closes and removes it.
+- `connect_database` had no `ConnectGuard`: a cancelled future could leave the derived connection open on the server. It now uses the same guard as `connect`.
+- The idle timer only looked at `conns`, so a connect started just before the deadline was shut down mid-handshake. It now also requires `connecting == 0`.
+- The client returned more rows than `max_rows` when a chunk was split into several frames and later frames were buffered. Buffered row chunks are now split to the requested maximum, like document chunks.
+- A slow `Execute` that finished after its connection was disconnected inserted a stream nobody could close. The server now checks the connection still exists and closes the stream otherwise.
+- Cancelling a statement counted every in-flight call (`Browse`, `Catalog`, `Ping`, …) and could kill the whole driver for an unrelated slow catalog load. Only statement calls and fetches now keep the cancel waiting.
+
+Open for the next cycle: `Shutdown` does not abort an in-flight `Execute`/`Fetch` before waiting for its state, so a long statement can delay process exit; and a nonconforming server answering `FetchDone { exhausted: false }` with no chunk makes the client report exhaustion.
+
+Tests added in `crates/sqlr-sidecar/tests/server.rs` and `tests/sidecar.rs`, plus the echo test driver's slow-connect/slow-browse hooks; the sidecar test suites and clippy pass.
 
 # sqlr-registry: driver install, index and verification
 [to fill]

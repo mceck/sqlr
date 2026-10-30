@@ -335,6 +335,14 @@ impl State {
                 match execution {
                     Execution::Affected(n) => Response::Affected(n),
                     Execution::Rows(stream) => {
+                        if !self.conns.lock().contains_key(&conn) {
+                            let mut stream = stream;
+                            let _ = stream.close().await;
+                            return Err(DriverError::new(
+                                ErrorKind::Cancelled,
+                                "connection closed while the statement ran",
+                            ));
+                        }
                         let columns = stream.columns().to_vec();
                         let stream_id = self.next_stream.fetch_add(1, Ordering::Relaxed);
                         self.streams.lock().insert(
@@ -361,7 +369,15 @@ impl State {
                         self.send_chunk(id, &chunk)?;
                         Response::FetchDone { exhausted: false }
                     }
-                    None => Response::FetchDone { exhausted: true },
+                    None => {
+                        // The client sends no CloseStream after exhaustion, so the server
+                        // must release the cursor here.
+                        let entry = self.streams.lock().remove(&stream);
+                        if let Some(entry) = entry {
+                            let _ = entry.stream.lock().await.close().await;
+                        }
+                        Response::FetchDone { exhausted: true }
+                    }
                 }
             }
             Request::CloseStream { stream } => {
@@ -399,6 +415,14 @@ impl State {
                 let doc = connection.document().ok_or_else(document_unsupported)?;
                 match doc.run(database.as_deref(), &text).await? {
                     DocExecution::Docs(stream) => {
+                        if !self.conns.lock().contains_key(&conn) {
+                            let mut stream = stream;
+                            let _ = stream.close().await;
+                            return Err(DriverError::new(
+                                ErrorKind::Cancelled,
+                                "connection closed while the request ran",
+                            ));
+                        }
                         let id = self.next_stream.fetch_add(1, Ordering::Relaxed);
                         self.doc_streams.lock().insert(
                             id,
@@ -410,6 +434,14 @@ impl State {
                         Response::Docs { stream: id }
                     }
                     DocExecution::Rows(stream) => {
+                        if !self.conns.lock().contains_key(&conn) {
+                            let mut stream = stream;
+                            let _ = stream.close().await;
+                            return Err(DriverError::new(
+                                ErrorKind::Cancelled,
+                                "connection closed while the request ran",
+                            ));
+                        }
                         let columns = stream.columns().to_vec();
                         let id = self.next_stream.fetch_add(1, Ordering::Relaxed);
                         self.streams.lock().insert(

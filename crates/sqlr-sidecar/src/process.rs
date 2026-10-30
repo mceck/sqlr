@@ -503,6 +503,7 @@ impl Process {
         handle.spawn(async move {
             tokio::time::sleep(me.idle_timeout).await;
             if me.conns.load(Ordering::Acquire) == 0
+                && me.connecting.load(Ordering::Acquire) == 0
                 && me.idle_epoch.load(Ordering::Acquire) == epoch
             {
                 me.shutdown().await;

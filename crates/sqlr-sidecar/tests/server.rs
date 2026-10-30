@@ -102,6 +102,30 @@ fn exec(conn: u64, sql: &str, params: Option<Vec<Value>>) -> Request {
 }
 
 #[tokio::test]
+async fn an_exhausted_stream_is_released() {
+    let mut rig = Rig::new().await;
+    rig.connect(1).await;
+    let (_, response) = rig.call(exec(1, "select 1", None)).await;
+    let Response::Rows { stream, .. } = response else {
+        panic!("expected rows, got {response:?}");
+    };
+    let (_, first) = rig.call(Request::Fetch { stream, max: 10 }).await;
+    let (_, done) = if matches!(first, Response::FetchDone { exhausted: false }) {
+        rig.call(Request::Fetch { stream, max: 10 }).await
+    } else {
+        (Vec::new(), first)
+    };
+    assert!(matches!(done, Response::FetchDone { exhausted: true }));
+    // The client sends no CloseStream after exhaustion, so another Fetch must not find
+    // the released stream.
+    let (_, again) = rig.call(Request::Fetch { stream, max: 10 }).await;
+    assert!(matches!(
+        again,
+        Response::Error(e) if e.kind == ErrorKind::Protocol
+    ));
+}
+
+#[tokio::test]
 async fn unknown_connections_and_streams_are_protocol_errors() {
     let mut rig = Rig::new().await;
     for request in [

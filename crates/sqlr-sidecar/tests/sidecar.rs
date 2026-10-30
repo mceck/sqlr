@@ -281,6 +281,55 @@ async fn cancel_escalates_to_kill() {
 }
 
 #[tokio::test]
+async fn a_cancel_does_not_kill_the_driver_for_a_slow_browse() {
+    let mut spec = echo_spec();
+    spec.env.push(("ECHO_SLOW_BROWSE_MS".into(), "500".into()));
+    spec.cancel_grace = Duration::from_millis(200);
+    let (driver, _) = SidecarDriver::probe(spec).await.unwrap();
+    let conn = driver
+        .connect(&config(), &Secrets::default())
+        .await
+        .unwrap();
+    let browsing = conn.clone();
+    let browse = tokio::spawn(async move { browsing.browse(&NodePath::root()).await });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let running = conn.clone();
+    let query = tokio::spawn(async move { run(&running, "sleep").await });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    conn.cancel_handle().cancel().await.unwrap();
+    assert!(
+        driver.is_running(),
+        "a slow catalog call made the cancel kill the process"
+    );
+    assert_eq!(conn.ping().await.unwrap().product, "echo");
+    browse.await.unwrap().unwrap();
+    let _ = query.await.unwrap();
+}
+
+#[tokio::test]
+async fn a_connect_in_flight_keeps_the_idle_timer_from_stopping_the_driver() {
+    let mut spec = echo_spec();
+    spec.idle_timeout = Duration::from_millis(100);
+    let (driver, _) = SidecarDriver::probe(spec).await.unwrap();
+    let first = driver
+        .connect(&config(), &Secrets::default())
+        .await
+        .unwrap();
+    drop(first);
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let mut slow = config();
+    slow.values.insert("slow_connect_ms".into(), "300".into());
+    let second = tokio::time::timeout(
+        Duration::from_secs(2),
+        driver.connect(&slow, &Secrets::default()),
+    )
+    .await
+    .expect("the idle timer stopped the driver mid-connect")
+    .unwrap();
+    assert_eq!(second.ping().await.unwrap().product, "echo");
+}
+
+#[tokio::test]
 async fn idle_sidecar_stops() {
     let capture = Capture::default();
     let subscriber = tracing_subscriber::fmt()

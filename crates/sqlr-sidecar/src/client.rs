@@ -9,11 +9,11 @@ use std::time::Instant;
 use async_trait::async_trait;
 use parking_lot::Mutex;
 use sqlr_core::{
-    CancelHandle, ColumnMeta, Connection, ConnectionConfig, Dialect, DocChunk, DocExecution,
-    DocStream, DocTarget, DocValue, DocumentConn, Driver, DriverError, DriverManifest, ErrorKind,
-    Execution, Family, Node, NodePath, QueryLanguage, RelationalConn, ResultChunk, RowStream,
-    SchemaCatalog, Secrets, ServerInfo, StatementClass, TableInfo, TableRef, Value, decode_chunk,
-    decode_doc_chunk,
+    CancelHandle, Cell, ChunkBuilder, ColumnMeta, Connection, ConnectionConfig, Dialect, DocChunk,
+    DocExecution, DocStream, DocTarget, DocValue, DocumentConn, Driver, DriverError,
+    DriverManifest, ErrorKind, Execution, Family, Node, NodePath, QueryLanguage, RelationalConn,
+    ResultChunk, RowStream, SchemaCatalog, Secrets, ServerInfo, StatementClass, TableInfo,
+    TableRef, Value, decode_chunk, decode_doc_chunk,
 };
 
 use crate::dialect::SidecarDialect;
@@ -223,6 +223,12 @@ impl SidecarConnection {
     }
 
     async fn call(&self, request: Request) -> Result<Response, DriverError> {
+        self.process.call(&request).await
+    }
+
+    /// A statement request; only these keep a cancel waiting (a slow catalog load must not
+    /// make the process look like a driver that ignored the cancel).
+    async fn call_statement(&self, request: Request) -> Result<Response, DriverError> {
         let _inflight = InflightGuard::enter(&self.inflight);
         self.process.call(&request).await
     }
@@ -308,6 +314,10 @@ impl Connection for SidecarConnection {
         // driver's own counter.
         static NEXT: AtomicU64 = AtomicU64::new(1 << 40);
         let new_conn = NEXT.fetch_add(1, Ordering::Relaxed);
+        // If this future is dropped before the answer, the server may still open the
+        // derived connection: the guard disconnects it (or kills the process when it was
+        // the last thing alive).
+        let mut pending = ConnectGuard::new(self.process.clone(), Some(new_conn));
         let answer = self
             .call(Request::ConnectDatabase {
                 conn: self.conn,
@@ -315,7 +325,10 @@ impl Connection for SidecarConnection {
                 database: database.to_string(),
             })
             .await?;
-        SidecarConnection::open(self.process.clone(), new_conn, answer, self.language)
+        let connection =
+            SidecarConnection::open(self.process.clone(), new_conn, answer, self.language)?;
+        pending.complete();
+        Ok(connection)
     }
 }
 
@@ -423,7 +436,7 @@ impl RelationalConn for SidecarConnection {
 impl SidecarConnection {
     async fn run(&self, sql: &str, params: Option<Vec<Value>>) -> Result<Execution, DriverError> {
         let answer = self
-            .call(Request::Execute {
+            .call_statement(Request::Execute {
                 conn: self.conn,
                 sql: sql.to_string(),
                 params,
@@ -455,6 +468,37 @@ struct SidecarStream {
     closed: bool,
 }
 
+impl SidecarStream {
+    /// Takes at most `max` rows from the front of `ready`, keeping the rest for the next
+    /// call: the server may split an oversized chunk into several frames.
+    fn pop_ready(&mut self, max: usize) -> Option<ResultChunk> {
+        let chunk = self.ready.pop_front()?;
+        let (head, tail) = split_rows(chunk, max);
+        if let Some(tail) = tail {
+            self.ready.push_front(tail);
+        }
+        Some(head)
+    }
+}
+
+/// Splits `chunk` after `max` rows, keeping the rest for the next call.
+fn split_rows(chunk: ResultChunk, max: usize) -> (ResultChunk, Option<ResultChunk>) {
+    if chunk.len() <= max {
+        return (chunk, None);
+    }
+    let columns = chunk.columns().clone();
+    let mut head = ChunkBuilder::new(columns.clone());
+    let mut tail = ChunkBuilder::new(columns.clone());
+    for row in 0..chunk.len() {
+        let cells: Vec<Cell<'_>> = (0..columns.len()).map(|col| chunk.cell(row, col)).collect();
+        let builder = if row < max { &mut head } else { &mut tail };
+        builder
+            .push_row(&cells)
+            .expect("a chunk's cells match its columns");
+    }
+    (head.finish(), Some(tail.finish()))
+}
+
 #[async_trait]
 impl RowStream for SidecarStream {
     fn columns(&self) -> Arc<[ColumnMeta]> {
@@ -462,7 +506,8 @@ impl RowStream for SidecarStream {
     }
 
     async fn next_chunk(&mut self, max_rows: usize) -> Result<Option<ResultChunk>, DriverError> {
-        if let Some(chunk) = self.ready.pop_front() {
+        let max = max_rows.max(1);
+        if let Some(chunk) = self.pop_ready(max) {
             return Ok(Some(chunk));
         }
         if self.exhausted || self.closed {
@@ -471,7 +516,7 @@ impl RowStream for SidecarStream {
         let _inflight = InflightGuard::enter(&self.inflight);
         let mut pending = self.process.begin(&Request::Fetch {
             stream: self.stream,
-            max: u32::try_from(max_rows).unwrap_or(u32::MAX),
+            max: u32::try_from(max).unwrap_or(u32::MAX),
         })?;
         loop {
             match pending.next().await? {
@@ -495,7 +540,7 @@ impl RowStream for SidecarStream {
                 Event::Control(response) => match *response {
                     Response::FetchDone { exhausted } => {
                         self.exhausted = exhausted;
-                        return Ok(self.ready.pop_front());
+                        return Ok(self.pop_ready(max));
                     }
                     Response::Error(e) => return Err(e),
                     other => return Err(unexpected(&other)),
@@ -548,7 +593,7 @@ impl DocumentConn for SidecarConnection {
 
     async fn run(&self, database: Option<&str>, text: &str) -> Result<DocExecution, DriverError> {
         match self
-            .call(Request::DocRun {
+            .call_statement(Request::DocRun {
                 conn: self.conn,
                 database: database.map(str::to_owned),
                 text: text.to_owned(),
@@ -800,5 +845,29 @@ impl Drop for SidecarDocStream {
                 let _ = process.call(&request).await;
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlr_core::{ColumnKind, DisplayHint};
+
+    #[test]
+    fn a_buffered_chunk_is_split_to_the_requested_max() {
+        let columns: Arc<[ColumnMeta]> = vec![ColumnMeta::new(
+            "n",
+            "int8",
+            ColumnKind::Int,
+            DisplayHint::Number,
+        )]
+        .into();
+        let mut builder = ChunkBuilder::new(columns);
+        for i in 0..4 {
+            builder.push_row(&[Cell::Int(i)]).unwrap();
+        }
+        let (head, tail) = split_rows(builder.finish(), 1);
+        assert_eq!(head.len(), 1);
+        assert_eq!(tail.unwrap().len(), 3);
     }
 }

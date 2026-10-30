@@ -24,12 +24,14 @@ struct Echo {
     manifest: DriverManifest,
     ignore_cancel: bool,
     hang_cancel: bool,
+    slow_browse_ms: Option<u64>,
 }
 
 struct EchoConn {
     cancelled: Arc<AtomicBool>,
     ignore_cancel: bool,
     hang_cancel: bool,
+    slow_browse_ms: Option<u64>,
     dialect: EchoDialect,
 }
 
@@ -113,10 +115,18 @@ impl Driver for Echo {
         if cfg.values.get("block_connect").is_some_and(|v| v == "true") {
             std::future::pending::<()>().await;
         }
+        if let Some(ms) = cfg
+            .values
+            .get("slow_connect_ms")
+            .and_then(|v| v.parse::<u64>().ok())
+        {
+            tokio::time::sleep(Duration::from_millis(ms)).await;
+        }
         Ok(Arc::new(EchoConn {
             cancelled: Arc::default(),
             ignore_cancel: self.ignore_cancel,
             hang_cancel: self.hang_cancel,
+            slow_browse_ms: self.slow_browse_ms,
             dialect: EchoDialect,
         }))
     }
@@ -131,6 +141,9 @@ impl Connection for EchoConn {
         })
     }
     async fn browse(&self, _path: &NodePath) -> Result<Vec<Node>, DriverError> {
+        if let Some(ms) = self.slow_browse_ms {
+            tokio::time::sleep(Duration::from_millis(ms)).await;
+        }
         Ok(vec![Node {
             path: NodePath(vec!["t".into()]),
             name: "t".into(),
@@ -259,6 +272,9 @@ async fn main() {
         },
         ignore_cancel: std::env::var_os("ECHO_IGNORE_CANCEL").is_some(),
         hang_cancel: std::env::var_os("ECHO_HANG_CANCEL").is_some(),
+        slow_browse_ms: std::env::var("ECHO_SLOW_BROWSE_MS")
+            .ok()
+            .and_then(|v| v.parse().ok()),
     };
     let protocol = std::env::var("ECHO_PROTOCOL").unwrap_or_else(|_| PROTOCOL.to_string());
     let _ = serve_io(
