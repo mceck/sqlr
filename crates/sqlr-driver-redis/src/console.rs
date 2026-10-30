@@ -60,6 +60,11 @@ pub(crate) async fn exec_block(
     if commands.is_empty() {
         return Ok(RespValue::Array(Vec::new()));
     }
+    // Redis silently ignores an empty command (`*0`), so the transaction's reply
+    // never arrives and the console's connection would wait forever.
+    if commands.iter().any(|args| args.is_empty()) {
+        return Ok(refused("empty command"));
+    }
     for args in &commands {
         if let Some(why) = refused_in_console(args) {
             return Ok(refused(why));

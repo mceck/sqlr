@@ -114,7 +114,7 @@ pub(crate) fn to_resp(value: Value) -> RespValue {
         Value::Double(d) => RespValue::Double(d),
         Value::Boolean(b) => RespValue::Bool(b),
         Value::VerbatimString { text, .. } => RespValue::Verbatim(text),
-        Value::BigNumber(n) => RespValue::Simple(format!("{n:?}")),
+        Value::BigNumber(n) => RespValue::Simple(String::from_utf8_lossy(&n).into_owned()),
         Value::Push { data, .. } => RespValue::Array(data.into_iter().map(to_resp).collect()),
         Value::ServerError(e) => RespValue::Error(server_text(e.code(), e.details())),
         // `Value` is non-exhaustive.
@@ -146,6 +146,14 @@ mod tests {
         );
         assert_eq!(server_text("NOAUTH", None), "NOAUTH");
         assert_eq!(server_text("ERR", Some("")), "ERR");
+    }
+
+    #[test]
+    fn big_numbers_are_rendered_as_digits() {
+        assert_eq!(
+            to_resp(Value::BigNumber(b"123456789012345678901234567890".to_vec())),
+            RespValue::Simple("123456789012345678901234567890".into())
+        );
     }
 
     #[test]

@@ -13,7 +13,7 @@
 [] drivers: PostgreSQL
 [x] drivers: MySQL / MariaDB
 [x] drivers: SQLite
-[] drivers: Redis
+[x] drivers: Redis
 [x] drivers: SQL Server / Oracle
 [] drivers: Elasticsearch / Snowflake / ClickHouse / JDBC
 [] sidecar drivers: MongoDB / DuckDB / HANA
@@ -150,7 +150,13 @@ Fixed:
 Tests added in `src/errors.rs`, `src/snapshot.rs`, `tests/objects.rs` and `tests/sqlite.rs`; 18 unit + 60 integration tests and clippy pass.
 
 # drivers: Redis
-[to fill]
+Fixed:
+- RESP3 big numbers were rendered with `Debug` (`[49, 50, …]`) instead of their digits; the bytes are now decoded as text.
+- Destructive-option detection scanned every argument, so a `MIGRATE` key/password named `COPY` was treated as non-destructive, while `COPY a REPLACE` and `RESTORE REPLACE 0 payload` were falsely destructive. Options are now read from their real positions, skipping `AUTH`/`AUTH2` arguments and stopping at `KEYS`.
+- `LCS` and `ZINTERCARD` were missing from the read-only command list, and `SYNC`/`PSYNC` were allowed in the console (they take over the connection). Added to reads/refusals.
+- An empty command inside a `MULTI` block encoded `*0`, which Redis ignores, leaving the console waiting forever. Empty commands are now refused with `ERR empty command`.
+
+Tests added in `classify.rs`, `errors.rs` and `connect.rs`; 21 unit tests and clippy pass.
 
 # drivers: SQL Server / Oracle
 Fixed:

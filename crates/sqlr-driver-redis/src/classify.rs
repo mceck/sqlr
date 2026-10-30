@@ -47,6 +47,7 @@ const READ: &[&str] = &[
     "SUNION",
     "SDIFF",
     "SINTERCARD",
+    "ZINTERCARD",
     "ZCARD",
     "ZRANGE",
     "ZRANGEBYSCORE",
@@ -84,6 +85,7 @@ const READ: &[&str] = &[
     "EVAL_RO",
     "EVALSHA_RO",
     "FCALL_RO",
+    "LCS",
     "LOLWUT",
     "ECHO",
     "PING",
@@ -216,10 +218,28 @@ const DELETE: &[&str] = &["DEL", "UNLINK"];
 /// Commands that wipe data or stop the server.
 const WIPE: &[&str] = &["FLUSHDB", "FLUSHALL", "SHUTDOWN"];
 
+/// Whether `flag` is a `MIGRATE` option: it comes after the fixed arguments and before
+/// any `KEYS` keys, and is not the argument of `AUTH`/`AUTH2`.
+fn migrate_option(word: &dyn Fn(usize) -> String, len: usize, flag: &str) -> bool {
+    let mut i = 6;
+    while i < len {
+        match word(i).as_str() {
+            "AUTH" => i += 2,
+            "AUTH2" => i += 3,
+            "KEYS" => return false,
+            other if other == flag => return true,
+            _ => i += 1,
+        }
+    }
+    false
+}
+
 /// Why a command is destructive beyond the wipe and delete commands: it overwrites data,
 /// changes the server's role, stops it, blocks it, or runs code whose effects are unknown.
 fn dangerous(name: &str, len: usize, word: &dyn Fn(usize) -> String) -> Option<String> {
-    let has = |flag: &str| (1..len).any(|i| word(i) == flag);
+    // Options start after the command's fixed arguments; a key or a password that happens
+    // to spell an option is not that option.
+    let has_from = |start: usize, flag: &str| (start..len).any(|i| word(i) == flag);
     let sub = word(1);
     let reason = match name {
         "REPLICAOF" | "SLAVEOF" => "changes the server's role",
@@ -231,8 +251,10 @@ fn dangerous(name: &str, len: usize, word: &dyn Fn(usize) -> String) -> Option<S
             "loads or unloads a module"
         }
         "SCRIPT" if sub == "FLUSH" => "SCRIPT FLUSH",
-        "MIGRATE" if !has("COPY") => "MIGRATE moves the key off this server",
-        "RESTORE" | "COPY" if has("REPLACE") => "overwrites an existing key",
+        "MIGRATE" if !migrate_option(word, len, "COPY") => "MIGRATE moves the key off this server",
+        // `RESTORE key ttl payload [REPLACE] …`, `COPY source destination [DB db] [REPLACE]`.
+        "RESTORE" if has_from(4, "REPLACE") => "overwrites an existing key",
+        "COPY" if has_from(3, "REPLACE") => "overwrites an existing key",
         // The read-only variants (`EVAL_RO`, ...) cannot write and are reads.
         "EVAL" | "EVALSHA" | "FCALL" => "script: effects unknown",
         _ => return None,
@@ -325,6 +347,7 @@ pub(crate) fn refused_in_console(args: &[Vec<u8>]) -> Option<&'static str> {
         "QUIT" => Some("close the tab to disconnect"),
         "SELECT" => Some("SELECT is handled by the console itself"),
         "HELLO" | "RESET" => Some("the console keeps its own protocol and session"),
+        "SYNC" | "PSYNC" => Some("replication takes over the console's connection"),
         "MULTI" | "EXEC" | "DISCARD" | "WATCH" | "UNWATCH" => {
             Some("MULTI blocks are handled by the console itself")
         }
@@ -359,6 +382,15 @@ mod tests {
         assert!(class(&["EVAL", "return 1", "0"]).modifies());
         assert!(!class(&["EVAL_RO", "return 1", "0"]).modifies());
         assert!(class(&["FCALL", "f", "0"]).modifies());
+    }
+
+    #[test]
+    fn reads_added_in_redis_7_are_reads() {
+        assert_eq!(class(&["LCS", "a", "b"]), StatementClass::Read);
+        assert_eq!(
+            class(&["ZINTERCARD", "2", "z1", "z2"]),
+            StatementClass::Read
+        );
     }
 
     #[test]
@@ -419,6 +451,8 @@ mod tests {
             &["HELLO", "2"],
             &["MULTI"],
             &["CLIENT", "REPLY", "OFF"],
+            &["SYNC"],
+            &["PSYNC", "?", "-1"],
         ] {
             assert!(refused(line).is_some(), "{line:?}");
         }
@@ -466,6 +500,23 @@ mod dangerous {
         ] {
             assert!(destructive(line), "{line:?} is {:?}", class(line));
         }
+    }
+
+    #[test]
+    fn destructive_options_are_read_from_their_positions() {
+        // `COPY` is the key here, not the MIGRATE option: the key still leaves the server.
+        assert!(destructive(&["MIGRATE", "h", "6379", "COPY", "0", "5000"]));
+        // `COPY` is the AUTH password, not the option.
+        assert!(destructive(&[
+            "MIGRATE", "h", "6379", "k", "0", "5000", "AUTH", "COPY"
+        ]));
+        // `COPY` after `KEYS` is a key, not the option.
+        assert!(destructive(&[
+            "MIGRATE", "h", "6379", "k", "0", "5000", "KEYS", "COPY"
+        ]));
+        // A key named `REPLACE` is not the COPY/RESTORE option.
+        assert!(!destructive(&["COPY", "a", "REPLACE"]));
+        assert!(!destructive(&["RESTORE", "REPLACE", "0", "payload"]));
     }
 
     #[test]

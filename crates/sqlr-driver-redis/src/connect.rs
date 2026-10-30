@@ -470,3 +470,35 @@ impl KeyValueConn for RedisConnection {
         self.inner.read_only.store(on, Ordering::SeqCst);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_inner() -> Inner {
+        Inner {
+            target: Target {
+                addr: ConnectionAddr::Tcp("127.0.0.1".into(), 1),
+                username: None,
+                password: None,
+                tls_root: None,
+            },
+            resp3: AtomicBool::new(false),
+            slots: tokio::sync::Mutex::new(HashMap::new()),
+            console_ids: Mutex::new(Vec::new()),
+            cancel_epoch: AtomicU64::new(0),
+            configured_db: 0,
+            separator: b":".to_vec(),
+            databases: AtomicU64::new(16),
+            read_only: AtomicBool::new(false),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_console_block_with_an_empty_command_is_refused() {
+        let reply = console::exec_block(&test_inner(), 0, vec![Vec::new()])
+            .await
+            .expect("a refused command is a reply");
+        assert_eq!(reply, RespValue::Error("ERR empty command".into()));
+    }
+}
