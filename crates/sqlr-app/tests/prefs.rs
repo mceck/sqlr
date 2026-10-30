@@ -71,6 +71,24 @@ fn open_preferences(h: &mut Harness<'static, SqlrApp>) {
 const STOP_ON_ERROR: &str = "Stop a script at its first error";
 
 #[test]
+fn prefs_sections_keep_the_window_width() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut h = app(dir.path());
+    open_preferences(&mut h);
+    h.run_steps(3);
+    let width = |h: &Harness<'static, SqlrApp>| h.get_by_label("Close Preferences").rect().right();
+    let general = width(&h);
+    for section in ["Appearance", "Data formats"] {
+        h.get_by_label(section).click();
+        h.run_steps(3);
+        assert!(
+            (width(&h) - general).abs() < 0.5,
+            "{section} widened the preferences window"
+        );
+    }
+}
+
+#[test]
 fn prefs_search_filters_sections() {
     let dir = tempfile::tempdir().unwrap();
     let mut h = app(dir.path());

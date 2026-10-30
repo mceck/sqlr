@@ -4,7 +4,7 @@
 use egui::{DragValue, RichText, Ui};
 use sqlr_core::{SettingDef, SettingKind, SettingValue};
 
-use crate::theme::{self, icons};
+use crate::theme::{self, Spacing, icons};
 
 /// Edits `value` with the control the setting's type calls for. Returns whether it changed.
 pub fn setting_editor(ui: &mut Ui, def: &SettingDef, value: &mut SettingValue) -> bool {
@@ -47,7 +47,9 @@ pub fn setting_editor(ui: &mut Ui, def: &SettingDef, value: &mut SettingValue) -
         }
         (SettingKind::Float { min, max, step }, SettingValue::Float(f)) => {
             if def.id == "appearance.ui_scale" {
-                // The usual zoom steps, then the exact value.
+                // The usual zoom steps, then the exact value: tighter gaps keep them on one
+                // line within the settings row.
+                ui.spacing_mut().item_spacing.x = Spacing::S;
                 for pct in [75, 100, 125, 150, 200] {
                     let scale = f64::from(pct) / 100.0;
                     let selected = (*f - scale).abs() < 0.001;

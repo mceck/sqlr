@@ -111,21 +111,28 @@ impl Editing<'_> {
                     },
                 );
             }
-            ui.add_enabled_ui(!locked, |ui| {
-                changed = setting_editor(ui, def, &mut edited);
-            });
-            if overridden
-                && ui
-                    .small_button("Reset")
-                    .on_hover_text("Clear the value")
-                    .clicked()
-            {
-                reset = true;
-            }
-            if !overridden && *self.scope != Level::Global {
-                let from = self.scopes.name(&from);
-                theme::hint(ui, &format!("from {from}"));
-            }
+            // The editor and its actions wrap inside the row: a wide control group (the UI
+            // scale presets, digit grouping) must not widen the whole window.
+            ui.with_layout(
+                Layout::left_to_right(Align::Center).with_main_wrap(true),
+                |ui| {
+                    ui.add_enabled_ui(!locked, |ui| {
+                        changed = setting_editor(ui, def, &mut edited);
+                    });
+                    if overridden
+                        && ui
+                            .small_button("Reset")
+                            .on_hover_text("Clear the value")
+                            .clicked()
+                    {
+                        reset = true;
+                    }
+                    if !overridden && *self.scope != Level::Global {
+                        let from = self.scopes.name(&from);
+                        theme::hint(ui, &format!("from {from}"));
+                    }
+                },
+            );
         });
         ui.horizontal(|ui| {
             ui.add_space(9.0 + 2.0 * ui.spacing().item_spacing.x);

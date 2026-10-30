@@ -390,7 +390,7 @@ pub const GROUPINGS: &[(&str, &str)] = &[
     ("none", "None"),
     ("comma", "1,234,567"),
     ("space", "1 234 567"),
-    ("underscore", "Underscore (1_234_567)"),
+    ("underscore", "1_234_567"),
 ];
 
 #[expect(
