@@ -299,16 +299,21 @@ async fn declare_cursor(
     buffer_instead(e, rollback)
 }
 
+/// Whether `e` says the statement just cannot be a cursor: 0A000 for a data-modifying
+/// CTE, 42601 for a top-level DML with a `WITH` clause.
+fn not_a_cursor(e: &tokio_postgres::Error) -> bool {
+    [SqlState::FEATURE_NOT_SUPPORTED, SqlState::SYNTAX_ERROR]
+        .iter()
+        .any(|code| e.code() == Some(code))
+}
+
 /// After a failed `DECLARE` and its `undo`: `Ok(false)` when the statement just cannot be a
 /// cursor, the error otherwise.
 fn buffer_instead(
     e: tokio_postgres::Error,
     undo: Result<Vec<SimpleQueryMessage>, tokio_postgres::Error>,
 ) -> Result<bool, DriverError> {
-    let not_a_cursor = [SqlState::FEATURE_NOT_SUPPORTED, SqlState::SYNTAX_ERROR]
-        .iter()
-        .any(|code| e.code() == Some(code));
-    if !not_a_cursor {
+    if !not_a_cursor(&e) {
         return Err(map_error(e));
     }
     undo.map_err(map_error)?;
@@ -345,10 +350,10 @@ fn protocol(message: impl std::fmt::Display) -> DriverError {
 }
 
 /// Streams a row-returning statement with parameters that cannot be a cursor. Its rows
-/// arrive in binary format. An `INSERT`/`UPDATE`/`DELETE … RETURNING` is wrapped so that every
-/// column comes back through its type's text output (the same text a cursor fetch yields); any
-/// other statement (a data-modifying `WITH`, `EXPLAIN`, …) is decoded from binary for the
-/// common types.
+/// arrive in binary format. An `INSERT`/`UPDATE`/`DELETE`/`MERGE … RETURNING` is wrapped so
+/// that every column comes back through its type's text output (the same text a cursor
+/// fetch yields); any other statement (a data-modifying `WITH`, `EXPLAIN`, …) is decoded
+/// from binary for the common types.
 async fn stream_with_params(
     client: &Client,
     sql: &str,
@@ -356,10 +361,11 @@ async fn stream_with_params(
     params: &Params<'_>,
 ) -> Result<(tokio_postgres::RowStream, bool), DriverError> {
     let keyword = first_keyword(sql);
-    let wrappable = ["INSERT", "UPDATE", "DELETE"]
+    let data_change = ["INSERT", "UPDATE", "DELETE", "MERGE"]
         .iter()
         .any(|k| keyword.eq_ignore_ascii_case(k));
-    if !wrappable {
+    let with = keyword.eq_ignore_ascii_case("WITH");
+    if !data_change && !with {
         return client
             .query_raw(sql, params.iter().copied())
             .await
@@ -381,11 +387,30 @@ async fn stream_with_params(
         names.join(", "),
         projection.join(", ")
     );
-    client
-        .query_raw(wrapped.as_str(), params.iter().copied())
-        .await
-        .map(|stream| (stream, true))
-        .map_err(map_error)
+    if !with {
+        return client
+            .query_raw(wrapped.as_str(), params.iter().copied())
+            .await
+            .map(|stream| (stream, true))
+            .map_err(map_error);
+    }
+    // A `WITH` statement is either a data change whose statement follows the CTEs (the
+    // wrapper works) or a query with a data-modifying CTE, whose DML must stay at the top
+    // level (the wrapper is refused). The statement itself already prepared, so a parse
+    // error here is the wrapper's: decode its rows from binary instead.
+    match client.prepare(wrapped.as_str()).await {
+        Ok(stmt) => client
+            .query_raw(&stmt, params.iter().copied())
+            .await
+            .map(|stream| (stream, true))
+            .map_err(map_error),
+        Err(e) if not_a_cursor(&e) => client
+            .query_raw(sql, params.iter().copied())
+            .await
+            .map(|stream| (stream, false))
+            .map_err(map_error),
+        Err(e) => Err(map_error(e)),
+    }
 }
 
 fn get<'a, T: FromSql<'a>>(row: &'a Row, i: usize) -> Result<Option<T>, DriverError> {
@@ -496,8 +521,33 @@ fn first_keyword(sql: &str) -> &str {
         .map_or("", |t| &sql[t.start..t.end])
 }
 
+/// The first word of `sql` after comments and any leading `(`: a parenthesized statement
+/// (`(SELECT …) UNION (SELECT …)`) is still a query, and `DECLARE` accepts it.
+fn query_keyword(sql: &str) -> &str {
+    let mut rest = sql;
+    loop {
+        let mut tokens = Vec::new();
+        pg_syntax().lex(rest, LexState::Normal, &mut tokens);
+        let Some(first) = tokens.iter().find(|t| t.kind != TokenKind::Comment) else {
+            return "";
+        };
+        if first.kind == TokenKind::Punct && &rest[first.start..first.end] == "(" {
+            rest = &rest[first.end..];
+            continue;
+        }
+        return if matches!(
+            first.kind,
+            TokenKind::Keyword | TokenKind::Function | TokenKind::Ident
+        ) {
+            &rest[first.start..first.end]
+        } else {
+            ""
+        };
+    }
+}
+
 fn is_cursor_query(sql: &str) -> bool {
-    let keyword = first_keyword(sql);
+    let keyword = query_keyword(sql);
     ["SELECT", "WITH", "VALUES", "TABLE"]
         .iter()
         .any(|k| keyword.eq_ignore_ascii_case(k))
@@ -662,6 +712,23 @@ mod tests {
             "INSERT INTO t VALUES (1) RETURNING x",
             "SELECTx",
         ] {
+            assert!(!is_cursor_query(sql), "{sql}");
+        }
+    }
+
+    #[test]
+    fn parenthesized_queries_are_cursor_queries() {
+        for sql in [
+            "(SELECT 1)",
+            "((SELECT 1))",
+            "(  SELECT 1 ) UNION (SELECT 2)",
+            "(VALUES (1), (2))",
+            "(TABLE t)",
+            "(WITH x AS (SELECT 1) SELECT * FROM x)",
+        ] {
+            assert!(is_cursor_query(sql), "{sql}");
+        }
+        for sql in ["(1 + 2)", "()", "(SHOW server_version)", "(;"] {
             assert!(!is_cursor_query(sql), "{sql}");
         }
     }

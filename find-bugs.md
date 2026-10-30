@@ -10,7 +10,7 @@
 [x] sqlr-registry: driver install, index and verification
 [x] sqlr-mcp: server, policy, tokens and results
 [x] sqlr-terminal: PTY, screen, input and tabs
-[] drivers: PostgreSQL
+[x] drivers: PostgreSQL
 [x] drivers: MySQL / MariaDB
 [x] drivers: SQLite
 [x] drivers: Redis
@@ -130,7 +130,12 @@ Fixed:
 Tests added in `input.rs`, `screen.rs` and `widget.rs`; `cargo test -p sqlr-terminal` (47 tests) and clippy pass. The `input.rs`/`screen.rs` changes landed in commit f351b62 with the MCP work; the widget changes are in the following terminal commit.
 
 # drivers: PostgreSQL
-[to fill]
+Fixed:
+- `EXPLAIN` refused any SQL containing the substring `$1`, even inside a string literal, dollar-quoted text or a comment. Parameters are now detected by lexing (`TokenKind::Param`).
+- Parenthesized queries (`(SELECT …) UNION (SELECT …)`, `(VALUES …)`) were not recognized as cursor queries because only the first token was inspected; they now skip leading parentheses and use the cursor path.
+- A `WITH … INSERT/UPDATE/DELETE … RETURNING` with parameters was decoded from binary instead of the cursor's typed text path, so returned values could change type. A `WITH` statement is now wrapped when its main statement is a data change, falling back to binary only for data-modifying CTEs the wrapper cannot nest.
+
+Tests added in `dialect.rs` and `execute.rs`, plus a container test in `tests/execute.rs`; 34 unit tests and clippy pass.
 
 # drivers: MySQL / MariaDB
 Fixed:

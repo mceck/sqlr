@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use sqlr_core::{DdlGen, Dialect, Node, SqlSyntax, hex_bytes};
+use sqlr_core::{DdlGen, Dialect, LexState, Node, SqlSyntax, TokenKind, hex_bytes};
 
 use crate::syntax::pg_syntax;
 
@@ -75,7 +75,7 @@ impl Dialect for PgDialect {
         sql: &str,
         analyze: bool,
     ) -> Result<sqlr_core::ExplainSpec, sqlr_core::DriverError> {
-        if sql.contains("$1") {
+        if self.has_parameters(sql) {
             return Err(sqlr_core::DriverError::new(
                 sqlr_core::ErrorKind::Unsupported,
                 "Explain needs a statement without parameters ($1…): write the values in",
@@ -141,6 +141,18 @@ impl Dialect for PgDialect {
 
     fn ddl_gen(&self) -> Option<&dyn DdlGen> {
         Some(self)
+    }
+}
+
+impl PgDialect {
+    /// Whether `sql` binds a numbered parameter (`$1`), lexed so a `$1` inside a string
+    /// literal or a comment does not count.
+    fn has_parameters(&self, sql: &str) -> bool {
+        let mut tokens = Vec::new();
+        self.syntax().lex(sql, LexState::Normal, &mut tokens);
+        tokens
+            .iter()
+            .any(|t| t.kind == TokenKind::Param && sql[t.start..t.end].starts_with('$'))
     }
 }
 
@@ -212,6 +224,27 @@ mod tests {
     #[test]
     fn quote_ident_mixed_case_space_quote() {
         assert_eq!(PgDialect.quote_ident("My \"T\""), "\"My \"\"T\"\"\"");
+    }
+
+    #[test]
+    fn explain_refuses_parameters_but_not_literals_that_look_like_them() {
+        for sql in [
+            "SELECT 1",
+            "SELECT '$1' AS price",
+            "SELECT $$ a $1 b $$ AS note",
+            "SELECT data ? 'key' FROM t",
+            "SELECT 1 -- $1 in a comment",
+        ] {
+            assert!(PgDialect.explain_spec(sql, false).is_ok(), "{sql}");
+        }
+        for sql in [
+            "SELECT $1::int",
+            "SELECT $12::int",
+            "INSERT INTO t VALUES ($1)",
+        ] {
+            let err = PgDialect.explain_spec(sql, false).unwrap_err();
+            assert_eq!(err.kind, sqlr_core::ErrorKind::Unsupported, "{sql}");
+        }
     }
 
     #[test]

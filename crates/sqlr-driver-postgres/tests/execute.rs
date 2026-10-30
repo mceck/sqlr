@@ -608,6 +608,46 @@ async fn execute_with_binds_every_value_kind() {
     affected(&conn, "COMMIT").await;
 }
 
+#[tokio::test]
+async fn with_prefixed_writes_return_typed_text() {
+    sqlr_testkit::skip_container_tests!("POSTGRES");
+    let (_c, conn) = connect().await;
+    affected(&conn, "SET TIME ZONE 'UTC'").await;
+    affected(
+        &conn,
+        "CREATE TEMP TABLE wp(id int PRIMARY KEY, amount numeric, at timestamptz)",
+    )
+    .await;
+    // A `WITH` whose main statement is the write is wrapped like a plain INSERT: every
+    // column comes back as its type's text output.
+    let mut s = rows_with(
+        &conn,
+        "WITH x AS (SELECT $1::int AS id) INSERT INTO wp(id, amount, at) \
+         SELECT id, 1.5, '2026-10-21 10:00:00+00' FROM x RETURNING id, amount, at",
+        &[Value::Int(1)],
+    )
+    .await;
+    let kinds: Vec<ColumnKind> = s.columns().iter().map(|c| c.kind).collect();
+    use ColumnKind::*;
+    assert_eq!(kinds, [Int, Text, Text]);
+    let chunk = s.next_chunk(10).await.unwrap().unwrap();
+    assert_eq!(chunk.cell(0, 0), Cell::Int(1));
+    assert_eq!(chunk.cell(0, 1), Cell::Text("1.5"));
+    assert_eq!(chunk.cell(0, 2), Cell::Text("2026-10-21 10:00:00+00"));
+    s.close().await.unwrap();
+
+    // A data-modifying CTE cannot be nested in the wrapper: it keeps the binary path.
+    let mut s = rows_with(
+        &conn,
+        "WITH d AS (DELETE FROM wp WHERE id = $1 RETURNING id) SELECT id FROM d",
+        &[Value::Int(1)],
+    )
+    .await;
+    let chunk = s.next_chunk(10).await.unwrap().unwrap();
+    assert_eq!(chunk.cell(0, 0), Cell::Int(1));
+    s.close().await.unwrap();
+}
+
 fn origin(schema: &str, table: &str, column: &str) -> ColumnOrigin {
     ColumnOrigin {
         table: TableRef {
