@@ -17,7 +17,7 @@
 [x] drivers: SQL Server / Oracle
 [] drivers: Elasticsearch / Snowflake / ClickHouse / JDBC
 [] sidecar drivers: MongoDB / DuckDB / HANA
-[] sqlr-app: application logic (workers, actions, messages, cli, tabs, pending)
+[x] sqlr-app: application logic (workers, actions, messages, cli, tabs, pending)
 [] sqlr-ui: grid and editor
 [x] sqlr-ui: forms, trees, dialogs and keymap
 
@@ -167,7 +167,12 @@ Tests added in `types.rs` and `execute.rs`; 20 SQL Server + 31 Oracle unit tests
 [to fill]
 
 # sqlr-app: application logic
-[to fill]
+Fixed:
+- The next savepoint name started at `savepoints.len() + 1`, so an existing `sp2` made the button create `sp3` instead of the free `sp1`. Names now start at `sp1` and skip only those in use.
+- Reopening an already-open DDL/object/ER/admin tab in another dock group only marked it active inside its leaf; the dock's focused leaf stayed elsewhere, so the tab did not come forward. A `focus_path` helper now also focuses the leaf, and all “focus existing tab” sites use it.
+- Clicking a recent document connection connected it but opened no tab: `open_recent` sent documents through the SQL editor path, which rejects NoSQL connections. Document connections now open a document tab.
+
+Tests added in `transaction.rs`, `ddl_tab.rs` and `welcome.rs`; 242 lib tests and clippy pass.
 
 # sqlr-ui: grid and editor
 [to fill]

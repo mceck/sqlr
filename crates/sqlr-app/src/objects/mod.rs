@@ -287,7 +287,7 @@ impl SqlrApp {
                 .as_ref()
                 .is_some_and(|o| o.conn == conn && o.object == object)
         }) {
-            let _ = self.dock.set_active_tab(path);
+            self.focus_path(path);
             return;
         }
         let tab = ObjectTab::open(
@@ -313,7 +313,7 @@ impl SqlrApp {
                 .as_ref()
                 .is_some_and(|o| o.conn == conn && o.object == object)
         }) {
-            let _ = self.dock.set_active_tab(path);
+            self.focus_path(path);
             return;
         }
         let Some(editing) = self.editing_for(conn) else {

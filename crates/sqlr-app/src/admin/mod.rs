@@ -185,7 +185,7 @@ impl SqlrApp {
                 .as_ref()
                 .is_some_and(|a| a.conn() == conn && a.panel() == panel)
         }) {
-            let _ = self.dock.set_active_tab(path);
+            self.focus_path(path);
             return;
         }
         if self.engine.admin_support(conn).is_none() {

@@ -342,7 +342,7 @@ impl SqlrApp {
         if let Some(path) =
             self.er_diagram_tab(conn, database.as_deref(), &schema, tables.as_deref())
         {
-            let _ = self.dock.set_active_tab(path);
+            self.focus_path(path);
             return;
         }
         let title = format!("ER · {schema}");

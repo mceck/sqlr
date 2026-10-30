@@ -84,6 +84,14 @@ impl TxLine {
     }
 }
 
+/// The next free savepoint name: `sp1`, `sp2`, …, skipping the names in use.
+fn next_savepoint_name(savepoints: &[String]) -> String {
+    (1..)
+        .map(|n| format!("sp{n}"))
+        .find(|name| !savepoints.contains(name))
+        .unwrap_or_default()
+}
+
 /// Local `HH:MM` of a Unix-milliseconds time.
 fn hh_mm(ms: i64) -> String {
     let when = format_when(ms);
@@ -318,11 +326,8 @@ impl SqlrApp {
             self.engine.rollback(&key);
         }
         if savepoint {
-            let name = (savepoints.len() + 1..)
-                .map(|n| format!("sp{n}"))
-                .find(|n| !savepoints.contains(n))
-                .unwrap_or_default();
-            self.engine.savepoint(&key, name);
+            self.engine
+                .savepoint(&key, next_savepoint_name(&savepoints));
         }
         if let Some(name) = rollback_to {
             self.engine.rollback_to(&key, name);
@@ -844,6 +849,15 @@ mod tests {
             wrote: false,
             started_by_savepoint: false,
         }
+    }
+
+    #[test]
+    fn savepoint_names_start_at_one_and_skip_the_names_in_use() {
+        assert_eq!(next_savepoint_name(&[]), "sp1");
+        assert_eq!(next_savepoint_name(&["sp1".into()]), "sp2");
+        assert_eq!(next_savepoint_name(&["sp2".into()]), "sp1");
+        assert_eq!(next_savepoint_name(&["sp1".into(), "sp3".into()]), "sp2");
+        assert_eq!(next_savepoint_name(&["named".into()]), "sp1");
     }
 
     #[test]

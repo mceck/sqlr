@@ -163,6 +163,14 @@ impl SqlrApp {
             }
             return;
         }
+        if self.is_document(id) {
+            // A document connection edits its statements in a document tab, not a SQL one.
+            let title = self
+                .connection(id)
+                .map_or_else(|| id.to_string(), |c| c.name.clone());
+            self.open_doc_tab(title, id, None, "", false);
+            return;
+        }
         self.new_editor_tab_on(id);
     }
 
@@ -188,7 +196,62 @@ impl SqlrApp {
 
 #[cfg(test)]
 mod tests {
-    use super::relative_time;
+    use std::sync::Arc;
+
+    use sqlr_core::{ConnectionConfig, Secrets};
+    use sqlr_engine::{DriverRegistry, Engine};
+    use sqlr_store::{ConnectionRepo, MemorySecretStore, Settings};
+    use sqlr_testkit::FakeDocDriver;
+
+    use super::*;
+    use crate::app::AppDeps;
+
+    /// An app with the saved document connection "m".
+    fn document_app() -> (SqlrApp, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut drivers = DriverRegistry::default();
+        drivers.register(FakeDocDriver::new(Default::default()));
+        let repo =
+            ConnectionRepo::open(dir.path(), Box::new(MemorySecretStore::default())).unwrap();
+        repo.save(
+            &ConnectionConfig {
+                id: "m".into(),
+                name: "m-conn".into(),
+                driver: "fakedoc".into(),
+                group: None,
+                color: None,
+                values: Default::default(),
+                profile: None,
+                save_secrets: true,
+                agent_access: Default::default(),
+            },
+            &Secrets::default(),
+        )
+        .unwrap();
+        let deps = AppDeps {
+            check_updates: false,
+            engine: Engine::new(drivers, Arc::new(|| {})),
+            repo,
+            settings: Settings::default(),
+            config_dir: dir.path().to_path_buf(),
+            data_dir: None,
+            startup_notice: None,
+            storage_warning: None,
+            mcp_token_store: None,
+            diagnostics: None,
+            diagnostics_warning: None,
+        };
+        (SqlrApp::new(deps, &egui::Context::default()), dir)
+    }
+
+    #[test]
+    fn a_recent_document_connection_opens_a_document_tab() {
+        let (mut app, _dir) = document_app();
+        app.open_recent("m");
+        let tab = app.active_tab().expect("a document tab");
+        assert_eq!(tab.conn.as_deref(), Some("m"));
+        assert!(tab.doc.is_some(), "the tab runs document statements");
+    }
 
     #[test]
     fn relative_times() {

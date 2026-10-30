@@ -1767,9 +1767,15 @@ impl SqlrApp {
     /// Makes `key`'s tab the active tab of its leaf and focuses that leaf.
     pub(crate) fn focus_tab(&mut self, key: u64) {
         if let Some(path) = self.dock.find_tab_from(|t| t.key == key) {
-            let _ = self.dock.set_active_tab(path);
-            self.dock.set_focused_node_and_surface(path.node_path());
+            self.focus_path(path);
         }
+    }
+
+    /// Makes an already-open tab active and focuses its leaf, so the app's active tab is
+    /// the one that was asked for even when it sits in another group.
+    pub(crate) fn focus_path(&mut self, path: egui_dock::TabPath) {
+        let _ = self.dock.set_active_tab(path);
+        self.dock.set_focused_node_and_surface(path.node_path());
     }
 
     /// Points the tab at another connection (its database no longer applies) and switches

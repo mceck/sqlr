@@ -208,7 +208,7 @@ impl SqlrApp {
     /// Opens (or focuses) the DDL tab of `node`.
     pub(crate) fn open_ddl(&mut self, conn: &str, node: &sqlr_core::Node) {
         if let Some(path) = self.ddl_tab(conn, node) {
-            let _ = self.dock.set_active_tab(path);
+            self.focus_path(path);
             return;
         }
         let ddl = DdlTab::open(&self.engine, conn, node.clone());
@@ -252,5 +252,46 @@ impl SqlrApp {
                 DdlState::Ready(text) => Some(text.clone()),
                 _ => None,
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use sqlr_core::{NodeKind, NodePath};
+
+    use super::*;
+
+    fn table_node() -> Node {
+        Node {
+            path: NodePath(vec!["s".into(), "tables".into(), "t".into()]),
+            name: "t".into(),
+            kind: NodeKind::Table,
+            has_children: true,
+            detail: None,
+        }
+    }
+
+    #[test]
+    fn reopening_a_ddl_tab_in_another_group_focuses_it() {
+        let (mut app, _dir) = crate::palette::tests::bare_app();
+        app.dock = egui_dock::DockState::new(vec![]);
+        let first = app.new_tab(Some("first".into()), None, "");
+        let node = table_node();
+        app.open_ddl("c1", &node);
+        let ddl = app.active_key().unwrap();
+        assert_ne!(ddl, first);
+
+        // Move the DDL tab to a second group, then focus the first tab.
+        let path = app.dock.find_tab_from(|t| t.key == ddl).unwrap();
+        let tab = app.dock.remove_tab(path).unwrap();
+        app.dock
+            .main_surface_mut()
+            .split_right(egui_dock::NodeIndex::root(), 0.5, vec![tab]);
+        app.focus_tab(first);
+        assert_eq!(app.active_key(), Some(first));
+
+        // Opening the same DDL again focuses the tab that is already open.
+        app.open_ddl("c1", &node);
+        assert_eq!(app.active_key(), Some(ddl));
     }
 }
