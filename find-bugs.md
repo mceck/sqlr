@@ -6,7 +6,7 @@ Cycle 1 completed on 2026-10-30: all 19 sections checked. The full workspace sui
 first try and passed on retry; worth a deterministic look in this cycle).
 
 ## Cycle 2 sections:
-[ ] sqlr-core: values, encoding and documents (`value`, `encode`, `read`, `rows`, `chunk`, `doc*`, `formats`)
+[x] sqlr-core: values, encoding and documents (`value`, `encode`, `read`, `rows`, `chunk`, `doc*`, `formats`)
 [ ] sqlr-core: SQL and text utilities (`classify`, `syntax`, `format_sql`, `generate`, `schema_change`, `compare`, `datagen`, `transfer`, `url`, `wire`, `es_request`, `mongo_shell`, `er`)
 [ ] sqlr-store: persistence and secrets (connections, vault, settings, history, snippets, keymap, recents, profiles, layered)
 [ ] sqlr-engine: sessions, transactions and results (`engine`, `session`, `tx`, `script`, `apply`, `result`, `result_memory`, `result_spill`, `job`)
@@ -220,3 +220,11 @@ Fixed:
 - XML pretty-printing ended a tag at the first `>`, even inside a quoted attribute (`<a b="x>y">`), splitting valid XML. A quote-aware tag scanner is used.
 
 Tests added in `tests/plan_view.rs`, `tests/admin.rs`, `tests/library.rs` and `src/value_panel.rs`; 166 unit + targeted integration tests and clippy pass.
+
+## Cycle 2 findings:
+
+# sqlr-core: values, encoding and documents
+Fixed:
+- A headerless CSV/TSV whose first non-blank record was wider than one column still emitted every leading blank line as a one-cell row (and `decode` padded it to an all-NULL row). Those blanks are file preamble once the width is known to be greater than one, like blank lines after it; they are now dropped, while a genuinely one-column file still keeps them.
+
+Tests added in `read.rs`; 249 sqlr-core lib tests and clippy pass.

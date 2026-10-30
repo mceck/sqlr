@@ -303,11 +303,17 @@ fn read_delimited<R: BufRead>(
             }
             width = record.len();
             names = (1..=width).map(|i| format!("column{i}")).collect();
-            for (start, field) in pending_blanks.drain(..) {
-                let row = vec![field_value(o, null_quoted, field)];
-                if !on_row(&names, start as u64, row) {
-                    return Ok(names);
+            // The pending blanks are one-column rows only if the file is one column wide;
+            // before a wider row they are preamble, like the blanks skipped below.
+            if width == 1 {
+                for (start, field) in pending_blanks.drain(..) {
+                    let row = vec![field_value(o, null_quoted, field)];
+                    if !on_row(&names, start as u64, row) {
+                        return Ok(names);
+                    }
                 }
+            } else {
+                pending_blanks.clear();
             }
         }
         if blank && width != 1 {
@@ -622,6 +628,25 @@ mod tests {
                 (1, vec![Value::Text(String::new())]),
                 (2, vec![Value::Null])
             ]
+        );
+    }
+
+    #[test]
+    fn headerless_leading_blanks_before_a_wide_row_are_skipped() {
+        // A blank line is only a one-column row when the file turns out to be one column
+        // wide. Before a two-column row it is file preamble, like every other blank line.
+        let headless = TextFormat::Csv(CsvOptions {
+            header: false,
+            ..CsvOptions::default()
+        });
+        let (names, rows) = collect(&headless, "\n1,2\n", usize::MAX);
+        assert_eq!(names, ["column1", "column2"]);
+        assert_eq!(
+            rows,
+            [(
+                2,
+                vec![Value::Text("1".into()), Value::Text("2".into())]
+            )]
         );
     }
 
