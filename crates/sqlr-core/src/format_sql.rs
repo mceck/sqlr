@@ -110,9 +110,15 @@ pub fn format_sql(syntax: &SqlSyntax, text: &str, opts: &FormatOptions) -> Strin
         } else {
             ""
         };
+        // Adjacent string literals concatenate only when a newline separates them, even
+        // with a block comment in between.
+        let previous_string = tokens[..index]
+            .iter()
+            .rev()
+            .find(|t| t.kind != TokenKind::Comment);
         let string_newline = token.kind == TokenKind::String
-            && previous.is_some_and(|(k, _)| k == TokenKind::String)
-            && gap.contains(['\n', '\r']);
+            && previous_string.is_some_and(|t| t.kind == TokenKind::String)
+            && text[previous_string.map_or(0, |t| t.end)..token.start].contains(['\n', '\r']);
         let newline = index > 0
             && (is_clause
                 && !matches!(

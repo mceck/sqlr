@@ -34,6 +34,12 @@ pub enum DatagenError {
         /// The referenced column.
         key: String,
     },
+    /// A sequence or date range cannot produce another value without overflowing.
+    #[error("Column {column} cannot generate another value: its range is exhausted")]
+    RangeExhausted {
+        /// The generated column.
+        column: String,
+    },
 }
 
 /// How the values of one generated column are produced.
@@ -261,9 +267,9 @@ impl Rng {
     }
 }
 
-/// Days since 1970-01-01 as `YYYY-MM-DD`.
-fn date_text(days: i64) -> String {
-    let z = days + 719_468;
+/// Days since 1970-01-01 as `YYYY-MM-DD`; `None` when the day count overflows.
+fn date_text(days: i64) -> Option<String> {
+    let z = days.checked_add(719_468)?;
     let era = z.div_euclid(146_097);
     let doe = z.rem_euclid(146_097);
     let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
@@ -271,19 +277,21 @@ fn date_text(days: i64) -> String {
     let mp = (5 * doy + 2) / 153;
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = yoe + era * 400 + i64::from(m <= 2);
-    format!("{y:04}-{m:02}-{d:02}")
+    let y = yoe
+        .checked_add(era.checked_mul(400)?)?
+        .checked_add(i64::from(m <= 2))?;
+    Some(format!("{y:04}-{m:02}-{d:02}"))
 }
 
-fn timestamp_text(seconds: i64) -> String {
+fn timestamp_text(seconds: i64) -> Option<String> {
     let (days, rest) = (seconds.div_euclid(86_400), seconds.rem_euclid(86_400));
-    format!(
+    Some(format!(
         "{} {:02}:{:02}:{:02}",
-        date_text(days),
+        date_text(days)?,
         rest / 3600,
         rest / 60 % 60,
         rest % 60
-    )
+    ))
 }
 
 fn slug(text: &str) -> String {
@@ -291,6 +299,29 @@ fn slug(text: &str) -> String {
         .filter(|c| c.is_ascii_alphanumeric())
         .collect::<String>()
         .to_lowercase()
+}
+
+/// Whether a type name is an integer type, without matching `interval` or `point`.
+fn is_integer_type(ty: &str) -> bool {
+    let base = ty.split(['(', ' ', '[']).next().unwrap_or(ty);
+    matches!(
+        base,
+        "int"
+            | "integer"
+            | "int2"
+            | "int4"
+            | "int8"
+            | "bigint"
+            | "smallint"
+            | "tinyint"
+            | "mediumint"
+            | "serial"
+            | "bigserial"
+            | "smallserial"
+            | "serial2"
+            | "serial4"
+            | "serial8"
+    )
 }
 
 /// The generator that suits `column` by its name and type; a foreign key picks from its
@@ -369,7 +400,7 @@ pub fn default_generator(column: &TableColumn, fk: Option<&ConstraintDef>) -> Ge
     if ty.contains("bool") || ty == "tinyint(1)" || ty == "bit" {
         return Generator::Bool { true_ratio: 0.5 };
     }
-    if ty.contains("int") || ty == "serial" {
+    if is_integer_type(&ty) {
         return if name == "id" {
             Generator::Sequence { start: 1, step: 1 }
         } else {
@@ -522,7 +553,17 @@ impl RowGenerator {
     ) -> Result<Value, DatagenError> {
         let r = &mut self.rng;
         Ok(match generator {
-            Generator::Sequence { start, step } => Value::Int(start + step * self.made as i64),
+            Generator::Sequence { start, step } => {
+                let exhausted = || DatagenError::RangeExhausted {
+                    column: column.to_string(),
+                };
+                let made = i64::try_from(self.made).map_err(|_| exhausted())?;
+                let value = step
+                    .checked_mul(made)
+                    .and_then(|offset| start.checked_add(offset))
+                    .ok_or_else(exhausted)?;
+                Value::Int(value)
+            }
             Generator::IntRange { min, max } => Value::Int(r.range(*min, *max)),
             Generator::FloatRange { min, max, decimals } => {
                 let f = min + (max - min) * r.unit();
@@ -540,9 +581,19 @@ impl RowGenerator {
                 }
             }
             Generator::Bool { true_ratio } => Value::Bool((r.unit() as f32) < *true_ratio),
-            Generator::DateRange { from, to } => Value::Text(date_text(r.range(*from, *to))),
+            Generator::DateRange { from, to } => {
+                Value::Text(date_text(r.range(*from, *to)).ok_or_else(|| {
+                    DatagenError::RangeExhausted {
+                        column: column.to_string(),
+                    }
+                })?)
+            }
             Generator::TimestampRange { from, to } => {
-                Value::Text(timestamp_text(r.range(*from, *to)))
+                Value::Text(timestamp_text(r.range(*from, *to)).ok_or_else(|| {
+                    DatagenError::RangeExhausted {
+                        column: column.to_string(),
+                    }
+                })?)
             }
             Generator::Uuid => {
                 let (a, b) = (r.next(), r.next());
@@ -725,6 +776,16 @@ mod tests {
             Generator::IntRange { .. }
         ));
         assert!(matches!(
+            g("small", "int4", None),
+            Generator::IntRange { .. }
+        ));
+        // `interval` and `point` contain "int" but are not integers.
+        assert!(matches!(
+            g("duration", "interval", None),
+            Generator::Lorem { .. }
+        ));
+        assert!(matches!(g("where", "point", None), Generator::Lorem { .. }));
+        assert!(matches!(
             g("active", "boolean", None),
             Generator::Bool { .. }
         ));
@@ -751,6 +812,48 @@ mod tests {
         assert!(matches!(
             default_generator(&col("user_id", "integer", None), Some(&fk)),
             Generator::ForeignKey { column, .. } if column == "id"
+        ));
+    }
+
+    #[test]
+    fn extreme_ranges_report_an_error_instead_of_panicking() {
+        let mut g = RowGenerator::new(
+            &spec(
+                vec![colgen(
+                    "n",
+                    Generator::Sequence {
+                        start: i64::MAX,
+                        step: 1,
+                    },
+                )],
+                2,
+                1,
+            ),
+            BTreeMap::new(),
+        );
+        assert!(g.next_batch(1).is_ok());
+        assert!(matches!(
+            g.next_batch(1),
+            Err(DatagenError::RangeExhausted { .. })
+        ));
+
+        let mut g = RowGenerator::new(
+            &spec(
+                vec![colgen(
+                    "d",
+                    Generator::DateRange {
+                        from: i64::MAX,
+                        to: i64::MAX,
+                    },
+                )],
+                1,
+                1,
+            ),
+            BTreeMap::new(),
+        );
+        assert!(matches!(
+            g.next_batch(1),
+            Err(DatagenError::RangeExhausted { .. })
         ));
     }
 

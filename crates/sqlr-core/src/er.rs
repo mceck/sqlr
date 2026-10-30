@@ -69,10 +69,11 @@ impl ErModel {
             .filter(|t| only.is_none_or(|names| names.contains(&t.table.name)))
             .collect();
         tables.sort_by(|a, b| a.table.name.cmp(&b.table.name));
-        let index: BTreeMap<&str, usize> = tables
+        let schema_of = |t: &TableRef| t.schema.clone().unwrap_or_else(|| snapshot.schema.clone());
+        let index: BTreeMap<(String, &str), usize> = tables
             .iter()
             .enumerate()
-            .map(|(i, t)| (t.table.name.as_str(), i))
+            .map(|(i, t)| ((schema_of(&t.table), t.table.name.as_str()), i))
             .collect();
         let mut model = ErModel::default();
         for t in &tables {
@@ -116,7 +117,11 @@ impl ErModel {
                 else {
                     continue;
                 };
-                let Some(&to) = index.get(target.name.as_str()) else {
+                let target_schema = target
+                    .schema
+                    .clone()
+                    .unwrap_or_else(|| snapshot.schema.clone());
+                let Some(&to) = index.get(&(target_schema, target.name.as_str())) else {
                     continue;
                 };
                 let unique = t.constraints.iter().any(|u| match u {
@@ -488,6 +493,51 @@ mod tests {
             unique: false,
             nullable: false,
         }
+    }
+
+    #[test]
+    fn foreign_keys_match_the_target_schema() {
+        use crate::schema::{ColumnDef, FkAction, TableDef};
+        let mut orders = TableDef::new(TableRef {
+            database: None,
+            schema: Some("s".into()),
+            name: "orders".into(),
+        });
+        orders.columns.push(ColumnDef {
+            name: "customer".into(),
+            type_name: "integer".into(),
+            nullable: true,
+            ..Default::default()
+        });
+        orders.constraints.push(ConstraintDef::ForeignKey {
+            name: Some("fk".into()),
+            columns: vec!["customer".into()],
+            target: TableRef {
+                database: None,
+                schema: Some("other".into()),
+                name: "customers".into(),
+            },
+            target_columns: vec!["id".into()],
+            on_update: FkAction::NoAction,
+            on_delete: FkAction::NoAction,
+            deferrable: false,
+            initially_deferred: false,
+        });
+        let customers = TableDef::new(TableRef {
+            database: None,
+            schema: Some("s".into()),
+            name: "customers".into(),
+        });
+        let snapshot = SchemaSnapshot {
+            engine: "test".into(),
+            schema: "s".into(),
+            objects: vec![ObjectDef::Table(orders), ObjectDef::Table(customers)],
+            dependencies: Vec::new(),
+        };
+        assert!(
+            ErModel::from_snapshot(&snapshot, None).edges.is_empty(),
+            "a foreign key into another schema is not an edge"
+        );
     }
 
     fn measure(t: &ErTable) -> (f32, f32) {

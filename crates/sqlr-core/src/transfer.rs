@@ -441,7 +441,7 @@ pub fn map_type(from_dialect: &str, type_name: &str, to_dialect: &str) -> (Strin
             TypeClass::Json | TypeClass::Array => "json".into(),
             TypeClass::Enum => "varchar(255)".into(),
         },
-        _ => match &class {
+        "sqlite" => match &class {
             TypeClass::Int2 | TypeClass::Int4 | TypeClass::Int8 => "integer".into(),
             TypeClass::Numeric(Some((p, _))) if *p <= 15 => "numeric".into(),
             TypeClass::Numeric(_) => {
@@ -460,6 +460,203 @@ pub fn map_type(from_dialect: &str, type_name: &str, to_dialect: &str) -> (Strin
             }
             _ => "text".into(),
         },
+        "sqlserver" => match &class {
+            TypeClass::Int2 => "smallint".into(),
+            TypeClass::Int4 => "int".into(),
+            TypeClass::Int8 => "bigint".into(),
+            TypeClass::Numeric(Some((p, s))) => format!("decimal({p},{s})"),
+            TypeClass::Numeric(None) => "decimal(38,10)".into(),
+            TypeClass::Float4 => "real".into(),
+            TypeClass::Float8 => "float".into(),
+            TypeClass::Bool => "bit".into(),
+            TypeClass::Text => "nvarchar(max)".into(),
+            TypeClass::Varchar(Some(n)) => format!("nvarchar({n})"),
+            TypeClass::Varchar(None) => "nvarchar(max)".into(),
+            TypeClass::Char(Some(n)) => format!("nchar({n})"),
+            TypeClass::Char(None) => "nchar(1)".into(),
+            TypeClass::Bytes => "varbinary(max)".into(),
+            TypeClass::Date => "date".into(),
+            TypeClass::Time => "time".into(),
+            TypeClass::Timestamp => "datetime2".into(),
+            TypeClass::TimestampTz => "datetimeoffset".into(),
+            TypeClass::Interval => {
+                warning = Some("SQL Server has no interval type: stored as text".to_string());
+                "nvarchar(64)".into()
+            }
+            TypeClass::Uuid => "uniqueidentifier".into(),
+            TypeClass::Json | TypeClass::Array => "nvarchar(max)".into(),
+            TypeClass::Enum => "nvarchar(255)".into(),
+            TypeClass::Unknown => "nvarchar(max)".into(),
+        },
+        "oracle" => match &class {
+            TypeClass::Int2 | TypeClass::Int4 => "number(10)".into(),
+            TypeClass::Int8 => "number(19)".into(),
+            TypeClass::Numeric(Some((p, s))) => format!("number({p},{s})"),
+            TypeClass::Numeric(None) => "number".into(),
+            TypeClass::Float4 => "binary_float".into(),
+            TypeClass::Float8 => "binary_double".into(),
+            TypeClass::Bool => "number(1)".into(),
+            TypeClass::Text => "clob".into(),
+            TypeClass::Varchar(Some(n)) => format!("varchar2({n})"),
+            TypeClass::Varchar(None) => "varchar2(4000)".into(),
+            TypeClass::Char(Some(n)) => format!("char({n})"),
+            TypeClass::Char(None) => "char(1)".into(),
+            TypeClass::Bytes => "blob".into(),
+            TypeClass::Date => "date".into(),
+            TypeClass::Time => {
+                warning = Some("Oracle has no time-only type: stored as text".to_string());
+                "varchar2(32)".into()
+            }
+            TypeClass::Timestamp => "timestamp".into(),
+            TypeClass::TimestampTz => "timestamp with time zone".into(),
+            TypeClass::Interval => "interval day to second".into(),
+            TypeClass::Uuid => "varchar2(36)".into(),
+            TypeClass::Json | TypeClass::Array => "clob".into(),
+            TypeClass::Enum => "varchar2(255)".into(),
+            TypeClass::Unknown => "varchar2(4000)".into(),
+        },
+        "duckdb" => match &class {
+            TypeClass::Int2 => "smallint".into(),
+            TypeClass::Int4 => "integer".into(),
+            TypeClass::Int8 => "bigint".into(),
+            TypeClass::Numeric(Some((p, s))) => format!("decimal({p},{s})"),
+            TypeClass::Numeric(None) => "decimal(38,10)".into(),
+            TypeClass::Float4 => "real".into(),
+            TypeClass::Float8 => "double".into(),
+            TypeClass::Bool => "boolean".into(),
+            TypeClass::Text => "varchar".into(),
+            TypeClass::Varchar(Some(n)) => format!("varchar({n})"),
+            TypeClass::Varchar(None) => "varchar".into(),
+            TypeClass::Char(Some(n)) => format!("char({n})"),
+            TypeClass::Char(None) => "char".into(),
+            TypeClass::Bytes => "blob".into(),
+            TypeClass::Date => "date".into(),
+            TypeClass::Time => "time".into(),
+            TypeClass::Timestamp => "timestamp".into(),
+            TypeClass::TimestampTz => "timestamptz".into(),
+            TypeClass::Interval => "interval".into(),
+            TypeClass::Uuid => "uuid".into(),
+            TypeClass::Json | TypeClass::Array => "json".into(),
+            TypeClass::Enum => "varchar".into(),
+            TypeClass::Unknown => "varchar".into(),
+        },
+        "clickhouse" => match &class {
+            TypeClass::Int2 => "Int16".into(),
+            TypeClass::Int4 => "Int32".into(),
+            TypeClass::Int8 => "Int64".into(),
+            TypeClass::Numeric(Some((p, s))) => format!("Decimal({p},{s})"),
+            TypeClass::Numeric(None) => "Decimal(38,10)".into(),
+            TypeClass::Float4 => "Float32".into(),
+            TypeClass::Float8 => "Float64".into(),
+            TypeClass::Bool => "Bool".into(),
+            TypeClass::Text | TypeClass::Varchar(_) | TypeClass::Char(_) | TypeClass::Bytes => {
+                "String".into()
+            }
+            TypeClass::Date => "Date".into(),
+            TypeClass::Time => {
+                warning = Some("ClickHouse has no time-only type: stored as text".to_string());
+                "String".into()
+            }
+            TypeClass::Timestamp => "DateTime64(6)".into(),
+            TypeClass::TimestampTz => "DateTime64(6, 'UTC')".into(),
+            TypeClass::Interval => {
+                warning = Some("ClickHouse has no interval type: stored as text".to_string());
+                "String".into()
+            }
+            TypeClass::Uuid => "UUID".into(),
+            TypeClass::Json | TypeClass::Array | TypeClass::Enum | TypeClass::Unknown => {
+                "String".into()
+            }
+        },
+        "snowflake" => match &class {
+            TypeClass::Int2 => "NUMBER(5)".into(),
+            TypeClass::Int4 => "NUMBER(10)".into(),
+            TypeClass::Int8 => "NUMBER(19)".into(),
+            TypeClass::Numeric(Some((p, s))) => format!("NUMBER({p},{s})"),
+            TypeClass::Numeric(None) => "NUMBER(38,10)".into(),
+            TypeClass::Float4 => "FLOAT".into(),
+            TypeClass::Float8 => "DOUBLE".into(),
+            TypeClass::Bool => "BOOLEAN".into(),
+            TypeClass::Text => "VARCHAR".into(),
+            TypeClass::Varchar(Some(n)) => format!("VARCHAR({n})"),
+            TypeClass::Varchar(None) => "VARCHAR".into(),
+            TypeClass::Char(Some(n)) => format!("CHAR({n})"),
+            TypeClass::Char(None) => "CHAR".into(),
+            TypeClass::Bytes => "BINARY".into(),
+            TypeClass::Date => "DATE".into(),
+            TypeClass::Time => "TIME".into(),
+            TypeClass::Timestamp => "TIMESTAMP_NTZ".into(),
+            TypeClass::TimestampTz => "TIMESTAMP_TZ".into(),
+            TypeClass::Interval => {
+                warning = Some("Snowflake has no interval type: stored as text".to_string());
+                "VARCHAR".into()
+            }
+            TypeClass::Uuid => "VARCHAR(36)".into(),
+            TypeClass::Json | TypeClass::Array => "VARIANT".into(),
+            TypeClass::Enum => "VARCHAR".into(),
+            TypeClass::Unknown => "VARCHAR".into(),
+        },
+        "hana" => match &class {
+            TypeClass::Int2 => "SMALLINT".into(),
+            TypeClass::Int4 => "INTEGER".into(),
+            TypeClass::Int8 => "BIGINT".into(),
+            TypeClass::Numeric(Some((p, s))) => format!("DECIMAL({p},{s})"),
+            TypeClass::Numeric(None) => "DECIMAL(38,10)".into(),
+            TypeClass::Float4 => "REAL".into(),
+            TypeClass::Float8 => "DOUBLE".into(),
+            TypeClass::Bool => "BOOLEAN".into(),
+            TypeClass::Text => "NCLOB".into(),
+            TypeClass::Varchar(Some(n)) => format!("NVARCHAR({n})"),
+            TypeClass::Varchar(None) => "NVARCHAR(5000)".into(),
+            TypeClass::Char(Some(n)) => format!("NCHAR({n})"),
+            TypeClass::Char(None) => "NCHAR(1)".into(),
+            TypeClass::Bytes => "BLOB".into(),
+            TypeClass::Date => "DATE".into(),
+            TypeClass::Time => "TIME".into(),
+            TypeClass::Timestamp | TypeClass::TimestampTz => "TIMESTAMP".into(),
+            TypeClass::Interval => {
+                warning = Some("SAP HANA has no interval type: stored as text".to_string());
+                "NVARCHAR(64)".into()
+            }
+            TypeClass::Uuid => "VARBINARY(16)".into(),
+            TypeClass::Json | TypeClass::Array | TypeClass::Enum | TypeClass::Unknown => {
+                "NCLOB".into()
+            }
+        },
+        "jdbc" => match &class {
+            TypeClass::Int2 => "SMALLINT".into(),
+            TypeClass::Int4 => "INTEGER".into(),
+            TypeClass::Int8 => "BIGINT".into(),
+            TypeClass::Numeric(Some((p, s))) => format!("DECIMAL({p},{s})"),
+            TypeClass::Numeric(None) => "DECIMAL(38,10)".into(),
+            TypeClass::Float4 => "REAL".into(),
+            TypeClass::Float8 => "DOUBLE PRECISION".into(),
+            TypeClass::Bool => "BOOLEAN".into(),
+            TypeClass::Text => "CLOB".into(),
+            TypeClass::Varchar(Some(n)) => format!("VARCHAR({n})"),
+            TypeClass::Varchar(None) => "VARCHAR(4000)".into(),
+            TypeClass::Char(Some(n)) => format!("CHAR({n})"),
+            TypeClass::Char(None) => "CHAR(1)".into(),
+            TypeClass::Bytes => "BLOB".into(),
+            TypeClass::Date => "DATE".into(),
+            TypeClass::Time => "TIME".into(),
+            TypeClass::Timestamp => "TIMESTAMP".into(),
+            TypeClass::TimestampTz => "TIMESTAMP WITH TIME ZONE".into(),
+            TypeClass::Interval => {
+                warning = Some("The JDBC target has no interval type: stored as text".to_string());
+                "VARCHAR(64)".into()
+            }
+            TypeClass::Uuid => "VARCHAR(36)".into(),
+            TypeClass::Json | TypeClass::Array | TypeClass::Enum | TypeClass::Unknown => {
+                "CLOB".into()
+            }
+        },
+        other => {
+            warning = Some(format!(
+                "No type mapping to {other}: the type {type_name} is kept"
+            ));
+            type_name.trim().to_string()
+        }
     };
     if class == TypeClass::Unknown {
         warning = Some(format!(
@@ -593,5 +790,19 @@ mod tests {
         assert_eq!(ty, "longtext");
         assert!(warning.unwrap().contains("geometry"));
         assert_eq!(map_type("postgres", "integer", "mysql").1, None);
+        // SQL Server's `int` is 32-bit: a bigint must stay a bigint.
+        assert_eq!(map("postgres", "bigint", "sqlserver"), "bigint");
+        assert_eq!(map("postgres", "text", "sqlserver"), "nvarchar(max)");
+        assert_eq!(
+            map("postgres", "timestamptz", "sqlserver"),
+            "datetimeoffset"
+        );
+        // Oracle has no `text`; varchar2 is the right string type.
+        assert_eq!(map("postgres", "text", "oracle"), "clob");
+        assert_eq!(map("postgres", "bigint", "oracle"), "number(19)");
+        // An unknown target keeps the source type and says so instead of using SQLite types.
+        let (ty, warning) = map_type("postgres", "bigint", "unknown-db");
+        assert_eq!(ty, "bigint");
+        assert!(warning.unwrap().contains("No type mapping"));
     }
 }

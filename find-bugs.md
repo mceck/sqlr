@@ -2,7 +2,7 @@
 
 ## Sections:
 [x] sqlr-core: values, encoding and documents (`value`, `encode`, `read`, `rows`, `chunk`, `doc*`, `formats`)
-[] sqlr-core: SQL and text utilities (`classify`, `syntax`, `format_sql`, `generate`, `schema_change`, `compare`, `datagen`, `transfer`, `url`, `wire`, `es_request`, `mongo_shell`, `er`)
+[x] sqlr-core: SQL and text utilities (`classify`, `syntax`, `format_sql`, `generate`, `schema_change`, `compare`, `datagen`, `transfer`, `url`, `wire`, `es_request`, `mongo_shell`, `er`)
 [] sqlr-store: persistence and secrets (connections, vault, settings, history, snippets, keymap, recents, profiles, layered)
 [] sqlr-engine: sessions, transactions and results (`engine`, `session`, `tx`, `script`, `apply`, `result`, `result_memory`, `result_spill`, `job`)
 [] sqlr-engine: transfer and imports (`transfer/*`)
@@ -36,7 +36,20 @@ Fixed:
 Tests added in `read.rs`, `encode.rs`, `formats.rs`, `doc.rs` and `doc_rows.rs`; `cargo test -p sqlr-core` and `cargo clippy -p sqlr-core --all-targets` pass.
 
 # sqlr-core: SQL and text utilities
-[to fill]
+Fixed:
+- SQLite/DuckDB file URLs built by `connection_url` did not encode reserved path characters and turned relative SQLite paths into absolute ones; such URLs parsed back to a different file (or failed). Paths are now encoded per segment and relative paths stay relative.
+- `redact_url` leaked a password in malformed URLs without `://` (for example `postgresql //bob:secret@h`). The authority-like part is now redacted even without a scheme separator, and `%+1`/`%-1` are rejected as invalid percent escapes.
+- `classify_script` returned Read for `EXPLAIN SELECT 1\nDELETE FROM t`: a hidden second statement bypassed read-only enforcement and destructive confirmations. It now scans the batch after the planned statement and catches the hidden write.
+- A table rename in the object editor dropped its triggers because the editor leaves `triggers[].table` stale; `diff_table` compared triggers by the table reference. Triggers are now compared by name and definition, ignoring the table reference.
+- Generate SQL produced `SET` with no assignment for a table whose only columns are generated/identity and has no row key; it now returns a clear error.
+- Data generator arithmetic overflowed (debug panic, release wrap) for extreme `Sequence` or `DateRange` values; it now returns `RangeExhausted`. Type matching no longer treats `interval`/`point` as integers (`contains("int")`).
+- Compare reported a `Changed` object with no changes when only column order differed, so the diff reappeared on every compare; such normalized differences are now ignored. Quoted type names keep their case (`"MyType"` is not lowercased), and `requalify`/`collapse_ws` leave dollar-quoted strings and comments untouched.
+- ER diagrams matched foreign-key targets by table name only, drawing an edge to a same-named table in another schema; targets now match schema and name.
+- The SQL formatter removed the newline between adjacent string literals when a comment sat between them, producing a syntax error; the newline is preserved.
+- Type mapping for transfer targets other than PostgreSQL/MySQL/SQLite used the SQLite branch (e.g. `bigint` became 32-bit `integer` on SQL Server, `text` was emitted for Oracle). Added mappings for SQL Server, Oracle, DuckDB, ClickHouse, Snowflake, HANA and JDBC; unknown targets keep the source type with a warning.
+- A single-action `_bulk` request was sent as `application/json` because `is_ndjson` only accepted arrays; it is now NDJSON and the Elasticsearch driver wraps the single action as one NDJSON line.
+
+Tests added across the affected modules plus `tests/format_sql.rs`; `cargo test -p sqlr-core`, `cargo test -p sqlr-driver-elastic --lib` and clippy for both crates pass.
 
 # sqlr-store: persistence and secrets
 [to fill]

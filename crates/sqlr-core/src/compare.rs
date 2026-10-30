@@ -60,20 +60,77 @@ pub struct ObjectDiff {
     pub deps: Vec<String>,
 }
 
-/// `text` with every run of whitespace outside quotes folded into one space.
+/// If `chars[i]` starts a PostgreSQL dollar-quoted string (`$$…$$`, `$tag$…$tag$`),
+/// returns `(content_start, end_after_the_closing_delimiter)`.
+fn dollar_quote(chars: &[char], i: usize) -> Option<(usize, usize)> {
+    if chars.get(i) != Some(&'$') {
+        return None;
+    }
+    let mut j = i + 1;
+    while j < chars.len() && (chars[j].is_ascii_alphanumeric() || chars[j] == '_') {
+        j += 1;
+    }
+    if chars.get(j) != Some(&'$') {
+        return None;
+    }
+    // A tag follows the rules of an unquoted identifier: empty or letter/underscore first.
+    if j > i + 1 && !(chars[i + 1].is_ascii_alphabetic() || chars[i + 1] == '_') {
+        return None;
+    }
+    let len = j - i + 1;
+    let mut k = j + 1;
+    while k + len <= chars.len() {
+        if chars[k..k + len]
+            .iter()
+            .copied()
+            .eq(chars[i..=j].iter().copied())
+        {
+            return Some((j + 1, k + len));
+        }
+        k += 1;
+    }
+    None
+}
+
+/// `text` with every run of whitespace outside quotes folded into one space. Dollar-quoted
+/// strings are copied whole: their whitespace is data.
 fn collapse_ws(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut quote: Option<char> = None;
     let mut space = false;
-    for c in text.trim().chars() {
+    let chars: Vec<char> = text.trim().chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
         match quote {
             Some(q) => {
                 out.push(c);
                 if c == q {
                     quote = None;
                 }
+                i += 1;
             }
-            None if c.is_whitespace() => space = true,
+            None if c == '$' => {
+                if let Some((_, end)) = dollar_quote(&chars, i) {
+                    if space && !out.is_empty() {
+                        out.push(' ');
+                    }
+                    space = false;
+                    out.extend(&chars[i..end]);
+                    i = end;
+                } else {
+                    if space && !out.is_empty() {
+                        out.push(' ');
+                    }
+                    space = false;
+                    out.push(c);
+                    i += 1;
+                }
+            }
+            None if c.is_whitespace() => {
+                space = true;
+                i += 1;
+            }
             None => {
                 if space && !out.is_empty() {
                     out.push(' ');
@@ -83,7 +140,25 @@ fn collapse_ws(text: &str) -> String {
                     quote = Some(c);
                 }
                 out.push(c);
+                i += 1;
             }
+        }
+    }
+    out
+}
+
+/// `text` lowercased outside double-quoted identifiers, whose case is significant.
+fn lowercase_unquoted(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut quoted = false;
+    for c in text.chars() {
+        if c == '"' {
+            quoted = !quoted;
+            out.push(c);
+        } else if quoted {
+            out.push(c);
+        } else {
+            out.extend(c.to_lowercase());
         }
     }
     out
@@ -91,7 +166,7 @@ fn collapse_ws(text: &str) -> String {
 
 /// A column type with its spelling made one: lower case, `int4` as `integer`…
 fn normalize_type(type_name: &str) -> String {
-    let lower = collapse_ws(&type_name.to_lowercase());
+    let lower = collapse_ws(&lowercase_unquoted(type_name));
     let (base, rest) = match lower.find(['(', '[']) {
         Some(i) => (lower[..i].trim_end(), &lower[i..]),
         None => (lower.as_str(), ""),
@@ -228,6 +303,36 @@ fn requalify(text: &str, from: &str, to: &str) -> String {
                 || chars[i - 1] == '.'
                 || chars[i - 1] == '"'
                 || chars[i - 1] == '`');
+        // A dollar-quoted string is data, like a single-quoted literal.
+        if at_start
+            && c == '$'
+            && let Some((_, end)) = dollar_quote(&chars, i)
+        {
+            out.extend(&chars[i..end]);
+            i = end;
+            continue;
+        }
+        // Comments are copied unchanged too: rewriting a qualifier there changes nothing
+        // the server runs, but it does change the text the user compares.
+        if c == '-' && chars.get(i + 1) == Some(&'-') {
+            let end = chars[i..]
+                .iter()
+                .position(|&x| x == '\n')
+                .map_or(chars.len(), |n| i + n);
+            out.extend(&chars[i..end]);
+            i = end;
+            continue;
+        }
+        if c == '/' && chars.get(i + 1) == Some(&'*') {
+            let mut end = i + 2;
+            while end + 1 < chars.len() && !(chars[end] == '*' && chars[end + 1] == '/') {
+                end += 1;
+            }
+            end = (end + 2).min(chars.len());
+            out.extend(&chars[i..end]);
+            i = end;
+            continue;
+        }
         if at_start && (c == '"' || c == '`') {
             // A quoted identifier: the schema qualifier is rewritten, any other is copied
             // whole.
@@ -445,6 +550,7 @@ pub fn compare(
                         let lossy = lossy(&changes);
                         (changes, lossy)
                     }
+                    // Column order is not a difference; `diff_table` pairs by name.
                     (ObjectDef::View(a), ObjectDef::View(b))
                         if !a.materialized && !b.materialized =>
                     {
@@ -465,6 +571,12 @@ pub fn compare(
                         true,
                     ),
                 };
+                // A normalized difference `diff_table` cannot express (column order, say)
+                // is not a change to apply: a Changed diff with no steps would come back
+                // on every compare.
+                if changes.is_empty() {
+                    continue;
+                }
                 diffs.push(ObjectDiff {
                     object,
                     kind: DiffKind::Changed,
@@ -925,6 +1037,55 @@ mod tests {
         let source = snapshot("s", vec![ObjectDef::Table(a), ObjectDef::View(va)]);
         let target = snapshot("s", vec![ObjectDef::Table(b), ObjectDef::View(vb)]);
         assert_eq!(compare(&source, &target, &Lines), Vec::new());
+    }
+
+    #[test]
+    fn column_order_is_not_a_difference() {
+        let source = snapshot(
+            "s",
+            vec![ObjectDef::Table(table(
+                "s",
+                "t",
+                &[("a", "integer"), ("b", "integer")],
+            ))],
+        );
+        let target = snapshot(
+            "s",
+            vec![ObjectDef::Table(table(
+                "s",
+                "t",
+                &[("b", "integer"), ("a", "integer")],
+            ))],
+        );
+        assert_eq!(compare(&source, &target, &Lines), Vec::new());
+    }
+
+    #[test]
+    fn quoted_type_names_keep_their_case() {
+        assert_eq!(normalize_type("\"MyType\""), "\"MyType\"");
+        assert_eq!(normalize_type("INT4"), "integer");
+    }
+
+    #[test]
+    fn dollar_quoted_view_text_is_not_requalified_or_collapsed() {
+        let source = snapshot(
+            "a",
+            vec![ObjectDef::View(view("a", "v", "SELECT $$ a.t  $$"))],
+        );
+        let target = snapshot(
+            "b",
+            vec![ObjectDef::View(view("b", "v", "SELECT $$ a.t  $$"))],
+        );
+        assert_eq!(compare(&source, &target, &Lines), Vec::new());
+        assert_eq!(
+            requalify("SELECT $$ a.t $$, a.t", "a", "b"),
+            "SELECT $$ a.t $$, b.t"
+        );
+        assert_eq!(collapse_ws("SELECT $$a  b$$"), "SELECT $$a  b$$");
+        assert_eq!(
+            requalify("SELECT a.t -- a.t\n, a.t", "a", "b"),
+            "SELECT b.t -- a.t\n, b.t"
+        );
     }
 
     #[test]

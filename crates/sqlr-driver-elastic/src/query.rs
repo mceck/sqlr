@@ -405,6 +405,7 @@ impl crate::EsConnection {
                 let body = match body {
                     None => Body::None,
                     Some(Json::Array(lines)) if ndjson => Body::NdJson(lines),
+                    Some(v) if ndjson => Body::NdJson(vec![v]),
                     Some(v) => Body::Json(v),
                 };
                 let tag = new_tag();

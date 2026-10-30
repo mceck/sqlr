@@ -145,11 +145,62 @@ impl SqlSyntax {
         }
         // `EXPLAIN DELETE …` only plans the statement (without ANALYZE); its embedded
         // DELETE must not turn a plan into a write. `EXPLAIN ANALYZE` is already a write
-        // above when its wrapped statement modifies.
+        // above when its wrapped statement modifies. A write keyword after the planned
+        // statement is a second statement in a semicolon-less batch, though.
         if first_word.is_some_and(|word| word.eq_ignore_ascii_case("EXPLAIN")) {
+            if let Some(body) = self.explain_body(sql) {
+                let planned = self.first_word(body).unwrap_or("");
+                if matches!(
+                    planned.to_ascii_uppercase().as_str(),
+                    "SELECT" | "SHOW" | "VALUES" | "TABLE" | "DESCRIBE" | "DESC" | "WITH"
+                ) {
+                    return self.batch_write(body).unwrap_or(StatementClass::Read);
+                }
+            }
             return StatementClass::Read;
         }
         self.batch_write(sql).unwrap_or(StatementClass::Read)
+    }
+
+    /// The text of the statement an `EXPLAIN` wraps, from its first verb; `None` when no
+    /// verb follows.
+    fn explain_body<'a>(&self, sql: &'a str) -> Option<&'a str> {
+        let mut tokens = Vec::new();
+        self.lex(sql, LexState::Normal, &mut tokens);
+        let mut seen_explain = false;
+        let mut depth = 0u32;
+        for t in &tokens {
+            if t.kind == TokenKind::Comment {
+                continue;
+            }
+            let text = &sql[t.start..t.end];
+            if !seen_explain {
+                seen_explain =
+                    t.kind != TokenKind::Semicolon && text.eq_ignore_ascii_case("EXPLAIN");
+                continue;
+            }
+            match text {
+                "(" => {
+                    depth += 1;
+                    continue;
+                }
+                ")" => {
+                    depth = depth.saturating_sub(1);
+                    continue;
+                }
+                _ => {}
+            }
+            if depth == 0
+                && matches!(
+                    t.kind,
+                    TokenKind::Keyword | TokenKind::Ident | TokenKind::Function
+                )
+                && EXPLAIN_VERBS.iter().any(|v| text.eq_ignore_ascii_case(v))
+            {
+                return Some(&sql[t.start..]);
+            }
+        }
+        None
     }
 
     /// The first word token in `text`, skipping comments.
@@ -687,6 +738,7 @@ mod tests {
             "BEGIN DELETE FROM t END",
             "SELECT 1\nINSERT INTO t VALUES (1)",
             "SELECT 1\nEXEC dangerous_procedure",
+            "EXPLAIN SELECT 1\nDELETE FROM t",
             "BEGIN UPDATE t SET a = 1; END;",
             "WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x",
         ] {
@@ -699,6 +751,7 @@ mod tests {
             "SELECT * FROM t FOR UPDATE",
             "SELECT * FROM t FOR NO KEY UPDATE",
             "EXPLAIN DELETE FROM t",
+            "EXPLAIN WITH x AS (SELECT 1) SELECT * FROM x",
             "SELECT 'DELETE FROM t' FROM t",
             "SELECT \"delete\" FROM t",
             "SELECT 1 -- DELETE FROM t",

@@ -172,7 +172,14 @@ pub fn generate_sql(
                 .map(|c| format!("{} = {}", d.quote_ident(c), value(c)))
                 .collect();
             if set.is_empty() {
-                // Every column is part of the key: a no-op assignment keeps it valid.
+                // Every writable column is part of the key: a no-op assignment keeps it
+                // valid. With no writable column and no key there is nothing to update.
+                if key.is_empty() {
+                    return Err(DriverError::new(
+                        ErrorKind::Unsupported,
+                        format!("no column of {} can be updated", name),
+                    ));
+                }
                 set = key
                     .iter()
                     .map(|k| format!("{0} = {0}", d.quote_ident(k)))
@@ -298,6 +305,16 @@ mod tests {
             generate_sql(SqlTemplate::Update, &def, &Ansi).unwrap(),
             "UPDATE \"public\".\"users\"\nSET \"id\" = \"id\"\nWHERE \"id\" = /* id */ NULL;"
         );
+    }
+
+    #[test]
+    fn update_template_fails_when_nothing_can_be_set() {
+        let mut t = users();
+        t.columns.truncate(1);
+        t.columns[0].identity = Some(Identity::Always);
+        t.constraints.clear();
+        let err = generate_sql(SqlTemplate::Update, &ObjectDef::Table(t), &Ansi).unwrap_err();
+        assert!(err.to_string().contains("no column"), "{err}");
     }
 
     #[test]

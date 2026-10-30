@@ -76,6 +76,11 @@ fn formatter_preserves_semantically_significant_string_boundaries() {
         f.contains("'hello'\n'world'"),
         "PostgreSQL concatenates strings separated by a newline: {f}"
     );
+    let f = format_sql(&syntax, "select 'hello'\n/* c */ 'world'", &options);
+    assert!(
+        f.contains("\n'world'"),
+        "a comment between two literals must not remove their newline: {f}"
+    );
     let f = format_sql(&syntax, "select U&'d\\0061t'", &options);
     assert!(
         f.contains("U&'d\\0061t'"),

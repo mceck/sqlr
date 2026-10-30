@@ -299,14 +299,21 @@ pub fn diff_table(before: &TableDef, after: &TableDef) -> Vec<SchemaChange> {
             to: new.name.clone(),
         });
     }
-    for t in before.triggers.iter().filter(|t| {
-        // A trigger follows its table's rename.
-        let moved = crate::schema::TriggerDef {
-            table: table.clone(),
-            ..(*t).clone()
-        };
-        !after.triggers.contains(&moved)
-    }) {
+    // A trigger follows its table's rename, and an editor may leave the trigger's `table`
+    // reference stale while it changes only the table's own name: compare every other field.
+    let same_trigger = |a: &crate::schema::TriggerDef, b: &crate::schema::TriggerDef| {
+        a.name == b.name
+            && a.timing == b.timing
+            && a.events == b.events
+            && a.for_each_row == b.for_each_row
+            && a.condition == b.condition
+            && a.body == b.body
+    };
+    for t in before
+        .triggers
+        .iter()
+        .filter(|t| !after.triggers.iter().any(|a| same_trigger(t, a)))
+    {
         out.push(SchemaChange::Drop {
             object: ObjectRef::child(ObjectKind::Trigger, table, &t.name),
             cascade: false,
@@ -353,13 +360,11 @@ pub fn diff_table(before: &TableDef, after: &TableDef) -> Vec<SchemaChange> {
     for c in added_constraints.iter().filter(|c| c.is_foreign_key()) {
         out.push(add_constraint(c));
     }
-    for t in after.triggers.iter().filter(|t| {
-        let old = crate::schema::TriggerDef {
-            table: before.table.clone(),
-            ..(*t).clone()
-        };
-        !before.triggers.contains(&old)
-    }) {
+    for t in after
+        .triggers
+        .iter()
+        .filter(|t| !before.triggers.iter().any(|b| same_trigger(b, t)))
+    {
         out.push(SchemaChange::Create(ObjectDef::Trigger(t.clone())));
     }
 
@@ -806,6 +811,44 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn a_table_rename_keeps_triggers_with_a_stale_table_reference() {
+        let mut before = base();
+        before.triggers.push(TriggerDef {
+            name: "trg".into(),
+            table: t("orders"),
+            timing: "BEFORE".into(),
+            events: vec!["INSERT".into()],
+            for_each_row: true,
+            condition: None,
+            body: "EXECUTE FUNCTION f()".into(),
+        });
+        let mut after = before.clone();
+        after.table.name = "orders2".into();
+        // The editor renames the table but leaves `after.triggers[0].table` as it was.
+        assert_eq!(
+            diff_table(&before, &after),
+            [SchemaChange::Rename {
+                object: ObjectRef::relation(ObjectKind::Table, &t("orders")),
+                to: "orders2".into()
+            }]
+        );
+
+        // A real trigger change still drops and creates it.
+        after.triggers[0].body = "EXECUTE FUNCTION g()".into();
+        assert!(diff_table(&before, &after).iter().any(|c| matches!(
+            c,
+            SchemaChange::Drop {
+                object,
+                ..
+            } if object.kind == ObjectKind::Trigger
+        )));
+        assert!(diff_table(&before, &after).iter().any(|c| matches!(
+            c,
+            SchemaChange::Create(ObjectDef::Trigger(t)) if t.body == "EXECUTE FUNCTION g()"
+        )));
     }
 
     #[test]

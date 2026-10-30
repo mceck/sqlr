@@ -41,7 +41,8 @@ impl EsRequest {
         match self {
             EsRequest::Http { path, body, .. } => {
                 let p = path.split('?').next().unwrap_or("");
-                matches!(body, Some(serde_json::Value::Array(_)))
+                // A `_bulk` with one action is one object, not an array, but still NDJSON.
+                body.is_some()
                     && ["_bulk", "_msearch", "_msearch/template"]
                         .iter()
                         .any(|e| p.ends_with(e))
@@ -428,6 +429,10 @@ mod tests {
             parse_es_console("POST _bulk\n{\"a\":1}\n{\"b\":2}\nPOST x/_search\n{}").unwrap();
         assert!(reqs[0].1.is_ndjson());
         assert!(!reqs[1].1.is_ndjson());
+        // A single delete action is one NDJSON line, not a JSON array.
+        let reqs =
+            parse_es_console("POST _bulk\n{\"delete\":{\"_index\":\"i\",\"_id\":\"1\"}}").unwrap();
+        assert!(reqs[0].1.is_ndjson());
     }
 
     #[test]

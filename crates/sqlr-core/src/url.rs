@@ -85,6 +85,7 @@ fn percent_decode(text: &str) -> Result<String, UrlError> {
         if bytes[i] == b'%' {
             let hex = text
                 .get(i + 1..i + 3)
+                .filter(|h| h.bytes().all(|b| b.is_ascii_hexdigit()))
                 .and_then(|h| u8::from_str_radix(h, 16).ok())
                 .ok_or(UrlError::InvalidPercentEncoding)?;
             out.push(hex);
@@ -260,23 +261,23 @@ pub fn parse_connection_url(url: &str) -> Result<ConnectionUrl, UrlError> {
 /// if that hides more than a password.
 pub fn redact_url(url: &str) -> String {
     let mut out = url.to_string();
-    if let Some(scheme_end) = out.find("://") {
-        let start = scheme_end + 3;
-        let end = out[start..]
-            .find(['/', '?', '#'])
-            .map_or(out.len(), |i| start + i);
-        let last_at = out[start..].rfind('@').map(|i| start + i);
-        if let Some(at) = last_at.filter(|&at| at > end) {
-            if let Some(colon) = out[start..at].find(':') {
-                out.replace_range(start + colon + 1..at, "***");
-            }
-        } else if may_hide_password(&out[start..end]) {
-            out.replace_range(start..end, "***");
-        } else if let Some(at) = out[start..end].rfind('@') {
-            let at = start + at;
-            if let Some(colon) = out[start..at].find(':') {
-                out.replace_range(start + colon + 1..at, "***");
-            }
+    // A malformed URL may lack `://` (a space instead of a colon, say) and still hold a
+    // password in an authority-like `user:password@` part.
+    let start = out.find("://").map_or(0, |i| i + 3);
+    let end = out[start..]
+        .find(['/', '?', '#'])
+        .map_or(out.len(), |i| start + i);
+    let last_at = out[start..].rfind('@').map(|i| start + i);
+    if let Some(at) = last_at.filter(|&at| at > end) {
+        if let Some(colon) = out[start..at].find(':') {
+            out.replace_range(start + colon + 1..at, "***");
+        }
+    } else if may_hide_password(&out[start..end]) {
+        out.replace_range(start..end, "***");
+    } else if let Some(at) = out[start..end].rfind('@') {
+        let at = start + at;
+        if let Some(colon) = out[start..at].find(':') {
+            out.replace_range(start + colon + 1..at, "***");
         }
     }
     if let Some(q) = out.find('?') {
@@ -391,24 +392,21 @@ pub fn connection_url(
     };
     if FILE_SCHEMES.contains(&scheme.as_str()) {
         let path = value("path").unwrap_or_default();
-        if scheme == "duckdb" {
-            if path == ":memory:" {
-                return Some("duckdb::memory:".into());
-            }
-            let path = path
-                .split('/')
-                .map(percent_encode)
-                .collect::<Vec<_>>()
-                .join("/");
-            // A relative path must stay relative; `//` would create an authority.
-            return Some(if path.starts_with('/') {
-                format!("{scheme}://{path}")
-            } else {
-                format!("{scheme}:{path}")
-            });
+        if path == ":memory:" {
+            return Some(format!("{scheme}::memory:"));
         }
-        let slash = if path.starts_with('/') { "" } else { "/" };
-        return Some(format!("{scheme}://{slash}{path}"));
+        // A path is not an authority: encode the characters that would end or split the
+        // URL, and keep a relative path relative (`//` would make it an authority).
+        let path = path
+            .split('/')
+            .map(percent_encode)
+            .collect::<Vec<_>>()
+            .join("/");
+        return Some(if path.starts_with('/') {
+            format!("{scheme}://{path}")
+        } else {
+            format!("{scheme}:{path}")
+        });
     }
     let mut url = format!("{scheme}://");
     if let Some(user) = value("user") {
@@ -481,6 +479,58 @@ mod tests {
                 Some(path)
             );
         }
+    }
+
+    #[test]
+    fn saved_sqlite_urls_round_trip_reserved_path_characters() {
+        let manifest = DriverManifest {
+            id: "sqlite".into(),
+            name: "SQLite".into(),
+            family: Family::Relational,
+            capabilities: Capabilities::default(),
+            fields: vec![field("path", FieldType::Text)],
+            dialect: "sqlite".into(),
+            url_schemes: vec!["sqlite".into()],
+            default_port: None,
+            editing: None,
+        };
+        let mut cfg = crate::config::ConnectionConfig {
+            id: "c".into(),
+            name: "SQLite".into(),
+            driver: "sqlite".into(),
+            group: None,
+            color: None,
+            values: Default::default(),
+            profile: None,
+            save_secrets: true,
+            agent_access: Default::default(),
+        };
+        for path in [":memory:", "/tmp/data?#%.db", "/tmp/a?b.db", "relative.db"] {
+            cfg.values.insert("path".into(), path.into());
+            let url = connection_url(&cfg, &manifest).unwrap();
+            assert_eq!(
+                parse_connection_url(&url).unwrap().path.as_deref(),
+                Some(path),
+                "{url}"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_urls_without_a_scheme_separator_do_not_echo_passwords() {
+        for url in ["postgresql //bob:secret@h", "postgresql bob:secret@h"] {
+            let error = parse_connection_url(url).unwrap_err().to_string();
+            assert!(!error.contains("secret"), "{error}");
+            assert!(!redact_url(url).contains("secret"), "{}", redact_url(url));
+        }
+        assert_eq!(
+            parse_connection_url("postgresql://h/db?x=%+1").unwrap_err(),
+            UrlError::InvalidPercentEncoding
+        );
+        assert_eq!(
+            parse_connection_url("postgresql://h/db?x=%-1").unwrap_err(),
+            UrlError::InvalidPercentEncoding
+        );
     }
 
     #[test]
