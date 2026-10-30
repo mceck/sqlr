@@ -8,23 +8,23 @@ first try and passed on retry; worth a deterministic look in this cycle).
 ## Cycle 2 sections:
 [x] sqlr-core: values, encoding and documents (`value`, `encode`, `read`, `rows`, `chunk`, `doc*`, `formats`)
 [x] sqlr-core: SQL and text utilities (`classify`, `syntax`, `format_sql`, `generate`, `schema_change`, `compare`, `datagen`, `transfer`, `url`, `wire`, `es_request`, `mongo_shell`, `er`)
-[ ] sqlr-store: persistence and secrets (connections, vault, settings, history, snippets, keymap, recents, profiles, layered)
+[x] sqlr-store: persistence and secrets (connections, vault, settings, history, snippets, keymap, recents, profiles, layered)
 [ ] sqlr-engine: sessions, transactions and results (`engine`, `session`, `tx`, `script`, `apply`, `result`, `result_memory`, `result_spill`, `job`)
-[ ] sqlr-engine: transfer and imports (`transfer/*`)
-[ ] sqlr-sidecar: protocol, client and process
-[ ] sqlr-registry: driver install, index and verification
+[x] sqlr-engine: transfer and imports (`transfer/*`)
+[x] sqlr-sidecar: protocol, client and process
+[x] sqlr-registry: driver install, index and verification
 [x] sqlr-mcp: server, policy, tokens and results
 [x] sqlr-terminal: PTY, screen, input and tabs
 [ ] drivers: PostgreSQL
-[ ] drivers: MySQL / MariaDB
+[x] drivers: MySQL / MariaDB
 [x] drivers: SQLite
-[ ] drivers: Redis
-[ ] drivers: SQL Server / Oracle
-[ ] drivers: Elasticsearch / Snowflake / ClickHouse / JDBC
-[ ] sidecar drivers: MongoDB / DuckDB / HANA
-[ ] sqlr-app: application logic (workers, actions, messages, cli, tabs, pending)
-[ ] sqlr-ui: grid and editor
-[ ] sqlr-ui: forms, trees, dialogs and keymap
+[x] drivers: Redis
+[x] drivers: SQL Server / Oracle
+[x] drivers: Elasticsearch / Snowflake / ClickHouse / JDBC
+[x] sidecar drivers: MongoDB / DuckDB / HANA
+[x] sqlr-app: application logic (workers, actions, messages, cli, tabs, pending)
+[x] sqlr-ui: grid and editor
+[x] sqlr-ui: forms, trees, dialogs and keymap
 
 ## Cycle 1 findings:
 # sqlr-core: values, encoding and documents
@@ -254,3 +254,39 @@ Fixed:
 - `classify_script` flagged a read-only table-valued `PRAGMA` (`PRAGMA table_info(t)`, `PRAGMA main.table_list(t)`) as `Destructive("PRAGMA in a batch of statements")` because the batch scan re-examined the first statement's own verb. The first word is now exempt; a `PRAGMA` hidden after another statement (or inside `BEGIN … END`) is still caught.
 
 Test added in `classify.rs`; 249 sqlr-core lib tests and clippy pass.
+
+# sqlr-store: persistence and secrets
+No new bug found in this cycle. Reviewed `connections` (import, save, folder moves), `vault`/`secrets`, `settings`, `history`, `snippets`, `keymap`, `recent`/`recent_objects`, `profiles`, `layered`, `catalog`, `db` migration/trim and the client-migration import/export paths; existing tests and clippy pass.
+
+# sqlr-engine: transfer and imports
+No new bug found in this cycle. Reviewed `xlsx`, `parquet`, `convert` (UTC/date arithmetic), `pipeline` cancellation, `write_table` rejected rows and `clipboard`; existing targeted tests and clippy pass.
+
+# sqlr-sidecar: protocol, client and process
+No new bug found beyond the open item already recorded: a nonconforming server that answers `FetchDone { exhausted: false }` with no chunk still makes the client report exhaustion. `frame`, `messages`, `client`, `process`, `server` and `dialect` were re-read; the shutdown task-abort fix remains in place.
+
+# sqlr-registry: driver install, index and verification
+No new bug found in this cycle. Reviewed `verify`, `install` archive extraction/limits, `index` parsing/version order, `download`, `manual` and `release`; existing tests and clippy pass.
+
+# drivers: MySQL / MariaDB
+No new bug found in this cycle. Reviewed `types` (both protocols, BIT/fraction), `execute` streaming/cleanup, `dialect`/`syntax` and `ddl_gen`; 31 unit tests and clippy pass.
+
+# drivers: Redis
+No new bug found in this cycle. Reviewed `values` (streams/scan/score parsing), `classify`, `console` and `errors`; 21 unit tests and clippy pass.
+
+# drivers: SQL Server / Oracle
+No new bug found in this cycle. Reviewed SQL Server `execute` (rowsets, MERGE, cleanup) and Oracle value/LOB/timestamp decoding; unit tests and clippy pass.
+
+# drivers: Elasticsearch / Snowflake / ClickHouse / JDBC
+No new bug found in this cycle. Reviewed Elasticsearch `write` bulk/by-query responses, Snowflake `protocol` partitions/data and SQLSTATE mapping, ClickHouse `stream` decoding, and the JDBC Java discovery; unit tests and clippy pass.
+
+# sidecar drivers: MongoDB / DuckDB / HANA
+No new bug found in this cycle. Reviewed DuckDB `types` (HUGEINT/UUID/BIT/TIMETZ/infinities), HANA `catalog`/`errors`, and Mongo `query` limits; unit/native tests and clippy pass.
+
+# sqlr-app: application logic
+No new bug found in this cycle. Reviewed pending-change routing, closed-tab reopening, store-worker duplication and the welcome/recent paths. The full-suite flake (`history_context_menu_saves_the_query_as_a_snippet`) is a 5 s wall-clock timeout that reproduces under heavy parallel load but passed 5/5 in isolation; it is test timing, not a product race.
+
+# sqlr-ui: grid and editor
+No new bug found in this cycle. Reviewed selection/subtract, edit history/duplicate/set-NULL, document-table pages, editor statements/wrapping and hex parsing; 167 unit + targeted integration tests and clippy pass.
+
+# sqlr-ui: forms, trees, dialogs and keymap
+No new bug found in this cycle. Reviewed plan reveal, lock trees, snippet folder ids, XML pretty-printing, JSON view/edit validation and the keymap editor; 166 unit + targeted integration tests and clippy pass.
