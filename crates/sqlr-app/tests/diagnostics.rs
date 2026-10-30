@@ -218,7 +218,9 @@ fn the_diagnostics_window_lists_an_incident_and_toggles_the_sql_setting() {
         .scroll_to_me();
     h.run_steps(5);
     h.get_by_label("Include SQL in logs and reports").click();
-    h.run_steps(3);
+    step_until(&mut h, "the SQL setting to toggle", |h| {
+        h.state().setting_text("diagnostics.include_sql", None) == "false"
+    });
     let after = h.state().setting_text("diagnostics.include_sql", None);
     assert_ne!(before, after, "the setting toggled");
     assert_eq!(after, "false");
