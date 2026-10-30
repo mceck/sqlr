@@ -9,7 +9,7 @@
 [x] sqlr-sidecar: protocol, client and process
 [x] sqlr-registry: driver install, index and verification
 [x] sqlr-mcp: server, policy, tokens and results
-[] sqlr-terminal: PTY, screen, input and tabs
+[x] sqlr-terminal: PTY, screen, input and tabs
 [] drivers: PostgreSQL
 [] drivers: MySQL / MariaDB
 [] drivers: SQLite
@@ -119,7 +119,13 @@ Fixed:
 Tests added in `crates/sqlr-mcp/tests/protocol.rs` and policy unit tests; the full sqlr-mcp suite and clippy pass.
 
 # sqlr-terminal: PTY, screen, input and tabs
-[to fill]
+Fixed:
+- Shift+Tab was sent as a plain Tab, so readline/less never received backtab; it now sends `CSI Z`.
+- Copying a selection containing a wide character inserted a space at its continuation cell (`界e` became `界 e`). Continuation cells are skipped and a selection starting on one snaps to the wide character.
+- Erased or blank cells with a background colour were not painted, so `CSI 2J`/`K` backgrounds and selection highlights over blank cells disappeared. The background is now painted before the empty glyph is skipped.
+- Mouse and selection cell mapping averaged the canvas width over the column count, which drifts from the painted glyph width when the width is not an exact multiple; clicks and SGR reports could target the neighbouring cell. The painted `char_width`/`row_height` are now used.
+
+Tests added in `input.rs`, `screen.rs` and `widget.rs`; `cargo test -p sqlr-terminal` (47 tests) and clippy pass. The `input.rs`/`screen.rs` changes landed in commit f351b62 with the MCP work; the widget changes are in the following terminal commit.
 
 # drivers: PostgreSQL
 [to fill]

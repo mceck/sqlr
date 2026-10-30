@@ -606,7 +606,7 @@ impl TerminalPanel {
                 egui::StrokeKind::Inside,
             );
         }
-        self.interactions(ui, &response, &snapshot, theme);
+        self.interactions(ui, &response, &snapshot, theme, char_width, row_height);
     }
 
     fn paint(
@@ -633,9 +633,7 @@ impl TerminalPanel {
                 let Some(cell) = snapshot.cell(row, col) else {
                     continue;
                 };
-                if cell.text.is_empty() {
-                    continue;
-                }
+                // The second half of a wide character belongs to the cell before it.
                 if col > 0
                     && snapshot
                         .cell(row, col - 1)
@@ -664,6 +662,10 @@ impl TerminalPanel {
                         CornerRadius::ZERO,
                         bg,
                     );
+                }
+                // An erased cell has a background but no glyph to draw.
+                if cell.text.is_empty() {
+                    continue;
                 }
                 let text = if cell.text == " " {
                     " "
@@ -737,9 +739,11 @@ impl TerminalPanel {
         response: &egui::Response,
         snapshot: &ScreenSnapshot,
         theme: &TerminalTheme,
+        char_width: f32,
+        row_height: f32,
     ) {
-        let char_width = self.last_rect.width() / f32::from(snapshot.cols.max(1));
-        let row_height = self.last_rect.height() / f32::from(snapshot.rows.max(1));
+        // Use the same cell size the canvas painted with. Averaging the rect over the
+        // column count is not the same thing when the width is not an exact multiple.
         let cell = |pos: egui::Pos2| {
             cell_at(
                 self.last_rect,
@@ -1161,6 +1165,133 @@ mod tests {
         );
         panel.close();
         assert!(!panel.focused());
+        panel.kill();
+    }
+
+    #[test]
+    fn mouse_reports_use_the_painted_cell_width() {
+        use crate::session::{BackendFactory, BackendParts};
+        use crate::shell::CommandSpec;
+        use parking_lot::Mutex;
+        use std::io::{Cursor, Write};
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        #[derive(Clone, Default)]
+        struct MouseBackend(Arc<Mutex<Vec<u8>>>, Arc<AtomicBool>);
+        impl Write for MouseBackend {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl BackendFactory for MouseBackend {
+            fn start(
+                &self,
+                _: &CommandSpec,
+                _: u16,
+                _: u16,
+            ) -> Result<BackendParts, crate::session::PtyError> {
+                let killed = self.1.clone();
+                let stopped = self.1.clone();
+                Ok(BackendParts {
+                    // SGR mouse reports, as a full-screen agent enables them.
+                    reader: Box::new(Cursor::new(b"\x1b[?1000h\x1b[?1006h".to_vec())),
+                    writer: Box::new(self.clone()),
+                    resize: Box::new(|_, _| {}),
+                    kill: Box::new(move || killed.store(true, Ordering::SeqCst)),
+                    wait: Box::new(move || {
+                        while !stopped.load(Ordering::SeqCst) {
+                            std::thread::sleep(Duration::from_millis(1));
+                        }
+                        Ok(0)
+                    }),
+                    pid: None,
+                })
+            }
+        }
+
+        let backend = MouseBackend::default();
+        let config = SessionConfig::default();
+        let spec = crate::shell::resolve_current(&config.shell, &config.cwd);
+        let session = TerminalSession::spawn_with(&backend, &spec, &config, Arc::new(|| {}));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while session.snapshot(0).mouse_mode == MouseProtocolMode::None {
+            assert!(Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        let mut panel = TerminalPanel {
+            session: Some(session),
+            started_once: true,
+            ..Default::default()
+        };
+        let theme = theme();
+        let font = theme.font();
+        let ctx = egui::Context::default();
+        fn frame(
+            ctx: &egui::Context,
+            panel: &mut TerminalPanel,
+            theme: &TerminalTheme,
+            events: Vec<egui::Event>,
+            width: f32,
+        ) {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(width, 300.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    panel.show(ui, theme, Arc::new(|| {}));
+                },
+            );
+            output.textures_delta.clear();
+        }
+        let mut width = 640.0;
+        frame(&ctx, &mut panel, &theme, vec![], width);
+        let char_width = ctx.fonts_mut(|fonts| fonts.glyph_width(&font, 'M').max(1.0));
+        let row_height = ctx.fonts_mut(|fonts| fonts.row_height(&font).max(1.0));
+        // The canvas width is rarely an exact multiple of the glyph width. Find a point
+        // whose painted cell differs from the one an averaged width would report.
+        let mut target = None;
+        for step in 0..20 {
+            let rect = panel.canvas_rect();
+            let cols = (rect.width() / char_width).floor().max(1.0) as u16;
+            let averaged = rect.width() / f32::from(cols.max(1));
+            for col in 0..cols {
+                let x = (f32::from(col) + 0.5) * char_width;
+                let painted = (x / char_width).floor() as u16;
+                let averaged = (x / averaged).floor() as u16;
+                if painted != averaged {
+                    target = Some((painted, x));
+                    break;
+                }
+            }
+            if target.is_some() {
+                break;
+            }
+            width = 640.0 + (step as f32 + 1.0) * 0.25;
+            frame(&ctx, &mut panel, &theme, vec![], width);
+        }
+        let (col, x) = target.expect("a canvas width with a partial last cell");
+        let rect = panel.canvas_rect();
+        let pos = pos2(rect.left() + x, rect.top() + row_height * 0.5);
+        frame(
+            &ctx,
+            &mut panel,
+            &theme,
+            vec![egui::Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            width,
+        );
+        let expected = format!("\x1b[<0;{};1M", col + 1);
+        assert_eq!(String::from_utf8_lossy(&backend.0.lock()), expected);
         panel.kill();
     }
 
