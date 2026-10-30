@@ -17,7 +17,7 @@ first try and passed on retry; worth a deterministic look in this cycle).
 [x] sqlr-terminal: PTY, screen, input and tabs
 [ ] drivers: PostgreSQL
 [ ] drivers: MySQL / MariaDB
-[ ] drivers: SQLite
+[x] drivers: SQLite
 [ ] drivers: Redis
 [ ] drivers: SQL Server / Oracle
 [ ] drivers: Elasticsearch / Snowflake / ClickHouse / JDBC
@@ -241,3 +241,10 @@ Fixed:
 - The terminal's Clear action rebuilt the vt100 parser with zero scrollback, so after clearing the screen the configured scrollback stopped being kept for the rest of the session. The emulator now remembers the configured size and recreates the parser with it.
 
 Test added in `screen.rs`; 48 terminal lib tests and clippy pass.
+
+# drivers: SQLite
+Fixed:
+- The explorer listed an FTS/virtual table's shadow tables (`docs_data`, `docs_idx`, …) as ordinary tables, although the schema snapshot excludes them. A user could edit or drop the module's storage from the tree. `browse` now filters `pragma_table_list` shadow entries too.
+- A table whose AUTOINCREMENT primary key was changed to a non-`INTEGER` type generated `BIGINT PRIMARY KEY AUTOINCREMENT`, which SQLite rejects on apply, instead of the generator's clear "needs a one-column INTEGER primary key" error. The type is now checked.
+
+Tests added in `browse.rs` and `ddl_gen.rs`; 20 unit + 60 integration tests and clippy pass.

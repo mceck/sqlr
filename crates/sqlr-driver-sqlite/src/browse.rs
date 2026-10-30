@@ -94,12 +94,15 @@ fn objects(
 ) -> Result<Vec<Node>, DriverError> {
     let sql = format!(
         "SELECT name, tbl_name FROM {}.sqlite_schema \
-         WHERE type = ?1 AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY name",
+         WHERE type = ?1 AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' \
+           AND name NOT IN (SELECT name FROM pragma_table_list \
+                            WHERE schema = ?2 AND type = 'shadow') \
+         ORDER BY name",
         SqliteDialect.quote_ident(schema)
     );
     let mut stmt = conn.prepare(&sql).map_err(map_error)?;
     let rows: Vec<(String, String)> = stmt
-        .query_map([ty], |r| Ok((r.get(0)?, r.get(1)?)))
+        .query_map([ty, schema], |r| Ok((r.get(0)?, r.get(1)?)))
         .map_err(map_error)?
         .collect::<Result<_, _>>()
         .map_err(map_error)?;
@@ -149,4 +152,27 @@ fn columns(
             node(path, name, NodeKind::Column, false, Some(detail))
         })
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn virtual_table_shadow_tables_are_not_listed_as_tables() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE VIRTUAL TABLE docs USING fts5(body)")
+            .unwrap();
+        let nodes = browse(
+            &conn,
+            &NodePath(vec!["main".into(), "tables".into()]),
+        )
+        .unwrap();
+        let names: Vec<&str> = nodes.iter().map(|n| n.name.as_str()).collect();
+        assert!(names.contains(&"docs"), "{names:?}");
+        assert!(
+            !names.iter().any(|n| n.starts_with("docs_")),
+            "shadow tables leaked into the explorer: {names:?}"
+        );
+    }
 }

@@ -133,7 +133,10 @@ impl SqliteDialect {
             _ => None,
         });
         let auto_clause = match (auto, pk) {
-            (Some(c), Some((name, columns))) if columns.as_slice() == [c.name.clone()] => {
+            (Some(c), Some((name, columns)))
+                if c.type_name.trim().eq_ignore_ascii_case("INTEGER")
+                    && columns.as_slice() == [c.name.clone()] =>
+            {
                 let named = match name {
                     Some(n) => format!("CONSTRAINT {} ", self.q(n)),
                     None => String::new(),
@@ -599,6 +602,28 @@ mod tests {
                 .kind,
             ErrorKind::Unsupported
         );
+    }
+
+    #[test]
+    fn autoincrement_needs_an_integer_column() {
+        let mut def = TableDef::new(t("t"));
+        def.columns = vec![ColumnDef {
+            name: "id".into(),
+            type_name: "BIGINT".into(),
+            nullable: true,
+            identity: Some(Identity::AutoIncrement),
+            ..Default::default()
+        }];
+        def.constraints.push(ConstraintDef::PrimaryKey {
+            name: None,
+            columns: vec!["id".into()],
+        });
+        // SQLite accepts AUTOINCREMENT only on an exact INTEGER primary key; emitting
+        // `BIGINT PRIMARY KEY AUTOINCREMENT` would fail on apply.
+        let err = SqliteDialect
+            .create_table_statement(&def)
+            .expect_err("a non-INTEGER AUTOINCREMENT column cannot be created");
+        assert!(err.message.contains("INTEGER"), "{}", err.message);
     }
 
     #[test]
