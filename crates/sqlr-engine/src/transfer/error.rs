@@ -89,6 +89,16 @@ pub(crate) enum TransferFileError {
     /// More rows than an Excel sheet holds.
     #[error("An Excel sheet holds at most 1 048 576 rows")]
     SheetFull,
+    /// A text cell longer than Excel's limit.
+    #[error("Row {row}, column {column}: {chars} characters; an Excel cell holds at most 32 767")]
+    CellTooLong {
+        /// One-based row number in the sheet.
+        row: u32,
+        /// One-based column number in the sheet.
+        column: u16,
+        /// The value's character count.
+        chars: usize,
+    },
     /// The writer thread panicked or was cancelled.
     #[error("{0}")]
     Join(#[from] tokio::task::JoinError),

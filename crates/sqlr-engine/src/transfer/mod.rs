@@ -1166,12 +1166,16 @@ impl Load<'_> {
                             session.rollback().await;
                             return JobOutcome::Failed(e);
                         }
-                        if options.max_rejected.is_some_and(|max| rejected_count > max) {
+                        if options
+                            .max_rejected
+                            .is_some_and(|max| rejected_count >= max)
+                        {
                             session.rollback().await;
+                            let rows = if rejected_count == 1 { "row" } else { "rows" };
                             return JobOutcome::Failed(DriverError::new(
                                 ErrorKind::Other,
                                 format!(
-                                    "Stopped after {rejected_count} rejected rows (line {line}: \
+                                    "Stopped after {rejected_count} rejected {rows} (line {line}: \
                                      {reason}){}",
                                     kept_note(committed)
                                 ),

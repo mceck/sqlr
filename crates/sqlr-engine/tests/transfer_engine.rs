@@ -614,15 +614,15 @@ fn the_rejected_file_is_complete_when_the_load_stops() {
         panic!("the load stops after too many rejected rows");
     };
     assert!(
-        e.message.contains("Stopped after 2 rejected rows"),
+        e.message.contains("Stopped after 1 rejected row"),
         "{}",
         e.message
     );
     let text = std::fs::read_to_string(&rejected).unwrap();
     assert_eq!(
         text.lines().count(),
-        3,
-        "header and the two rejected rows: {text}"
+        2,
+        "header and the rejected row: {text}"
     );
 }
 

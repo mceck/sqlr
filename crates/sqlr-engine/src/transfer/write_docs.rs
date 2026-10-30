@@ -4,8 +4,8 @@
 //! Documents go in batches of the import's batch size, one `insertMany` (MongoDB) or
 //! `_bulk` request (Elasticsearch) each, through the driver's own statement path. There is
 //! no transaction: after a failure the documents of earlier batches stay, and the error says
-//! how many. With "skip bad rows", a failed batch is inserted again one document at a time
-//! and the documents that fail are reported.
+//! how many. With "skip bad rows", documents are inserted one at a time from the start: a
+//! batch that failed after a prefix cannot be retried without duplicating that prefix.
 
 use std::sync::Arc;
 
@@ -54,31 +54,30 @@ impl Batches<'_> {
         if docs.is_empty() {
             return Ok(());
         }
-        let only: Vec<DocValue> = docs.iter().map(|(_, d)| d.clone()).collect();
-        let text = insert_many_text(self.doc.language(), self.target, &only)
-            .map_err(|e| DriverError::new(ErrorKind::Other, e.to_string()))?;
-        match self.doc.run(self.target.database.as_deref(), &text).await {
-            Ok(_) => {
-                self.written += docs.len() as u64;
-                Ok(())
-            }
-            Err(e) if !self.skip_bad || e.kind == ErrorKind::Connection => Err(e),
-            Err(_) => {
-                // Again one at a time, to find the documents that fail.
-                for (line, d) in docs {
-                    match self.doc.insert_doc(self.target, &d).await {
-                        Ok(_) => self.written += 1,
-                        Err(e) if e.kind == ErrorKind::Connection => return Err(e),
-                        Err(e) => {
-                            if self.rejected.len() < MAX_REJECTED {
-                                self.rejected.push((line, e.message));
-                            }
+        if self.skip_bad {
+            // A batch request can be partially applied before it fails (MongoDB's ordered
+            // insertMany, an Elasticsearch _bulk). Retrying the whole batch would insert
+            // the successful prefix twice, so write one document at a time instead.
+            for (line, d) in docs {
+                match self.doc.insert_doc(self.target, &d).await {
+                    Ok(_) => self.written += 1,
+                    Err(e) if e.kind == ErrorKind::Connection => return Err(e),
+                    Err(e) => {
+                        if self.rejected.len() < MAX_REJECTED {
+                            self.rejected.push((line, e.message));
                         }
                     }
                 }
-                Ok(())
             }
+            return Ok(());
         }
+        let only: Vec<DocValue> = docs.iter().map(|(_, d)| d.clone()).collect();
+        let text = insert_many_text(self.doc.language(), self.target, &only)
+            .map_err(|e| DriverError::new(ErrorKind::Other, e.to_string()))?;
+        self.doc
+            .run(self.target.database.as_deref(), &text)
+            .await
+            .map(|_| self.written += docs.len() as u64)
     }
 }
 

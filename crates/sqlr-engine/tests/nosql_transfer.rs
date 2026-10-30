@@ -538,6 +538,62 @@ fn query_to_collection_as_flat_documents() {
     assert!(e.message.contains("only reads"), "{}", e.message);
 }
 
+#[test]
+fn skipping_bad_documents_does_not_duplicate_a_partial_batch() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = sqlr_testkit::FakeDocDriver::new(sqlr_testkit::FakeDocScript {
+        // The batch request inserts its first document and then fails.
+        partial_insert_before_error: Some(1),
+        ..Default::default()
+    });
+    let mut drivers = DriverRegistry::default();
+    drivers.register(sqlr_driver_sqlite::SqliteDriver::new());
+    drivers.register(fake.clone());
+    let engine = Engine::new(drivers, no_repaint());
+    let db = ConnectionConfig {
+        values: [(
+            "path".to_string(),
+            dir.path().join("b.db").display().to_string(),
+        )]
+        .into(),
+        ..config("s", "sqlite")
+    };
+    connect(&engine, &db, &Secrets::default(), Duration::from_secs(5));
+    connect(
+        &engine,
+        &config("d", "fakedoc"),
+        &Secrets::default(),
+        Duration::from_secs(5),
+    );
+    sql_rows(&engine, "s", "CREATE TABLE t (id INTEGER, name TEXT)");
+    sql_rows(&engine, "s", "INSERT INTO t VALUES (1, 'ann'), (2, 'bob')");
+    let mut spec = TransferSpec {
+        source: Endpoint::Query {
+            conn: "s".into(),
+            database: None,
+            sql: "SELECT id, name FROM t ORDER BY id".into(),
+        },
+        target: Endpoint::Collection {
+            conn: "d".into(),
+            target: people(),
+            query: None,
+        },
+        mapping: Vec::new(),
+        options: ImportOptions::default(),
+    };
+    spec.options.skip_bad_rows = true;
+    spec.options.batch = 10;
+    let JobOutcome::Imported { written, .. } = job(&engine, engine.transfer(spec)) else {
+        panic!("the import did not finish");
+    };
+    assert_eq!(written, 2);
+    assert_eq!(
+        fake.docs().len(),
+        2,
+        "the successful prefix of the batch was inserted twice"
+    );
+}
+
 fn fake_doc_engine(docs: Vec<DocValue>) -> (Engine, std::sync::Arc<sqlr_testkit::FakeDocDriver>) {
     let fake = sqlr_testkit::FakeDocDriver::new(sqlr_testkit::FakeDocScript {
         docs,

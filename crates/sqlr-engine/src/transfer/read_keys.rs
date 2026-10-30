@@ -80,6 +80,20 @@ fn page_bytes(page: &KvPage) -> usize {
     }
 }
 
+fn check_value_size(value: &KvPage, limit: usize, key: &[u8]) -> Result<(), DriverError> {
+    if page_bytes(value) > limit {
+        return Err(DriverError::new(
+            ErrorKind::Other,
+            format!(
+                "The value of {} is larger than {} MB: export it from the console",
+                display_key(key),
+                limit >> 20
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// The value of `key`, every page of it; `None` for a type without pages (module types).
 async fn read_value(
     kv: &dyn KeyValueConn,
@@ -91,24 +105,18 @@ async fn read_value(
         return Ok(None);
     }
     let mut value = kv.page(db, key, KvCursor::Start, VALUE_PAGE).await?;
+    // A value can arrive whole in the first page; check it before looking for more.
+    check_value_size(&value, MAX_VALUE_BYTES, key)?;
     let mut seen = std::collections::HashSet::new();
     value.names(&mut seen);
     while let Some(next) = value.next() {
-        if page_bytes(&value) > MAX_VALUE_BYTES {
-            return Err(DriverError::new(
-                ErrorKind::Other,
-                format!(
-                    "The value of {} is larger than {} MB: export it from the console",
-                    display_key(key),
-                    MAX_VALUE_BYTES >> 20
-                ),
-            ));
-        }
         let page = kv.page(db, key, next, VALUE_PAGE).await?;
         if page.is_empty() && page.next().is_none() {
             break;
         }
         value.append_dedup(page, &mut seen);
+        // The last page has no next, so the check must follow every append too.
+        check_value_size(&value, MAX_VALUE_BYTES, key)?;
     }
     Ok(Some(value_json(&value)))
 }
@@ -214,5 +222,15 @@ mod tests {
             total: 1,
         };
         assert_eq!(value_json(&z).to_string(), "[[\"m\",1.5]]");
+    }
+
+    #[test]
+    fn a_value_is_measured_after_its_last_page() {
+        let page = KvPage::Hash {
+            fields: vec![(b"field".to_vec(), b"0123456789".to_vec())],
+            cursor: 0,
+        };
+        assert!(check_value_size(&page, 10, b"k").is_err());
+        assert!(check_value_size(&page, 100, b"k").is_ok());
     }
 }

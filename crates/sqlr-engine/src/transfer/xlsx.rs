@@ -106,6 +106,11 @@ fn serial_to_iso(serial: f64) -> String {
     let days = serial.floor();
     let mut seconds = ((serial - days) * 86_400.0).round() as i64;
     let mut days = days as i64 - 25_569;
+    // Excel's 1900 leap-year bug: serials 1..59 are one day later than the 1899-12-30
+    // epoch suggests (serial 60 is its fictitious 1900-02-29, which no calendar has).
+    if serial < 61.0 {
+        days += 1;
+    }
     if seconds >= 86_400 {
         seconds -= 86_400;
         days += 1;
@@ -169,11 +174,23 @@ impl SheetWriter {
             let done = match value {
                 Value::Null => continue,
                 Value::Bool(b) => sheet.write_boolean(self.row, col, *b),
-                Value::Int(n) => sheet.write_number(self.row, col, *n as f64),
+                // Excel stores numbers as doubles: above 2^53 a number would be silently
+                // rounded, so the exact integer is written as text instead.
+                Value::Int(n) if n.unsigned_abs() <= (1u64 << 53) => {
+                    sheet.write_number(self.row, col, *n as f64)
+                }
+                Value::Int(n) => sheet.write_string(self.row, col, n.to_string()),
                 Value::Float(f) => sheet.write_number(self.row, col, *f),
                 Value::Text(s) => {
-                    let s: String = s.chars().take(MAX_CELL_CHARS).collect();
-                    sheet.write_string(self.row, col, &s)
+                    let chars = s.chars().count();
+                    if chars > MAX_CELL_CHARS {
+                        return Err(TransferFileError::CellTooLong {
+                            row: self.row + 1,
+                            column: col + 1,
+                            chars,
+                        });
+                    }
+                    sheet.write_string(self.row, col, s)
                 }
                 Value::Bytes(_) => {
                     let hex = value.display().into_owned();
@@ -201,5 +218,32 @@ mod tests {
         assert_eq!(serial_to_iso(45_360.0), "2024-03-09");
         assert_eq!(serial_to_iso(45_360.5), "2024-03-09 12:00:00");
         assert_eq!(serial_to_iso(45_360.999_999_9), "2024-03-10");
+        // Before Excel's fictitious 1900-02-29 the epoch is one day earlier.
+        assert_eq!(serial_to_iso(1.0), "1900-01-01");
+        assert_eq!(serial_to_iso(59.0), "1900-02-28");
+        assert_eq!(serial_to_iso(61.0), "1900-03-01");
+    }
+
+    #[test]
+    fn too_long_text_is_an_error_not_a_silent_truncation() {
+        let mut writer = SheetWriter::new(&["t".into()]).unwrap();
+        let err = writer
+            .write_row(&[Value::Text("x".repeat(MAX_CELL_CHARS + 1))])
+            .unwrap_err();
+        assert!(err.to_string().contains("32 767"), "{err}");
+    }
+
+    #[test]
+    fn large_integers_are_written_exactly() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.xlsx");
+        let mut writer = SheetWriter::new(&["n".into()]).unwrap();
+        writer
+            .write_row(&[Value::Int(9_007_199_254_740_993)])
+            .unwrap();
+        writer.save(&path).unwrap();
+        let (names, rows) = read_sheet(&path, None, true).unwrap();
+        assert_eq!(names, ["n"]);
+        assert_eq!(rows[0][0], Value::Text("9007199254740993".into()));
     }
 }

@@ -7,8 +7,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use parking_lot::Mutex;
 use sqlr_core::{
     CancelHandle, Capabilities, Connection, ConnectionConfig, DocChunk, DocExecution, DocStream,
-    DocTarget, DocValue, DocumentConn, Driver, DriverError, DriverManifest, Family, MongoOp, Node,
-    NodePath, QueryLanguage, Secrets, ServerInfo, StatementClass, parse_mongo_shell,
+    DocTarget, DocValue, DocumentConn, Driver, DriverError, DriverManifest, ErrorKind, Family,
+    MongoOp, Node, NodePath, QueryLanguage, Secrets, ServerInfo, StatementClass, parse_mongo_shell,
     read_only_error,
 };
 
@@ -20,6 +20,9 @@ pub struct FakeDocScript {
     pub tree: Vec<Node>,
     /// Returned by `run` instead of documents.
     pub run_error: Option<DriverError>,
+    /// An `insertMany` run inserts this many documents and then fails, as a partially
+    /// applied ordered batch does.
+    pub partial_insert_before_error: Option<usize>,
     /// When set, `run` returns this value instead of documents.
     pub value: Option<DocValue>,
     /// The collection names that are views (`is_view`).
@@ -213,6 +216,14 @@ impl DocumentConn for FakeDocConnection {
         if let Ok(ops) = parse_mongo_shell(text)
             && let Some((_, MongoOp::InsertMany { docs, .. })) = ops.first()
         {
+            if let Some(n) = self.shared.script.partial_insert_before_error {
+                let n = n.min(docs.len());
+                self.shared.docs.lock().extend(docs[..n].iter().cloned());
+                return Err(DriverError::new(
+                    ErrorKind::Other,
+                    "the batch failed after a prefix",
+                ));
+            }
             let ids = docs
                 .iter()
                 .map(|d| d.get("_id").cloned().unwrap_or(DocValue::Null))

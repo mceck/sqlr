@@ -44,10 +44,15 @@ pub(super) fn utc_naive(text: &str) -> String {
         return text.to_string();
     }
     let minutes = match digits.len() {
-        0 => Some(0),
-        2 => num(&digits).map(|h| h * 60),
+        // A bare sign is not an offset; `Z` is.
+        0 if offset == "Z" => Some(0),
+        0 => None,
+        2 => num(&digits)
+            .filter(|h| (0..=23).contains(h))
+            .map(|h| h * 60),
         4 => num(&digits[..2])
             .zip(num(&digits[2..]))
+            .filter(|(h, m)| (0..=23).contains(h) && (0..=59).contains(m))
             .map(|(h, m)| h * 60 + m),
         _ => None,
     };
@@ -66,6 +71,20 @@ pub(super) fn utc_naive(text: &str) -> String {
     let (Some(h), Some(mi), Some(s)) = (num(h), num(mi), num(s)) else {
         return text.to_string();
     };
+    // Invalid components must not be normalized into a different valid timestamp.
+    if !(0..=9999).contains(&y)
+        || !(1..=12).contains(&m)
+        || d < 1
+        || d > days_in_month(y, m)
+        || !(0..=23).contains(&h)
+        || !(0..=59).contains(&mi)
+        || !(0..=59).contains(&s)
+    {
+        return text.to_string();
+    }
+    if frac.is_some_and(|f| f.is_empty() || !f.bytes().all(|b| b.is_ascii_digit())) {
+        return text.to_string();
+    }
     let seconds = days_from_civil(y, m, d) * 86_400 + h * 3600 + mi * 60 + s - sign * minutes * 60;
     let days = seconds.div_euclid(86_400);
     let of_day = seconds.rem_euclid(86_400);
@@ -81,6 +100,15 @@ pub(super) fn utc_naive(text: &str) -> String {
         out.push_str(frac);
     }
     out
+}
+
+fn days_in_month(y: i64, m: i64) -> i64 {
+    match m {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 => 29,
+        _ => 28,
+    }
 }
 
 /// Days since 1970-01-01 of a proleptic Gregorian date.
@@ -129,6 +157,17 @@ mod tests {
         assert_eq!(utc("2024-03-09 12:00:00"), "2024-03-09 12:00:00");
         assert_eq!(utc("2024-03-09"), "2024-03-09");
         assert_eq!(utc("soon"), "soon");
+        // Invalid components must not be normalized into another valid timestamp.
+        for invalid in [
+            "2024-02-31 00:00:00+00",
+            "2024-00-10 00:00:00+00",
+            "2024-01-01 25:00:00+00",
+            "2024-01-01 10:00:00+24:00",
+            "2024-01-01 10:00:00+",
+            "2024-01-01 10:00:00.5x+00",
+        ] {
+            assert_eq!(utc(invalid), invalid, "{invalid}");
+        }
     }
 
     #[test]

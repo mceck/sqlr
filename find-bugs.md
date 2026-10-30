@@ -5,7 +5,7 @@
 [x] sqlr-core: SQL and text utilities (`classify`, `syntax`, `format_sql`, `generate`, `schema_change`, `compare`, `datagen`, `transfer`, `url`, `wire`, `es_request`, `mongo_shell`, `er`)
 [x] sqlr-store: persistence and secrets (connections, vault, settings, history, snippets, keymap, recents, profiles, layered)
 [x] sqlr-engine: sessions, transactions and results (`engine`, `session`, `tx`, `script`, `apply`, `result`, `result_memory`, `result_spill`, `job`)
-[] sqlr-engine: transfer and imports (`transfer/*`)
+[x] sqlr-engine: transfer and imports (`transfer/*`)
 [] sqlr-sidecar: protocol, client and process
 [] sqlr-registry: driver install, index and verification
 [] sqlr-mcp: server, policy, tokens and results
@@ -71,7 +71,16 @@ Open for the next cycle (needs a deterministic test): a later query marks earlie
 Tests added in `crates/sqlr-engine/tests/tx.rs` and `tests/apply.rs`, with a small `connect_delay` test hook in `sqlr-testkit`; targeted integration tests and clippy pass.
 
 # sqlr-engine: transfer and imports
-[to fill]
+Fixed:
+- With `skip_bad_rows` on a collection target, a failed `insertMany`/`_bulk` was retried document by document. MongoDB's ordered insert and Elasticsearch's bulk can apply a prefix before failing, so the retry inserted that prefix twice (or reported it as duplicate keys). Documents are now inserted one at a time from the start when skipping bad rows.
+- The Redis 64 MB value limit was checked only between pages, so a value delivered whole in one page (or the final page) was never measured. The size is now checked after the first page and after every append.
+- XLSX export rounded integers above 2^53 and silently truncated text over Excel's 32,767-character limit. Large integers are written as exact text, and a too-long cell now fails with a clear error instead of losing data.
+- XLSX serial dates before 1900-03-01 were one day early because of Excel's fictitious 1900-02-29; serials 1..59 now map to the dates Excel shows.
+- `utc_naive` normalized invalid dates and times (`2024-02-31`, `25:00`, `+24:00`, a bare `+`, a non-numeric fraction) into a different valid timestamp; invalid input now comes back unchanged.
+- `max_rejected` allowed one rejection more than the configured maximum (`Some(1)` stopped after two). It now stops at the configured count and the message uses the singular for one row.
+- A workbook/Parquet export cancelled before the first batch (or after the last one) still renamed the partial file and reported `Exported`; the cancel is now checked before and after the batch loop.
+
+Tests added in the transfer modules and `tests/transfer_engine.rs` / `tests/nosql_transfer.rs`; targeted engine tests and clippy pass.
 
 # sqlr-sidecar: protocol, client and process
 [to fill]

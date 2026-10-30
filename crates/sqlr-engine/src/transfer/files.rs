@@ -182,8 +182,10 @@ async fn sink_rows(
     });
     let mut written = 0u64;
     let mut failure: Option<TransferFileError> = None;
-    let mut cancelled = false;
-    while let Some(batch) = reader.recv().await {
+    // A cancel can land before the first batch (or after the last one): both must still
+    // remove the partial file instead of publishing it.
+    let mut cancelled = job.is_cancelled();
+    while !cancelled && let Some(batch) = reader.recv().await {
         if job.is_cancelled() {
             cancelled = true;
             break;
@@ -206,6 +208,9 @@ async fn sink_rows(
                 break;
             }
         }
+    }
+    if job.is_cancelled() {
+        cancelled = true;
     }
     drop(tx);
     let wrote = writer
@@ -235,5 +240,39 @@ async fn sink_rows(
     JobOutcome::Exported {
         rows: written,
         path,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::job::{JobKind, Jobs};
+
+    struct EmptySink;
+
+    impl RowSink for EmptySink {
+        fn row(&mut self, _: Vec<Value>) -> Result<(), TransferFileError> {
+            Ok(())
+        }
+        fn finish(self: Box<Self>) -> Result<(), TransferFileError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_cancel_before_the_first_batch_leaves_no_file() {
+        let jobs = Jobs::default();
+        let job = jobs.create(JobKind::Export);
+        jobs.cancel(job.id);
+        let (tx, rx) = mpsc::channel::<RowBatch>(2);
+        drop(tx);
+        let dir = tempfile::tempdir().unwrap();
+        let partial = dir.path().join("partial");
+        let path = dir.path().join("out.xlsx");
+        std::fs::write(&partial, b"partial").unwrap();
+        let outcome = sink_rows(&job, rx, Box::new(EmptySink), partial.clone(), path.clone()).await;
+        assert!(matches!(outcome, JobOutcome::Cancelled));
+        assert!(!partial.exists(), "the partial file survived a cancel");
+        assert!(!path.exists(), "a cancelled export published its file");
     }
 }
