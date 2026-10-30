@@ -92,6 +92,13 @@ impl Results {
         entry.reply.clone()
     }
 
+    pub fn reply_for(&self, owner: &str, id: &str) -> Option<Value> {
+        let mut entries = self.entries.lock();
+        let entry = entries.get_mut(id).filter(|e| e.owner == owner)?;
+        entry.last_access = Instant::now();
+        entry.reply.clone()
+    }
+
     pub fn get(&self, id: &str) -> Option<(QueryId, ResultKind)> {
         let mut entries = self.entries.lock();
         let entry = entries.get_mut(id)?;
@@ -99,8 +106,23 @@ impl Results {
         Some((entry.engine?, entry.kind))
     }
 
+    pub fn get_for(&self, owner: &str, id: &str) -> Option<(QueryId, ResultKind)> {
+        let mut entries = self.entries.lock();
+        let entry = entries.get_mut(id).filter(|e| e.owner == owner)?;
+        entry.last_access = Instant::now();
+        Some((entry.engine?, entry.kind))
+    }
+
     pub fn touch(&self, id: &str) {
         if let Some(entry) = self.entries.lock().get_mut(id) {
+            entry.last_access = Instant::now();
+        }
+    }
+
+    pub fn touch_for(&self, owner: &str, id: &str) {
+        if let Some(entry) = self.entries.lock().get_mut(id)
+            && entry.owner == owner
+        {
             entry.last_access = Instant::now();
         }
     }
@@ -115,6 +137,15 @@ impl Results {
             .lock()
             .remove(id)
             .map(|entry| (entry.engine, entry.kind))
+    }
+
+    pub fn remove_for(&self, owner: &str, id: &str) -> Option<(Option<QueryId>, ResultKind)> {
+        let mut entries = self.entries.lock();
+        let entry = entries.get(id)?;
+        if entry.owner != owner {
+            return None;
+        }
+        entries.remove(id).map(|entry| (entry.engine, entry.kind))
     }
 
     /// Closes every result of one MCP session.
@@ -255,7 +286,7 @@ pub struct TabularPage {
 }
 
 /// Copies a page of an engine rows result. The lock is released before returning.
-pub fn tabular_page(
+pub async fn tabular_page(
     engine: &Engine,
     q: QueryId,
     offset: usize,
@@ -300,14 +331,14 @@ pub fn tabular_page(
         }
     };
     // Fetch more when the page asks beyond what is loaded and the stream may still have rows.
-    if offset + limit > total {
+    if offset.saturating_add(limit) > total {
         let status = {
             let result = result.read();
             result.status.clone()
         };
         if status == (QueryStatus::Ready { more: true }) {
             engine.fetch_more(q);
-            wait_ready(engine, q, Duration::from_secs(2));
+            wait_ready(engine, q, Duration::from_secs(2)).await;
         }
     }
     let (rows, truncated) = {
@@ -325,7 +356,7 @@ pub fn tabular_page(
                 })
                 .collect();
             let encoded = serde_json::to_string(&row).map_or(0, |s| s.len());
-            if !rows.is_empty() && bytes + encoded > MAX_PAGE_BYTES {
+            if bytes + encoded > MAX_PAGE_BYTES {
                 truncated = true;
                 break;
             }
@@ -369,7 +400,7 @@ fn error_code(kind: sqlr_core::ErrorKind) -> &'static str {
     }
 }
 
-pub fn wait_ready(engine: &Engine, q: QueryId, timeout: Duration) {
+pub async fn wait_ready(engine: &Engine, q: QueryId, timeout: Duration) {
     let deadline = Instant::now() + timeout;
     loop {
         let status = engine.result(q).map(|r| r.read().status.clone());
@@ -379,7 +410,7 @@ pub fn wait_ready(engine: &Engine, q: QueryId, timeout: Duration) {
         if Instant::now() >= deadline {
             return;
         }
-        std::thread::sleep(Duration::from_millis(10));
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }
 
@@ -389,7 +420,7 @@ pub struct DocumentPage {
     pub total: usize,
 }
 
-pub fn document_page(
+pub async fn document_page(
     engine: &Engine,
     q: QueryId,
     offset: usize,
@@ -400,11 +431,12 @@ pub fn document_page(
     };
     let needs_more = {
         let result = initial.read();
-        offset + limit > result.len() && result.status == (QueryStatus::Ready { more: true })
+        offset.saturating_add(limit) > result.len()
+            && result.status == (QueryStatus::Ready { more: true })
     };
     if needs_more {
         engine.fetch_more_docs(q);
-        wait_docs_ready(engine, q, Duration::from_secs(2));
+        wait_docs_ready(engine, q, Duration::from_secs(2)).await;
     }
     let Some(result) = engine.doc_result(q) else {
         return Err(ToolError::not_found("The result expired or was closed"));
@@ -437,7 +469,7 @@ pub fn document_page(
     };
     if tabular {
         // A tabular document result is an ordinary rows result with the same id.
-        let (status, elapsed, error, page) = tabular_page(engine, q, offset, limit)?;
+        let (status, elapsed, error, page) = tabular_page(engine, q, offset, limit).await?;
         let mut all_messages = messages;
         all_messages.extend(page.messages);
         let total = page.rows.len();
@@ -464,7 +496,7 @@ pub fn document_page(
             };
             let value = doc_json(&doc);
             let encoded = serde_json::to_string(&value).map_or(0, |s| s.len());
-            if !documents.is_empty() && bytes + encoded > MAX_PAGE_BYTES {
+            if bytes + encoded > MAX_PAGE_BYTES {
                 truncated = true;
                 break;
             }
@@ -490,7 +522,7 @@ pub fn document_page(
     ))
 }
 
-pub fn wait_docs_ready(engine: &Engine, q: QueryId, timeout: Duration) {
+pub async fn wait_docs_ready(engine: &Engine, q: QueryId, timeout: Duration) {
     let deadline = Instant::now() + timeout;
     loop {
         let status = engine.doc_result(q).map(|r| r.read().status.clone());
@@ -500,7 +532,7 @@ pub fn wait_docs_ready(engine: &Engine, q: QueryId, timeout: Duration) {
         if Instant::now() >= deadline {
             return;
         }
-        std::thread::sleep(Duration::from_millis(10));
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }
 

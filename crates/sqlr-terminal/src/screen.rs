@@ -119,7 +119,19 @@ impl ScreenSnapshot {
                 break;
             }
             if let Some(cell) = self.cell(row, col) {
-                if cell.wide {
+                let continuation = col > 0
+                    && self
+                        .cell(row, col - 1)
+                        .is_some_and(|previous| previous.wide);
+                if continuation {
+                    // The second half of a wide character adds no text. A selection that
+                    // starts on it still takes the character it belongs to.
+                    if (row, col) == start
+                        && let Some(previous) = self.cell(row, col - 1)
+                    {
+                        out.push_str(&previous.text);
+                    }
+                } else if cell.wide {
                     out.push_str(&cell.text);
                 } else if cell.text.is_empty() {
                     out.push(' ');
@@ -545,6 +557,18 @@ mod tests {
         em.feed(b"\x1b[>");
         em.feed(b"5u");
         assert_eq!(em.snapshot(0).kitty_flags, 5);
+    }
+
+    #[test]
+    fn text_selection_does_not_insert_a_space_for_wide_continuations() {
+        let em = Emulator::new(3, 10, 10);
+        em.feed("界e".as_bytes());
+        let s = em.snapshot(0);
+        // The cell after a wide character is its continuation, not a blank column.
+        assert_eq!(s.cell(0, 1).unwrap().text, "");
+        assert_eq!(s.text_between((0, 0), (0, 3)), "界e");
+        // Starting on the continuation still takes the character it belongs to.
+        assert_eq!(s.text_between((0, 1), (0, 3)), "界e");
     }
 
     #[test]

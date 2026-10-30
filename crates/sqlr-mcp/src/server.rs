@@ -219,11 +219,17 @@ impl ServerHandler for McpService {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
         let parts = context.extensions.get::<axum::http::request::Parts>();
-        let session_id = parts
+        let requested = parts
             .and_then(|parts| parts.headers.get("mcp-session-id"))
             .and_then(|value| value.to_str().ok())
-            .unwrap_or("stateless")
-            .to_string();
+            .unwrap_or("stateless");
+        // Only a session created through the capped manager may name itself: a client
+        // header must not create a new entry (and a fresh tab budget) per call.
+        let session_id = if self.state.sessions.lock().contains_key(requested) {
+            requested.to_string()
+        } else {
+            "stateless".to_string()
+        };
         let client = context.client_info();
         let (name, version) = client
             .as_ref()
@@ -237,8 +243,6 @@ impl ServerHandler for McpService {
                 session.client_name = name.clone();
                 session.client_version = version.clone();
             }
-        } else {
-            self.state.register_session(&session_id, &name, &version);
         }
         let tool_ctx = self.state.context(&session_id);
         let conn = request

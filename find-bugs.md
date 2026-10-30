@@ -8,7 +8,7 @@
 [x] sqlr-engine: transfer and imports (`transfer/*`)
 [x] sqlr-sidecar: protocol, client and process
 [x] sqlr-registry: driver install, index and verification
-[] sqlr-mcp: server, policy, tokens and results
+[x] sqlr-mcp: server, policy, tokens and results
 [] sqlr-terminal: PTY, screen, input and tabs
 [] drivers: PostgreSQL
 [] drivers: MySQL / MariaDB
@@ -106,7 +106,17 @@ Fixed:
 Tests added in `crates/sqlr-registry/tests/registry.rs` and `src/download.rs`; the registry test suites and clippy pass.
 
 # sqlr-mcp: server, policy, tokens and results
-[to fill]
+Fixed:
+- `config_write` with `"profile": null` silently downgraded a Production or custom read-only profile to Development. Clearing now resolves to Development and passes the same strictness check as naming it.
+- `ssl_mode` was not treated as a transport-security field, so an agent could switch PostgreSQL/MySQL from `verify-full` to `disable` or remove the field. It is now tighten-only, with the TLS modes ranked from `disable` to `verify-full`.
+- A client-supplied `Mcp-Session-Id` was trusted: any unknown id created a session entry (and a fresh tab budget) per call. Only ids created by the capped session manager are accepted; other calls share the stateless context.
+- `offset + limit` could overflow for a huge `offset`. The offset is validated against `usize` and the page bounds use saturating addition.
+- Local Redis console commands (`SELECT`, `WATCH`, `UNWATCH`) were reported as “does not parse” after running; the console is now polled for their output, and the console is closed on timeout too.
+- Retained results were looked up by id only: another MCP session could read or close them. Lookups, touches and closes now require the owner session.
+- The first row/document bypassed `MAX_PAGE_BYTES`, so a single 1 MiB cell was returned whole with `truncated:false`. The page budget now applies to the first item too.
+- `wait_ready`/`wait_docs_ready` slept with `std::thread::sleep` inside async handlers and could stall all MCP traffic; they now await `tokio::time::sleep`, and the page functions are async.
+
+Tests added in `crates/sqlr-mcp/tests/protocol.rs` and policy unit tests; the full sqlr-mcp suite and clippy pass.
 
 # sqlr-terminal: PTY, screen, input and tabs
 [to fill]

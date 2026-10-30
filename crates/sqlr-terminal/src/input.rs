@@ -25,6 +25,8 @@ pub fn encode_key(
     let cursor = if application_cursor { b'O' } else { b'[' };
     let special: Option<&[u8]> = match key {
         Key::Enter => Some(b"\r"),
+        // Shift+Tab is backtab; a plain Tab is still the control character.
+        Key::Tab if modifiers.shift => Some(b"\x1b[Z"),
         Key::Tab => Some(b"\t"),
         Key::Backspace => Some(b"\x7f"),
         Key::Escape => Some(b"\x1b"),
@@ -523,6 +525,19 @@ mod tests {
         assert_eq!(
             encode_key(Key::F5, m(), false, false),
             Some(b"\x1b[15~".to_vec())
+        );
+    }
+
+    #[test]
+    fn shift_tab_sends_backtab() {
+        // Shift+Tab is the terminal's backtab (CSI Z), not a plain Tab.
+        assert_eq!(
+            encode_key(Key::Tab, Modifiers::SHIFT, false, false),
+            Some(b"\x1b[Z".to_vec())
+        );
+        assert_eq!(
+            encode_events(&[key(Key::Tab, Modifiers::SHIFT)], false, false, 0, false).bytes,
+            b"\x1b[Z".to_vec()
         );
     }
 

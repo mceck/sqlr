@@ -231,7 +231,8 @@ fn field_type_json(ty: &FieldType) -> Value {
 /// Driver fields that weaken transport security. An agent may only tighten them.
 pub fn is_transport_security_field(key: &str) -> bool {
     let key = key.to_ascii_lowercase();
-    key.contains("tls_verify")
+    key == "ssl_mode"
+        || key.contains("tls_verify")
         || key.contains("verify_cert")
         || key.contains("verify_server")
         || key.contains("check_hostname")
@@ -245,6 +246,26 @@ pub fn is_transport_security_field(key: &str) -> bool {
 pub fn transport_security_ok(key: &str, old: Option<&str>, new: &str) -> ToolResult<()> {
     if !is_transport_security_field(key) {
         return Ok(());
+    }
+    if key.eq_ignore_ascii_case("ssl_mode") {
+        // PostgreSQL and MySQL order their TLS modes from disabled to certificate checked.
+        let rank = |v: &str| match v.trim().to_ascii_lowercase().as_str() {
+            "disable" => 0,
+            "allow" => 1,
+            "prefer" => 2,
+            "require" => 3,
+            "verify-ca" | "verify_ca" => 4,
+            "verify-full" | "verify_full" => 5,
+            _ => 0,
+        };
+        let weakens = old.is_some_and(|old| rank(old) > rank(new));
+        return if weakens {
+            Err(ToolError::invalid(format!(
+                "{key} weakens transport security and can only be tightened"
+            )))
+        } else {
+            Ok(())
+        };
     }
     let safe = |v: &str| {
         let v = v.trim().to_ascii_lowercase();
@@ -329,6 +350,10 @@ mod tests {
         assert!(transport_security_ok("tls_verify", Some("true"), "false").is_err());
         assert!(transport_security_ok("tls_verify", None, "false").is_ok());
         assert!(transport_security_ok("host", Some("x"), "y").is_ok());
+        assert!(is_transport_security_field("ssl_mode"));
+        assert!(transport_security_ok("ssl_mode", Some("verify-full"), "disable").is_err());
+        assert!(transport_security_ok("ssl_mode", Some("require"), "verify-full").is_ok());
+        assert!(transport_security_ok("ssl_mode", Some("prefer"), "require").is_ok());
     }
 
     #[test]

@@ -1039,6 +1039,7 @@ async fn connection_writes_validate_metadata_and_preserve_exposure() {
         assert_eq!(result["error"]["code"], "invalid", "{payload}: {result}");
     }
     assert!(host.state.lock().writes.is_empty());
+    host.state.lock().config.profile = Some("production".into());
     let result = client
         .tool(
             200,
@@ -1063,6 +1064,15 @@ async fn connection_writes_validate_metadata_and_preserve_exposure() {
         assert!(!write.config.values.contains_key("path"));
         assert_eq!(write.save_secrets, Some(false));
     }
+    // Clearing the profile means Development: it must not loosen Production.
+    let downgrade = client
+        .tool(
+            202,
+            "config_write",
+            json!({"target":"connection","payload":{"id":"c1","profile":null}}),
+        )
+        .await;
+    assert_eq!(downgrade["error"]["code"], "invalid", "{downgrade}");
     let result = client
         .tool(
             201,
@@ -1464,6 +1474,18 @@ async fn document_queries_page_close_and_report_native_errors() {
         json!([{"_id":5,"name":"row 5"}])
     );
     assert_eq!(last["truncated"], false);
+    let huge = sqlr_mcp::tools::call(
+        &state,
+        &state.context("test"),
+        "get_query_result",
+        json!({"query_id":id,"offset":u64::MAX}).as_object(),
+    )
+    .await
+    .expect("a huge offset is just an empty page");
+    assert_eq!(
+        huge.structured_content.unwrap()["document"]["documents"],
+        json!([])
+    );
     let cancelled = direct_tool(&state, "cancel_query", json!({"query_id":id})).await;
     assert_eq!(cancelled["query_id"], id);
     let closed = direct_tool(&state, "close_result", json!({"query_id":id})).await;
@@ -1532,6 +1554,14 @@ async fn key_value_queries_return_replies_and_reject_blocking_commands() {
     assert_eq!(get["kind"], "reply");
     assert_eq!(get["status"], "ready");
     assert_eq!(get["reply"]["value"], "hello");
+    let local = direct_tool(
+        &state,
+        "run_query",
+        json!({"connection_id":"c1","query":"SELECT 1"}),
+    )
+    .await;
+    assert_eq!(local["kind"], "reply");
+    assert_eq!(local["status"], "ready");
     let id = get["query_id"].as_str().unwrap();
     let page = direct_tool(&state, "get_query_result", json!({"query_id":id})).await;
     assert_eq!(page["reply"]["value"], "hello");

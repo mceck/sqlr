@@ -1246,6 +1246,50 @@ mod tests {
     }
 
     #[test]
+    fn erased_cells_keep_their_background_colour() {
+        // A TUI that erases with a background colour leaves empty cells that still have
+        // to be painted; only the glyph is missing.
+        let mut theme = theme();
+        theme.ansi[1] = Color32::from_rgb(0xff, 0x00, 0x00);
+        let snapshot = ScreenSnapshot {
+            rows: 1,
+            cols: 1,
+            cells: vec![CellView {
+                text: String::new(),
+                bg: TermColor::Idx(1),
+                ..CellView::default()
+            }],
+            ..Default::default()
+        };
+        let panel = TerminalPanel::default();
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(100.0, 50.0))),
+                ..Default::default()
+            },
+            |ui| {
+                panel.paint(
+                    ui,
+                    Rect::from_min_size(egui::Pos2::ZERO, vec2(20.0, 18.0)),
+                    &snapshot,
+                    &theme,
+                    20.0,
+                    18.0,
+                );
+            },
+        );
+        output.textures_delta.clear();
+        assert!(
+            output.shapes.iter().any(|clipped| matches!(
+                &clipped.shape,
+                egui::Shape::Rect(rect) if rect.fill == theme.ansi[1]
+            )),
+            "the erased cell's background was not painted"
+        );
+    }
+
+    #[test]
     fn reverse_swaps_the_cell_colours() {
         let theme = theme();
         let cell = CellView {

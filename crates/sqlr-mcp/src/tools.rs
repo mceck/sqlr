@@ -890,7 +890,7 @@ async fn run_sql_query(
         .insert(&ctx.session_id, results::ResultKind::Tabular, q, None);
     wait_query(state.engine.as_ref(), q, deadline).await;
     let (status, elapsed, error, page) =
-        results::tabular_page(state.engine.as_ref(), q, 0, max_rows)?;
+        results::tabular_page(state.engine.as_ref(), q, 0, max_rows).await?;
     let value = results::outcome_json(
         "tabular",
         &status,
@@ -932,7 +932,7 @@ async fn run_document_query(
         .insert(&ctx.session_id, results::ResultKind::Document, q, None);
     wait_docs(state.engine.as_ref(), q, deadline).await;
     let (status, elapsed, error, page) =
-        results::document_page(state.engine.as_ref(), q, 0, max_rows)?;
+        results::document_page(state.engine.as_ref(), q, 0, max_rows).await?;
     let value = results::outcome_json(
         "document",
         &status,
@@ -975,10 +975,9 @@ async fn run_key_value_query(
         approve(state, ctx, Some(connection), database, &class, text).await?;
     }
     let tab = 1_000_000 + NEXT_KV_CONSOLE.fetch_add(1, Ordering::Relaxed);
-    let Some(job) = state.engine.kv_command(&connection.config.id, tab, text) else {
-        return Err(ToolError::invalid("The command does not parse"));
-    };
-    let _ = job;
+    // Local commands (SELECT, WATCH, UNWATCH) run in the console and return no job; the
+    // output below is still theirs.
+    let _ = state.engine.kv_command(&connection.config.id, tab, text);
     let start = Instant::now();
     loop {
         let console = state.engine.kv_console(&connection.config.id, tab);
@@ -1003,6 +1002,7 @@ async fn run_key_value_query(
             return Ok(CallToolResult::structured(value));
         }
         if start.elapsed() >= deadline {
+            state.engine.kv_close_console(&connection.config.id, tab);
             let value = results::outcome_json(
                 "reply",
                 "running",
@@ -1054,13 +1054,14 @@ async fn get_query_result(
     args: &Args,
 ) -> ToolResult<CallToolResult> {
     let id = args.str("query_id")?;
-    let offset = args.opt_u64("offset")?.unwrap_or(0) as usize;
+    let offset = usize::try_from(args.opt_u64("offset")?.unwrap_or(0))
+        .map_err(|_| ToolError::invalid("offset is too large"))?;
     let limit = results::default_rows(args.opt_i64("limit")?)?;
     if let Some((tab, query)) = parse_tab_result_id(id) {
         return tab_result_page(state, id, tab, query, offset, limit).await;
     }
-    state.results.touch(id);
-    if let Some(reply) = state.results.reply(id) {
+    state.results.touch_for(&ctx.session_id, id);
+    if let Some(reply) = state.results.reply_for(&ctx.session_id, id) {
         let value = results::outcome_json(
             "reply",
             "ready",
@@ -1074,13 +1075,13 @@ async fn get_query_result(
         );
         return Ok(CallToolResult::structured(value));
     }
-    let Some((q, kind)) = state.results.get(id) else {
+    let Some((q, kind)) = state.results.get_for(&ctx.session_id, id) else {
         return Err(ToolError::not_found("The result expired or was closed"));
     };
     let value = match kind {
         results::ResultKind::Tabular => {
             let (status, elapsed, error, page) =
-                results::tabular_page(state.engine.as_ref(), q, offset, limit)?;
+                results::tabular_page(state.engine.as_ref(), q, offset, limit).await?;
             results::outcome_json(
                 "tabular",
                 &status,
@@ -1095,7 +1096,7 @@ async fn get_query_result(
         }
         results::ResultKind::Document => {
             let (status, elapsed, error, page) =
-                results::document_page(state.engine.as_ref(), q, offset, limit)?;
+                results::document_page(state.engine.as_ref(), q, offset, limit).await?;
             results::outcome_json(
                 "document",
                 &status,
@@ -1116,7 +1117,6 @@ async fn get_query_result(
     if let Some(object) = value.as_object_mut() {
         object.insert("offset".into(), json!(offset));
     }
-    let _ = ctx;
     Ok(CallToolResult::structured(value))
 }
 
@@ -1131,8 +1131,8 @@ async fn cancel_query(
             "A tab's run belongs to the person: it is stopped from the tab",
         ));
     }
-    state.results.touch(id);
-    let Some((q, kind)) = state.results.get(id) else {
+    state.results.touch_for(&ctx.session_id, id);
+    let Some((q, kind)) = state.results.get_for(&ctx.session_id, id) else {
         return Err(ToolError::not_found("The query id is unknown"));
     };
     match kind {
@@ -1150,7 +1150,6 @@ async fn cancel_query(
             |result| status_name(&result.read().status).to_string(),
         ),
     };
-    let _ = ctx;
     Ok(CallToolResult::structured(json!({
         "query_id": id,
         "status": status,
@@ -1168,7 +1167,7 @@ async fn close_result(
             "A tab's result belongs to the tab and stays in its grid; it cannot be closed",
         ));
     }
-    let Some((q, kind)) = state.results.remove(id) else {
+    let Some((q, kind)) = state.results.remove_for(&ctx.session_id, id) else {
         return Ok(CallToolResult::structured(
             json!({"query_id": id, "closed": false}),
         ));
@@ -1176,7 +1175,6 @@ async fn close_result(
     if let Some(q) = q {
         results::close_engine_result(state.engine.as_ref(), q, kind);
     }
-    let _ = ctx;
     Ok(CallToolResult::structured(
         json!({"query_id": id, "closed": true}),
     ))
@@ -1664,31 +1662,30 @@ async fn write_connection(
             Value::String(value) => Some(value.as_str()),
             _ => return Err(ToolError::invalid("profile must be a string or null")),
         };
-        if let Some(profile_id) = profile_id {
-            let profiles = state.host.profiles().await?;
-            let target = profiles
+        // A missing profile resolves to Development in the app, so clearing it is a
+        // downgrade and must pass the same strictness check as naming Development.
+        let target_id = profile_id.unwrap_or(ConnectionProfile::DEVELOPMENT);
+        let profiles = state.host.profiles().await?;
+        let target = profiles
+            .iter()
+            .find(|p| p.id == target_id)
+            .ok_or_else(|| ToolError::invalid(format!("Unknown profile \"{target_id}\"")))?;
+        if let Some(existing) = &existing {
+            let current_id = existing
+                .config
+                .profile
+                .clone()
+                .unwrap_or_else(|| ConnectionProfile::DEVELOPMENT.to_string());
+            let current = profiles
                 .iter()
-                .find(|p| p.id == profile_id)
-                .ok_or_else(|| ToolError::invalid(format!("Unknown profile \"{profile_id}\"")))?;
-            if let Some(existing) = &existing {
-                let current_id = existing
-                    .config
-                    .profile
-                    .clone()
-                    .unwrap_or_else(|| ConnectionProfile::DEVELOPMENT.to_string());
-                let current = profiles
-                    .iter()
-                    .find(|p| p.id == current_id)
-                    .cloned()
-                    .unwrap_or_else(ConnectionProfile::development);
-                policy::profile_is_at_least_as_strict(&current, target).map_err(|reason| {
-                    ToolError::invalid(format!("The profile cannot be loosened: {reason}"))
-                })?;
-            }
-            config.profile = Some(profile_id.to_string());
-        } else {
-            config.profile = None;
+                .find(|p| p.id == current_id)
+                .cloned()
+                .unwrap_or_else(ConnectionProfile::development);
+            policy::profile_is_at_least_as_strict(&current, target).map_err(|reason| {
+                ToolError::invalid(format!("The profile cannot be loosened: {reason}"))
+            })?;
         }
+        config.profile = profile_id.map(str::to_string);
     }
     if let Some(save_secrets) = payload.get("save_secrets") {
         config.save_secrets = save_secrets
@@ -2344,6 +2341,7 @@ async fn tab_result_page(
         offset,
         limit,
     )
+    .await
     .map_err(|_| ToolError::not_found("The tab no longer shows this result"))?;
     let mut value = results::outcome_json(
         "tabular",
