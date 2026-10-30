@@ -306,9 +306,12 @@ fn blocking_tree_indents_waiters_under_blockers() {
             (1, "4".to_string()),
         ]
     );
-    // A cycle (a deadlock about to be broken) ends instead of looping.
+    // A cycle (a deadlock about to be broken) is shown once, without looping.
     let cycle = [lock("1", &["2"], false), lock("2", &["1"], false)];
-    assert!(blocking_tree(&cycle).len() <= 2);
+    assert_eq!(
+        blocking_tree(&cycle),
+        [(0, "2".to_string()), (1, "1".to_string())]
+    );
 }
 
 struct RoleApp {

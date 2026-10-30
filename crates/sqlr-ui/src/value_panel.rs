@@ -445,6 +445,32 @@ fn hex_dump(bytes: &[u8]) -> String {
     out
 }
 
+/// The end (just past `>`) of the tag, comment or CDATA section starting at `rest`.
+/// A `>` inside a quoted attribute value does not end the tag.
+fn tag_end(rest: &str) -> Option<usize> {
+    let close = if rest.starts_with("<!--") {
+        Some("-->")
+    } else if rest.starts_with("<![CDATA[") {
+        Some("]]>")
+    } else {
+        None
+    };
+    if let Some(close) = close {
+        return rest.find(close).map(|at| at + close.len());
+    }
+    let mut quote = None;
+    for (i, c) in rest.char_indices() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None if c == '"' || c == '\'' => quote = Some(c),
+            None if c == '>' => return Some(i + 1),
+            None => {}
+        }
+    }
+    None
+}
+
 /// One element, comment or text run per line, indented by nesting; `None` when `raw` does
 /// not look like well-nested XML.
 fn pretty_xml(raw: &str) -> Option<String> {
@@ -463,15 +489,8 @@ fn pretty_xml(raw: &str) -> Option<String> {
         out.push_str(text);
     };
     while !rest.is_empty() {
-        if let Some(tail) = rest.strip_prefix('<') {
-            let close = if tail.starts_with("!--") {
-                "-->"
-            } else if tail.starts_with("![CDATA[") {
-                "]]>"
-            } else {
-                ">"
-            };
-            let end = rest.find(close)? + close.len();
+        if rest.starts_with('<') {
+            let end = tag_end(rest)?;
             let tag = &rest[..end];
             if tag.starts_with("</") {
                 depth = depth.checked_sub(1)?;
@@ -542,6 +561,15 @@ mod tests {
             "<?xml version=\"1.0\"?>\n<a x=\"1\">\n  <b>\n    text\n  </b>\n  <c/>\n  <!-- n -->\n</a>"
         );
         assert_eq!(panel_text(&m, Cell::Text("not xml")), "not xml");
+    }
+
+    #[test]
+    fn xml_attributes_may_hold_greater_than_signs() {
+        let m = ColumnMeta::new("x", "xml", ColumnKind::Text, DisplayHint::Xml);
+        assert_eq!(
+            panel_text(&m, Cell::Text(r#"<a b="x>y"><c/></a>"#)),
+            "<a b=\"x>y\">\n  <c/>\n</a>"
+        );
     }
 
     #[test]

@@ -24,6 +24,21 @@ fn double_click_at<S>(h: &mut Harness<'static, S>, pos: Pos2) {
     }
 }
 
+fn click_at<S>(h: &mut Harness<'static, S>, pos: Pos2) {
+    h.event(egui::Event::PointerMoved(pos));
+    h.step();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.step();
+    }
+    h.run_steps(2);
+}
+
 fn conns() -> Vec<(String, String)> {
     vec![
         ("c1".to_string(), "local".to_string()),
@@ -260,6 +275,46 @@ fn snippets_filter_by_name() {
     // A filter opens the folders holding a match.
     h.get_by_label("one");
     assert!(h.query_by_label("two").is_none());
+}
+
+#[test]
+fn same_named_folders_under_different_parents_toggle_independently() {
+    let snippets = vec![
+        snippet("s1", "one", "a/reports", None),
+        snippet("s2", "two", "b/reports", None),
+    ];
+    let mut h = snippets_harness(snippets);
+    h.get_by_label("a").click();
+    h.run_steps(2);
+    h.get_by_label("b").click();
+    h.run_steps(2);
+    let first = h
+        .get_all_by_label("reports")
+        .next()
+        .expect("a reports folder")
+        .rect()
+        .center();
+    click_at(&mut h, first);
+    h.get_by_label("one");
+    // The two folders are separate rows: opening the second leaves the first open.
+    let second = h
+        .get_all_by_label("reports")
+        .nth(1)
+        .expect("the second reports folder")
+        .rect()
+        .center();
+    click_at(&mut h, second);
+    h.get_by_label("two");
+    // Collapsing the first reports folder leaves the second one open.
+    let first = h
+        .get_all_by_label("reports")
+        .next()
+        .expect("a reports folder")
+        .rect()
+        .center();
+    click_at(&mut h, first);
+    assert!(h.query_by_label("one").is_none());
+    h.get_by_label("two");
 }
 
 #[test]

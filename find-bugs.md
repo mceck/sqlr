@@ -19,7 +19,7 @@
 [] sidecar drivers: MongoDB / DuckDB / HANA
 [] sqlr-app: application logic (workers, actions, messages, cli, tabs, pending)
 [] sqlr-ui: grid and editor
-[] sqlr-ui: forms, trees, dialogs and keymap
+[x] sqlr-ui: forms, trees, dialogs and keymap
 
 ## Findings:
 # sqlr-core: values, encoding and documents
@@ -173,4 +173,10 @@ Tests added in `types.rs` and `execute.rs`; 20 SQL Server + 31 Oracle unit tests
 [to fill]
 
 # sqlr-ui: forms, trees, dialogs and keymap
-[to fill]
+Fixed:
+- Revealing a plan hot-path node did not open the root recorded by “Collapse all” (the loop started at 1 instead of 0), so the tree stayed collapsed.
+- A deadlock cycle with no non-waiting blocker rendered as “nobody waits”; the lock tree now starts from the first edge of a cycle.
+- Snippet folders with the same name under different parents shared an egui id, so only one row worked and clicks toggled the wrong folder. The full folder path is now the id.
+- XML pretty-printing ended a tag at the first `>`, even inside a quoted attribute (`<a b="x>y">`), splitting valid XML. A quote-aware tag scanner is used.
+
+Tests added in `tests/plan_view.rs`, `tests/admin.rs`, `tests/library.rs` and `src/value_panel.rs`; 166 unit + targeted integration tests and clippy pass.

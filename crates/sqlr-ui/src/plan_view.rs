@@ -44,7 +44,8 @@ pub struct PlanViewState {
 impl PlanViewState {
     /// Selects `path`, opening the collapsed ancestors that hide it.
     pub fn reveal(&mut self, path: &[usize]) {
-        for end in 1..path.len() {
+        // The empty path is the root, which `collapse_all` records too.
+        for end in 0..path.len() {
             self.collapsed.remove(&path[..end]);
         }
         self.selected = Some(path.to_vec());

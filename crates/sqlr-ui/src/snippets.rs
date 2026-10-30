@@ -239,7 +239,7 @@ pub fn snippets_panel(
                         depth,
                         open,
                     } => {
-                        if folder_row(ui, name, *depth, *open) {
+                        if folder_row(ui, path, name, *depth, *open) {
                             if *open {
                                 state.expanded.remove(path);
                             } else {
@@ -257,12 +257,12 @@ pub fn snippets_panel(
 }
 
 /// Returns whether the folder was toggled.
-fn folder_row(ui: &mut egui::Ui, name: &str, depth: usize, open: bool) -> bool {
+fn folder_row(ui: &mut egui::Ui, path: &str, name: &str, depth: usize, open: bool) -> bool {
     let mut toggle = false;
     let palette = theme::palette(ui.ctx());
     let row = theme::list_row(
         ui,
-        egui::Id::new(("snippet_folder", name, depth)),
+        egui::Id::new(("snippet_folder", path)),
         false,
         Spacing::ROW_TREE,
         Sense::click(),

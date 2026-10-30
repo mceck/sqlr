@@ -50,6 +50,13 @@ pub fn blocking_tree(locks: &[LockInfo]) -> Vec<(usize, String)> {
     for root in roots {
         walk(root, 0, &edges, &mut Vec::new(), &mut out);
     }
+    // A deadlock cycle has no blocker that is not itself waiting: start from its first
+    // edge, so the cycle is shown instead of an empty "nobody waits" tree.
+    for (blocker, _) in &edges {
+        if !out.iter().any(|(_, session)| session.as_str() == *blocker) {
+            walk(blocker, 0, &edges, &mut Vec::new(), &mut out);
+        }
+    }
     out
 }
 

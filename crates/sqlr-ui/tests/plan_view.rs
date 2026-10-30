@@ -178,6 +178,22 @@ fn the_raw_plan_is_one_toggle_away_and_can_be_copied() {
 }
 
 #[test]
+fn revealing_a_node_opens_the_root_collapsed_by_collapse_all() {
+    let mut state = PlanViewState::default();
+    // "Collapse all" records the root with an empty path and each parent below it.
+    state.collapsed.insert(Vec::new());
+    state.collapsed.insert(vec![0]);
+    state.reveal(&[0, 1]);
+    assert!(
+        state.collapsed.is_empty(),
+        "the root and the parent hide the revealed node: {:?}",
+        state.collapsed
+    );
+    assert_eq!(state.selected, Some(vec![0, 1]));
+    assert_eq!(state.scroll_to, Some(vec![0, 1]));
+}
+
+#[test]
 fn a_changed_statement_offers_a_recompute() {
     let mut h = harness_with(parse_pg_json(PLAN).unwrap(), "SELECT 1", true, false);
     h.get_by_label("Text changed");
