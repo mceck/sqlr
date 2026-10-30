@@ -152,7 +152,7 @@ impl DataFormats {
             Cell::Bytes(b) => Cow::Owned(self.bytes(b, max_bytes)),
             Cell::Text(s) => match meta.hint {
                 DisplayHint::Temporal => self.temporal(meta, s),
-                DisplayHint::Decimal => Cow::Owned(group(s, self.grouping)),
+                DisplayHint::Number | DisplayHint::Decimal => Cow::Owned(group(s, self.grouping)),
                 DisplayHint::Json if !self.pretty_json => match compact(s) {
                     Some(c) => Cow::Owned(c),
                     None => Cow::Borrowed(s),
@@ -400,6 +400,11 @@ mod tests {
         let dec = meta("numeric", ColumnKind::Text, DisplayHint::Decimal);
         assert_eq!(f.format(&dec, Cell::Text("1234567.8900")), "1,234,567.8900");
         assert_eq!(f.format(&dec, Cell::Text("NaN")), "NaN");
+        // Large integers carried as text (DuckDB HUGEINT) are numbers too.
+        let huge = meta("hugeint", ColumnKind::Text, DisplayHint::Number);
+        assert_eq!(f.format(&huge, Cell::Text("1234567")), "1,234,567");
+        assert_eq!(f.format(&huge, Cell::Text("-1234")), "-1,234");
+        assert_eq!(f.format(&huge, Cell::Text("not a number")), "not a number");
         let boolean = meta("bool", ColumnKind::Bool, DisplayHint::Plain);
         assert_eq!(f.format(&boolean, Cell::Bool(true)), "✓");
         assert_eq!(f.format(&boolean, Cell::Bool(false)), "✗");

@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::io::BufRead;
+use std::io::{BufRead, Read as _};
 
 use serde::Deserialize;
 use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
@@ -81,10 +81,10 @@ impl From<std::io::Error> for ReadError {
 /// byte-order mark is skipped.
 pub fn read_rows<R: BufRead>(
     format: &TextFormat,
-    mut reader: R,
+    reader: R,
     on_row: impl FnMut(&[String], u64, Vec<Value>) -> bool,
 ) -> Result<Vec<String>, ReadError> {
-    skip_bom(&mut reader)?;
+    let reader = skip_bom(reader)?;
     match format {
         TextFormat::Csv(o) => read_delimited(o, reader, on_row),
         TextFormat::Tsv => read_delimited(&CsvOptions::tsv(), reader, on_row),
@@ -94,11 +94,24 @@ pub fn read_rows<R: BufRead>(
     }
 }
 
-fn skip_bom<R: BufRead>(reader: &mut R) -> std::io::Result<()> {
-    if reader.fill_buf()?.starts_with(b"\xEF\xBB\xBF") {
-        reader.consume(3);
+/// Consumes a leading UTF-8 byte-order mark. A `BufRead` may hand out fewer than three
+/// bytes at a time, so the first bytes are gathered before deciding, then chained back in
+/// front of the reader when they are not a BOM.
+fn skip_bom<R: BufRead>(mut reader: R) -> std::io::Result<impl BufRead> {
+    let mut prefix = [0u8; 3];
+    let mut len = 0;
+    while len < prefix.len() {
+        let buf = reader.fill_buf()?;
+        if buf.is_empty() {
+            break;
+        }
+        let take = (prefix.len() - len).min(buf.len());
+        prefix[len..len + take].copy_from_slice(&buf[..take]);
+        reader.consume(take);
+        len += take;
     }
-    Ok(())
+    let start = if prefix == *b"\xEF\xBB\xBF" { 3 } else { 0 };
+    Ok(std::io::Cursor::new(prefix[start..len].to_vec()).chain(reader))
 }
 
 /// Chars of a buffered reader, read a line at a time.
@@ -261,22 +274,44 @@ fn read_delimited<R: BufRead>(
     let mut line = 1;
     let mut names: Vec<String> = Vec::new();
     if o.header {
-        match next_record(&mut chars, o.delimiter, o.quote, &mut line)? {
-            Some((_, fields)) => names = fields.into_iter().map(|f| f.text).collect(),
-            None => return Ok(Vec::new()),
+        loop {
+            match next_record(&mut chars, o.delimiter, o.quote, &mut line)? {
+                Some((_, fields)) => {
+                    // Blank lines before the header are file preamble, not column names.
+                    if is_blank(&fields) {
+                        continue;
+                    }
+                    names = fields.into_iter().map(|f| f.text).collect();
+                    break;
+                }
+                None => return Ok(Vec::new()),
+            }
         }
     }
     // A sentinel that needs quoting is written quoted (see `CsvOptions::null_text`).
     let null_quoted = o.needs_quotes(&o.null_text);
     let mut width = names.len();
+    // With no header the width is not known until the first non-blank record; a leading
+    // blank record is a one-column row if that width turns out to be one.
+    let mut pending_blanks: Vec<(usize, Field)> = Vec::new();
     while let Some((start, record)) = next_record(&mut chars, o.delimiter, o.quote, &mut line)? {
-        let blank = record.len() == 1 && !record[0].quoted && record[0].text.is_empty();
-        if blank && width != 1 {
-            continue;
-        }
+        let blank = is_blank(&record);
         if width == 0 {
+            if blank {
+                pending_blanks.push((start, record.into_iter().next().expect("one field")));
+                continue;
+            }
             width = record.len();
             names = (1..=width).map(|i| format!("column{i}")).collect();
+            for (start, field) in pending_blanks.drain(..) {
+                let row = vec![field_value(o, null_quoted, field)];
+                if !on_row(&names, start as u64, row) {
+                    return Ok(names);
+                }
+            }
+        }
+        if blank && width != 1 {
+            continue;
         }
         // A short row is padded with NULLs; a long one has fields nothing names.
         if record.len() > width {
@@ -288,20 +323,36 @@ fn read_delimited<R: BufRead>(
         }
         let mut row: Vec<Value> = record
             .into_iter()
-            .map(|f| {
-                if f.text == o.null_text && (!f.quoted || null_quoted) {
-                    Value::Null
-                } else {
-                    Value::Text(f.text)
-                }
-            })
+            .map(|f| field_value(o, null_quoted, f))
             .collect();
         row.resize(width, Value::Null);
         if !on_row(&names, start as u64, row) {
             break;
         }
     }
+    if width == 0 && !pending_blanks.is_empty() {
+        // A headerless file of blank lines is one column of blank fields.
+        names = vec!["column1".into()];
+        for (start, field) in pending_blanks {
+            let row = vec![field_value(o, null_quoted, field)];
+            if !on_row(&names, start as u64, row) {
+                break;
+            }
+        }
+    }
     Ok(names)
+}
+
+fn is_blank(record: &[Field]) -> bool {
+    record.len() == 1 && !record[0].quoted && record[0].text.is_empty()
+}
+
+fn field_value(o: &CsvOptions, null_quoted: bool, field: Field) -> Value {
+    if field.text == o.null_text && (!field.quoted || null_quoted) {
+        Value::Null
+    } else {
+        Value::Text(field.text)
+    }
 }
 
 /// A JSON object with its keys in document order.
@@ -543,6 +594,75 @@ mod tests {
         })
         .unwrap();
         assert_eq!((names, n), (vec!["a".to_string()], 1));
+    }
+
+    #[test]
+    fn headerless_single_column_keeps_leading_blank_rows() {
+        let headless = TextFormat::Csv(CsvOptions {
+            header: false,
+            ..CsvOptions::default()
+        });
+        let (names, rows) = collect(&headless, "\n1\n", usize::MAX);
+        assert_eq!(names, ["column1"]);
+        assert_eq!(
+            rows,
+            [(1, vec![Value::Null]), (2, vec![Value::Text("1".into())])]
+        );
+
+        // With a non-empty NULL sentinel a blank field is the empty string, not NULL.
+        let headless = TextFormat::Csv(CsvOptions {
+            header: false,
+            null_text: "\\N".into(),
+            ..CsvOptions::default()
+        });
+        let (_, rows) = collect(&headless, "\n\\N\n", usize::MAX);
+        assert_eq!(
+            rows,
+            [
+                (1, vec![Value::Text(String::new())]),
+                (2, vec![Value::Null])
+            ]
+        );
+    }
+
+    #[test]
+    fn blank_lines_before_the_header_are_skipped() {
+        let csv = "\n\na,b\n1,2\n";
+        let (names, rows) = collect(&TextFormat::Csv(CsvOptions::default()), csv, usize::MAX);
+        assert_eq!(names, ["a", "b"]);
+        assert_eq!(
+            rows,
+            [(4, vec![Value::Text("1".into()), Value::Text("2".into())])]
+        );
+    }
+
+    #[test]
+    fn skips_a_bom_split_across_buffer_reads() {
+        let csv = "\u{feff}a,b\n1,2\n";
+        let reader = std::io::BufReader::with_capacity(1, csv.as_bytes());
+        let mut rows = Vec::new();
+        let names = read_rows(
+            &TextFormat::Csv(CsvOptions::default()),
+            reader,
+            |_, _, row| {
+                rows.push(row);
+                true
+            },
+        )
+        .unwrap();
+        assert_eq!(names, ["a", "b"]);
+        assert_eq!(rows[0], [Value::Text("1".into()), Value::Text("2".into())]);
+
+        let json = "\u{feff}[{\"a\":1}]";
+        let reader = std::io::BufReader::with_capacity(1, json.as_bytes());
+        let mut rows = Vec::new();
+        let names = read_rows(&TextFormat::Json, reader, |_, _, row| {
+            rows.push(row);
+            true
+        })
+        .unwrap();
+        assert_eq!(names, ["a"]);
+        assert_eq!(rows[0], [Value::Int(1)]);
     }
 
     #[test]

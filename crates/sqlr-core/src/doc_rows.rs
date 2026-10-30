@@ -91,7 +91,7 @@ pub fn docs_to_rows(docs: &[DocValue], first_page: usize) -> RowBuffer {
     let columns = doc_columns(docs.iter().take(first_page.max(1)));
     let metas = doc_column_metas(&columns);
     let mut rows = RowBuffer::new(metas.clone());
-    if !docs.is_empty() && !columns.is_empty() {
+    if !docs.is_empty() {
         rows.push_chunk(doc_rows_chunk(&metas, docs));
     }
     rows
@@ -182,6 +182,14 @@ mod tests {
         );
         assert_eq!(rows.row_count(), 3);
         assert_eq!(rows.cell(1, 1), Some(Cell::Null), "a missing key is NULL");
+    }
+
+    #[test]
+    fn documents_without_fields_still_count_as_rows() {
+        let docs = [doc(vec![]), doc(vec![])];
+        let rows = docs_to_rows(&docs, 10);
+        assert!(rows.columns().is_empty());
+        assert_eq!(rows.row_count(), 2);
     }
 
     #[test]

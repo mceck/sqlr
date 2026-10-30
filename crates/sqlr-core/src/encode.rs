@@ -353,6 +353,26 @@ impl<'d> Encoder<'d> {
         let Some((formats, columns)) = &self.formats else {
             return self.encode_row(cells, out);
         };
+        if let Some(o) = csv_options(&self.format) {
+            // Only text cells get the spreadsheet escape: a formatted number or boolean is
+            // data a spreadsheet must keep as such, not a formula.
+            for (i, (cell, meta)) in cells.iter().zip(columns).enumerate() {
+                if i > 0 {
+                    out.push(o.delimiter);
+                }
+                match cell {
+                    Cell::Null => csv_field(&o, None, out),
+                    Cell::Text(_) => {
+                        let text = formats.format_export(meta, *cell);
+                        csv_field_safe(&o, Some(&text), out, self.spreadsheet_safe);
+                    }
+                    other => csv_field(&o, Some(&formats.format_export(meta, *other)), out),
+                }
+            }
+            out.push_str(if o.crlf { "\r\n" } else { "\n" });
+            self.rows += 1;
+            return;
+        }
         let shown: Vec<Option<String>> = cells
             .iter()
             .zip(columns)
@@ -766,6 +786,25 @@ mod tests {
             assert_eq!(names, ["id", "v", "b"], "{format:?}");
             assert!(decoded == as_json(&rows), "{format:?} round trip differs");
         }
+    }
+
+    #[test]
+    fn formatted_numbers_are_not_escaped_as_spreadsheet_formulas() {
+        use crate::settings_model::SettingValue;
+        let columns = [
+            ColumnMeta::new("n", "int8", ColumnKind::Int, DisplayHint::Number),
+            ColumnMeta::new("t", "text", ColumnKind::Text, DisplayHint::Plain),
+        ];
+        let formats = DataFormats::from_values(|id| match id {
+            "formats.number_grouping" => Some(SettingValue::Choice("comma".into())),
+            _ => None,
+        });
+        let mut encoder = Encoder::new(TextFormat::Csv(CsvOptions::default()), &columns, None)
+            .with_spreadsheet_safe()
+            .with_formats(formats, &columns);
+        let mut out = String::new();
+        encoder.row(&[Cell::Int(-1234), Cell::Text("-text")], &mut out);
+        assert_eq!(out, "\"-1,234\",'-text\n");
     }
 
     #[test]

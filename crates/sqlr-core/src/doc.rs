@@ -313,7 +313,13 @@ pub(crate) fn decode_wrapper(fields: Vec<(String, DocValue)>) -> Result<DocValue
             Some(DocValue::String(s)) => parse_iso_date(s)?,
             Some(DocValue::Int32(v)) => i64::from(*v),
             Some(DocValue::Int64(v)) => *v,
-            Some(DocValue::Double(v)) if v.fract() == 0.0 => *v as i64,
+            Some(DocValue::Double(v))
+                if v.fract() == 0.0
+                    && *v >= -9_223_372_036_854_775_808.0
+                    && *v < 9_223_372_036_854_775_808.0 =>
+            {
+                *v as i64
+            }
             // Inner wrappers decode first, so `{"$numberLong": "…"}` arrives as `Int64`.
             _ => return Err(DocParseError::InvalidWrapper { what: "$date" }),
         }),
@@ -328,6 +334,12 @@ pub(crate) fn decode_wrapper(fields: Vec<(String, DocValue)>) -> Result<DocValue
         ["$binary", "$type"] => {
             let b64 = text(first, "$binary")?;
             let sub = text(fields.get(1).map(|(_, v)| v), "$type")?;
+            binary(&b64, &sub)?
+        }
+        // Legacy `$binary`/`$type` is a set of members, so JSON key order must not matter.
+        ["$type", "$binary"] => {
+            let sub = text(first, "$type")?;
+            let b64 = text(fields.get(1).map(|(_, v)| v), "$binary")?;
             binary(&b64, &sub)?
         }
         ["$uuid"] => DocValue::Binary {
@@ -732,6 +744,18 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (y, m, d)
 }
 
+/// A year in ISO 8601 form: four digits, or a sign and at least four digits outside
+/// 0000–9999 (`-0001`, `+10000`).
+fn format_year(y: i64) -> String {
+    if (0..=9999).contains(&y) {
+        format!("{y:04}")
+    } else if y < 0 {
+        format!("-{:04}", y.unsigned_abs())
+    } else {
+        format!("+{y:04}")
+    }
+}
+
 /// `2024-02-29T12:34:56.789Z`; the fraction only when the milliseconds are not zero.
 pub fn format_iso_date(ms: i64) -> String {
     let days = ms.div_euclid(86_400_000);
@@ -743,7 +767,7 @@ pub fn format_iso_date(ms: i64) -> String {
         rem / 1000 % 60,
         rem % 1000,
     );
-    let mut out = format!("{y:04}-{m:02}-{d:02}T{h:02}:{min:02}:{s:02}");
+    let mut out = format!("{}-{m:02}-{d:02}T{h:02}:{min:02}:{s:02}", format_year(y));
     if milli != 0 {
         let _ = write!(out, ".{milli:03}");
     }
@@ -767,11 +791,30 @@ pub fn parse_iso_date(s: &str) -> Result<i64, DocParseError> {
             .and_then(|digits| digits.parse().ok())
             .ok_or_else(bad)
     };
-    let year = num(0, 4)?;
-    if b.get(4) != Some(&b'-') || b.get(7) != Some(&b'-') {
+    // A year has four digits, or a sign and at least four for expanded years.
+    let (sign, year_start) = match b.first() {
+        Some(b'-') => (-1i64, 1),
+        Some(b'+') => (1i64, 1),
+        _ => (1, 0),
+    };
+    let mut year_end = year_start;
+    while year_end < b.len() && b[year_end].is_ascii_digit() {
+        year_end += 1;
+    }
+    if year_end - year_start < 4 {
         return Err(bad());
     }
-    let (month, day) = (num(5, 2)? as u32, num(8, 2)? as u32);
+    let digits = std::str::from_utf8(&b[year_start..year_end]).map_err(|_| bad())?;
+    let year: i64 = digits.parse().map_err(|_| bad())?;
+    let year = sign * year;
+    // Keep `days_from_civil` and the millisecond arithmetic away from overflow.
+    if year.unsigned_abs() > 1_000_000_000 {
+        return Err(bad());
+    }
+    if b.get(year_end) != Some(&b'-') || b.get(year_end + 3) != Some(&b'-') {
+        return Err(bad());
+    }
+    let (month, day) = (num(year_end + 1, 2)? as u32, num(year_end + 4, 2)? as u32);
     let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
     let month_days = [
         31,
@@ -790,21 +833,25 @@ pub fn parse_iso_date(s: &str) -> Result<i64, DocParseError> {
     if !(1..=12).contains(&month) || day == 0 || day > month_days[month as usize - 1] {
         return Err(bad());
     }
-    let mut ms = days_from_civil(year, month, day) * 86_400_000;
-    let mut i = 10;
+    let mut ms = days_from_civil(year, month, day)
+        .checked_mul(86_400_000)
+        .ok_or_else(bad)?;
+    let mut i = year_end + 6;
     if i < b.len() && (b[i] == b'T' || b[i] == b't' || b[i] == b' ') {
         let (h, mi) = (num(i + 1, 2)?, num(i + 4, 2)?);
         if b.get(i + 3) != Some(&b':') || h > 23 || mi > 59 {
             return Err(bad());
         }
-        ms += h * 3_600_000 + mi * 60_000;
+        ms = ms
+            .checked_add(h * 3_600_000 + mi * 60_000)
+            .ok_or_else(bad)?;
         i += 6;
         if b.get(i) == Some(&b':') {
             let sec = num(i + 1, 2)?;
             if sec > 60 {
                 return Err(bad());
             }
-            ms += sec * 1000;
+            ms = ms.checked_add(sec * 1000).ok_or_else(bad)?;
             i += 3;
             if b.get(i) == Some(&b'.') {
                 i += 1;
@@ -817,7 +864,9 @@ pub fn parse_iso_date(s: &str) -> Result<i64, DocParseError> {
                 }
                 let frac = &s.trim()[start..i];
                 let milli: String = frac.chars().chain("000".chars()).take(3).collect();
-                ms += milli.parse::<i64>().map_err(|_| bad())?;
+                ms = ms
+                    .checked_add(milli.parse::<i64>().map_err(|_| bad())?)
+                    .ok_or_else(bad)?;
             }
         }
     }
@@ -836,7 +885,12 @@ pub fn parse_iso_date(s: &str) -> Result<i64, DocParseError> {
                 return Err(bad());
             }
             let offset = (h * 60 + m) * 60_000;
-            ms -= if sign == b'+' { offset } else { -offset };
+            ms = if sign == b'+' {
+                ms.checked_sub(offset)
+            } else {
+                ms.checked_add(offset)
+            }
+            .ok_or_else(bad)?;
         }
         _ => return Err(bad()),
     }
@@ -935,6 +989,38 @@ mod tests {
             "",
         ] {
             assert!(parse_iso_date(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn iso_dates_round_trip_outside_four_digit_years() {
+        let year_minus_one = days_from_civil(-1, 1, 1) * 86_400_000;
+        assert_eq!(format_iso_date(year_minus_one), "-0001-01-01T00:00:00Z");
+        assert_eq!(format_iso_date(YEAR_10000_MS), "+10000-01-01T00:00:00Z");
+        for ms in [year_minus_one, YEAR_10000_MS, YEAR_10000_MS + 5] {
+            assert_eq!(parse_iso_date(&format_iso_date(ms)).unwrap(), ms, "{ms}");
+        }
+    }
+
+    #[test]
+    fn legacy_binary_wrapper_ignores_key_order() {
+        let legacy = serde_json::json!({"$type": "00", "$binary": "AA=="});
+        assert_eq!(
+            DocValue::from_ejson(&legacy).unwrap(),
+            DocValue::Binary {
+                subtype: 0,
+                bytes: vec![0]
+            }
+        );
+    }
+
+    #[test]
+    fn an_out_of_range_date_number_is_rejected() {
+        for value in [1e300, -1e300, 1e19] {
+            assert!(
+                DocValue::from_ejson(&serde_json::json!({"$date": value})).is_err(),
+                "{value}"
+            );
         }
     }
 
