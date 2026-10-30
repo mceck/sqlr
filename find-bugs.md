@@ -14,7 +14,7 @@
 [] drivers: MySQL / MariaDB
 [x] drivers: SQLite
 [] drivers: Redis
-[] drivers: SQL Server / Oracle
+[x] drivers: SQL Server / Oracle
 [] drivers: Elasticsearch / Snowflake / ClickHouse / JDBC
 [] sidecar drivers: MongoDB / DuckDB / HANA
 [] sqlr-app: application logic (workers, actions, messages, cli, tabs, pending)
@@ -146,7 +146,12 @@ Tests added in `src/errors.rs`, `src/snapshot.rs`, `tests/objects.rs` and `tests
 [to fill]
 
 # drivers: SQL Server / Oracle
-[to fill]
+Fixed:
+- Oracle decoded a NULL CLOB/BLOB (`LobValue::Null`) as empty text/bytes, losing the distinction between NULL and empty. It now decodes to `Value::Null`.
+- Oracle TIMESTAMP WITH TIME ZONE lost its `+00:00` zone (and printed `-00:30` as `+00:30` because only the hour offset was checked). The zone is kept for a TimestampTz column and the sign considers both offset components.
+- SQL Server appended the `MERGE` terminator after a trailing line comment (`MERGE … -- note;`), leaving the statement unterminated. The `;` is now on its own line.
+
+Tests added in `types.rs` and `execute.rs`; 20 SQL Server + 31 Oracle unit tests and clippy pass.
 
 # drivers: Elasticsearch / Snowflake / ClickHouse / JDBC
 [to fill]

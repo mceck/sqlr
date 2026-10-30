@@ -22,13 +22,7 @@ pub(crate) async fn execute(
     params: &[Value],
 ) -> Result<Execution, DriverError> {
     let syntax = tsql_syntax();
-    let sql = trim_statement_in(&syntax, sql);
-    // T-SQL insists that a `MERGE` ends in `;`, which trimming just took off.
-    let sql = if first_word(&sql).eq_ignore_ascii_case("MERGE") {
-        std::borrow::Cow::Owned(format!("{sql};"))
-    } else {
-        sql
-    };
+    let sql = statement_text(sql);
     let class = MsDialect
         .statement_class(&sql)
         .unwrap_or_else(|| syntax.classify(&sql));
@@ -240,6 +234,18 @@ fn stopped() -> DriverError {
     DriverError::new(ErrorKind::Connection, "SQL Server result worker stopped")
 }
 
+/// `sql` trimmed, with the `;` T-SQL requires at the end of a `MERGE`, which trimming just
+/// took off. The terminator goes on a line of its own, so a trailing line comment cannot
+/// swallow it.
+fn statement_text(sql: &str) -> std::borrow::Cow<'_, str> {
+    let sql = trim_statement_in(&tsql_syntax(), sql);
+    if first_word(&sql).eq_ignore_ascii_case("MERGE") {
+        std::borrow::Cow::Owned(format!("{sql}\n;"))
+    } else {
+        sql
+    }
+}
+
 /// The rows `spec.sql` returns between `spec.before` and `spec.after`, all as plain
 /// batches: a showplan comes back as a rowset only for a batch of its own. `after` runs
 /// whatever happened.
@@ -353,7 +359,24 @@ impl RowStream for MsRows {
 
 #[cfg(test)]
 mod tests {
-    use super::returns_rows;
+    use super::{returns_rows, statement_text};
+
+    #[test]
+    fn a_merge_terminator_is_not_swallowed_by_a_trailing_comment() {
+        let sql = statement_text(
+            "MERGE INTO t USING s ON t.id = s.id \
+             WHEN NOT MATCHED THEN INSERT (id) VALUES (s.id) -- upsert",
+        );
+        assert!(sql.ends_with("\n;"), "{sql}");
+        assert!(!sql.contains("-- upsert;"), "{sql}");
+        // A MERGE that already ends in `;` gets exactly one.
+        let sql = statement_text(
+            "MERGE INTO t USING s ON 1 = 1 WHEN NOT MATCHED THEN INSERT (a) VALUES (1);",
+        );
+        assert_eq!(sql.matches(';').count(), 1, "{sql}");
+        // Other statements lose only their terminator.
+        assert_eq!(statement_text("SELECT 1;"), "SELECT 1");
+    }
 
     #[test]
     fn only_rowsets_are_queried() {

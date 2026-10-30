@@ -135,13 +135,19 @@ pub(crate) fn decode(value: &OracleValue, ty: OracleType) -> Value {
             "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
             v.year, v.month, v.day, v.hour, v.minute, v.second
         )),
-        (OracleValue::Timestamp(v), _) => {
+        (OracleValue::Timestamp(v), ty) => {
             let mut text = format!(
                 "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:06}",
                 v.year, v.month, v.day, v.hour, v.minute, v.second, v.microsecond
             );
-            if v.has_timezone() {
-                let sign = if v.tz_hour_offset < 0 { '-' } else { '+' };
+            // `has_timezone` is false for a UTC offset (`+00:00`): a TIMESTAMP WITH TIME
+            // ZONE column keeps its zone in the text even when the offset is zero.
+            if v.has_timezone() || ty == OracleType::TimestampTz {
+                let sign = if v.tz_hour_offset < 0 || v.tz_minute_offset < 0 {
+                    '-'
+                } else {
+                    '+'
+                };
                 text.push_str(&format!(
                     " {sign}{:02}:{:02}",
                     v.tz_hour_offset.unsigned_abs(),
@@ -155,6 +161,8 @@ pub(crate) fn decode(value: &OracleValue, ty: OracleType) -> Value {
         (OracleValue::Boolean(v), _) => Value::Bool(*v),
         (OracleValue::RowId(v), _) => Value::Text(format!("{v}")),
         (OracleValue::Json(v), _) => Value::Text(v.to_string()),
+        // A NULL LOB is a NULL cell, not an empty string or an empty byte string.
+        (OracleValue::Lob(LobValue::Null), _) => Value::Null,
         (OracleValue::Lob(v), OracleType::Blob | OracleType::Bfile | OracleType::Raw) => {
             match v.as_bytes() {
                 Ok(Some(bytes)) => Value::Bytes(bytes.to_vec()),
@@ -372,6 +380,49 @@ mod tests {
             d(OracleValue::RowId(oracle_rs::types::RowId::new(1, 2, 3, 4))),
             Value::Text(_)
         ));
+    }
+
+    #[test]
+    fn a_null_lob_is_null_not_empty() {
+        // A NULL CLOB/BLOB arrives as `LobValue::Null`; an empty one as `LobValue::Empty`.
+        assert_eq!(
+            decode(&OracleValue::Lob(LobValue::Null), OracleType::Clob),
+            Value::Null
+        );
+        assert_eq!(
+            decode(&OracleValue::Lob(LobValue::Null), OracleType::Blob),
+            Value::Null
+        );
+        assert_eq!(
+            decode(&OracleValue::Lob(LobValue::Empty), OracleType::Clob),
+            Value::Text(String::new())
+        );
+        assert_eq!(
+            decode(&OracleValue::Lob(LobValue::Empty), OracleType::Blob),
+            Value::Bytes(Vec::new())
+        );
+    }
+
+    #[test]
+    fn a_timestamp_zone_keeps_its_sign_and_its_utc_offset() {
+        use oracle_rs::types::OracleTimestamp;
+        let utc = OracleTimestamp::with_timezone(2024, 1, 2, 3, 4, 5, 0, 0, 0);
+        assert_eq!(
+            decode(&OracleValue::Timestamp(utc), OracleType::TimestampTz),
+            Value::Text("2024-01-02 03:04:05.000000 +00:00".into())
+        );
+        // A negative offset under one hour keeps its sign.
+        let half = OracleTimestamp::with_timezone(2024, 1, 2, 3, 4, 5, 0, 0, -30);
+        assert_eq!(
+            decode(&OracleValue::Timestamp(half), OracleType::TimestampTz),
+            Value::Text("2024-01-02 03:04:05.000000 -00:30".into())
+        );
+        // A plain TIMESTAMP has no zone, even though its offsets are zero.
+        let plain = OracleTimestamp::new(2024, 1, 2, 3, 4, 5, 0);
+        assert_eq!(
+            decode(&OracleValue::Timestamp(plain), OracleType::Timestamp),
+            Value::Text("2024-01-02 03:04:05.000000".into())
+        );
     }
 
     #[test]
