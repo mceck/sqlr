@@ -11,7 +11,7 @@
 [x] sqlr-mcp: server, policy, tokens and results
 [x] sqlr-terminal: PTY, screen, input and tabs
 [] drivers: PostgreSQL
-[] drivers: MySQL / MariaDB
+[x] drivers: MySQL / MariaDB
 [x] drivers: SQLite
 [] drivers: Redis
 [x] drivers: SQL Server / Oracle
@@ -131,7 +131,12 @@ Tests added in `input.rs`, `screen.rs` and `widget.rs`; `cargo test -p sqlr-term
 [to fill]
 
 # drivers: MySQL / MariaDB
-[to fill]
+Fixed:
+- A generated column's `NOT NULL` was dropped by `column_definition`, so a load → `CREATE` → load round trip changed it to nullable. MySQL now writes the nullability after `STORED`/`VIRTUAL`; MariaDB still omits it because its grammar rejects it (MDEV-10964).
+- Spatial indexes reported by `information_schema.STATISTICS` as `RTREE` could not be recreated (`unknown index type 'RTREE'`). Both `RTREE` and `SPATIAL` now emit `SPATIAL`.
+- `MyDialect` recorded `NO_BACKSLASH_ESCAPES` but `syntax()` always returned the backslash-escaping syntax, so `SELECT 'C:\'; DELETE FROM t` was lexed as one unterminated string and the hidden `DELETE` was classified `Read`. A second cached syntax without backslash escapes is now used for those sessions.
+
+Tests added in `ddl_gen.rs`, `dialect.rs`; 31 unit tests and clippy pass.
 
 # drivers: SQLite
 Fixed:

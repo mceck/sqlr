@@ -93,6 +93,11 @@ impl MyDialect {
                 "VIRTUAL"
             };
             out.push_str(&format!(" GENERATED ALWAYS AS ({expr}) {storage}"));
+            // MySQL keeps a generated column's nullability; MariaDB has no
+            // `[NOT NULL | NULL]` in its generated-column grammar (MDEV-10964).
+            if !self.mariadb {
+                out.push_str(if c.nullable { " NULL" } else { " NOT NULL" });
+            }
         } else {
             out.push_str(if c.nullable { " NULL" } else { " NOT NULL" });
             if let Some(default) = &c.default {
@@ -194,7 +199,9 @@ impl MyDialect {
         let method = i.method.as_deref().map(str::to_ascii_uppercase);
         Ok(match method.as_deref() {
             Some("FULLTEXT") => ("FULLTEXT ", String::new()),
-            Some("SPATIAL") => ("SPATIAL ", String::new()),
+            // `information_schema.STATISTICS` calls a spatial index `RTREE` on both
+            // servers; the statement spelling is `SPATIAL`.
+            Some("SPATIAL" | "RTREE") => ("SPATIAL ", String::new()),
             Some(m @ ("BTREE" | "HASH")) => {
                 (if i.unique { "UNIQUE " } else { "" }, format!(" USING {m}"))
             }
@@ -797,5 +804,74 @@ mod tests {
         assert_eq!(plain, ["TRUNCATE TABLE `d``b`.`x`"]);
         // The same statement either way: the UI offers no CASCADE.
         assert_eq!(MyDialect::default().ddl(&[truncate(true)]).unwrap(), plain);
+    }
+
+    /// A spatial index is reported as `RTREE` by `information_schema.STATISTICS`
+    /// (MySQL and MariaDB), not `SPATIAL`.
+    #[test]
+    fn rtree_indexes_are_recreated_as_spatial() {
+        let mut def = TableDef::new(t("shapes"));
+        def.columns = vec![ColumnDef {
+            name: "g".into(),
+            type_name: "geometry".into(),
+            nullable: false,
+            ..Default::default()
+        }];
+        def.indexes = vec![IndexDef {
+            name: "g_idx".into(),
+            columns: vec![IndexColumn::column("g")],
+            method: Some("RTREE".into()),
+            ..Default::default()
+        }];
+        let ddl = MyDialect::default()
+            .create_ddl(&ObjectDef::Table(def))
+            .unwrap();
+        assert!(ddl.contains("SPATIAL KEY `g_idx` (`g`)"), "{ddl}");
+        // The same through the single-index path.
+        let index = SchemaChange::AddIndex {
+            table: t("shapes"),
+            index: IndexDef {
+                name: "g_idx".into(),
+                columns: vec![IndexColumn::column("g")],
+                method: Some("RTREE".into()),
+                ..Default::default()
+            },
+            concurrently: false,
+        };
+        let ddl = MyDialect::default().ddl(&[index]).unwrap();
+        assert_eq!(
+            ddl,
+            ["CREATE SPATIAL INDEX `g_idx` ON `d``b`.`shapes` (`g`)"]
+        );
+    }
+
+    /// MySQL keeps `NOT NULL` on a generated column; dropping it makes a round trip
+    /// change the column. MariaDB rejects nullability on generated columns
+    /// (MDEV-10964), so it is written only for MySQL.
+    #[test]
+    fn generated_columns_keep_their_nullability_where_supported() {
+        let mut def = TableDef::new(t("x"));
+        def.columns = vec![ColumnDef {
+            name: "doubled".into(),
+            type_name: "int".into(),
+            nullable: false,
+            generated: Some("`a` * 2".into()),
+            generated_stored: true,
+            ..Default::default()
+        }];
+        let mysql = MyDialect::default()
+            .create_ddl(&ObjectDef::Table(def.clone()))
+            .unwrap();
+        assert!(
+            mysql.contains("GENERATED ALWAYS AS (`a` * 2) STORED NOT NULL"),
+            "{mysql}"
+        );
+        let mariadb = MyDialect {
+            mariadb: true,
+            ..MyDialect::default()
+        };
+        let ddl = mariadb.create_ddl(&ObjectDef::Table(def)).unwrap();
+        assert!(!ddl.contains("NOT NULL"), "{ddl}");
+        assert!(!ddl.contains(" STORED NULL"), "{ddl}");
     }
 }

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use sqlr_core::{DdlGen, Dialect, Node, SqlSyntax, TableRef, wrap_subquery};
 
-use crate::syntax::mysql_syntax;
+use crate::syntax::{mysql_syntax, mysql_syntax_no_backslash_escapes};
 
 /// MySQL rules. `database` is the connection's default database, searched for unqualified
 /// names; `mariadb` is set when the server is MariaDB, whose DDL differs in places.
@@ -42,7 +42,11 @@ impl Dialect for MyDialect {
     }
 
     fn syntax(&self) -> Arc<SqlSyntax> {
-        mysql_syntax()
+        if self.no_backslash_escapes {
+            mysql_syntax_no_backslash_escapes()
+        } else {
+            mysql_syntax()
+        }
     }
 
     fn default_schemas(&self) -> Vec<String> {
@@ -327,5 +331,25 @@ mod tests {
         assert_eq!(d.string_literal("it's"), "'it''s'");
         assert_eq!(d.string_literal("a\\b"), "_utf8mb4 X'615c62'");
         assert_eq!(d.bytes_literal(&[1, 0xab]), "X'01ab'");
+    }
+
+    /// With `NO_BACKSLASH_ESCAPES` a backslash is a plain character: a string ending
+    /// in one closes at its quote, so the statement after `;` is its own.
+    #[test]
+    fn syntax_follows_the_sessions_backslash_mode() {
+        let plain = MyDialect::default();
+        assert!(plain.syntax().backslash_escapes);
+        let strict = MyDialect {
+            no_backslash_escapes: true,
+            ..MyDialect::default()
+        };
+        assert!(!strict.syntax().backslash_escapes);
+        let text = "SELECT 'C:\\'; DELETE FROM t";
+        let ranges = strict.syntax().split(text, sqlr_core::LexState::Normal);
+        assert_eq!(ranges.len(), 2, "{ranges:?}");
+        assert!(matches!(
+            strict.syntax().classify_script(text),
+            sqlr_core::StatementClass::Destructive(_)
+        ));
     }
 }

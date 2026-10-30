@@ -1327,7 +1327,12 @@ const MYSQL_FUNCTIONS: &[&str] = &[
 /// Backtick identifier quotes.
 const BACKTICK_IDENTS: &[(u8, u8)] = &[(b'`', b'`')];
 
-static MYSQL: LazyLock<Arc<SqlSyntax>> = LazyLock::new(|| {
+static MYSQL: LazyLock<Arc<SqlSyntax>> = LazyLock::new(|| syntax(true));
+
+/// The same syntax for a session running with `NO_BACKSLASH_ESCAPES`.
+static MYSQL_NO_BACKSLASH_ESCAPES: LazyLock<Arc<SqlSyntax>> = LazyLock::new(|| syntax(false));
+
+fn syntax(backslash_escapes: bool) -> Arc<SqlSyntax> {
     let sorted = |list: &[&'static str]| {
         let mut v = list.to_vec();
         v.sort_unstable();
@@ -1346,14 +1351,20 @@ static MYSQL: LazyLock<Arc<SqlSyntax>> = LazyLock::new(|| {
         hash_comments: true,
         ident_quotes: BACKTICK_IDENTS,
         double_quote_strings: true,
-        backslash_escapes: true,
+        backslash_escapes,
         grammar: "sequel",
     })
-});
+}
 
 /// The shared MySQL/MariaDB syntax.
 pub fn mysql_syntax() -> Arc<SqlSyntax> {
     MYSQL.clone()
+}
+
+/// The syntax of a session running with `NO_BACKSLASH_ESCAPES`: a backslash in a
+/// string literal is a plain character, so it does not escape the closing quote.
+pub(crate) fn mysql_syntax_no_backslash_escapes() -> Arc<SqlSyntax> {
+    MYSQL_NO_BACKSLASH_ESCAPES.clone()
 }
 
 #[cfg(test)]
