@@ -1147,6 +1147,14 @@ fn failed_database_drop_lists_only_its_sessions_and_confirms_termination() {
     });
     wait_for_label(&mut h, "Retry drop");
     click_in_modal(&mut h, "Retry drop");
+    step_until(&mut h, "the retried DROP DATABASE", |_| {
+        driver
+            .executed()
+            .iter()
+            .filter(|s| s.contains("DROP DATABASE"))
+            .count()
+            >= 2
+    });
     wait_for_label(&mut h, "Database in use");
     assert_eq!(
         driver
