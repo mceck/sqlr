@@ -91,7 +91,9 @@ Fixed:
 - A slow `Execute` that finished after its connection was disconnected inserted a stream nobody could close. The server now checks the connection still exists and closes the stream otherwise.
 - Cancelling a statement counted every in-flight call (`Browse`, `Catalog`, `Ping`, …) and could kill the whole driver for an unrelated slow catalog load. Only statement calls and fetches now keep the cancel waiting.
 
-Open for the next cycle: `Shutdown` does not abort an in-flight `Execute`/`Fetch` before waiting for its state, so a long statement can delay process exit; and a nonconforming server answering `FetchDone { exhausted: false }` with no chunk makes the client report exhaustion.
+- `Shutdown` aborted only connecting tasks and then waited for in-flight `Execute`/`Fetch` tasks, so a long statement delayed process exit. All request tasks are now aborted before streams are closed and the writer is awaited.
+
+Open for the next cycle: a nonconforming server answering `FetchDone { exhausted: false }` with no chunk makes the client report exhaustion.
 
 Tests added in `crates/sqlr-sidecar/tests/server.rs` and `tests/sidecar.rs`, plus the echo test driver's slow-connect/slow-browse hooks; the sidecar test suites and clippy pass.
 

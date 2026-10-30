@@ -102,6 +102,136 @@ fn exec(conn: u64, sql: &str, params: Option<Vec<Value>>) -> Request {
 }
 
 #[tokio::test]
+async fn shutdown_does_not_wait_for_a_long_statement() {
+    use std::time::Duration;
+
+    use sqlr_core::{
+        CancelHandle, Capabilities, Connection, Dialect, Driver, DriverError, DriverManifest,
+        Execution, Family, Node, ServerInfo,
+    };
+
+    struct Slow;
+    struct SlowConn;
+    struct SlowDialect;
+
+    impl Dialect for SlowDialect {
+        fn quote_ident(&self, ident: &str) -> String {
+            format!("\"{ident}\"")
+        }
+        fn select_all(&self, _: &Node, _: Option<usize>) -> Option<String> {
+            None
+        }
+    }
+
+    struct NoCancel;
+
+    #[async_trait::async_trait]
+    impl CancelHandle for NoCancel {
+        async fn cancel(&self) -> Result<(), DriverError> {
+            Ok(())
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Connection for SlowConn {
+        async fn ping(&self) -> Result<ServerInfo, DriverError> {
+            Ok(ServerInfo {
+                product: "slow".into(),
+                version: "1".into(),
+            })
+        }
+        async fn browse(&self, _: &NodePath) -> Result<Vec<Node>, DriverError> {
+            Ok(Vec::new())
+        }
+        fn cancel_handle(&self) -> Arc<dyn CancelHandle> {
+            Arc::new(NoCancel)
+        }
+        fn relational(&self) -> Option<&dyn sqlr_core::RelationalConn> {
+            Some(self)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl sqlr_core::RelationalConn for SlowConn {
+        async fn execute(&self, _: &str) -> Result<Execution, DriverError> {
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            Ok(Execution::Affected(0))
+        }
+        fn dialect(&self) -> &dyn Dialect {
+            &SlowDialect
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Driver for Slow {
+        fn manifest(&self) -> &DriverManifest {
+            static MANIFEST: std::sync::OnceLock<DriverManifest> = std::sync::OnceLock::new();
+            MANIFEST.get_or_init(|| DriverManifest {
+                id: "slow".into(),
+                name: "Slow".into(),
+                family: Family::Relational,
+                capabilities: Capabilities::default(),
+                fields: Vec::new(),
+                dialect: "ansi".into(),
+                url_schemes: Vec::new(),
+                default_port: None,
+                editing: None,
+            })
+        }
+        async fn connect(
+            &self,
+            _: &ConnectionConfig,
+            _: &Secrets,
+        ) -> Result<Arc<dyn Connection>, DriverError> {
+            Ok(Arc::new(SlowConn))
+        }
+    }
+
+    let (client, server_end) = tokio::io::duplex(1 << 20);
+    let (sr, sw) = split(server_end);
+    let server = tokio::spawn(serve_io(Arc::new(Slow), PROTOCOL.into(), sr, sw));
+    let (mut rx, mut tx) = split(client);
+    let config = ConnectionConfig {
+        id: "c".into(),
+        name: "c".into(),
+        driver: "slow".into(),
+        group: None,
+        color: None,
+        values: Default::default(),
+        profile: None,
+        save_secrets: true,
+        agent_access: Default::default(),
+    };
+    write_frame(
+        &mut tx,
+        CONTROL,
+        1,
+        &encode(&Request::Connect {
+            conn: 1,
+            config,
+            secrets: Secrets::default(),
+        }),
+    )
+    .await
+    .unwrap();
+    let frame = read_frame(&mut rx).await.unwrap().unwrap();
+    assert!(matches!(
+        decode(&frame.payload).unwrap(),
+        Response::Connected { .. }
+    ));
+    write_frame(&mut tx, CONTROL, 2, &encode(&exec(1, "slow", None)))
+        .await
+        .unwrap();
+    write_frame(&mut tx, CONTROL, 3, &encode(&Request::Shutdown))
+        .await
+        .unwrap();
+    let frame = read_frame(&mut rx).await.unwrap().unwrap();
+    assert_eq!(frame.id, 3);
+    let done = tokio::time::timeout(Duration::from_secs(1), server).await;
+    assert!(done.is_ok(), "Shutdown waited for the slow statement");
+}
+
+#[tokio::test]
 async fn an_exhausted_stream_is_released() {
     let mut rig = Rig::new().await;
     rig.connect(1).await;

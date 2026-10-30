@@ -99,6 +99,8 @@ where
         out,
     });
     let mut connecting = HashMap::<u64, tokio::task::AbortHandle>::new();
+    // Every request task, not just connects: Shutdown must not wait for a long query.
+    let mut tasks = HashMap::<u64, tokio::task::AbortHandle>::new();
     let result = loop {
         let frame = match read_frame(&mut input).await {
             Ok(Some(frame)) => frame,
@@ -149,6 +151,7 @@ where
             break Ok(());
         }
         connecting.retain(|_, task| !task.is_finished());
+        tasks.retain(|_, task| !task.is_finished());
         // Register in wire order so Disconnect also cancels a still pending Connect.
         let opening = match &request {
             Request::Connect { conn, .. } => Some(*conn),
@@ -166,6 +169,7 @@ where
             let response = state.handle(id, request).await;
             state.reply(id, &response);
         });
+        tasks.insert(id, task.abort_handle());
         if let Some(conn) = opening {
             connecting.insert(conn, task.abort_handle());
         }
@@ -173,6 +177,11 @@ where
     // Let queued replies (the shutdown acknowledgement) reach the pipe, then drop the
     // connections: a driver releases its server resources when its objects drop.
     for task in connecting.into_values() {
+        task.abort();
+    }
+    // Abort the remaining requests too: an in-flight Execute/Fetch holds a State clone and
+    // can keep the writer (and the process) alive for as long as the query runs.
+    for task in tasks.into_values() {
         task.abort();
     }
     state.document_queues.lock().clear();
