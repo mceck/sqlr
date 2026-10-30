@@ -227,3 +227,33 @@ async fn serial_tables_script_runs_and_converges() {
     );
     assert_eq!(again, Vec::new(), "after the script:\n{script}");
 }
+
+#[tokio::test]
+async fn partitioned_children_are_created_once_by_a_snapshot_migration() {
+    sqlr_testkit::skip_container_tests!("POSTGRES");
+    let env = Env::new(
+        "CREATE SCHEMA a; CREATE SCHEMA b;
+         CREATE TABLE b.m (id int NOT NULL, at date NOT NULL) PARTITION BY RANGE (at);
+         CREATE TABLE b.m_2024 PARTITION OF b.m
+             FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');",
+    )
+    .await;
+    let rel = env.conn.relational().unwrap();
+    let generator = rel.dialect().ddl_gen().unwrap();
+    let diffs = compare(
+        &env.snapshot("b").await,
+        &env.snapshot("a").await,
+        generator,
+    );
+    let script = migration_script(&diffs, &HashSet::<ObjectRef>::new(), generator, "-- test");
+    env.raw
+        .batch_execute(&script)
+        .await
+        .unwrap_or_else(|e| panic!("{e:?}\n{script}"));
+    let again = compare(
+        &env.snapshot("b").await,
+        &env.snapshot("a").await,
+        generator,
+    );
+    assert_eq!(again, Vec::new(), "after the script:\n{script}");
+}

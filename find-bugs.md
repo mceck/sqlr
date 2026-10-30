@@ -15,7 +15,7 @@ first try and passed on retry; worth a deterministic look in this cycle).
 [x] sqlr-registry: driver install, index and verification
 [x] sqlr-mcp: server, policy, tokens and results
 [x] sqlr-terminal: PTY, screen, input and tabs
-[ ] drivers: PostgreSQL
+[x] drivers: PostgreSQL
 [x] drivers: MySQL / MariaDB
 [x] drivers: SQLite
 [x] drivers: Redis
@@ -290,3 +290,10 @@ No new bug found in this cycle. Reviewed selection/subtract, edit history/duplic
 
 # sqlr-ui: forms, trees, dialogs and keymap
 No new bug found in this cycle. Reviewed plan reveal, lock trees, snippet folder ids, XML pretty-printing, JSON view/edit validation and the keymap editor; 166 unit + targeted integration tests and clippy pass.
+
+# drivers: PostgreSQL
+Fixed:
+- A snapshot migration of a partitioned table created every partition child twice: the parent's `CREATE TABLE … PARTITION OF` already creates the child, and the child was also a top-level object in the snapshot. Children of a table that is itself being added are now left to the parent. `retarget` also rewrites a partition child's schema, so the parent no longer creates it in the source schema (`CREATE TABLE "b"."m_2024" PARTITION OF "a"."m"`).
+- Note: a partition child's own indexes/constraints are still not carried by the parent's create; only the parent-level definition is migrated. That needs a nested partition definition in the core model and is left for a later pass.
+
+Tests added in `tests/snapshot.rs`; 6 container snapshot tests, 12 core compare tests and clippy pass.

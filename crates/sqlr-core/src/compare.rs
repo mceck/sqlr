@@ -407,6 +407,9 @@ fn retarget(def: &ObjectDef, from: &str, to: &str) -> ObjectDef {
                 tr.body = text(&tr.body);
                 tr.condition = tr.condition.as_deref().map(&text);
             }
+            for p in &mut t.partitions {
+                p.table = table(&p.table);
+            }
             ObjectDef::Table(t)
         }
         ObjectDef::View(v) => ObjectDef::View(ViewDef {
@@ -524,21 +527,42 @@ pub fn compare(
     let source_names = relation_names(source);
     let target_names = relation_names(target);
     let ddl = |def: &ObjectDef| generator.create_ddl(def).ok();
+    // A partition child of a table that is itself being created is created by the
+    // parent's `CREATE TABLE … PARTITION OF`; creating it again would fail.
+    let partition_children_of_added: HashSet<TableRef> = moved
+        .iter()
+        .filter(|(key, _)| !existing.contains_key(*key))
+        .flat_map(|(_, def)| match def {
+            ObjectDef::Table(t) => t
+                .partitions
+                .iter()
+                .map(|p| p.table.clone())
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        })
+        .collect();
     let mut diffs = Vec::new();
     for (key, wanted_def) in &moved {
         let object = wanted_def.object_ref();
         match existing.get(key) {
-            None => diffs.push(ObjectDiff {
-                object,
-                kind: DiffKind::Added,
-                source_ddl: ddl(wanted_def),
-                target_ddl: None,
-                changes: vec![SchemaChange::Create(wanted_def.clone())],
-                destructive: false,
-                source_def: Some(wanted_def.clone()),
-                target_def: None,
-                deps: deps_of(wanted_def, &source_names),
-            }),
+            None => {
+                if let ObjectDef::Table(t) = wanted_def
+                    && partition_children_of_added.contains(&t.table)
+                {
+                    continue;
+                }
+                diffs.push(ObjectDiff {
+                    object,
+                    kind: DiffKind::Added,
+                    source_ddl: ddl(wanted_def),
+                    target_ddl: None,
+                    changes: vec![SchemaChange::Create(wanted_def.clone())],
+                    destructive: false,
+                    source_def: Some(wanted_def.clone()),
+                    target_def: None,
+                    deps: deps_of(wanted_def, &source_names),
+                });
+            }
             Some(have) => {
                 let (n_have, n_want) = (normalize(have), normalize(wanted_def));
                 if without_dependents(&n_have) == without_dependents(&n_want) {
