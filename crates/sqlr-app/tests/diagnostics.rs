@@ -217,7 +217,8 @@ fn the_diagnostics_window_lists_an_incident_and_toggles_the_sql_setting() {
     h.get_by_label("Include SQL in logs and reports")
         .scroll_to_me();
     h.run_steps(5);
-    h.get_by_label("Include SQL in logs and reports").click();
+    h.get_by_label("Include SQL in logs and reports")
+        .click_accesskit();
     step_until(&mut h, "the SQL setting to toggle", |h| {
         h.state().setting_text("diagnostics.include_sql", None) == "false"
     });
