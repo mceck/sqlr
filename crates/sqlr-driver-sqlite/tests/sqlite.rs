@@ -613,6 +613,29 @@ async fn new_execute_ends_the_open_stream() {
     assert!(done.next_chunk(10).await.unwrap().is_none());
 }
 
+/// A result cut by a newer statement stays cancelled even while that newer result is
+/// still open: it must not look complete.
+#[tokio::test]
+async fn cut_stream_stays_cancelled_while_another_result_is_open() {
+    let (_dir, conn) = temp_db().await;
+    let mut first = rows(
+        &conn,
+        "WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c WHERE n < 100) SELECT n FROM c",
+    )
+    .await;
+    assert_eq!(first.next_chunk(10).await.unwrap().unwrap().len(), 10);
+    let mut second = rows(
+        &conn,
+        "WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c WHERE n < 100) SELECT n FROM c",
+    )
+    .await;
+    assert_eq!(second.next_chunk(10).await.unwrap().unwrap().len(), 10);
+    let err = first.next_chunk(10).await.unwrap_err();
+    assert_eq!(err.kind, ErrorKind::Cancelled, "{err:?}");
+    assert!(err.message.contains("newer statement"), "{err:?}");
+    second.close().await.unwrap();
+}
+
 #[tokio::test]
 async fn cancel_while_idle_is_ignored() {
     let (_dir, conn) = temp_db().await;

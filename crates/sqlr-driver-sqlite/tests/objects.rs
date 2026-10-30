@@ -519,6 +519,33 @@ CREATE INDEX t_a ON t (a)",
     assert_eq!(env.table("t2").await, after);
 }
 
+/// A trigger added while the table is renamed is created on the new name: the editor
+/// leaves the trigger's table reference at the name it had when the trigger was added.
+#[tokio::test]
+async fn renaming_a_table_creates_its_new_trigger_on_the_new_name() {
+    let env = Env::new("CREATE TABLE t (id INTEGER PRIMARY KEY, a TEXT)").await;
+    let before = env.table("t").await;
+    let mut after = before.clone();
+    after.table.name = "t2".into();
+    after.triggers.push(TriggerDef {
+        name: "t2_ai".into(),
+        table: before.table.clone(),
+        timing: "AFTER".into(),
+        events: vec!["INSERT".into()],
+        for_each_row: true,
+        condition: None,
+        body: "SELECT 1;".into(),
+    });
+    let statements = env.alter(&before, &after).await;
+    assert!(
+        statements.iter().any(|s| s.contains("ON \"t2\"")),
+        "{statements:#?}"
+    );
+    let loaded = env.table("t2").await;
+    assert_eq!(loaded.triggers.len(), 1);
+    assert_eq!(loaded.triggers[0].table, t("t2"));
+}
+
 #[tokio::test]
 async fn sqlite_rebuild_preserves_everything() {
     let env = Env::new(

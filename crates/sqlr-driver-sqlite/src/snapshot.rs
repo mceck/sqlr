@@ -21,16 +21,20 @@ struct Row {
 
 pub(crate) fn load_schema(conn: &Connection, schema: &str) -> Result<SchemaSnapshot, DriverError> {
     let q = SqliteDialect.quote_ident(schema);
-    // The creation order (rowid) is the order dependents are recreated in.
+    // The creation order (rowid) is the order dependents are recreated in. A virtual
+    // table's shadow tables are its module's storage, not objects of the schema: creating
+    // or dropping them as ordinary tables would break the virtual table.
     let rows: Vec<Row> = {
         let mut stmt = conn
             .prepare(&format!(
                 "SELECT type, name, tbl_name, sql FROM {q}.sqlite_schema \
                  WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' \
+                   AND name NOT IN (SELECT name FROM pragma_table_list \
+                                    WHERE schema = ?1 AND type = 'shadow') \
                  ORDER BY rowid"
             ))
             .map_err(map_error)?;
-        stmt.query_map([], |r| {
+        stmt.query_map([schema], |r| {
             Ok(Row {
                 ty: r.get(0)?,
                 name: r.get(1)?,
@@ -157,5 +161,22 @@ mod tests {
             statements <= 15,
             "{statements} statements for 800 objects: the count must not follow their number"
         );
+    }
+
+    /// The shadow tables of a virtual table are the module's storage, not objects of the
+    /// schema: a compare must neither create nor drop them (dropping them breaks the
+    /// virtual table).
+    #[test]
+    fn virtual_table_shadow_tables_are_not_objects() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE VIRTUAL TABLE docs USING fts5(body); CREATE TABLE plain (a)")
+            .unwrap();
+        let snapshot = load_schema(&conn, "main").unwrap();
+        let names: Vec<String> = snapshot
+            .objects
+            .iter()
+            .map(|o| o.object_ref().name)
+            .collect();
+        assert_eq!(names, ["plain"]);
     }
 }

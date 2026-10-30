@@ -1,5 +1,6 @@
 //! Statements: row counts, and results stepped incrementally on the worker thread.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
@@ -13,7 +14,7 @@ use tokio::sync::oneshot;
 
 use crate::map_error;
 use crate::types::{self, column_metas, declared};
-use crate::worker::{Command, Worker, closed};
+use crate::worker::{Command, Worker, closed, cut_error};
 
 pub(crate) enum Started {
     Rows {
@@ -72,6 +73,10 @@ impl Drop for Running<'_> {
 
 /// Runs on the worker thread: starts `sql`, then serves its fetches. Other commands are
 /// handled in between; a new `Execute` ends this result and is returned to run next.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the worker's statement context: connection, channel, run state, stream, SQL, parameters, reply and the cut results"
+)]
 pub(crate) fn run(
     conn: &rusqlite::Connection,
     rx: &mpsc::Receiver<Command>,
@@ -80,6 +85,7 @@ pub(crate) fn run(
     sql: &str,
     params: &[Value],
     reply: oneshot::Sender<Result<Started, DriverError>>,
+    cut: &HashSet<u64>,
 ) -> Ended {
     let mut stmt = match conn.prepare(sql) {
         Ok(stmt) => stmt,
@@ -151,8 +157,14 @@ pub(crate) fn run(
                 };
                 let _ = reply.send(result);
             }
-            Command::Fetch { reply, .. } => {
-                let _ = reply.send(Ok(None));
+            Command::Fetch {
+                stream: s, reply, ..
+            } => {
+                let _ = reply.send(if cut.contains(&s) {
+                    Err(cut_error())
+                } else {
+                    Ok(None)
+                });
             }
             Command::Close { stream: s } if s == stream => return DONE,
             Command::Close { .. } => {}

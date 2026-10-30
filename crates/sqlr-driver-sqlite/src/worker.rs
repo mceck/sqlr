@@ -40,6 +40,14 @@ pub(crate) fn closed() -> DriverError {
     DriverError::new(ErrorKind::Connection, "the SQLite connection is closed")
 }
 
+/// The error a result cut by a newer statement answers with, so it never looks complete.
+pub(crate) fn cut_error() -> DriverError {
+    DriverError::new(
+        ErrorKind::Cancelled,
+        "the result was ended by a newer statement",
+    )
+}
+
 pub(crate) struct Worker {
     tx: mpsc::Sender<Command>,
     interrupt: InterruptHandle,
@@ -192,7 +200,7 @@ fn run(conn: &rusqlite::Connection, rx: &mpsc::Receiver<Command>, running: &Atom
             Command::Execute { sql, params, reply } => {
                 let stream = next_stream;
                 next_stream += 1;
-                let ended = execute::run(conn, rx, running, stream, &sql, &params, reply);
+                let ended = execute::run(conn, rx, running, stream, &sql, &params, reply, &cut);
                 if ended.cut {
                     cut.insert(stream);
                 }
@@ -200,10 +208,7 @@ fn run(conn: &rusqlite::Connection, rx: &mpsc::Receiver<Command>, running: &Atom
             }
             Command::Fetch { stream, reply, .. } => {
                 let _ = reply.send(if cut.contains(&stream) {
-                    Err(DriverError::new(
-                        ErrorKind::Cancelled,
-                        "the result was ended by a newer statement",
-                    ))
+                    Err(cut_error())
                 } else {
                     Ok(None)
                 });

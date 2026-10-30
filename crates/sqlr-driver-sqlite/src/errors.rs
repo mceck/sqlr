@@ -48,6 +48,7 @@ fn kind_for(code: ErrorCode, message: &str) -> ErrorKind {
         ErrorCode::Unknown
             if message.contains("syntax error")
                 || message.starts_with("no such")
+                || message.starts_with("unrecognized token")
                 || message.contains("incomplete input") =>
         {
             ErrorKind::Syntax
@@ -55,5 +56,19 @@ fn kind_for(code: ErrorCode, message: &str) -> ErrorKind {
         // `PRAGMA query_only` reports a write attempt as a plain error.
         ErrorCode::Unknown if message.contains("readonly") => ErrorKind::Permission,
         _ => ErrorKind::Other,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unrecognized_token_is_a_syntax_error() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        let err = conn.prepare("SELECT #").unwrap_err();
+        let err = map_error(err);
+        assert_eq!(err.kind, ErrorKind::Syntax, "{err:?}");
+        assert_eq!(err.position, Some(7), "{err:?}");
     }
 }

@@ -12,7 +12,7 @@
 [x] sqlr-terminal: PTY, screen, input and tabs
 [] drivers: PostgreSQL
 [] drivers: MySQL / MariaDB
-[] drivers: SQLite
+[x] drivers: SQLite
 [] drivers: Redis
 [] drivers: SQL Server / Oracle
 [] drivers: Elasticsearch / Snowflake / ClickHouse / JDBC
@@ -134,7 +134,13 @@ Tests added in `input.rs`, `screen.rs` and `widget.rs`; `cargo test -p sqlr-term
 [to fill]
 
 # drivers: SQLite
-[to fill]
+Fixed:
+- A result cut by a newer statement answered `Ok(None)` while the newer result was still open, so the cut looked complete. Both fetch paths now return the shared `Cancelled` “ended by a newer statement” error.
+- Adding a trigger while renaming a table used the trigger's stale table reference, so SQLite created it on the old (now missing) name. The native `ALTER TABLE` path now creates the trigger on the renamed table.
+- The schema snapshot included a virtual table's shadow tables (`docs_data`, `docs_idx`, …) as ordinary objects; a compare/migration could create or drop them and corrupt the FTS table. `pragma_table_list` shadow entries are excluded.
+- SQLite's `unrecognized token` parse error was classified as `Other`; it is now `Syntax`, with its position.
+
+Tests added in `src/errors.rs`, `src/snapshot.rs`, `tests/objects.rs` and `tests/sqlite.rs`; 18 unit + 60 integration tests and clippy pass.
 
 # drivers: Redis
 [to fill]

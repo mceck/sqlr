@@ -536,6 +536,14 @@ impl DdlGen for SqliteDialect {
                     ));
                     recreated.push(self.create_index(&after.table, index)?);
                 }
+                // The editor may leave a trigger's table at the name the table had when
+                // the trigger was added: it belongs to this table, whatever it says.
+                SchemaChange::Create(ObjectDef::Trigger(trigger)) => {
+                    out.push(self.create_trigger(&TriggerDef {
+                        table: after.table.clone(),
+                        ..trigger.clone()
+                    })?);
+                }
                 other => out.extend(self.change(other)?),
             }
         }
