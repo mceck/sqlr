@@ -267,11 +267,7 @@ impl PgDialect {
                 .into_iter()
                 .map(|c| format!("ALTER TABLE {q} ADD {}", self.constraint(c))),
         );
-        out.extend(
-            t.indexes
-                .iter()
-                .map(|i| self.create_index(&t.table, i, false)),
-        );
+        // Partitions first: an index on a child can only be created once the child exists.
         for p in &t.partitions {
             out.push(format!(
                 "CREATE TABLE {} PARTITION OF {q} {}",
@@ -279,6 +275,11 @@ impl PgDialect {
                 p.bound
             ));
         }
+        out.extend(
+            t.indexes
+                .iter()
+                .map(|i| self.create_index(&t.table, i, false)),
+        );
         out.extend(t.triggers.iter().map(|tr| self.create_trigger(tr)));
         if let Some(comment) = &t.comment {
             out.push(format!(

@@ -551,14 +551,42 @@ pub fn compare(
                 {
                     continue;
                 }
+                // A partition child that is created by the parent's `PARTITION OF` still
+                // has its own indexes; carry them on the parent's create (as their own
+                // statements on the child) instead of losing them with the child object.
+                let mut create_def = wanted_def.clone();
+                if let ObjectDef::Table(t) = &mut create_def {
+                    let children: Vec<TableRef> =
+                        t.partitions.iter().map(|p| p.table.clone()).collect();
+                    for child in children {
+                        let Some(child_def) = moved.values().find_map(|o| match o {
+                            ObjectDef::Table(cd) if cd.table == child => Some(cd),
+                            _ => None,
+                        }) else {
+                            continue;
+                        };
+                        for index in &child_def.indexes {
+                            let Ok(ddl) = generator.create_ddl(&ObjectDef::Index {
+                                table: child.clone(),
+                                index: index.clone(),
+                            }) else {
+                                continue;
+                            };
+                            let mut index = index.clone();
+                            index.definition =
+                                Some(ddl.trim().trim_end_matches(';').trim_end().to_string());
+                            t.indexes.push(index);
+                        }
+                    }
+                }
                 diffs.push(ObjectDiff {
                     object,
                     kind: DiffKind::Added,
-                    source_ddl: ddl(wanted_def),
+                    source_ddl: ddl(&create_def),
                     target_ddl: None,
-                    changes: vec![SchemaChange::Create(wanted_def.clone())],
+                    changes: vec![SchemaChange::Create(create_def.clone())],
                     destructive: false,
-                    source_def: Some(wanted_def.clone()),
+                    source_def: Some(create_def),
                     target_def: None,
                     deps: deps_of(wanted_def, &source_names),
                 });

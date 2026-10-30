@@ -25,7 +25,7 @@ overflowing on an extreme timestamp.
 [ ] sqlr-registry: driver install, index and verification
 [ ] sqlr-mcp: server, policy, tokens and results
 [ ] sqlr-terminal: PTY, screen, input and tabs
-[ ] drivers: PostgreSQL
+[x] drivers: PostgreSQL
 [ ] drivers: MySQL / MariaDB
 [ ] drivers: SQLite
 [ ] drivers: Redis
@@ -380,3 +380,10 @@ No new bug found in cycle 3. Re-read selection subtraction, edit history/duplica
 No new bug found in cycle 3. Re-read tree folder state, plan reveal, lock cycles, XML/JSON views and the keymap editor; 166 unit + targeted integration tests and clippy pass.
 
 ## Cycle 4 findings:
+
+# drivers: PostgreSQL
+Fixed:
+- A partition child created by the parent's `CREATE TABLE … PARTITION OF` lost its own indexes in a snapshot migration (the child object was skipped to avoid the duplicate create). The child's indexes are now carried onto the parent's create as their own statements, and partitions are created before the parent's indexes so a child index can target the child.
+- A child-specific constraint is still not carried by the parent's create; that needs a nested partition definition in the core model and remains a documented limitation.
+
+Tests extended in `tests/snapshot.rs` (child index); 6 container snapshot tests, 12 core compare tests and clippy pass.

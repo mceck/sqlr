@@ -235,7 +235,8 @@ async fn partitioned_children_are_created_once_by_a_snapshot_migration() {
         "CREATE SCHEMA a; CREATE SCHEMA b;
          CREATE TABLE b.m (id int NOT NULL, at date NOT NULL) PARTITION BY RANGE (at);
          CREATE TABLE b.m_2024 PARTITION OF b.m
-             FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');",
+             FOR VALUES FROM ('2024-01-01') TO ('2025-01-01');
+         CREATE INDEX m_2024_at ON b.m_2024 (at);",
     )
     .await;
     let rel = env.conn.relational().unwrap();
