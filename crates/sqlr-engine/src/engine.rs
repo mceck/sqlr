@@ -388,6 +388,19 @@ impl Engine {
                         format!("unknown driver \"{}\"", cfg.driver),
                     ));
                     let tx = TxState::new(profile.commit_mode, profile.read_only, now_ms());
+                    // The tabs and agents of the old connection must not keep working on a
+                    // connection the user just replaced with an unknown driver.
+                    let stale: Vec<SessionKey> = inner
+                        .sessions
+                        .keys()
+                        .filter(|k| k.conn == cfg.id && k.slot != Slot::Meta)
+                        .cloned()
+                        .collect();
+                    for k in stale {
+                        if let Some(old) = inner.sessions.remove(&k) {
+                            self.shared.retire(old);
+                        }
+                    }
                     inner.conns.remove(&cfg.id);
                     if let Some(old) = inner.sessions.insert(key, Session::new(failed, io, tx)) {
                         self.shared.retire(old);
@@ -1294,12 +1307,8 @@ impl Engine {
         let job = self.shared.jobs.create(JobKind::Apply);
         let id = job.id;
         let io = {
-            let inner = self.shared.inner.lock();
-            inner
-                .sessions
-                .get(key)
-                .filter(|s| s.is_live())
-                .map(|s| s.io.clone())
+            let mut inner = self.shared.inner.lock();
+            self.shared.live_or_reopen(&mut inner, key)
         };
         match io {
             None => self
@@ -1325,23 +1334,29 @@ impl Engine {
         let id = job.id;
         let work = match source {
             ExportSource::Loaded(q) => Work::ExportLoaded { q, format, path },
-            ExportSource::Rerun { key, database, sql } => match self.live_io(&key) {
-                None => {
-                    self.shared
-                        .jobs
-                        .finish(id, JobOutcome::Failed(not_connected()));
-                    return id;
+            ExportSource::Rerun { key, database, sql } => {
+                let io = {
+                    let mut inner = self.shared.inner.lock();
+                    self.shared.live_or_reopen(&mut inner, &key)
+                };
+                match io {
+                    None => {
+                        self.shared
+                            .jobs
+                            .finish(id, JobOutcome::Failed(not_connected()));
+                        return id;
+                    }
+                    Some(io) => Work::ExportRerun {
+                        key,
+                        ticket: io.issue_ticket(),
+                        io,
+                        database,
+                        sql,
+                        format,
+                        path,
+                    },
                 }
-                Some(io) => Work::ExportRerun {
-                    key,
-                    ticket: io.issue_ticket(),
-                    io,
-                    database,
-                    sql,
-                    format,
-                    path,
-                },
-            },
+            }
         };
         self.send(Command::Transfer(TransferRun { job, work }));
         self.shared.repaint();
@@ -1407,7 +1422,11 @@ impl Engine {
     ) -> JobId {
         let job = self.shared.jobs.create(JobKind::Import);
         let id = job.id;
-        match self.live_io(key) {
+        let io = {
+            let mut inner = self.shared.inner.lock();
+            self.shared.live_or_reopen(&mut inner, key)
+        };
+        match io {
             None => self
                 .shared
                 .jobs

@@ -4,7 +4,7 @@
 [x] sqlr-core: values, encoding and documents (`value`, `encode`, `read`, `rows`, `chunk`, `doc*`, `formats`)
 [x] sqlr-core: SQL and text utilities (`classify`, `syntax`, `format_sql`, `generate`, `schema_change`, `compare`, `datagen`, `transfer`, `url`, `wire`, `es_request`, `mongo_shell`, `er`)
 [x] sqlr-store: persistence and secrets (connections, vault, settings, history, snippets, keymap, recents, profiles, layered)
-[] sqlr-engine: sessions, transactions and results (`engine`, `session`, `tx`, `script`, `apply`, `result`, `result_memory`, `result_spill`, `job`)
+[x] sqlr-engine: sessions, transactions and results (`engine`, `session`, `tx`, `script`, `apply`, `result`, `result_memory`, `result_spill`, `job`)
 [] sqlr-engine: transfer and imports (`transfer/*`)
 [] sqlr-sidecar: protocol, client and process
 [] sqlr-registry: driver install, index and verification
@@ -59,7 +59,16 @@ Fixed:
 Tests added in `crates/sqlr-store/tests/db.rs` and `tests/store.rs`; `cargo nextest run -p sqlr-store` and clippy pass.
 
 # sqlr-engine: sessions, transactions and results
-[to fill]
+Fixed:
+- A failed transaction command left the tracked state wrong: after a failed `COMMIT` on a PostgreSQL-like driver the transaction is gone, and a failed `SAVEPOINT`/`ROLLBACK TO` aborts it, but the engine kept `Open` (and `tx_conn`, savepoints and `wrote`). The error path now closes the transaction for a failed commit/rollback and marks it `Failed` for an aborting savepoint command.
+- A no-op `COMMIT`/`ROLLBACK`/`SAVEPOINT`/`ROLLBACK TO` closed the session's streaming result before checking that it was a no-op, so the remaining pages became unreachable (`cut_short`). The result is now closed only after the command is known to run.
+- `apply_changeset`, `import` and `export` refused a session in `Failed` instead of reconnecting it; they now use `live_or_reopen`, like `execute_in`.
+- `connect` with an unknown driver removed the connection entry but left its tab/agent sessions running on the old connection; they are now retired too.
+- A read-only switch requested while a session was still `Connecting` was lost when that connect failed. The request is now remembered for the next reconnect.
+
+Open for the next cycle (needs a deterministic test): a later query marks earlier results `superseded` before its execute claims the stream; if it is closed first, the earlier result can still be cut short.
+
+Tests added in `crates/sqlr-engine/tests/tx.rs` and `tests/apply.rs`, with a small `connect_delay` test hook in `sqlr-testkit`; targeted integration tests and clippy pass.
 
 # sqlr-engine: transfer and imports
 [to fill]

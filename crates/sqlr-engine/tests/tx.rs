@@ -1,8 +1,11 @@
 //! Sessions per editor tab, commit modes, read-only sessions and savepoints (§7.9).
 
 use std::sync::Arc;
+use std::time::Duration;
 
-use sqlr_core::{CommitMode, ConnectionProfile, ErrorKind, Node, NodeKind, NodePath, Secrets};
+use sqlr_core::{
+    CommitMode, ConnectionProfile, DriverError, ErrorKind, Node, NodeKind, NodePath, Secrets,
+};
 use sqlr_engine::{
     DriverRegistry, Engine, LoadState, MessageLevel, QueryId, QueryStatus, SessionKey,
     SessionStatus, Slot, TxPhase,
@@ -143,6 +146,123 @@ fn wait_phase(engine: &Engine, key: &SessionKey, want: &TxPhase) {
         "phase stayed {:?}",
         phase(engine, key)
     );
+}
+
+#[test]
+fn a_failed_commit_ends_the_transaction_on_a_postgres_like_driver() {
+    let (engine, _fake, key) = setup(
+        FakeScript {
+            fail_matching: Some("COMMIT".into()),
+            error_aborts_transaction: true,
+            affected: Some(1),
+            ..Default::default()
+        },
+        profile(CommitMode::Manual),
+    );
+    ok(&engine, &key, "insert into t values (1)");
+    assert_eq!(phase(&engine, &key), TxPhase::Open);
+    engine.commit(&key);
+    assert!(
+        wait_until(TIMEOUT, || phase(&engine, &key) == TxPhase::Idle),
+        "the failed commit left the transaction open"
+    );
+    assert!(!engine.transaction(&key).unwrap().blocks_ddl());
+}
+
+#[test]
+fn a_failed_rollback_to_marks_the_transaction_failed() {
+    let (engine, fake, key) = setup(
+        FakeScript {
+            fail_matching: Some("ROLLBACK TO".into()),
+            error_aborts_transaction: true,
+            ..Default::default()
+        },
+        profile(CommitMode::Manual),
+    );
+    ok(&engine, &key, "select 1");
+    engine.savepoint(&key, "s".into());
+    assert!(
+        wait_until(TIMEOUT, || fake
+            .executed()
+            .iter()
+            .any(|s| s.contains("SAVEPOINT"))),
+        "savepoint did not run"
+    );
+    engine.rollback_to(&key, "s".into());
+    assert!(
+        wait_until(TIMEOUT, || phase(&engine, &key) == TxPhase::Failed),
+        "the failed rollback left the phase {:?}",
+        phase(&engine, &key)
+    );
+}
+
+#[test]
+fn a_noop_commit_keeps_the_streaming_result() {
+    let (engine, _fake, key) = setup(
+        FakeScript {
+            rows: 3,
+            ..Default::default()
+        },
+        dev(),
+    );
+    let q = engine.execute_in(&key, None, "select 1".into(), 1);
+    assert!(matches!(
+        settled(&engine, q),
+        QueryStatus::Ready { more: true }
+    ));
+    engine.commit(&key);
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(
+        matches!(status(&engine, q), QueryStatus::Ready { more: true }),
+        "a no-op commit truncated the open result"
+    );
+}
+
+#[test]
+fn an_unknown_driver_retires_the_old_tab_sessions() {
+    let (engine, _fake, _) = setup(FakeScript::default(), dev());
+    let tab = engine.session("c", Some(1));
+    ok(&engine, &tab, "select 1");
+    engine.connect(config("c", "missing-driver"), Secrets::default(), dev());
+    assert!(wait_until(TIMEOUT, || matches!(
+        engine.session_status("c"),
+        Some(SessionStatus::Failed(_))
+    )));
+    let q = engine.execute_in(&tab, None, "select 1".into(), 10);
+    assert!(
+        matches!(settled(&engine, q), QueryStatus::Failed(e) if e.kind == ErrorKind::Connection),
+        "the old tab session survived the failed reconnect"
+    );
+}
+
+#[test]
+fn read_only_survives_a_connect_that_fails_while_switching() {
+    let fake = FakeDriver::new(FakeScript {
+        connect_error: Some(DriverError::new(ErrorKind::Connection, "no server")),
+        connect_delay: Some(Duration::from_millis(100)),
+        ..Default::default()
+    });
+    let mut drivers = DriverRegistry::default();
+    drivers.register(fake);
+    let engine = Engine::new(drivers, no_repaint());
+    engine.connect(config("c", "fake"), Secrets::default(), dev());
+    let key = engine.session("c", Some(1));
+    let q = engine.execute_in(&key, None, "select 1".into(), 10);
+    engine.set_read_only(&key, true);
+    assert!(wait_until(TIMEOUT, || matches!(
+        engine.session_status("c"),
+        Some(SessionStatus::Failed(_))
+    )));
+    assert!(
+        wait_until(TIMEOUT, || engine
+            .transaction(&key)
+            .is_some_and(|t| t.read_only)),
+        "the read-only request was lost with the failed connect"
+    );
+    assert!(matches!(
+        engine.result(q).map(|r| r.read().status.clone()),
+        Some(QueryStatus::Failed(_))
+    ));
 }
 
 #[test]

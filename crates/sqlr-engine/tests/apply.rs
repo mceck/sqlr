@@ -363,6 +363,24 @@ fn cancelled_apply_runs_nothing() {
 }
 
 #[test]
+fn apply_reopens_a_session_lost_to_a_connection_error() {
+    let (engine, _fake) = engine_with(FakeScript {
+        connection_error_matching: Some("kill".into()),
+        ..Default::default()
+    });
+    open_tab_session(&engine);
+    let q = engine.execute_in(&tab(), None, "select kill".into(), 10);
+    assert!(wait_until(TIMEOUT, || engine.result(q).is_some_and(
+        |r| matches!(&r.read().status, QueryStatus::Failed(e) if e.kind == ErrorKind::Connection)
+    )));
+    let job = engine.apply_changeset(&tab(), changeset(vec![update(1, "total", Value::Int(5))]));
+    assert!(
+        matches!(outcome(&engine, job), JobOutcome::Applied(_)),
+        "apply did not reconnect the failed tab session"
+    );
+}
+
+#[test]
 fn describe_caches_table_info() {
     let info = TableInfo {
         table: orders(),

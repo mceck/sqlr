@@ -4,7 +4,8 @@
 use std::sync::Arc;
 
 use sqlr_core::{
-    CommitMode, Connection, DriverError, ErrorKind, Execution, SqlSyntax, StatementClass, TxVerb,
+    CommitMode, Connection, Dialect, DriverError, ErrorKind, Execution, SqlSyntax, StatementClass,
+    TxVerb,
 };
 
 use crate::engine::{Shared, apply_read_only};
@@ -85,6 +86,18 @@ pub(crate) struct TxRules {
     pub savepoints_replace: bool,
     /// A top-level `SAVEPOINT` starts a transaction by itself (SQLite).
     pub savepoint_opens: bool,
+}
+
+impl TxRules {
+    pub(crate) fn from_dialect(dialect: &dyn Dialect) -> Self {
+        Self {
+            ddl_commits: dialect.ddl_commits_transaction(),
+            error_aborts: dialect.error_aborts_transaction(),
+            nested_begin: dialect.nested_begin_increments_depth(),
+            savepoints_replace: dialect.savepoint_names_replace(),
+            savepoint_opens: dialect.savepoint_starts_transaction(),
+        }
+    }
 }
 
 pub(crate) const FAILED_COMMIT_NOTE: &str = "The failed transaction was rolled back";
@@ -408,10 +421,6 @@ impl Shared {
         let turn = io.wait_turn(ticket).await;
         let mut slot = io.stream.lock().await;
         drop(turn);
-        if let Some((prev, mut stream)) = slot.take() {
-            let _ = stream.close().await;
-            self.mark_complete(prev);
-        }
         let snapshot = {
             let mut inner = self.inner.lock();
             inner
@@ -424,6 +433,16 @@ impl Shared {
                 })
         };
         let Some((base, tx_conn, others, tx)) = snapshot else {
+            // The connect failed before the switch could run. Remember the request so the
+            // next reconnect starts read-only, instead of silently dropping it.
+            if let TxOp::SetReadOnly(on) = &op {
+                let mut inner = self.inner.lock();
+                if let Some(s) = inner.session(&key, &io) {
+                    s.tx.read_only = *on;
+                    let mode = s.tx.mode;
+                    inner.prefs.insert(key.clone(), (mode, *on));
+                }
+            }
             return;
         };
         let conn = tx_conn.unwrap_or_else(|| base.clone());
@@ -437,6 +456,20 @@ impl Shared {
             (TxOp::RollbackTo(name), Some(rel)) => rel.dialect().rollback_to_sql(name),
             (_, None) => return,
         };
+        // A command that changes nothing must not close the result still streaming.
+        match &op {
+            TxOp::Commit | TxOp::Rollback if !tx.is_open() => return,
+            TxOp::Savepoint(_) if tx.phase != TxPhase::Open => return,
+            TxOp::RollbackTo(_) if !tx.is_open() => return,
+            _ => {}
+        }
+        if let Some((prev, mut stream)) = slot.take() {
+            let _ = stream.close().await;
+            self.mark_complete(prev);
+        }
+        let rules = conn.relational().map_or(TxRules::default(), |rel| {
+            TxRules::from_dialect(rel.dialect())
+        });
         let outcome = match &op {
             TxOp::SetReadOnly(on) => {
                 let mut outcome = Ok(());
@@ -448,9 +481,6 @@ impl Shared {
                 }
                 outcome
             }
-            TxOp::Commit | TxOp::Rollback if !tx.is_open() => return,
-            TxOp::Savepoint(_) if tx.phase != TxPhase::Open => return,
-            TxOp::RollbackTo(_) if !tx.is_open() => return,
             _ => run_sql(&conn, &dialect_sql).await,
         };
         match outcome {
@@ -495,6 +525,31 @@ impl Shared {
             }
             Err(e) => {
                 self.on_error(&key, &io, &e);
+                // A failed transaction command may have ended the server transaction:
+                // PostgreSQL rolls back on a failed COMMIT and aborts on a failed
+                // SAVEPOINT/ROLLBACK TO. Keep the UI state in step with the server.
+                {
+                    let mut inner = self.inner.lock();
+                    if let Some(s) = inner.session(&key, &io) {
+                        let now = now_ms();
+                        s.tx.last_activity_ms = now;
+                        match &op {
+                            TxOp::Commit if rules.error_aborts => {
+                                s.tx.close(now);
+                                s.tx_conn = None;
+                            }
+                            TxOp::Rollback => {
+                                // The rollback itself failed: the server state is unknown.
+                                s.tx.close(now);
+                                s.tx_conn = None;
+                            }
+                            TxOp::Savepoint(_) | TxOp::RollbackTo(_) if rules.error_aborts => {
+                                s.tx.phase = TxPhase::Failed;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
                 let what = match &op {
                     TxOp::Commit => "Commit",
                     TxOp::Rollback => "Rollback",

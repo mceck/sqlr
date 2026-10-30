@@ -186,6 +186,8 @@ pub struct FakeScript {
     pub connect_error: Option<DriverError>,
     /// Parks the connect future until it is dropped.
     pub block_on_connect: bool,
+    /// Waits before answering `connect`, so a test can act while the session is Connecting.
+    pub connect_delay: Option<std::time::Duration>,
     /// Simulates a driver panic while connecting.
     pub panic_on_connect: bool,
     /// Returned by `execute`.
@@ -816,6 +818,9 @@ impl Driver for FakeDriver {
         );
         if self.shared.script.block_on_connect {
             std::future::pending::<()>().await;
+        }
+        if let Some(delay) = self.shared.script.connect_delay {
+            tokio::time::sleep(delay).await;
         }
         if let Some(expected) = &self.shared.script.password
             && secrets.0.get("password") != Some(expected)
