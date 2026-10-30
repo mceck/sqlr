@@ -353,9 +353,7 @@ impl Registry {
             .filter(|e| e.path().join("driver.toml").is_file())
             .filter_map(|e| semver::Version::parse(&e.file_name().into_string().ok()?).ok())
             .collect();
-        // `semver::Version` ignores build metadata, so break ties by the full spelling to
-        // keep the active version deterministic.
-        versions.sort_by(|a, b| a.cmp(b).then_with(|| a.to_string().cmp(&b.to_string())));
+        versions.sort();
         let Some(newest) = versions.last().map(ToString::to_string) else {
             return Ok(None);
         };

@@ -26,7 +26,7 @@ a real problem, preserved the intended behaviour, or reached the production path
 The user requested one aggregate review of all unpushed changes, corrections for every
 confirmed finding, and inclusion of later commits added to main during the review.
 
-The audit covers 41 commits between `4031ca3` and main at `e69aeaf`, followed by the
+The audit covers 42 commits between `4031ca3` and main at `79b9fe8`, followed by the
 review corrections. The original audit record was `find-bugs.md`; this completed task
 replaces that working diary and its repetitive clean-cycle entries.
 
@@ -58,6 +58,7 @@ record the evidence and practical limits in this task.
 17. As a user reopening Connections or objects, I want the right tab opened and focused, so that the requested surface comes forward.
 18. As a user editing results or SQL, I want selections, hex input, document pages and CRLF wrapping handled safely, so that ordinary input does not panic or hide data.
 19. As a user comparing schemas, I want nested partitions and their definitions preserved, so that the migration runs once and a repeated compare converges.
+20. As a user changing Preferences sections, I want the dialog width to remain stable, so that controls fit without resizing the window.
 
 ## Implementation Decisions
 
@@ -67,7 +68,7 @@ record the evidence and practical limits in this task.
 - Compare transport protection using actual Driver mode spellings and effective defaults. Share strict color validation between the production configuration paths.
 - Preserve unsupported numeric ranges through explicit text mappings and warnings rather than invalid destination DDL or silent rounding.
 - Keep every partition as its own table definition. Attach tables after creation and table changes; emit inherited triggers and foreign keys once.
-- Treat the first-free-savepoint-name adjustment as a small UX improvement, not a repaired execution failure.
+- Treat the first-free-savepoint-name adjustment as a small UX improvement, not a repaired execution failure. Remove the redundant registry sort fallback: the dependency already orders build metadata.
 - Keep lasting behaviour in the linked specs. This task records scope, regression evidence and validation instead of repeated claims that another review cycle was clean.
 
 ## Testing Decisions
@@ -116,7 +117,7 @@ incorporated from main, with failing cases observed before applying the correcti
 
 **One finding, resolved:** behaviour and architectural decisions had changed without
 updating the living specs, contrary to `CLAUDE.md`'s workflow. Updated the specs for
-connections, query execution, drivers, agents, and data/schema tools. These now
+connections, query execution, drivers, agents, data/schema tools and Preferences. These now
 describe the transfer limits, TLS policy, stream ownership and partition migration
 behaviour. No new dependencies or production test hooks were needed.
 
@@ -124,6 +125,12 @@ The savepoint-name change is a small UX improvement: the earlier algorithm alrea
 chose a free name. Choosing `sp1` rather than `sp3` when only `sp2` exists does not fix
 an execution failure. Its description as a bugfix overstated its importance; the
 behaviour is harmless and remains consistent with the toolbar spec.
+
+The claimed registry build-metadata tie was not a real ordering bug. The pinned
+`semver::Version` already has a total `Ord` including build metadata; only
+`cmp_precedence` ignores it. Removed the redundant string comparator and its
+misleading comment, restoring the existing total sort. This is confirmed by the
+[dependency's own ordering documentation](https://docs.rs/semver/1.0.28/semver/struct.Version.html#method.cmp_precedence).
 
 ### Task
 
@@ -143,11 +150,19 @@ Standards: one resolved finding. Task: nine resolved finding groups, including t
 CSV correction already supplied by main. The highest Task risks were transaction
 loss and the ineffective TLS downgrade restriction.
 
+The final main update also fixes the Preferences dialog widening when switching to
+Appearance or Data formats. Wrapping the control group, using tighter spacing for
+scale presets and shortening the grouping label preserve the existing setting values
+and the specified dialog width. The app's Preferences tests verify this update after
+realigning the review branch.
+
 ### Validation
 
 - Regression cases were run against the faulty code before each correction.
 - The MCP HTTP protocol suite passes all 30 tests.
-- Final isolated workspace run: 2,505 tests passed, 22 explicitly skipped, with external-service tests disabled.
+- After the final main update, all eight targeted Preferences tests pass.
+- The registry suite passes all 34 tests after removing the redundant sort fallback.
+- Final isolated workspace run: 2,506 tests passed, 22 explicitly skipped, with external-service tests disabled.
 - Final isolated PostgreSQL execution and snapshot run: 38 tests passed; 77 other tests were excluded by the selection.
 - Formatting, workspace dependency gates and isolated workspace Clippy (`--all-targets --locked -- -D warnings`) all pass.
 

@@ -117,7 +117,7 @@ Commands include app actions (new tab, connect, transfer data, compare schemas, 
 
 ### Preferences
 
-Preferences opens with `⌘,`, from the toolbar, from the application menu or from the Palette. It is 880 pixels wide with a 600-pixel body. A list of sections 196 pixels wide sits on the left with a search field above it, focused when the window opens. A section with unsaved changes shows a dot. The footer has Apply, Save, Cancel and Open settings folder, plus an unsaved changes label.
+Preferences opens with `⌘,`, from the toolbar, from the application menu or from the Palette. It is 880 pixels wide with a 600-pixel body. Switching sections keeps that width; control groups wrap inside the available settings row, including the scale presets and number-grouping choices. A list of sections 196 pixels wide sits on the left with a search field above it, focused when the window opens. A section with unsaved changes shows a dot. The footer has Apply, Save, Cancel and Open settings folder, plus an unsaved changes label.
 
 Search matches every word typed against a setting's identifier, section, label, description and keywords, and lists the matching settings with their section.
 
