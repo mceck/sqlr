@@ -76,7 +76,7 @@ pub const DEFAULT_MCP_PORT: u16 = 47821;
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            page_size: 500,
+            page_size: 200,
             stop_script_on_error: true,
             theme: ThemePref::System,
             mono_font_size: DEFAULT_MONO_FONT_SIZE,

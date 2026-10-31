@@ -77,7 +77,7 @@ The status bar is one line of segments. On the left:
 - The transaction line: the statement count and time since it opened, a warning when the transaction failed, or an error note when only rollback is possible.
 - Rows and elapsed time for the selected result, or its final state.
 - Selection counts.
-- The fetch size as a combo with presets 100, 500, 1,000 and 5,000 plus a custom value, and Load all rows when the Result has more rows.
+- The fetch size as a combo with presets 100, 200, 500, 1,000 and 5,000 plus a custom value, and Load all rows when the Result has more rows.
 - A progress entry for a running export or copy, with a Cancel action.
 
 On the right: the command palette shortcut hint, the MCP status and session count, the terminal toggle, the encoding (`UTF-8`), the caret's line and column, and a Not saved marker for an unsaved script. The MCP segment stays visible when disabled with a grey dot. Clicking the dot toggles the server; clicking the text opens Settings → Agents. Each control reserves its own space. Below 700 logical pixels the terminal toggle uses its icon with the same tooltip and action, leaving room for the Connection, transaction and Result segments.
@@ -153,7 +153,7 @@ The section groups these under Execution, Privacy and diagnostics, Operations an
 
 #### Result grid
 
-- Rows per fetch: 500 by default, 1 to 1,000,000.
+- Rows per fetch: 200 by default, 1 to 1,000,000.
 - Maximum rows when loading all results: 100,000 by default, 0 for no cap.
 - Memory budget per Result: 128 MiB by default, global only.
 - Total memory budget: 512 MiB by default, global only.

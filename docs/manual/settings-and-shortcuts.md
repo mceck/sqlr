@@ -50,7 +50,7 @@ Appearance, editor preferences, memory budgets, diagnostics privacy and terminal
 
 | Setting in **Result grid** | Default | Meaning |
 |---|---|---|
-| **Rows per fetch** | 500 | Rows requested in each page, from 1 to 1,000,000 |
+| **Rows per fetch** | 200 | Rows requested in each page, from 1 to 1,000,000 |
 | **Maximum rows when loading all results** | 100,000 | Limit for **Fetch all**; 0 removes the row cap |
 | **Memory per result** | 128 MiB | Memory budget for one SQL result; 0 removes this limit |
 | **Memory for all results** | 512 MiB | Combined memory budget for SQL results; 0 removes this limit |

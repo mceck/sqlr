@@ -271,7 +271,7 @@ fn open_orders(h: &mut Harness<'static, SqlrApp>) {
     expand_to_orders(h);
     double_click(h, "orders");
     step_until(h, "the first page", |h| {
-        h.query_by_label_contains("500 rows (more available)")
+        h.query_by_label_contains("200 rows (more available)")
             .is_some()
     });
 }
@@ -1545,7 +1545,7 @@ fn messages_tab_lists_statements() {
     open_orders(&mut h);
     h.get_by_label("Messages").click();
     h.run_steps(2);
-    h.get_by_label_contains("SELECT * FROM orders · 500 rows (more available)");
+    h.get_by_label_contains("SELECT * FROM orders · 200 rows (more available)");
     replace_text(&mut h, "select 1; select 2;");
     press(&mut h, Modifiers::COMMAND | Modifiers::SHIFT, Key::Enter);
     step_until(&mut h, "the script", |h| {
@@ -1553,8 +1553,8 @@ fn messages_tab_lists_statements() {
     });
     h.get_by_label("Messages").click();
     h.run_steps(2);
-    h.get_by_label_contains("select 1 · 500 rows");
-    h.get_by_label_contains("select 2 · 500 rows");
+    h.get_by_label_contains("select 1 · 200 rows");
+    h.get_by_label_contains("select 2 · 200 rows");
     h.get_by_label("Copy");
 }
 
@@ -1594,10 +1594,10 @@ fn export_of_a_writing_statement_offers_only_loaded_rows() {
             .last()
             .is_some_and(|s| s.starts_with("INSERT"))
     });
-    wait_for_label(&mut h, "500 rows (more available)");
+    wait_for_label(&mut h, "200 rows (more available)");
     h.get_by_label("Export…").click();
     h.run_steps(2);
-    h.get_by_label("Loaded rows (500)");
+    h.get_by_label("Loaded rows (200)");
     assert!(h.query_by_label("Whole result (re-run)").is_none());
     let runs = driver.executed().len();
     h.get_by_label("Export").click_accesskit();

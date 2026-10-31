@@ -764,7 +764,7 @@ fn build_defs() -> Vec<SettingDef> {
                 min: 1,
                 max: 1_000_000,
             },
-            V::Int(500),
+            V::Int(200),
             All,
         ),
         def(

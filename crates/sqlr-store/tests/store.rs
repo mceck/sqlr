@@ -435,7 +435,7 @@ fn save_with_failing_secret_store_keeps_config() {
 #[test]
 fn settings_default_and_round_trip() {
     let dir = tempfile::tempdir().unwrap();
-    assert_eq!(Settings::load(dir.path()).unwrap().page_size, 500);
+    assert_eq!(Settings::load(dir.path()).unwrap().page_size, 200);
     Settings {
         page_size: 1000,
         ..Settings::default()

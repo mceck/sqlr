@@ -65,7 +65,7 @@ A script is split into statements by the Dialect, then run in order on the tab's
 
 ### Results and paging
 
-- **Page size** is 500 rows by default (`grid.page_size`, 1 to 1,000,000, settable per profile and per Connection). Each Result's status bar has a "Fetch: `N`" selector with presets 100, 500, 1000 and 5000 and a custom value; it changes the tab's Page size and the current Result's next fetch.
+- **Page size** is 200 rows by default (`grid.page_size`, 1 to 1,000,000, settable per profile and per Connection). Each Result's status bar has a "Fetch: `N`" selector with presets 100, 200, 500, 1000 and 5000 and a custom value; it changes the tab's Page size and the current Result's next fetch.
 - Scrolling within 50 rows of the end of the loaded rows fetches the next page while the Result has more. Each fetch is an Operation. Rows are read from the Driver at most 1,024 per chunk.
 - **Fetch all** streams the rest of the Result page after page, cancellable, with the row count growing as it goes. It stops at the row cap `grid.row_cap` (100,000 by default, 0 for no cap, settable per profile and per Connection); rows fetched before count toward the cap. At the cap the engine reads one more row to tell whether the Result was truncated, closes the stream, and adds "Result truncated at the row cap (`N` rows)".
 - Pages read inside an open transaction belong to it, so they see its uncommitted changes.
@@ -220,7 +220,7 @@ sequenceDiagram
 
 - **One Session per Editor tab, plus one for the explorer.** Users expect tabs to be independent, as in other clients: a long query or an open transaction in one tab must not block another or the explorer. The cost is one server connection per tab, so a setting turns it off for servers with tight connection limits.
 - **One open stream per Session; a new statement cuts the previous Result short.** Most protocols cannot interleave two result streams on one connection. Cutting short (and saying so in the status bar) is predictable; queueing the new statement behind an unfinished Result would freeze the tab.
-- **Paging with a 500-row default instead of loading everything.** Opening a large table is instant and memory stays bounded; Fetch all is explicit and capped.
+- **Paging with a 200-row default instead of loading everything.** Opening a large table is instant and memory stays bounded; Fetch all is explicit and capped.
 - **Spill immutable columnar chunks through read-only mappings.** Results remain complete under memory pressure, and consumers keep the same cell interface. One append-only anonymous file per Result bounds open file handles and lets the OS reclaim temporary storage after the last reader, including after a process exit. Chunk-level reservations keep snapshots accounted for; a worker performs storage I/O without holding Result locks.
 - **Statement classification on lexer tokens, conservative by default.** Keywords inside strings and comments never count, a `WHERE` counts only at the statement's own depth, and anything unknown counts as a write, so read-only mode and confirmations never miss a statement.
 - **Read-only enforced twice.** The server's own read-only mode catches what a classifier cannot see (functions with side effects); the client classifier refuses writes before they reach a server that has no read-only mode (SQL Server, Oracle).

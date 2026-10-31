@@ -13,7 +13,7 @@ use sqlr_ui::theme::{self, Palette, Spacing, icons};
 
 use crate::transaction::TxLine;
 
-const PRESETS: [usize; 4] = [100, 500, 1000, 5000];
+const PRESETS: [usize; 5] = [100, 200, 500, 1000, 5000];
 /// Appended to a result whose stream ended before its last row, so its row count is not
 /// mistaken for the query's total.
 const CUT_SHORT: &str =

@@ -6,7 +6,7 @@ The result grid shows fetched rows beneath your editor. You can inspect and copy
 
 ## Load the rows you need
 
-sqlr fetches 500 rows at a time by default. Scrolling near the end loads another page while more rows remain. Change **Fetch:** for the next page, or choose **Fetch all** to continue until the result ends or reaches its limit.
+sqlr fetches 200 rows at a time by default. Scrolling near the end loads another page while more rows remain. Change **Fetch:** for the next page, or choose **Fetch all** to continue until the result ends or reaches its limit.
 
 | Default limit | What happens when reached |
 | --- | --- |

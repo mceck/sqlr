@@ -106,7 +106,7 @@ fn corrupt_settings_fallback() {
     );
     assert_eq!(
         layered.get("grid.page_size", None),
-        (int(500), Level::Global)
+        (int(200), Level::Global)
     );
     assert_eq!(
         Settings::load(dir.path()).unwrap(),
@@ -122,7 +122,7 @@ fn corrupt_settings_fallback() {
 fn layered_resolution_order() {
     let mut s = LayeredSettings::default();
     let conn = Some(("c1", "production"));
-    assert_eq!(s.get("grid.page_size", conn), (int(500), Level::Global));
+    assert_eq!(s.get("grid.page_size", conn), (int(200), Level::Global));
 
     s.set("grid.page_size", &Level::Global, Some(int(100)))
         .unwrap();
