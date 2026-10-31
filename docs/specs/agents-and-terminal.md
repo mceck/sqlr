@@ -73,7 +73,7 @@ Each Connection stores an Agent access level:
 - `Read`: Agents browse and query with reads only. The Agent Session is read-only on the server, and the family classifier rejects modifying statements before execution.
 - `Write`: Agents browse and run modifying statements, while the Connection profile still decides commit mode, read-only mode, write confirmation and destructive confirmation.
 
-The person sets the level in three places that share one store path: the Advanced section of the connection dialog, the Explorer context menu, and the connection list in Settings → Agents. Changes apply immediately and are saved even while the server is off. `None` is the default for a new Connection, an Agent-created Connection and a duplicated Connection, and imports keep it at `None`. The Agent write path rejects a payload that contains it.
+The person sets the level in three places that share one store path: the connection dialog, which shows Agent access directly below the Connection details, the Explorer context menu, and the connection list in Settings → Agents. Changes apply immediately and are saved even while the server is off. `None` is the default for a new Connection, an Agent-created Connection and a duplicated Connection, and imports keep it at `None`. The Agent write path rejects a payload that contains it.
 
 Agent access is stored with the Connection and serialized with a default so existing `connections.toml` files load unchanged.
 
@@ -487,7 +487,7 @@ The MCP surface excludes the terminal entirely: no tool reads, writes, starts or
 
 **Connection dialog and Explorer**
 
-- An Agent access segmented control in the dialog's Advanced section, with an explanation of each level and a warning that Write still follows profile confirmations.
+- An Agent access segmented control shown directly in the dialog, below Profile, with an explanation of each level and a warning that Write still follows profile confirmations.
 - The Explorer context menu offers an Agent access submenu with the three levels, using the same store path.
 - The Connection menu shows its Agent access level as a checked entry.
 

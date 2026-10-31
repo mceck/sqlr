@@ -154,8 +154,8 @@ fn the_connection_dialog_offers_agent_access() {
     harness.run_steps(3);
     harness.get_by_label("New connection").click();
     harness.run_steps(3);
-    harness.get_by_label("Advanced").click();
-    harness.run_steps(3);
+    // Profile and Agent access sit in the form itself, with no Advanced section to open.
+    harness.get_by_label("Profile");
     harness.get_by_label("Agent access");
     for label in ["None", "Read", "Write"] {
         assert!(

@@ -16,7 +16,7 @@ Connections are how a user tells sqlr where their databases are and how to reach
 
 ### Saving, editing and deleting Connections
 
-The connection dialog creates and edits Connections. Its left list shows the saved Connections plus a new one; switching between them keeps each unsaved draft, so edits survive switching back. The right side has the Connection's identity (name, Folder, color from six presets or none), the Driver, the Connection profile (with "Manage profiles…"), Agent access (see [Agents and terminal](agents-and-terminal.md)) and the Driver's generated form.
+The connection dialog creates and edits Connections. Its left list shows the saved Connections plus a new one; switching between them keeps each unsaved draft, so edits survive switching back. The right side has the Driver picker, the Driver's generated form, the Connection details (name, Folder, color from six presets or none), the Connection profile (with "Manage profiles…") and Agent access (see [Agents and terminal](agents-and-terminal.md)); Profile and Agent access are always visible, with no collapsing "Advanced" section.
 
 - **Save** validates the form and sends the Connection to the store worker. A name is required. Required fields must be filled; a port must be 1 to 65535; a number must be a whole number; a choice must be one of its options; Driver properties are validated by their own rules. On a store failure the dialog stays open with the error.
 - The store writes `connections.toml` first, then each secret: a non-empty secret is stored in the vault, an emptied secret is deleted, and with "Save password" off every secret named in the form is deleted instead.
