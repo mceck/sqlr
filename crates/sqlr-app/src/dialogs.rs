@@ -639,7 +639,9 @@ impl ConnDialog {
                                         });
                                         theme::hint(ui, "The Production profile asks before writes and uses a red connection color.");
                                     }
-                                    egui::CollapsingHeader::new("Advanced").id_salt("connection_advanced").show(ui, |ui| {
+                                    ui.add_space(Spacing::M);
+                                    ui.vertical(|ui| {
+                                        ui.spacing_mut().item_spacing.y = Spacing::M;
                                         self.profile_row(ui, profiles);
                                         Self::agent_access_row(ui, &mut self.form.agent_access);
                                     });

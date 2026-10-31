@@ -20,7 +20,7 @@ The database picker also includes compatible services with preset ports and opti
 3. Give the connection a **Name** you will recognise later.
 4. Complete the driver's fields. A server normally needs host, port, database and user; SQLite needs a file path.
 5. Enter passwords or tokens in the masked secret fields.
-6. Expand **Advanced** and choose a **Profile**. Use [Profiles and transactions](profiles-and-transactions.md) to decide which write protections you need.
+6. Choose a **Profile** and an **Agent access** level. Use [Profiles and transactions](profiles-and-transactions.md) to decide which write protections you need.
 7. Enable **Save password securely on this device** if you want sqlr to retain credentials.
 8. Choose **Test connection** to check access, server version and round-trip time.
 9. Choose **Save**. Open the saved connection from the explorer when you want to work.

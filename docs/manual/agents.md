@@ -18,7 +18,7 @@ MCP is off by default. Turning it on does not expose your connections: each conn
 2. Find the connection under **Connection access**, using **Search connections** or the **All**, **Exposed** and **Hidden** filters.
 3. Select **Read** or **Write**. The change applies and saves immediately.
 
-You can also change **Agent access** in the explorer context menu or the connection dialog's **Advanced** section. New, imported, duplicated and agent-created connections start at **None**. An agent cannot change this permission. Setting it back to **None** closes that connection's agent sessions.
+You can also change **Agent access** in the explorer context menu or directly in the connection dialog. New, imported, duplicated and agent-created connections start at **None**. An agent cannot change this permission. Setting it back to **None** closes that connection's agent sessions.
 
 ![Agents preferences with MCP controls and connection access levels](images/agents/connection-access.png)
 
