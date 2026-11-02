@@ -176,7 +176,7 @@ fn mongo_tab_find_and_switch_views() {
         driver.runs(),
         [(
             Some("app".to_string()),
-            "db.users.find({}).limit(500)".to_string()
+            "db.users.find({}).limit(200)".to_string()
         )]
     );
     // Table is the default view; the tree shows the documents collapsed.
