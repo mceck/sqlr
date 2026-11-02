@@ -1185,6 +1185,16 @@ mod tests {
         assert_eq!(at(&mut l, 0, 0).as_deref(), Some("select 1"));
         assert_eq!(at(&mut l, 0, 9).as_deref(), Some("select 1"));
 
+        // Without a `;`, a blank line bounds the statement at the caret.
+        let text = "select * from t\n\nselect 2\nfrom u";
+        let (buf, mut l) = layer(text);
+        let at = |l: &mut SyntaxLayer, line, col| {
+            let c = buf.char_index(Pos { line, col });
+            l.statement_at(&buf, c).map(|r| text_of(&buf, r))
+        };
+        assert_eq!(at(&mut l, 0, 3).as_deref(), Some("select * from t"));
+        assert_eq!(at(&mut l, 2, 3).as_deref(), Some("select 2\nfrom u"));
+
         let func = "select 0;\ncreate function f() returns int as $$\nbegin\n  return 1;\nend;\n$$ language plpgsql;\nselect 2;";
         let (buf, mut l) = layer(func);
         let c = buf.char_index(Pos { line: 3, col: 4 });

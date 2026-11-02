@@ -21,6 +21,8 @@ An editor tab binds your query to a connection and optional database. Check that
 4. Run with the relevant shortcut or toolbar action.
 5. Read the result and **Messages** below the editor.
 
+A statement ends at a `;` or at an empty line. Two queries separated by a blank line therefore run as two statements even without a semicolon; a statement kept on several lines cannot hold an empty line outside parentheses.
+
 A script runs statements in order on one session. Row-returning statements get separate result tabs; other statements report their affected rows. The output records the outcome of each statement. **Stop a script at its first error**, in **General** preferences, is enabled by default. Stopping prevents subsequent statements from starting; it does not undo statements already committed.
 
 A session has one open result stream. A later statement can stop an earlier partially fetched result, including during a script. Rerun that statement separately if you need its remaining rows.

@@ -637,6 +637,21 @@ fn run_target_prefers_selection() {
 }
 
 #[test]
+fn a_blank_line_starts_the_statement_at_the_caret() {
+    let text = "select * from \"public\".\"app_user_devices\"\n\nselect * from app_user";
+    let mut s = EditorState::new(text, SqlSyntax::ansi());
+    s.set_carets(vec![Caret::at(p(2, 5))]);
+    assert_eq!(
+        s.run_target(),
+        Some(RunRequest {
+            sql: "select * from app_user".into(),
+            origin: 43,
+        })
+    );
+    assert_eq!(s.script_targets().len(), 2);
+}
+
+#[test]
 fn script_targets_split_whole_text() {
     let mut s = EditorState::new("select 1;\n\nselect 'a;b';\n select 3", SqlSyntax::ansi());
     assert_eq!(

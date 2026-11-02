@@ -395,6 +395,28 @@ fn scan_dollar(bytes: &[u8], mut i: usize, tag: u64) -> (usize, bool) {
     (bytes.len(), false)
 }
 
+/// Whether `gap`, the text between two tokens, holds a blank line: a line break followed by
+/// nothing but blanks and then another line break.
+fn blank_line(gap: &str) -> bool {
+    let bytes = gap.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'\n' {
+            i += 1;
+            continue;
+        }
+        let mut j = i + 1;
+        while j < bytes.len() && matches!(bytes[j], b' ' | b'\t' | b'\r') {
+            j += 1;
+        }
+        if bytes.get(j) == Some(&b'\n') {
+            return true;
+        }
+        i = j;
+    }
+    false
+}
+
 impl SqlSyntax {
     /// A shared ANSI-ish syntax with all dialect flags off.
     pub fn ansi() -> Arc<SqlSyntax> {
@@ -409,8 +431,9 @@ impl SqlSyntax {
         })
     }
 
-    /// Byte ranges of the statements in `text`: split at top-level `;`, trimmed of
-    /// whitespace, dropping ranges that hold only whitespace and comments.
+    /// Byte ranges of the statements in `text`: split at top-level `;` and at a blank line
+    /// outside parentheses, trimmed of whitespace, dropping ranges that hold only
+    /// whitespace and comments.
     pub fn split(&self, text: &str, start: LexState) -> Vec<Range<usize>> {
         let mut ranges = Vec::new();
         // The current statement: its first token start, last token end, and whether
@@ -422,7 +445,18 @@ impl SqlSyntax {
             }
             *cur = None;
         };
+        let mut depth = 0u32;
+        let mut prev_end = 0;
         self.lex_with(text, start, &mut |t| {
+            // A blank line between two tokens ends the statement, like a `;`, unless it is
+            // inside parentheses.
+            if cur.is_some()
+                && depth == 0
+                && t.kind != TokenKind::Semicolon
+                && blank_line(&text[prev_end..t.start])
+            {
+                flush(&mut cur);
+            }
             if t.kind == TokenKind::Semicolon {
                 flush(&mut cur);
             } else {
@@ -431,7 +465,15 @@ impl SqlSyntax {
                     Some((s, _, sig)) => (s, t.end, sig || significant),
                     None => (t.start, t.end, significant),
                 });
+                if t.kind == TokenKind::Punct {
+                    match &text[t.start..t.end] {
+                        "(" | "[" => depth += 1,
+                        ")" | "]" => depth = depth.saturating_sub(1),
+                        _ => {}
+                    }
+                }
             }
+            prev_end = t.end;
             true
         });
         flush(&mut cur);
@@ -954,6 +996,39 @@ mod tests {
             texts(text, &r),
             ["select ';'", "select \";\"", "-- ; x\n/* ; */ select 3"]
         );
+    }
+
+    #[test]
+    fn split_at_blank_lines() {
+        let s = SqlSyntax::ansi();
+        let text = "select 1\n\nselect 2\n  \t\r\nselect 3";
+        assert_eq!(
+            texts(text, &s.split(text, LexState::Normal)),
+            ["select 1", "select 2", "select 3"]
+        );
+        // A trailing line comment stays with the statement the blank line ends.
+        let text = "select 1 -- note\n\nselect 2";
+        assert_eq!(
+            texts(text, &s.split(text, LexState::Normal)),
+            ["select 1 -- note", "select 2"]
+        );
+        // A blank line ends a statement even before a clause: it is a boundary like `;`.
+        let text = "select *\nfrom t\n\nwhere x = 1;";
+        assert_eq!(
+            texts(text, &s.split(text, LexState::Normal)),
+            ["select *\nfrom t", "where x = 1"]
+        );
+    }
+
+    #[test]
+    fn a_blank_line_inside_a_literal_comment_or_parentheses_is_not_a_boundary() {
+        let s = pg_like();
+        let text = "create function f() returns int as $$\n\nbegin\n\nreturn 1;\n\nend;\n$$ language plpgsql";
+        assert_eq!(s.split(text, LexState::Normal).len(), 1);
+        let text = "select 'a\n\nb', \"c\n\nd\", /* e\n\nf */ g\nfrom t";
+        assert_eq!(texts(text, &s.split(text, LexState::Normal)), [text]);
+        let text = "select (\n\n1\n) from t";
+        assert_eq!(s.split(text, LexState::Normal).len(), 1);
     }
 
     #[test]
