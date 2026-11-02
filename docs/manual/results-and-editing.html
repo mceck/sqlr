@@ -59,7 +59,7 @@ img{max-width:100%}
 <h2 id="resize-columns">Resize columns</h2>
 <p>Drag the right boundary of a column header to change its width. Double-click the boundary to fit the column to its header and its loaded values, as in a spreadsheet. Resizing does not change sorting or selection.</p>
 <h2 id="sort-filter-and-inspect-values">Sort, filter and inspect values</h2>
-<p>Click a header to sort a complete result locally. If rows remain unfetched, sqlr offers <strong>Sort on server</strong>, which reruns the query with ordering. The SQL filter condition always runs on the server, including when all rows are loaded. <strong>Filter by this value</strong> builds a condition for you. Applying a sort or filter that reruns the query replaces the result; apply or discard edits first.</p>
+<p>Click a header to sort ascending, then descending, then unsorted. A complete result sorts locally; a partial result reruns the query with ordering, so the whole result is sorted rather than the loaded rows alone. The SQL filter condition always runs on the server, including when all rows are loaded. <strong>Filter by this value</strong> builds a condition for you. A sort or filter that reruns the query replaces the result; apply or discard edits first.</p>
 <p>NULL has a distinct muted rendering. Long values are shortened in the grid. Select a cell and use the value panel to see its full text, formatted JSON, binary representation or supported image preview. Configure date, numeric and other display formats in <a href="settings-and-shortcuts.html">Settings</a>.</p>
 <h2 id="select-and-copy">Select and copy</h2>
 <p>Drag a rectangle, click row numbers or headers, and use arrow keys to move the selection. Shift extends a range; ⌘-click adds separate ranges.</p>

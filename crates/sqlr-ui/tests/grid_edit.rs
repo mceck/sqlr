@@ -369,19 +369,30 @@ fn header_click_sorts_complete_result() {
 }
 
 #[test]
-fn partial_result_offers_server_sort() {
-    let mut h = harness_with(sequential(30), true, None);
+fn partial_result_header_click_sorts_on_server() {
+    let mut h = harness_with(buffer(&[Some(3), None, Some(1), Some(2)]), true, None);
     click(&mut h, "id");
-    // Only the loaded rows would be sorted: nothing moves until the server sorts.
-    assert_eq!(h.state().state.view_rows()[..3], [0, 1, 2]);
-    h.get_by_label("Sort on server").click();
-    h.run_steps(2);
-    assert!(
-        h.state()
-            .actions
-            .contains(&GridAction::SortOnServer(vec![(0, false)]))
+    // Only the loaded rows would be sorted: the click reruns the query instead.
+    assert!(h.state().state.sort.is_empty());
+    assert_eq!(h.state().state.view_rows(), [0, 1, 2, 3]);
+    assert_eq!(
+        h.state().actions.last(),
+        Some(&GridAction::SortOnServer(vec![(0, false)]))
     );
     assert!(h.query_by_label("Sort on server").is_none());
+    // The rerun replaces the grid and seeds the order it applied, so the cycle continues.
+    for (seeded, next) in [
+        (vec![(0, false)], vec![(0, true)]),
+        (vec![(0, true)], Vec::new()),
+    ] {
+        h.run_steps(100);
+        h.state_mut().state.sort = seeded;
+        click(&mut h, "id");
+        assert_eq!(
+            h.state().actions.last(),
+            Some(&GridAction::SortOnServer(next))
+        );
+    }
 }
 
 /// Appends rows `from..to` ("name i", id i) as one more chunk.

@@ -22,7 +22,7 @@ Drag the right boundary of a column header to change its width. Double-click the
 
 ## Sort, filter and inspect values
 
-Click a header to sort a complete result locally. If rows remain unfetched, sqlr offers **Sort on server**, which reruns the query with ordering. The SQL filter condition always runs on the server, including when all rows are loaded. **Filter by this value** builds a condition for you. Applying a sort or filter that reruns the query replaces the result; apply or discard edits first.
+Click a header to sort ascending, then descending, then unsorted. A complete result sorts locally; a partial result reruns the query with ordering, so the whole result is sorted rather than the loaded rows alone. The SQL filter condition always runs on the server, including when all rows are loaded. **Filter by this value** builds a condition for you. A sort or filter that reruns the query replaces the result; apply or discard edits first.
 
 NULL has a distinct muted rendering. Long values are shortened in the grid. Select a cell and use the value panel to see its full text, formatted JSON, binary representation or supported image preview. Configure date, numeric and other display formats in [Settings](settings-and-shortcuts.md).
 

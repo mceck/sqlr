@@ -1,5 +1,5 @@
 //! Custom-painted, virtualized result grid (rows and columns): row numbers, rectangular
-//! selection with keyboard navigation, local sort (server sorting offered as an action),
+//! selection with keyboard navigation, local sort (the server sorts a partial result),
 //! copy in several formats, and inline editing over an [`EditBuffer`].
 //!
 //! The widget calls no engine: it reads the rows it is given, keeps its own state, and
@@ -111,8 +111,6 @@ pub struct GridState {
     sorting: Option<ViewKey>,
     sort_repaint: Option<egui::Context>,
     editor: Option<CellEditor>,
-    /// A sort waiting for "Sort on server".
-    server_sort: Option<Vec<(usize, bool)>>,
     actions: Vec<GridAction>,
     /// Give the keyboard back to the grid on the next frame.
     refocus: bool,
@@ -867,7 +865,6 @@ pub fn data_grid(ui: &mut egui::Ui, state: &mut GridState, input: &GridInput<'_>
     if !state.hide_filter {
         filter_bar(ui, state);
     }
-    server_sort_bar(ui, state);
     state.sort_repaint = Some(ui.ctx().clone());
     state.refresh_view(rows, !input.more_available);
     if state.is_sorting() {
@@ -1132,24 +1129,6 @@ fn filter_bar(ui: &mut egui::Ui, state: &mut GridState) {
         });
 }
 
-/// "Sort on server?" after a header click on a partial result.
-fn server_sort_bar(ui: &mut egui::Ui, state: &mut GridState) {
-    let Some(order) = state.server_sort.clone() else {
-        return;
-    };
-    ui.horizontal(|ui| {
-        let muted = theme::palette(ui.ctx()).text_muted;
-        ui.label(RichText::new("Not every row is loaded: sorting needs the server.").color(muted));
-        if ui.button("Sort on server").clicked() {
-            state.actions.push(GridAction::SortOnServer(order));
-            state.server_sort = None;
-        }
-        if ui.button("Cancel").clicked() {
-            state.server_sort = None;
-        }
-    });
-}
-
 /// Clicks, drags and right-clicks; returns whether the selection changed.
 fn pointer(
     ui: &egui::Ui,
@@ -1219,7 +1198,8 @@ fn pointer(
             Hit::Header(c) => {
                 let next = sort::cycle(&state.sort, c);
                 if input.more_available {
-                    state.server_sort = Some(next);
+                    // The loaded rows are only a page: the whole order belongs to the query.
+                    state.actions.push(GridAction::SortOnServer(next));
                 } else {
                     state.sort = next.clone();
                     state.actions.push(GridAction::Sort(next));
