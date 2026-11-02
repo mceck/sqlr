@@ -422,6 +422,92 @@ fn where_field_filters_on_the_server() {
 }
 
 #[test]
+fn where_completion_inserts_the_matching_column() {
+    let mut h = harness_with(sequential(5), true, None);
+    h.get_by_role(egui::accesskit::Role::TextInput).click();
+    h.run_steps(2);
+    h.event(Event::Text("na".into()));
+    h.run_steps(2);
+    // ↵ inserts the selected column instead of running the filter.
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert!(
+        h.state()
+            .actions
+            .iter()
+            .all(|a| !matches!(a, GridAction::FilterOnServer(_))),
+        "the first ↵ completed instead of filtering"
+    );
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert!(
+        h.state()
+            .actions
+            .contains(&GridAction::FilterOnServer("name".into()))
+    );
+}
+
+#[test]
+fn where_completion_opens_with_the_complete_shortcut_and_moves() {
+    let mut h = harness_with(sequential(5), true, None);
+    h.get_by_role(egui::accesskit::Role::TextInput).click();
+    h.run_steps(2);
+    press(&mut h, Modifiers::CTRL, Key::Space);
+    // The list starts on id and ↵ would insert it; ↓ selects name.
+    press(&mut h, Modifiers::NONE, Key::ArrowDown);
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert!(
+        h.state()
+            .actions
+            .contains(&GridAction::FilterOnServer("name".into()))
+    );
+}
+
+#[test]
+fn where_completion_stays_out_of_string_literals() {
+    let mut h = harness_with(sequential(5), true, None);
+    h.get_by_role(egui::accesskit::Role::TextInput).click();
+    h.run_steps(2);
+    h.event(Event::Text("name = 'na".into()));
+    h.run_steps(2);
+    // No list to accept: the first ↵ runs the filter.
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert!(
+        h.state()
+            .actions
+            .contains(&GridAction::FilterOnServer("name = 'na".into()))
+    );
+}
+
+/// One row per column set, enough to draw the grid.
+fn rows_for(columns: Arc<[ColumnMeta]>) -> RowBuffer {
+    let mut rows = RowBuffer::new(columns.clone());
+    let mut b = ChunkBuilder::new(columns);
+    b.push_row(&[Cell::Int(1), Cell::Text("x")]).unwrap();
+    rows.push_chunk(b.finish());
+    rows
+}
+
+#[test]
+fn where_completion_quotes_names_that_need_it() {
+    let columns: Arc<[ColumnMeta]> = Arc::from(vec![
+        ColumnMeta::new("Order ID", "int8", ColumnKind::Int, DisplayHint::Number),
+        ColumnMeta::new("name", "text", ColumnKind::Text, DisplayHint::Plain),
+    ]);
+    let mut h = harness_with(rows_for(columns), false, None);
+    h.get_by_role(egui::accesskit::Role::TextInput).click();
+    h.run_steps(2);
+    h.event(Event::Text("Ord".into()));
+    h.run_steps(2);
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    assert!(
+        h.state()
+            .actions
+            .contains(&GridAction::FilterOnServer("\"Order ID\"".into()))
+    );
+}
+
+#[test]
 fn double_click_edits_cell_and_marks_pending() {
     let mut h = harness_with(sequential(5), false, Some(editable()));
     double_click(&mut h, "name 1");

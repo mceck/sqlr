@@ -8,6 +8,7 @@
 mod clipboard;
 mod doc_table;
 mod edit;
+mod filter;
 mod header;
 mod operations;
 mod selection;
@@ -93,6 +94,8 @@ pub struct GridState {
     pub sort: Vec<(usize, bool)>,
     /// The server-side condition typed into the WHERE field.
     pub where_filter: String,
+    /// The WHERE field's column completion session.
+    filter_completion: filter::Completion,
     /// No WHERE field: the rows come from a file or a fixed sample, not a query to re-run.
     pub hide_filter: bool,
     /// Pending edits; `Some` when the result can be edited.
@@ -863,7 +866,7 @@ pub fn data_grid(ui: &mut egui::Ui, state: &mut GridState, input: &GridInput<'_>
         return output;
     }
     if !state.hide_filter {
-        filter_bar(ui, state);
+        filter::bar(ui, state, input);
     }
     state.sort_repaint = Some(ui.ctx().clone());
     state.refresh_view(rows, !input.more_available);
@@ -1104,29 +1107,6 @@ fn resize_columns(
         }
     }
     active
-}
-
-/// The server `WHERE` field: re-runs the query with the condition on ↵.
-fn filter_bar(ui: &mut egui::Ui, state: &mut GridState) {
-    egui::Frame::NONE
-        .inner_margin(egui::Margin::symmetric(Spacing::M as i8, Spacing::S as i8))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = Spacing::S;
-                icons::paint(ui, icons::FILTER, theme::palette(ui.ctx()).text_muted);
-                let field = crate::text_menu::text_edit(
-                    ui,
-                    TextEdit::singleline(&mut state.where_filter)
-                        .hint_text("Filter rows (SQL WHERE), e.g. status = 'paid' ↵")
-                        .desired_width(f32::INFINITY),
-                );
-                if field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
-                    state.actions.push(GridAction::FilterOnServer(
-                        state.where_filter.trim().to_string(),
-                    ));
-                }
-            });
-        });
 }
 
 /// Clicks, drags and right-clicks; returns whether the selection changed.
