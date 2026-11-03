@@ -426,8 +426,11 @@ impl Shared {
             }
             let conn = target_conn.ok_or_else(not_connected)?;
             let io = self.live_io(conn).ok_or_else(not_connected)?;
+            // Introspection names a foreign key's target without its database: it lives in
+            // the database of the table being filled, which need not be the connection's own.
+            let database = table.database.as_deref().or(spec.table.database.as_deref());
             let connection = self
-                .session_connection(&SessionKey::meta(conn), &io, table.database.as_deref())
+                .session_connection(&SessionKey::meta(conn), &io, database)
                 .await?;
             let rel = connection.relational().ok_or_else(|| {
                 DriverError::new(ErrorKind::Unsupported, "this connection does not run SQL")

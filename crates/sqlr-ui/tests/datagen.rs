@@ -1,14 +1,15 @@
 use egui::accesskit::Role;
 use egui::vec2;
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable;
-use sqlr_core::{ColumnGen, Generator};
+use egui_kittest::kittest::{By, Queryable};
+use sqlr_core::{ColumnGen, Generator, TableRef};
 use sqlr_ui::datagen_table;
 use sqlr_ui::theme::{self, Palette};
 
 struct App {
     columns: Vec<ColumnGen>,
     types: Vec<(String, String)>,
+    lookups: Vec<sqlr_ui::LookupTable>,
     changed: usize,
 }
 
@@ -28,7 +29,7 @@ fn harness() -> Harness<'static, App> {
         .build_ui_state(
             |ui, app: &mut App| {
                 theme::apply(ui.ctx(), &Palette::dark(), 13.0);
-                if datagen_table(ui, &mut app.columns, &app.types) {
+                if datagen_table(ui, &mut app.columns, &app.types, &app.lookups) {
                     app.changed += 1;
                 }
             },
@@ -43,6 +44,14 @@ fn harness() -> Harness<'static, App> {
                     ("name".into(), "text".into()),
                     ("code".into(), "text".into()),
                 ],
+                lookups: vec![sqlr_ui::LookupTable {
+                    table: TableRef {
+                        database: None,
+                        schema: Some("public".into()),
+                        name: "users".into(),
+                    },
+                    columns: vec!["id".into(), "email".into()],
+                }],
                 changed: 0,
             },
         );
@@ -69,4 +78,38 @@ fn datagen_column_table_edits() {
     h.get_by_label("Write id").click();
     h.run_steps(2);
     assert_eq!(h.state().columns[0].generator, Generator::Default);
+}
+
+#[test]
+fn any_column_can_take_values_from_another_table() {
+    let mut h = harness();
+    // `name` is not a foreign key, but can still take a value from `users`.
+    h.get(By::new().role(Role::ComboBox).value("Full name"))
+        .click();
+    h.run_steps(2);
+    h.get_by_label("From table").click_accesskit();
+    h.run_steps(3);
+    assert!(
+        matches!(
+            &h.state().columns[1].generator,
+            Generator::ForeignKey { table, column }
+                if table.name == "users" && column == "id"
+        ),
+        "{:?}",
+        h.state().columns[1].generator
+    );
+    // Its target and column are editable: the column drop-down lists the table's columns.
+    h.get_by_label("Browse columns").click_accesskit();
+    h.run_steps(2);
+    h.get_by_label("email").click_accesskit();
+    h.run_steps(2);
+    assert!(
+        matches!(
+            &h.state().columns[1].generator,
+            Generator::ForeignKey { table, column }
+                if table.name == "users" && column == "email"
+        ),
+        "{:?}",
+        h.state().columns[1].generator
+    );
 }

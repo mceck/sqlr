@@ -24,14 +24,14 @@ pub enum DatagenError {
         /// The unique column.
         column: String,
     },
-    /// A foreign-key column refers to a table whose pool of values is empty.
-    #[error("Column {column} references {table}.{key}, which has no rows to pick from")]
+    /// A foreign-key or table-lookup column refers to a table whose pool of values is empty.
+    #[error("Column {column} takes values from {table}.{key}, which has no rows to pick from")]
     EmptyForeignKeyPool {
         /// The generated column.
         column: String,
-        /// The referenced table.
+        /// The table values are read from.
         table: String,
-        /// The referenced column.
+        /// The column values are read from.
         key: String,
     },
     /// A sequence or date range cannot produce another value without overflowing.
@@ -96,6 +96,11 @@ pub enum Generator {
     },
     /// A random UUID.
     Uuid,
+    /// A JSON object with `fields` generated members.
+    Json {
+        /// The number of fields in the object.
+        fields: u32,
+    },
     /// A first name.
     FirstName,
     /// A last name.
@@ -123,11 +128,12 @@ pub enum Generator {
     OneOf(Vec<String>),
     /// The same text in every row.
     Constant(String),
-    /// A key of another table, picked from the keys read from it.
+    /// A value picked from another table's column, read from that table: a foreign key, or
+    /// any other column the user points at a table.
     ForeignKey {
-        /// The table the keys come from.
+        /// The table the values come from.
         table: TableRef,
-        /// The key column of that table.
+        /// The column of that table.
         column: String,
     },
     /// Left to the database: the column is not written.
@@ -301,6 +307,30 @@ fn slug(text: &str) -> String {
         .to_lowercase()
 }
 
+/// A JSON object whose members are named after common columns, so the value looks like
+/// something an application would store.
+fn json_text(r: &mut Rng, fields: u32) -> String {
+    use serde_json::Value as Json;
+    const KEYS: [&str; 6] = ["id", "name", "active", "email", "city", "score"];
+    let mut object = serde_json::Map::new();
+    for i in 0..fields.min(20) {
+        let key = KEYS
+            .get(i as usize)
+            .map_or_else(|| format!("field{}", i + 1), |k| (*k).to_string());
+        let value = match key.as_str() {
+            "id" => Json::from(r.range(1, 1_000_000)),
+            "name" => Json::from(format!("{} {}", r.pick(&FIRST), r.pick(&LAST))),
+            "active" => Json::from((r.unit() as f32) < 0.5),
+            "email" => Json::from(format!("user{}@example.com", r.range(1, 999_999))),
+            "city" => Json::from(r.pick(&CITIES)),
+            "score" => Json::from(r.range(0, 10_000) as f64 / 100.0),
+            _ => Json::from(format!("{} {}", r.pick(&WORDS), r.pick(&WORDS))),
+        };
+        object.insert(key, value);
+    }
+    Json::Object(object).to_string()
+}
+
 /// Whether a type name is an integer type, without matching `interval` or `point`.
 fn is_integer_type(ty: &str) -> bool {
     let base = ty.split(['(', ' ', '[']).next().unwrap_or(ty);
@@ -353,6 +383,11 @@ pub fn default_generator(column: &TableColumn, fk: Option<&ConstraintDef>) -> Ge
     }
     let name = column.name.to_lowercase();
     let ty = column.type_name.to_lowercase();
+    let base_type = ty.split(['(', ' ']).next().unwrap_or(&ty);
+    // A JSON column needs a JSON document: plain text is rejected by the server.
+    if (base_type == "json" || base_type == "jsonb") && !ty.contains('[') {
+        return Generator::Json { fields: 3 };
+    }
     let has = |s: &str| name.contains(s);
     let is_text = ty.contains("char") || ty.contains("text") || ty.contains("string");
     if has("email") {
@@ -606,6 +641,7 @@ impl RowGenerator {
                     b & 0xffff_ffff_ffff
                 ))
             }
+            Generator::Json { fields } => Value::Text(json_text(r, *fields)),
             Generator::FirstName => Value::Text(r.pick(&FIRST).to_string()),
             Generator::LastName => Value::Text(r.pick(&LAST).to_string()),
             Generator::FullName => Value::Text(format!("{} {}", r.pick(&FIRST), r.pick(&LAST))),
@@ -948,6 +984,40 @@ mod tests {
         );
         g.next_batch(100).unwrap();
         assert_eq!(g.remembered(), 100);
+    }
+
+    #[test]
+    fn json_columns_get_json_objects() {
+        let g = |n: &str, t: &str, d: Option<&str>| default_generator(&col(n, t, d), None);
+        assert_eq!(g("payload", "jsonb", None), Generator::Json { fields: 3 });
+        assert_eq!(g("payload", "json", None), Generator::Json { fields: 3 });
+        // A name that would otherwise pick a plain-text generator still gets valid JSON.
+        assert_eq!(g("email", "jsonb", None), Generator::Json { fields: 3 });
+        let rows = RowGenerator::new(
+            &spec(
+                vec![colgen("payload", Generator::Json { fields: 3 })],
+                20,
+                7,
+            ),
+            BTreeMap::new(),
+        )
+        .next_batch(20)
+        .unwrap();
+        for row in rows {
+            let Value::Text(text) = &row[0] else {
+                panic!("JSON is written as text");
+            };
+            let value: serde_json::Value = serde_json::from_str(text).unwrap();
+            assert_eq!(value.as_object().unwrap().len(), 3, "{text}");
+        }
+        // An empty object is valid too.
+        let rows = RowGenerator::new(
+            &spec(vec![colgen("payload", Generator::Json { fields: 0 })], 1, 7),
+            BTreeMap::new(),
+        )
+        .next_batch(1)
+        .unwrap();
+        assert_eq!(rows[0][0], Value::Text("{}".into()));
     }
 
     #[test]

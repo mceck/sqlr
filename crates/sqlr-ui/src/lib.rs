@@ -49,7 +49,7 @@ pub use chrome::{
     breadcrumb_with_response, connection_chip, empty_state, status_segment, tool_button,
 };
 pub use console::{ConsoleState, RespLine, RespLineKind, console, resp_lines};
-pub use datagen::{datagen_table, generator_label};
+pub use datagen::{LookupTable, datagen_table, generator_label};
 pub use diff_tree::{DiffRow, DiffRowKind, diff_rows, diff_tree, text_diff};
 pub use doc_tree::{DocAction, DocTreeState, doc_tree};
 pub use driver_manager::{

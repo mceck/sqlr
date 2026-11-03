@@ -2,15 +2,25 @@
 //! options, how often it is NULL and whether values must be unique.
 
 use egui::{ComboBox, DragValue, RichText, TextEdit, WidgetInfo, WidgetType};
-use sqlr_core::{ColumnGen, Generator};
+use sqlr_core::{ColumnGen, Generator, TableRef};
 
 use crate::theme::{self, Spacing};
+
+/// A table whose values a column can take, whether or not the column is a real foreign
+/// key: "fill this column with a value from table x, column y".
+#[derive(Clone, Debug, PartialEq)]
+pub struct LookupTable {
+    /// The table the values come from.
+    pub table: TableRef,
+    /// Its columns, in ordinal order.
+    pub columns: Vec<String>,
+}
 
 /// The generator kinds a column can switch to, by label.
 /// Builds the generator a menu entry stands for.
 type MakeGenerator = fn() -> Generator;
 
-const CHOICES: [(&str, MakeGenerator); 20] = [
+const CHOICES: [(&str, MakeGenerator); 21] = [
     ("Sequence", || Generator::Sequence { start: 1, step: 1 }),
     ("Integer range", || Generator::IntRange {
         min: 1,
@@ -35,6 +45,7 @@ const CHOICES: [(&str, MakeGenerator); 20] = [
         to: 1_750_000_000,
     }),
     ("UUID", || Generator::Uuid),
+    ("JSON", || Generator::Json { fields: 3 }),
     ("First name", || Generator::FirstName),
     ("Last name", || Generator::LastName),
     ("Full name", || Generator::FullName),
@@ -60,6 +71,7 @@ pub fn generator_label(g: &Generator) -> &'static str {
         Generator::DateRange { .. } => "Date",
         Generator::TimestampRange { .. } => "Timestamp",
         Generator::Uuid => "UUID",
+        Generator::Json { .. } => "JSON",
         Generator::FirstName => "First name",
         Generator::LastName => "Last name",
         Generator::FullName => "Full name",
@@ -72,17 +84,131 @@ pub fn generator_label(g: &Generator) -> &'static str {
         Generator::Pattern(_) => "Pattern",
         Generator::OneOf(_) => "One of",
         Generator::Constant(_) => "Constant",
-        Generator::ForeignKey { .. } => "Foreign key",
+        Generator::ForeignKey { .. } => "From table",
         Generator::Default => "Database default",
     }
 }
 
-/// Draws one row per column of `columns` (`types`: each column's name and type, for display);
-/// returns `true` when the user changed something.
+/// The label of a lookup table: `schema.table`, or just the name without a schema.
+fn table_label(table: &TableRef) -> String {
+    match &table.schema {
+        Some(schema) if !schema.is_empty() => format!("{schema}.{}", table.name),
+        _ => table.name.clone(),
+    }
+}
+
+/// Whether two references name the same table; the database may be missing from one of
+/// them (introspection leaves it out for a foreign key's target).
+fn same_table(a: &TableRef, b: &TableRef) -> bool {
+    a.name == b.name
+        && a.schema == b.schema
+        && match (&a.database, &b.database) {
+            (Some(a), Some(b)) => a == b,
+            _ => true,
+        }
+}
+
+/// The table and column a fresh "From table" generator starts with: the table named after
+/// the column without `_id`, else the first one available.
+fn lookup_generator(lookups: &[LookupTable], column: &str) -> Generator {
+    let stem = column.strip_suffix("_id").unwrap_or(column);
+    let source = lookups
+        .iter()
+        .find(|l| l.table.name.eq_ignore_ascii_case(stem))
+        .or_else(|| lookups.first());
+    let (table, column) = source.map_or_else(
+        || {
+            (
+                TableRef {
+                    database: None,
+                    schema: None,
+                    name: String::new(),
+                },
+                String::new(),
+            )
+        },
+        |l| {
+            (
+                l.table.clone(),
+                l.columns.first().cloned().unwrap_or_default(),
+            )
+        },
+    );
+    Generator::ForeignKey { table, column }
+}
+
+/// `schema.table` or `table` typed by the user, keeping the current database.
+fn parse_table(text: &str, current: &TableRef) -> Option<TableRef> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    let (schema, name) = match text.rsplit_once('.') {
+        Some((schema, name)) if !schema.is_empty() && !name.is_empty() => {
+            (Some(schema.to_string()), name.to_string())
+        }
+        _ => (current.schema.clone(), text.to_string()),
+    };
+    Some(TableRef {
+        database: current.database.clone(),
+        schema,
+        name,
+    })
+}
+
+/// A text field with a drop-down of known names, for a table or column of a lookup.
+fn lookup_name(
+    ui: &mut egui::Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    value: &mut String,
+    names: &[String],
+    hint: &str,
+    browse_label: &str,
+    width: f32,
+) -> bool {
+    let mut changed = false;
+    ui.push_id(id, |ui| {
+        ui.horizontal(|ui| {
+            changed |= ui
+                .add(
+                    TextEdit::singleline(value)
+                        .hint_text(hint)
+                        .desired_width((width - 32.0).max(50.0)),
+                )
+                .changed();
+            let browse =
+                theme::icons::icon_button(ui, theme::icons::CARET_DOWN, None, browse_label);
+            egui::Popup::menu(&browse)
+                .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
+                .show(|ui| {
+                    ui.set_min_width(width.min(320.0));
+                    egui::ScrollArea::vertical()
+                        .max_height(200.0)
+                        .show(ui, |ui| {
+                            if names.is_empty() {
+                                theme::hint(ui, "No names loaded: type one in the field");
+                            }
+                            for name in names {
+                                if ui.selectable_label(name == value, name).clicked() {
+                                    *value = name.clone();
+                                    changed = true;
+                                }
+                            }
+                        });
+                });
+        });
+    });
+    changed
+}
+
+/// Draws one row per column of `columns` (`types`: each column's name and type, for display;
+/// `lookups`: the tables a "From table" generator can read values from); returns `true` when
+/// the user changed something.
 pub fn datagen_table(
     ui: &mut egui::Ui,
     columns: &mut [ColumnGen],
     types: &[(String, String)],
+    lookups: &[LookupTable],
 ) -> bool {
     let mut changed = false;
     let muted = theme::palette(ui.ctx()).text_muted;
@@ -122,10 +248,7 @@ pub fn datagen_table(
                     .find(|(n, _)| *n == c.column)
                     .map_or("", |(_, t)| t.as_str());
                 ui.label(RichText::new(ty).small().color(muted));
-                if matches!(
-                    c.generator,
-                    Generator::ForeignKey { .. } | Generator::Default
-                ) {
+                if c.generator == Generator::Default {
                     ui.add_enabled_ui(false, |ui| {
                         ComboBox::from_id_salt(("fixed_generator", i))
                             .selected_text(generator_label(&c.generator))
@@ -142,9 +265,16 @@ pub fn datagen_table(
                                     changed = true;
                                 }
                             }
+                            let from_table = generator_label(&c.generator) == "From table";
+                            if ui.selectable_label(from_table, "From table").clicked()
+                                && !from_table
+                            {
+                                c.generator = lookup_generator(lookups, &name);
+                                changed = true;
+                            }
                         });
                 }
-                changed |= options(ui, &mut c.generator);
+                changed |= options(ui, &mut c.generator, lookups, i);
                 let mut percent = c.null_ratio * 100.0;
                 if ui
                     .add(
@@ -172,7 +302,7 @@ pub fn datagen_table(
     changed
 }
 
-fn options(ui: &mut egui::Ui, g: &mut Generator) -> bool {
+fn options(ui: &mut egui::Ui, g: &mut Generator, lookups: &[LookupTable], index: usize) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| match g {
         Generator::Sequence { start, step } => {
@@ -216,6 +346,11 @@ fn options(ui: &mut egui::Ui, g: &mut Generator) -> bool {
             changed |= ui.add(DragValue::new(from).prefix("s ")).changed();
             changed |= ui.add(DragValue::new(to).prefix("to ")).changed();
         }
+        Generator::Json { fields } => {
+            changed |= ui
+                .add(DragValue::new(fields).range(0..=20).suffix(" fields"))
+                .changed();
+        }
         Generator::Lorem { words } => {
             changed |= ui
                 .add(DragValue::new(words).range(1..=200).suffix(" words"))
@@ -254,7 +389,59 @@ fn options(ui: &mut egui::Ui, g: &mut Generator) -> bool {
                 .changed();
         }
         Generator::ForeignKey { table, column } => {
-            ui.label(format!("{}.{column}", table.name));
+            ui.horizontal(|ui| {
+                let mut tables: Vec<String> =
+                    lookups.iter().map(|l| table_label(&l.table)).collect();
+                let current = table_label(table);
+                if !tables.contains(&current) {
+                    tables.push(current);
+                }
+                let mut text = table_label(table);
+                if lookup_name(
+                    ui,
+                    ("lookup-table", index),
+                    &mut text,
+                    &tables,
+                    "schema.table",
+                    "Browse tables",
+                    150.0,
+                ) {
+                    if let Some(next) = parse_table(&text, table)
+                        && next != *table
+                    {
+                        // Keep the column when the new table has it; else start from its
+                        // first one.
+                        if let Some(source) = lookups.iter().find(|l| same_table(&l.table, &next))
+                            && !source.columns.iter().any(|c| c == column)
+                        {
+                            *column = source.columns.first().cloned().unwrap_or_default();
+                        }
+                        *table = next;
+                    }
+                    changed = true;
+                }
+                let mut columns = lookups
+                    .iter()
+                    .find(|l| same_table(&l.table, table))
+                    .map(|l| l.columns.clone())
+                    .unwrap_or_default();
+                if !columns.contains(column) {
+                    columns.push(column.clone());
+                }
+                let mut text = column.clone();
+                if lookup_name(
+                    ui,
+                    ("lookup-column", index),
+                    &mut text,
+                    &columns,
+                    "column",
+                    "Browse columns",
+                    100.0,
+                ) {
+                    *column = text;
+                    changed = true;
+                }
+            });
         }
         _ => {}
     });

@@ -82,7 +82,7 @@ Use a writable test database for generated data.
 5. Choose **Preview** to inspect 20 sample rows.
 6. Choose **Insert N rows**, where N is your row count, then confirm with **Insert rows**.
 
-Generators include sequences, number and date ranges, UUIDs, names, addresses, pattern-based text, constants and choices from a list. A foreign-key generator picks actual values from the referenced table when writing; the preview uses stand-in values.
+Generators include sequences, number and date ranges, UUIDs, JSON objects, names, addresses, pattern-based text, constants and choices from a list. **From table** fills a column with values from another table and column; for a real foreign key it starts on the referenced table and key. Values are read from the table's own database when it is not the connection's principal one, and the preview uses stand-in values. Columns with a single-column primary key, unique constraint or unique index start with **Unique** checked.
 
 The same specification and seed reproduce the same generated values. If a uniqueness requirement cannot be satisfied, enlarge the generator's range or reduce the row count. The run reports written and rejected rows and offers **Stop** while running.
 

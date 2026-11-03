@@ -2,17 +2,17 @@
 //! chosen per column from its name and type (foreign keys pick existing keys), previewed on
 //! 20 rows and written through the transfer pipeline, with progress and a cancel.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use egui::{DragValue, RichText};
 use sqlr_core::{
-    ColumnGen, ConstraintDef, DataGenSpec, DatagenError, Endpoint, Generator, ObjectDef,
-    ObjectKind, ObjectRef, RowGenerator, TableColumn, TableDef, TableRef, TransferOptions,
-    TransferSpec, Value, default_generator,
+    CatalogNeed, ColumnGen, ConstraintDef, DataGenSpec, DatagenError, Endpoint, Generator,
+    ObjectDef, ObjectKind, ObjectRef, RowGenerator, TableColumn, TableDef, TableRef,
+    TransferOptions, TransferSpec, Value, default_generator,
 };
-use sqlr_engine::{Engine, JobId, JobOutcome, JobProgress};
+use sqlr_engine::{Engine, JobId, JobOutcome, JobProgress, LoadState};
 use sqlr_ui::theme::{self, Spacing};
-use sqlr_ui::{ToastKind, datagen_table};
+use sqlr_ui::{LookupTable, ToastKind, datagen_table};
 
 use crate::app::SqlrApp;
 use crate::job_failure::JobFailure;
@@ -39,18 +39,27 @@ pub(crate) struct DatagenDialog {
 }
 
 /// The generators a table's columns start with.
-fn initial_columns(def: &TableDef) -> Vec<ColumnGen> {
-    let unique_columns: Vec<&String> = def
+fn initial_columns(def: &TableDef, database: Option<&str>) -> Vec<ColumnGen> {
+    let unique_columns: Vec<&str> = def
         .constraints
         .iter()
         .filter_map(|c| match c {
             ConstraintDef::PrimaryKey { columns, .. } | ConstraintDef::Unique { columns, .. }
                 if columns.len() == 1 =>
             {
-                columns.first()
+                columns.first().map(String::as_str)
             }
             _ => None,
         })
+        .chain(
+            // A unique index is a unique column too, even when it is not a constraint.
+            def.indexes
+                .iter()
+                .filter_map(|index| match index.columns.as_slice() {
+                    [column] if index.unique && !column.expression => Some(column.expr.as_str()),
+                    _ => None,
+                }),
+        )
         .collect();
     def.columns
         .iter()
@@ -66,14 +75,42 @@ fn initial_columns(def: &TableDef) -> Vec<ColumnGen> {
                 default: c.default.clone(),
                 generated: c.generated.is_some(),
             };
+            let mut generator = default_generator(&column, fk);
+            // Introspection leaves the database out of a foreign key's target: the table
+            // lives in the database of the one being filled.
+            if let Generator::ForeignKey { table: target, .. } = &mut generator
+                && target.database.is_none()
+            {
+                target.database = database.map(str::to_string);
+            }
             ColumnGen {
                 column: c.name.clone(),
-                generator: default_generator(&column, fk),
+                generator,
                 null_ratio: 0.0,
-                unique: unique_columns.contains(&&c.name),
+                unique: unique_columns.contains(&c.name.as_str()),
             }
         })
         .collect()
+}
+
+/// Adds a lookup table, merging its columns with an entry that is already there.
+fn add_lookup(
+    lookups: &mut Vec<LookupTable>,
+    table: TableRef,
+    columns: impl Iterator<Item = String>,
+) {
+    if let Some(entry) = lookups.iter_mut().find(|l| l.table == table) {
+        for column in columns {
+            if !entry.columns.contains(&column) {
+                entry.columns.push(column);
+            }
+        }
+    } else {
+        lookups.push(LookupTable {
+            table,
+            columns: columns.collect(),
+        });
+    }
 }
 
 impl DatagenDialog {
@@ -142,6 +179,70 @@ impl DatagenDialog {
         }));
     }
 
+    /// Asks for the catalogs of the schemas lookups may come from: the table's own and those
+    /// its foreign keys point at.
+    fn request_lookups(&self, engine: &Engine) {
+        let database = self.table.database.as_deref();
+        let mut schemas = BTreeSet::new();
+        if let Some(schema) = &self.table.schema {
+            schemas.insert(schema.clone());
+        }
+        for c in &self.columns {
+            if let Generator::ForeignKey { table, .. } = &c.generator
+                && let Some(schema) = &table.schema
+            {
+                schemas.insert(schema.clone());
+            }
+        }
+        for schema in schemas {
+            engine.load_catalog_in(&self.conn, database, CatalogNeed::Schema(schema));
+        }
+    }
+
+    /// The tables a "From table" generator can read values from, as far as the catalog is
+    /// loaded: every loaded schema of the same database, the table being filled and every
+    /// foreign-key target.
+    fn lookups(&self, engine: &Engine) -> Vec<LookupTable> {
+        let mut lookups: Vec<LookupTable> = Vec::new();
+        if let Some(catalog) = engine.catalog_in(&self.conn, self.table.database.as_deref()) {
+            for state in catalog.schema.values() {
+                let LoadState::Ready(schema) = state else {
+                    continue;
+                };
+                for relation in &schema.relations {
+                    lookups.push(LookupTable {
+                        table: TableRef {
+                            database: self.table.database.clone(),
+                            schema: Some(schema.schema.clone()),
+                            name: relation.name.clone(),
+                        },
+                        columns: relation.columns.iter().map(|c| c.name.clone()).collect(),
+                    });
+                }
+            }
+        }
+        if !self.types.is_empty() {
+            add_lookup(
+                &mut lookups,
+                self.table.clone(),
+                self.types.iter().map(|(name, _)| name.clone()),
+            );
+        }
+        for c in &self.columns {
+            if let Generator::ForeignKey { table, column } = &c.generator {
+                let mut table = table.clone();
+                if table.database.is_none() {
+                    table.database = self.table.database.clone();
+                }
+                add_lookup(&mut lookups, table, std::iter::once(column.clone()));
+            }
+        }
+        lookups.sort_by(|a, b| {
+            (&a.table.schema, &a.table.name).cmp(&(&b.table.schema, &b.table.name))
+        });
+        lookups
+    }
+
     pub fn show(&mut self, ctx: &egui::Context, engine: &Engine) -> DatagenEvent {
         if let Some(id) = self.load
             && let Some(outcome) = engine.job(id).and_then(|s| s.outcome)
@@ -150,7 +251,7 @@ impl DatagenDialog {
             self.load = None;
             match outcome {
                 JobOutcome::Object(ObjectDef::Table(def)) => {
-                    self.columns = initial_columns(&def);
+                    self.columns = initial_columns(&def, self.table.database.as_deref());
                     self.types = def
                         .columns
                         .iter()
@@ -178,6 +279,8 @@ impl DatagenDialog {
                 });
             }
         }
+        self.request_lookups(engine);
+        let lookups = self.lookups(engine);
         let event = DatagenEvent::None;
         let title = format!("Generate data for {}", self.table.name);
         let response = theme::Dialog::new("datagen_dialog", theme::icons::CREATE, &title)
@@ -213,11 +316,11 @@ impl DatagenDialog {
                 theme::section_title(ui, "Column generators");
                 theme::hint(
                     ui,
-                    "Uncheck a column to let the database fill it. NULL % controls how often values are left empty.",
+                    "Uncheck a column to let the database fill it. From table takes values from another table's column. NULL % controls how often values are left empty.",
                 );
                 ui.add_space(Spacing::M);
                 egui::ScrollArea::both().max_height(260.0).show(ui, |ui| {
-                    if datagen_table(ui, &mut self.columns, &self.types) {
+                    if datagen_table(ui, &mut self.columns, &self.types, &lookups) {
                         self.preview = None;
                     }
                 });
@@ -339,5 +442,72 @@ impl SqlrApp {
             DatagenEvent::None => {}
             DatagenEvent::Close => self.datagen_dialog = None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlr_core::{ColumnDef, IndexColumn, IndexDef};
+
+    fn col(name: &str) -> ColumnDef {
+        ColumnDef {
+            name: name.into(),
+            type_name: "text".into(),
+            ..ColumnDef::default()
+        }
+    }
+
+    fn unique_index(name: &str, columns: &[&str]) -> IndexDef {
+        IndexDef {
+            name: name.into(),
+            columns: columns.iter().map(|c| IndexColumn::column(c)).collect(),
+            unique: true,
+            ..IndexDef::default()
+        }
+    }
+
+    #[test]
+    fn unique_constraints_and_indexes_flag_their_columns() {
+        let mut def = TableDef::new(TableRef {
+            database: None,
+            schema: Some("public".into()),
+            name: "t".into(),
+        });
+        def.columns = ["id", "email", "code", "slug", "left", "right"]
+            .into_iter()
+            .map(col)
+            .collect();
+        def.constraints = vec![
+            ConstraintDef::PrimaryKey {
+                name: None,
+                columns: vec!["id".into()],
+            },
+            ConstraintDef::Unique {
+                name: None,
+                columns: vec!["email".into()],
+            },
+            // A multi-column key does not make each column unique on its own.
+            ConstraintDef::Unique {
+                name: None,
+                columns: vec!["left".into(), "right".into()],
+            },
+        ];
+        def.indexes = vec![
+            unique_index("code_uq", &["code"]),
+            unique_index("pair_uq", &["left", "right"]),
+            // A partial unique index still constrains the values it covers.
+            IndexDef {
+                predicate: Some("slug IS NOT NULL".into()),
+                ..unique_index("slug_uq", &["slug"])
+            },
+        ];
+        let columns = initial_columns(&def, None);
+        let flagged: Vec<&str> = columns
+            .iter()
+            .filter(|c| c.unique)
+            .map(|c| c.column.as_str())
+            .collect();
+        assert_eq!(flagged, ["id", "email", "code", "slug"]);
     }
 }

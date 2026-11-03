@@ -202,12 +202,13 @@ The generator opens from a table in the Explorer. It reads the table's columns a
 
 - Sequence, integer range, float range, decimal, boolean, date range, timestamp range, UUID.
 - First name, last name, full name, email, phone, city, country, company, lorem text.
+- A JSON object for a JSON or JSONB column, with a chosen number of generated members.
 - A pattern where `#` is a digit, `?` a letter and `*` a letter or digit.
-- One of a list, a constant, the column default, or a foreign-key pick from another table.
+- One of a list, a constant, the column default, or a value from a table and column: this last one starts as the foreign-key pick for a real foreign key (the referenced table and key), and can be chosen for any other column too.
 
-The dialog sets the row count, default 100 and up to 100,000,000, and the seed, default 42. Each column row carries its generator and parameters, a NULL ratio in percent, and a unique switch; uniqueness is offered for a single-column primary key or unique constraint. A foreign-key generator reads up to 100,000 key values from the referenced table once at the start and picks among them.
+The dialog sets the row count, default 100 and up to 100,000,000, and the seed, default 42. Each column row carries its generator and parameters, a NULL ratio in percent, and a unique switch; uniqueness is offered and starts on for a single-column primary key, unique constraint or unique index. A value-from-table generator reads up to 100,000 values of the chosen column once at the start and picks among them; when the table lives in a database other than the connection's own, the values are read from that database.
 
-A preview of 20 rows shows the result before anything is written; foreign keys in the preview use small stand-in values. Insert asks for confirmation and writes through the Data transfer engine in batches of 1,000, then reports rows written and rejected. A failure with unique values after 200 attempts stops with an error saying the domain is too small. The generator is deterministic: the same specification and seed produce the same rows.
+A preview of 20 rows shows the result before anything is written; value-from-table generators in the preview use small stand-in values. Insert asks for confirmation and writes through the Data transfer engine in batches of 1,000, then reports rows written and rejected. A failure with unique values after 200 attempts stops with an error saying the domain is too small. The generator is deterministic: the same specification and seed produce the same rows.
 
 ### Schema compare
 
@@ -323,7 +324,7 @@ The Drivers supply what differs per database: whether databases can be dumped an
 
 - A transfer holds bounded memory: 500-row chunks from files and collections, 1,000-row reads from a loaded Result, and 256 KiB write flushes. A dump streams tool output rather than buffering it.
 - A Job log keeps the last 5,000 lines.
-- The generator is deterministic for a given specification and seed, and holds at most 100,000 foreign-key values per referenced table.
+- The generator is deterministic for a given specification and seed, and holds at most 100,000 values per referenced table or table lookup.
 - Rejected rows are capped at 1,000 per transfer.
 - The Compare, ER and Explain tools read only. A migration script is generated and opened, never applied; an analyzed write runs inside a transaction that is rolled back.
 - Passwords, passphrases and tokens stay out of command lines, logs, displays and temporary files with wider permissions than the user.
