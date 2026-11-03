@@ -579,6 +579,10 @@ impl<'a> Flattener<'a, '_> {
         }
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one recursive walk over the tree: the connection, driver, path, depth, the connecting flag, the parent's kind and the output rows are independent values of each level"
+    )]
     fn children(
         &self,
         conn: &'a str,
@@ -586,6 +590,7 @@ impl<'a> Flattener<'a, '_> {
         path: &'a NodePath,
         depth: usize,
         badge_connecting: bool,
+        parent: Option<NodeKind>,
         rows: &mut Vec<Row<'a>>,
     ) {
         match self.source.children(conn, path) {
@@ -593,10 +598,23 @@ impl<'a> Flattener<'a, '_> {
                 if nodes.is_empty() {
                     rows.push(Row::Empty { depth });
                 }
+                // The folders of an open schema or database load ahead to learn which are
+                // empty. Until every count is known they are held back behind a spinner,
+                // so the tree never shows a folder that then disappears.
+                let holding = !self.state.show_empty_folders
+                    && matches!(parent, Some(NodeKind::Schema | NodeKind::Database))
+                    && nodes.iter().any(|n| {
+                        n.hides_when_empty()
+                            && n.has_children
+                            && matches!(
+                                self.source.children(conn, &n.path),
+                                Children::Loading | Children::NotLoaded
+                            )
+                    });
                 for node in nodes {
                     if !self.state.show_empty_folders
                         && node.hides_when_empty()
-                        && self.source.child_count(conn, &node.path) == Some(0)
+                        && (holding || self.source.child_count(conn, &node.path) == Some(0))
                     {
                         continue;
                     }
@@ -614,8 +632,19 @@ impl<'a> Flattener<'a, '_> {
                         open,
                     });
                     if open {
-                        self.children(conn, driver, &node.path, depth + 1, false, rows);
+                        self.children(
+                            conn,
+                            driver,
+                            &node.path,
+                            depth + 1,
+                            false,
+                            Some(node.kind),
+                            rows,
+                        );
                     }
+                }
+                if holding {
+                    rows.push(Row::Loading { depth });
                 }
             }
             Children::Loading => rows.push(Row::Loading { depth }),
@@ -769,6 +798,7 @@ fn push_conn<'a>(
             root,
             depth + 1,
             conn.badge == ConnBadge::Connecting,
+            None,
             rows,
         );
     }
