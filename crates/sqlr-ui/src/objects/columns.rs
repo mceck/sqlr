@@ -12,14 +12,32 @@ pub(crate) const ROW: f32 = 26.0;
 
 const W_NUM: f32 = 28.0;
 const W_NAME: f32 = 150.0;
-const W_TYPE: f32 = 130.0;
-const W_PK: f32 = 36.0;
+const W_TYPE: f32 = 105.0;
+const W_PK: f32 = 52.0;
 const W_NULL: f32 = 44.0;
 /// The type field and its picker button.
 const W_TYPE_CELL: f32 = W_TYPE + 20.0 + Spacing::S;
 const W_EXPR: f32 = 170.0;
 const W_IDENTITY: f32 = 130.0;
 const W_COMMENT: f32 = 180.0;
+
+/// Width of one row: every cell plus the gaps between them.
+fn row_width(comments: bool) -> f32 {
+    let mut cells = vec![
+        W_NUM,
+        W_NAME,
+        W_TYPE_CELL,
+        W_PK,
+        W_NULL,
+        W_EXPR,
+        W_EXPR,
+        W_IDENTITY,
+    ];
+    if comments {
+        cells.push(W_COMMENT);
+    }
+    cells.iter().sum::<f32>() + Spacing::S * (cells.len() - 1) as f32
+}
 
 fn identity_label(identity: Option<Identity>) -> &'static str {
     match identity {
@@ -168,7 +186,7 @@ pub(super) fn columns_tab(
     area.show_rows(ui, ROW, table.columns.len(), |ui, range| {
         for i in range {
             ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width(), ROW),
+                egui::vec2(ui.available_width().max(row_width(editing.comments)), ROW),
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
                     ui.set_min_height(ROW);
