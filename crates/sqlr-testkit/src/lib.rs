@@ -194,6 +194,8 @@ pub struct FakeScript {
     pub query_error: Option<DriverError>,
     /// When set, `execute` fails (`ErrorKind::Syntax`) for any SQL containing this text.
     pub fail_matching: Option<String>,
+    /// A second text that makes `execute` fail like `fail_matching`.
+    pub fail_also_matching: Option<String>,
     /// When set, `execute` panics for any SQL containing this text, as a broken driver would.
     pub panic_matching: Option<String>,
     /// When set, `execute` returns `Execution::Affected` with this count instead of rows.
@@ -1005,13 +1007,19 @@ impl RelationalConn for FakeConnection {
         {
             panic!("fake driver panic near \"{pattern}\"");
         }
-        if let Some(pattern) = &self.shared.script.fail_matching
-            && sql.contains(pattern.as_str())
+        for pattern in [
+            &self.shared.script.fail_matching,
+            &self.shared.script.fail_also_matching,
+        ]
+        .into_iter()
+        .flatten()
         {
-            return Err(DriverError::new(
-                ErrorKind::Syntax,
-                format!("syntax error near \"{pattern}\""),
-            ));
+            if sql.contains(pattern.as_str()) {
+                return Err(DriverError::new(
+                    ErrorKind::Syntax,
+                    format!("syntax error near \"{pattern}\""),
+                ));
+            }
         }
         if let Some(pattern) = &self.shared.script.connection_error_matching
             && sql.contains(pattern.as_str())

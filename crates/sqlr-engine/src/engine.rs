@@ -29,7 +29,10 @@ use crate::session::{LoadState, Session, SessionIo, SessionKey, SessionStatus, S
 use crate::ssh::{self, ConnectReport, SshContext, TunnelSlot};
 use crate::store::{ProfilesState, SharedSecretStore};
 use crate::transfer::{ExportSource, ImportOptions, TransferRun, Work};
-use crate::tx::{MessageLevel, READ_ONLY, RunMessage, Stmt, TxOp, TxRules, TxState, run_sql};
+use crate::tx::{
+    MessageLevel, READ_ONLY, RunMessage, STMT_SAVEPOINT, Stmt, TxOp, TxPhase, TxRules, TxState,
+    run_sql,
+};
 
 pub type Repaint = Arc<dyn Fn() + Send + Sync>;
 
@@ -2794,18 +2797,42 @@ impl Shared {
                 }
             }
         }
+        // Where an error aborts the transaction, each user statement runs inside a statement
+        // savepoint so a failure is undone alone and the transaction stays open.
+        let first = begin && rules.error_aborts;
+        let guard = self
+            .set_statement_savepoint(key, io, conn, &stmt, rules, first)
+            .await;
         let outcome = rel.execute(sql).await;
         // §7.8: a DDL statement makes the cached catalog stale.
         if outcome.is_ok() && dialect.syntax().is_ddl(sql) {
             self.invalidate_catalog(&key.conn);
         }
         let mut notes = Vec::new();
+        let undone = match &outcome {
+            Err(e) if e.kind != ErrorKind::Connection && (guard || first) => {
+                self.undo_failed_statement(key, io, conn, guard).await
+            }
+            Ok(Execution::Affected(_)) if guard => {
+                self.release_statement_savepoint(key, io, conn).await;
+                false
+            }
+            _ => false,
+        };
         {
             let mut inner = self.inner.lock();
             if let Some(s) = inner.session(key, io) {
                 let note = match &outcome {
                     Ok(_) => s.tx.after_success(&stmt, rules, now_ms()),
                     Err(e) if e.kind == ErrorKind::Connection => None,
+                    Err(_) if undone && first => {
+                        s.tx.close(now_ms());
+                        Some(RunMessage::new(
+                            MessageLevel::Warning,
+                            "The statement failed and the transaction it opened was rolled back",
+                        ))
+                    }
+                    Err(_) if undone => Some(s.tx.statement_undone(now_ms())),
                     Err(_) => s.tx.after_failure(&stmt, rules, now_ms()),
                 };
                 notes.extend(note);
@@ -2843,6 +2870,100 @@ impl Shared {
                 self.finish_with(q, error_status(e), notes);
             }
         }
+    }
+
+    /// Sets the statement savepoint before a user statement in an open transaction on a
+    /// server where an error aborts it; releases the one a streaming statement left. True
+    /// when a savepoint is set.
+    async fn set_statement_savepoint(
+        &self,
+        key: &SessionKey,
+        io: &Arc<SessionIo>,
+        conn: &Arc<dyn Connection>,
+        stmt: &Stmt,
+        rules: TxRules,
+        first: bool,
+    ) -> bool {
+        let Some(rel) = conn.relational() else {
+            return false;
+        };
+        if first
+            || !rules.error_aborts
+            || matches!(stmt.class, sqlr_core::StatementClass::Transaction(_))
+        {
+            return false;
+        }
+        let leftover = {
+            let mut inner = self.inner.lock();
+            match inner.session(key, io) {
+                Some(s) if s.tx.phase == TxPhase::Open => std::mem::take(&mut s.tx.stmt_savepoint),
+                _ => return false,
+            }
+        };
+        let dialect = rel.dialect();
+        if leftover && let Some(sql) = dialect.release_savepoint_sql(STMT_SAVEPOINT) {
+            let _ = run_sql(conn, &sql).await;
+        }
+        if run_sql(conn, &dialect.savepoint_sql(STMT_SAVEPOINT))
+            .await
+            .is_err()
+        {
+            return false;
+        }
+        if let Some(s) = self.inner.lock().session(key, io) {
+            s.tx.stmt_savepoint = true;
+        }
+        true
+    }
+
+    /// Releases the statement savepoint of a statement that has no stream to keep open.
+    async fn release_statement_savepoint(
+        &self,
+        key: &SessionKey,
+        io: &Arc<SessionIo>,
+        conn: &Arc<dyn Connection>,
+    ) {
+        let Some(rel) = conn.relational() else {
+            return;
+        };
+        if let Some(sql) = rel.dialect().release_savepoint_sql(STMT_SAVEPOINT) {
+            let _ = run_sql(conn, &sql).await;
+        }
+        if let Some(s) = self.inner.lock().session(key, io) {
+            s.tx.stmt_savepoint = false;
+        }
+    }
+
+    /// Undoes a statement that failed in an open transaction: rolls back to its statement
+    /// savepoint, or (when it was the statement that opened the transaction) rolls the
+    /// transaction back. False when the server refused, so the transaction stays Failed.
+    async fn undo_failed_statement(
+        &self,
+        key: &SessionKey,
+        io: &Arc<SessionIo>,
+        conn: &Arc<dyn Connection>,
+        savepoint: bool,
+    ) -> bool {
+        let Some(rel) = conn.relational() else {
+            return false;
+        };
+        let dialect = rel.dialect();
+        if !savepoint {
+            return run_sql(conn, "ROLLBACK").await.is_ok();
+        }
+        if run_sql(conn, &dialect.rollback_to_sql(STMT_SAVEPOINT))
+            .await
+            .is_err()
+        {
+            return false;
+        }
+        if let Some(sql) = dialect.release_savepoint_sql(STMT_SAVEPOINT) {
+            let _ = run_sql(conn, &sql).await;
+        }
+        if let Some(s) = self.inner.lock().session(key, io) {
+            s.tx.stmt_savepoint = false;
+        }
+        true
     }
 
     /// The session's connection, or (when `database` names another database of the same
@@ -2992,6 +3113,9 @@ impl Shared {
                 PageEnd::Stopped => QueryStatus::Cancelled,
                 PageEnd::Failed(e) => {
                     notes.extend(self.on_error(key, io, &e));
+                    if e.kind != ErrorKind::Connection {
+                        notes.extend(self.after_fetch_failure(key, io).await);
+                    }
                     error_status(e)
                 }
             };
@@ -3018,6 +3142,35 @@ impl Shared {
                 return;
             }
         }
+    }
+
+    /// A fetch failed inside a user transaction: undo the statement through its savepoint,
+    /// or mark the transaction Failed when nothing could.
+    async fn after_fetch_failure(
+        self: &Arc<Self>,
+        key: &SessionKey,
+        io: &Arc<SessionIo>,
+    ) -> Option<RunMessage> {
+        let (conn, savepoint) = {
+            let mut inner = self.inner.lock();
+            let s = inner.session(key, io)?;
+            if s.tx.phase != TxPhase::Open {
+                return None;
+            }
+            (s.tx_conn.clone()?, s.tx.stmt_savepoint)
+        };
+        let rules = TxRules::from_dialect(conn.relational()?.dialect());
+        if savepoint && self.undo_failed_statement(key, io, &conn, true).await {
+            return self
+                .inner
+                .lock()
+                .session(key, io)
+                .map(|s| s.tx.statement_undone(now_ms()));
+        }
+        self.inner
+            .lock()
+            .session(key, io)
+            .and_then(|s| s.tx.fetch_failed(rules, now_ms()))
     }
 
     /// Rows `q` holds now.

@@ -698,10 +698,98 @@ fn killed_session_clears_transaction() {
 }
 
 #[test]
-fn postgres_failure_leaves_only_rollback() {
+fn a_failed_statement_is_undone_alone_on_a_postgres_like_driver() {
     let script = FakeScript {
         error_aborts_transaction: true,
         fail_matching: Some("oops".into()),
+        ..writes()
+    };
+    let (engine, fake, key) = setup(script, profile(CommitMode::Manual));
+    ok(&engine, &key, "insert into t values (1)");
+    assert!(matches!(
+        run(&engine, &key, "select oops"),
+        QueryStatus::Failed(_)
+    ));
+    assert_eq!(phase(&engine, &key), TxPhase::Open);
+    let executed = fake.executed();
+    assert!(
+        executed.contains(&"SAVEPOINT \"sqlr_stmt\"".to_string()),
+        "{executed:?}"
+    );
+    assert!(
+        executed.contains(&"ROLLBACK TO SAVEPOINT \"sqlr_stmt\"".to_string()),
+        "{executed:?}"
+    );
+    // The statement savepoint is not one the user can roll back to.
+    assert!(engine.transaction(&key).unwrap().savepoints.is_empty());
+    ok(&engine, &key, "insert into t values (2)");
+    assert_eq!(phase(&engine, &key), TxPhase::Open);
+}
+
+#[test]
+fn a_statement_savepoint_is_not_set_where_errors_do_not_abort() {
+    let script = FakeScript {
+        fail_matching: Some("oops".into()),
+        ..writes()
+    };
+    let (engine, fake, key) = setup(script, profile(CommitMode::Manual));
+    ok(&engine, &key, "insert into t values (1)");
+    assert!(matches!(
+        run(&engine, &key, "select oops"),
+        QueryStatus::Failed(_)
+    ));
+    assert!(!fake.executed().iter().any(|s| s.contains("sqlr_stmt")));
+    assert_eq!(phase(&engine, &key), TxPhase::Open);
+}
+
+#[test]
+fn a_fetch_that_fails_inside_a_transaction_is_undone_alone() {
+    let script = FakeScript {
+        error_aborts_transaction: true,
+        rows: 1200,
+        fail_after_chunks: Some((1, DriverError::new(ErrorKind::Other, "canceling statement"))),
+        ..Default::default()
+    };
+    let (engine, fake, key) = setup(script, profile(CommitMode::Manual));
+    ok(&engine, &key, "select 1");
+    let q = engine.execute_in(&key, None, "select n".into(), 500);
+    assert!(matches!(
+        settled(&engine, q),
+        QueryStatus::Ready { more: true }
+    ));
+    engine.fetch_more(q);
+    assert!(wait_until(TIMEOUT, || matches!(
+        status(&engine, q),
+        QueryStatus::Failed(_)
+    )));
+    assert!(wait_until(TIMEOUT, || fake
+        .executed()
+        .iter()
+        .any(|s| s.contains("ROLLBACK TO"))));
+    assert_eq!(phase(&engine, &key), TxPhase::Open);
+}
+
+#[test]
+fn a_failed_first_statement_ends_the_transaction_it_opened() {
+    let script = FakeScript {
+        error_aborts_transaction: true,
+        fail_matching: Some("oops".into()),
+        ..writes()
+    };
+    let (engine, _, key) = setup(script, profile(CommitMode::Manual));
+    assert!(matches!(
+        run(&engine, &key, "select oops"),
+        QueryStatus::Failed(_)
+    ));
+    wait_phase(&engine, &key, &TxPhase::Idle);
+}
+
+#[test]
+fn a_failed_savepoint_rollback_leaves_only_rollback() {
+    let script = FakeScript {
+        error_aborts_transaction: true,
+        fail_matching: Some("oops".into()),
+        fail_also_matching: Some("ROLLBACK TO".into()),
         ..writes()
     };
     let (engine, _, key) = setup(script, profile(CommitMode::Manual));
@@ -720,6 +808,7 @@ fn commit_of_a_failed_transaction_reports_the_rollback() {
     let script = FakeScript {
         error_aborts_transaction: true,
         fail_matching: Some("oops".into()),
+        fail_also_matching: Some("ROLLBACK TO".into()),
         ..writes()
     };
     let (engine, _, key) = setup(script, profile(CommitMode::Manual));
