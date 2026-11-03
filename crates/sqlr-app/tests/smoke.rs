@@ -1463,7 +1463,7 @@ fn status_bar_add_row_adds_a_pending_row() {
 }
 
 #[test]
-fn server_filter_waits_for_pending_changes() {
+fn server_filter_asks_before_discarding_pending_changes() {
     let dir = tempfile::tempdir().unwrap();
     let (mut h, driver) = harness_with_script(&dir, orders_table_script());
     expand_to_orders(&mut h);
@@ -1491,9 +1491,48 @@ fn server_filter_waits_for_pending_changes() {
     h.run_steps(2);
     press(&mut h, Modifiers::NONE, Key::Enter);
     h.run_steps(5);
-    wait_for_label(&mut h, "Apply or discard the pending changes first");
-    assert_eq!(driver.executed().len(), runs, "nothing re-ran");
-    h.get_by_label("1 pending change");
+    wait_for_label(&mut h, "Discard 1 pending change and filter?");
+    assert_eq!(driver.executed().len(), runs, "nothing re-ran yet");
+    h.get_by_label("Filter").click_accesskit();
+    step_until(&mut h, "the filtered query", |_| {
+        driver.executed().iter().any(|s| s.contains("id > 1"))
+    });
+    wait_for_label(&mut h, "No pending changes");
+}
+
+#[test]
+fn a_failed_server_filter_keeps_the_previous_result_and_shows_the_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut h, _driver) = harness_with_script(
+        &dir,
+        FakeScript {
+            fail_matching: Some("boom".into()),
+            ..orders_table_script()
+        },
+    );
+    expand_to_orders(&mut h);
+    double_click(&mut h, "orders");
+    wait_for_label(&mut h, "20");
+    let field = h
+        .get_all(
+            egui_kittest::kittest::By::new()
+                .role(egui::accesskit::Role::TextInput)
+                .value(""),
+        )
+        .last()
+        .expect("the WHERE field");
+    field.click();
+    h.run_steps(2);
+    h.event(egui::Event::Text("boom > 1".into()));
+    h.run_steps(2);
+    press(&mut h, Modifiers::NONE, Key::Enter);
+    wait_for_label(&mut h, "Remove filter");
+    // The rows of the previous result are still there, and the filter text can be edited.
+    h.get_by_label("20");
+    assert!(
+        h.query_by_label("Query failed").is_none(),
+        "the error panel did not replace the grid"
+    );
 }
 
 #[test]

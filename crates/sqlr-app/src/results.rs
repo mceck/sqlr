@@ -8,8 +8,8 @@ use sqlr_engine::{Engine, JobOutcome, LoadState, QueryId};
 use sqlr_ui::ToastKind;
 use sqlr_ui::theme::{self, Spacing};
 use sqlr_ui::{
-    ChangesAction, CopyFormat, EditBuffer, EditorState, GridAction, GridState, MAX_COPY_CELLS,
-    NoCatalog, ValueEdit, ValueEditAction, query_editor, value_editor, value_panel,
+    ChangesAction, CopyFormat, EditBuffer, EditorState, GridAction, MAX_COPY_CELLS, NoCatalog,
+    ValueEdit, ValueEditAction, query_editor, value_editor, value_panel,
 };
 
 use crate::app::{SqlrApp, tab_mut};
@@ -457,7 +457,7 @@ impl SqlrApp {
 
     /// Re-runs the tab's statement sorted and filtered by the server (§7.5): `Dialect::
     /// wrap_where` and `wrap_order` over the statement as the user ran it.
-    fn server_rerun(
+    pub(crate) fn server_rerun(
         &mut self,
         tab: u64,
         q: QueryId,
@@ -478,10 +478,10 @@ impl SqlrApp {
             .and_then(|g| g.edits.as_ref())
             .is_some_and(|e| e.pending() > 0);
         if pending {
-            self.notify_as(
-                ToastKind::Info,
-                "Apply or discard the pending changes first",
-            );
+            self.objects.discard = Some((
+                tab,
+                crate::objects::Discard::ServerRerun { q, order, filter },
+            ));
             return;
         }
         let Some(dialect) = self.dialects.get(&conn).cloned() else {
@@ -517,11 +517,7 @@ impl SqlrApp {
                 view.order.iter().map(|(_, n, d)| (n.clone(), *d)).collect();
             sql = dialect.wrap_order(&sql, &order);
         }
-        let new = t.run_sql(engine, &conn, sql, None);
-        let grid: &mut GridState = t.grids.entry(new).or_default();
-        grid.sort = view.order.iter().map(|(c, _, d)| (*c, *d)).collect();
-        grid.where_filter = view.filter.clone();
-        t.server = Some(view);
+        t.start_rerun(engine, &conn, sql, view);
     }
 
     fn copy_request(&mut self, tab: u64, q: QueryId, format: CopyFormat) {
