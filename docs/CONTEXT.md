@@ -80,6 +80,13 @@ The shared test harness every Driver passes against a real database.
 One live connection to a database opened by the engine for a Connection, owning its transaction state, commit mode and read-only switch.
 _Avoid_: connection (for the live link), engine session
 
+**Statement savepoint**:
+The savepoint the engine opens around each user statement in an open transaction, so a failed statement is undone on its own and the transaction stays open.
+
+**Clean transaction**:
+An open transaction that has written nothing; the engine ends it without asking.
+_Avoid_: read-only transaction (the read-only switch is a different Session setting)
+
 **Editor session**:
 The Session that belongs to one Editor tab when per-editor sessions are on.
 
