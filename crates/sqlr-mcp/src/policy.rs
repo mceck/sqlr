@@ -31,6 +31,21 @@ pub fn approval_needed(profile: &ConnectionProfile, class: &StatementClass) -> b
     }
 }
 
+/// Whether `statements` end the transaction on their own (`COMMIT`, `ROLLBACK`, or DDL on a
+/// server that commits before it) under a profile that commits manually (Manual or Smart).
+/// Such a statement always waits for the person's approval, whatever the write confirmations.
+pub fn ends_manual_transaction(
+    profile: &ConnectionProfile,
+    syntax: &SqlSyntax,
+    ddl_commits: bool,
+    statements: &[String],
+) -> bool {
+    profile.commit_mode != CommitMode::Auto
+        && statements
+            .iter()
+            .any(|s| syntax.ends_transaction(s, ddl_commits))
+}
+
 /// How a target profile is looser than the current one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum LooserProfile {
@@ -328,6 +343,27 @@ mod tests {
             confirm_destructive: destructive,
             read_only,
             idle_tx_timeout_min: None,
+        }
+    }
+
+    #[test]
+    fn manual_commit_profiles_gate_statements_that_end_the_transaction() {
+        let syntax = SqlSyntax::ansi();
+        let mut p = profile(false, false, false);
+        let commit = ["COMMIT".to_string()];
+        assert!(!ends_manual_transaction(&p, &syntax, false, &commit));
+        for mode in [CommitMode::Manual, CommitMode::Smart] {
+            p.commit_mode = mode;
+            assert!(ends_manual_transaction(&p, &syntax, false, &commit));
+            assert!(!ends_manual_transaction(
+                &p,
+                &syntax,
+                false,
+                &["SELECT 1".to_string()]
+            ));
+            let ddl = ["CREATE TABLE t (a int)".to_string()];
+            assert!(!ends_manual_transaction(&p, &syntax, false, &ddl));
+            assert!(ends_manual_transaction(&p, &syntax, true, &ddl));
         }
     }
 

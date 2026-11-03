@@ -2,7 +2,7 @@
 //! connection profile decides whether to ask first.
 
 use egui::{Id, RichText};
-use sqlr_core::{ConnectionProfile, SqlSyntax, StatementClass};
+use sqlr_core::{CommitMode, ConnectionProfile, SqlSyntax, StatementClass};
 use sqlr_ui::RunRequest;
 
 use crate::nosql::RedisCommand;
@@ -50,6 +50,40 @@ pub(crate) fn confirmation(
         .map(|s| syntax.classify_script(s))
         .collect();
     confirmation_for(profile, conn_name, &classes, statements)
+}
+
+/// The confirmation a script needs under manual commit (`mode` is Manual or Smart) when it
+/// holds statements that end the transaction by themselves: `COMMIT`, `ROLLBACK` or, when the
+/// server commits before DDL (`ddl_commits`), a schema change. Asked every time, whether or
+/// not a transaction is open; Auto mode never asks.
+pub(crate) fn transaction_confirmation(
+    mode: CommitMode,
+    conn_name: &str,
+    syntax: &SqlSyntax,
+    ddl_commits: bool,
+    statements: &[&str],
+) -> Option<(String, Vec<String>)> {
+    if mode == CommitMode::Auto {
+        return None;
+    }
+    let ending: Vec<&str> = statements
+        .iter()
+        .copied()
+        .filter(|s| syntax.ends_transaction(s, ddl_commits))
+        .collect();
+    if ending.is_empty() {
+        return None;
+    }
+    let prompt = format!(
+        "{conn_name} is in {} mode, but this script ends the transaction on its own. \
+         Changes would be committed or discarded without your decision. Run it anyway?",
+        if mode == CommitMode::Manual {
+            "manual commit"
+        } else {
+            "smart commit"
+        }
+    );
+    Some((prompt, lines(&ending)))
 }
 
 /// Like [`confirmation`], for statements already classified (by a driver that is not SQL).
@@ -207,7 +241,26 @@ impl SqlrApp {
             // So are document commands (`run_doc_command`).
             PendingKind::Doc(_) => return None,
         };
-        let (prompt, statements) = confirmation(&profile, &cfg.name, &syntax, &sql)?;
+        let session = self.engine.session(conn, Some(tab));
+        let mode = self
+            .engine
+            .transaction(&session)
+            .map_or(profile.commit_mode, |tx| tx.mode);
+        let ddl_commits = self
+            .dialects
+            .get(conn)
+            .is_some_and(|d| d.ddl_commits_transaction());
+        let ending = transaction_confirmation(mode, &cfg.name, &syntax, ddl_commits, &sql);
+        let (prompt, statements) = match (ending, confirmation(&profile, &cfg.name, &syntax, &sql))
+        {
+            (Some((p, mut lines)), Some((p2, lines2))) => {
+                lines.extend(lines2);
+                (format!("{p}\n\n{p2}"), lines)
+            }
+            (Some(ending), None) => ending,
+            (None, Some(other)) => other,
+            (None, None) => return None,
+        };
         Some(PendingRun {
             tab,
             conn: conn.to_string(),
@@ -315,6 +368,29 @@ mod tests {
         assert_eq!(listed.len(), 2);
         // A single, harmless statement is still not confirmed.
         assert!(confirmation(&dev, "db", &syntax, &["select 1"]).is_none());
+    }
+
+    #[test]
+    fn manual_and_smart_ask_before_a_script_ends_the_transaction() {
+        let syntax = SqlSyntax::ansi();
+        let script = ["insert into t values (1)", "commit"];
+        for mode in [CommitMode::Manual, CommitMode::Smart] {
+            let (prompt, listed) =
+                transaction_confirmation(mode, "db", &syntax, false, &script).unwrap();
+            assert!(prompt.contains("ends the transaction"), "{prompt}");
+            assert_eq!(listed, ["commit"]);
+        }
+        assert!(
+            transaction_confirmation(CommitMode::Auto, "db", &syntax, false, &script).is_none()
+        );
+        assert!(
+            transaction_confirmation(CommitMode::Manual, "db", &syntax, false, &["select 1"])
+                .is_none()
+        );
+        // DDL counts only where the server commits before it.
+        let ddl = ["create table t (a int)"];
+        assert!(transaction_confirmation(CommitMode::Manual, "db", &syntax, false, &ddl).is_none());
+        assert!(transaction_confirmation(CommitMode::Manual, "db", &syntax, true, &ddl).is_some());
     }
 
     #[test]

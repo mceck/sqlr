@@ -331,6 +331,35 @@ impl SqlSyntax {
             .is_some_and(|t| t.is_any(WORDS))
     }
 
+    /// Whether `sql` holds a statement that opens a read-write transaction (`BEGIN READ
+    /// WRITE`, `START TRANSACTION READ WRITE`). A read-only session refuses it: on
+    /// PostgreSQL and MySQL it would override the session's read-only default.
+    pub fn begins_read_write(&self, sql: &str) -> bool {
+        self.split(sql, LexState::Normal).into_iter().any(|range| {
+            let text = &sql[range];
+            if self.classify(text) != StatementClass::Transaction(TxVerb::Begin) {
+                return false;
+            }
+            let mut toks = Vec::new();
+            let mut depth = 0u32;
+            self.significant_tokens(text, &mut toks, &mut depth);
+            toks.windows(2).any(|w| w[0].is("READ") && w[1].is("WRITE"))
+        })
+    }
+
+    /// Whether `sql` holds a statement that ends the open transaction on its own: `COMMIT`,
+    /// `END`, `ROLLBACK`, `ABORT`, or, when the server commits before DDL (`ddl_commits`),
+    /// a schema change. Under manual commit these take the decision away from the person.
+    pub fn ends_transaction(&self, sql: &str, ddl_commits: bool) -> bool {
+        self.split(sql, LexState::Normal).into_iter().any(|range| {
+            let text = &sql[range];
+            matches!(
+                self.classify(text),
+                StatementClass::Transaction(TxVerb::Commit | TxVerb::Rollback)
+            ) || (ddl_commits && self.is_schema_change(text))
+        })
+    }
+
     /// Appends the tokens of the first statement in `sql`, without comments. In MySQL
     /// (`hash_comments`) an executable comment `/*! … */` runs as code, so its content
     /// counts. Returns `false` once a `;` ends the statement.
@@ -793,5 +822,42 @@ mod tests {
         ] {
             assert_eq!(syntax.classify_script(sql), Read, "{sql}");
         }
+    }
+    #[test]
+    fn read_write_begin_is_found() {
+        let syntax = SqlSyntax::ansi();
+        for sql in [
+            "BEGIN READ WRITE",
+            "start transaction read write",
+            "SELECT 1; BEGIN ISOLATION LEVEL SERIALIZABLE, READ WRITE",
+        ] {
+            assert!(syntax.begins_read_write(sql), "{sql}");
+        }
+        for sql in ["BEGIN", "BEGIN READ ONLY", "SELECT 'read write'", "COMMIT"] {
+            assert!(!syntax.begins_read_write(sql), "{sql}");
+        }
+    }
+
+    #[test]
+    fn statements_that_end_the_transaction_are_found() {
+        let syntax = SqlSyntax::ansi();
+        for sql in [
+            "COMMIT",
+            "end",
+            "ROLLBACK",
+            "INSERT INTO t VALUES (1); COMMIT;",
+        ] {
+            assert!(syntax.ends_transaction(sql, false), "{sql}");
+        }
+        for sql in [
+            "SELECT 1",
+            "BEGIN",
+            "SAVEPOINT a",
+            "ROLLBACK TO a",
+            "CREATE TABLE t (a int)",
+        ] {
+            assert!(!syntax.ends_transaction(sql, false), "{sql}");
+        }
+        assert!(syntax.ends_transaction("CREATE TABLE t (a int)", true));
     }
 }

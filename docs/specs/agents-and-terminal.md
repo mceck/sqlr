@@ -309,6 +309,8 @@ Approvals reuse the safety mechanism the person already sees for their own state
 
 A statement is classified per family: SQL through the Dialect's statement and script classifiers, MongoDB through the document shell classifier, Elasticsearch through the document request classifier, and Redis through the key-value command classifier. A read-only session rejects modification before any Approval is requested.
 
+A profile in Manual or Smart commit mode also requires an Approval, whatever its confirmation flags, for a statement (or a script's run) that ends the transaction on its own: `COMMIT`, `ROLLBACK`, or DDL on a server that commits before it. The agent cannot take the commit decision away from the person.
+
 When the profile requests confirmation for writes or for destructive statements, the tool call blocks and the app shows a modal dialog. This applies to `run_query`, `run_query_tab`, and Explain with `analyze` on a modifying statement. It contains:
 
 - the client name and version and the MCP session identifier;
