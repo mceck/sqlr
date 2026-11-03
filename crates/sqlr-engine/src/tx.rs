@@ -43,7 +43,7 @@ pub struct TxState {
     /// savepoint commits it.
     pub started_by_savepoint: bool,
     /// A statement savepoint is set and not yet released (the last statement streamed rows).
-    pub(crate) stmt_savepoint: bool,
+    pub stmt_savepoint: bool,
 }
 
 /// The savepoint the engine sets around each user statement where an error aborts the
@@ -168,6 +168,13 @@ impl TxState {
     /// Whether a transaction is open (or failed and waiting for a rollback).
     pub fn is_open(&self) -> bool {
         self.phase != TxPhase::Idle
+    }
+
+    /// Whether ending the transaction needs the user's decision: it is open and wrote, or
+    /// holds a savepoint of the user's. A Failed transaction and a clean one (nothing
+    /// written) end silently with a rollback.
+    pub fn needs_decision(&self) -> bool {
+        self.phase == TxPhase::Open && (self.wrote || !self.savepoints.is_empty())
     }
 
     /// Whether the open transaction keeps a DDL apply on another session from running: it
