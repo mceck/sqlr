@@ -139,6 +139,9 @@ pub(crate) struct Session {
     pub tx_conn: Option<Arc<dyn Connection>>,
     /// Keeps the connection's SSH tunnel open while the session lives.
     pub tunnel: Option<Arc<Tunnel>>,
+    /// When a query last finished on the session, or it connected: the idle ping waits for
+    /// a quiet minute from here.
+    pub last_used: std::time::Instant,
 }
 
 impl Session {
@@ -153,6 +156,7 @@ impl Session {
             tx,
             tx_conn: None,
             tunnel: None,
+            last_used: std::time::Instant::now(),
         }
     }
 

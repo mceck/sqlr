@@ -236,6 +236,14 @@ impl Engine {
                     .expect("build the engine runtime");
                 rt.block_on(async move {
                     let db_worker = tokio::spawn(run_db_worker(worker.clone(), db, db_jobs));
+                    let pinger = worker.clone();
+                    tokio::spawn(async move {
+                        let mut tick = tokio::time::interval(Duration::from_secs(30));
+                        loop {
+                            tick.tick().await;
+                            pinger.ping_idle_sessions().await;
+                        }
+                    });
                     let mut next_run = 0_u64;
                     while let Some(cmd) = rx.recv().await {
                         next_run += 1;
@@ -3556,9 +3564,58 @@ impl Shared {
             && session.active == Some(q)
         {
             session.active = None;
+            session.last_used = Instant::now();
+        }
+    }
+
+    /// Pings every connected session that has been quiet for [`IDLE_PING`] and holds
+    /// neither a transaction nor an open stream; a dead connection fails the session now,
+    /// so the next statement reconnects instead of failing on it.
+    pub(crate) async fn ping_idle_sessions(self: &Arc<Self>) {
+        let due: Vec<_> = {
+            let inner = self.inner.lock();
+            inner
+                .sessions
+                .iter()
+                .filter(|(_, s)| {
+                    s.is_connected()
+                        && s.active.is_none()
+                        && !s.tx.is_open()
+                        && s.last_used.elapsed() >= IDLE_PING
+                })
+                .filter_map(|(k, s)| Some((k.clone(), s.io.clone(), s.conn.clone()?)))
+                .collect()
+        };
+        for (key, io, conn) in due {
+            let Ok(slot) = io.stream.try_lock() else {
+                continue;
+            };
+            if slot.is_some() {
+                continue;
+            }
+            let ping = tokio::time::timeout(Duration::from_secs(5), conn.ping()).await;
+            drop(slot);
+            match ping {
+                Ok(Ok(_)) => {
+                    if let Some(s) = self.inner.lock().session(&key, &io) {
+                        s.last_used = Instant::now();
+                    }
+                }
+                Ok(Err(e)) if e.kind == ErrorKind::Connection => {
+                    self.on_error(&key, &io, &e);
+                }
+                Err(_) => {
+                    let e = DriverError::new(ErrorKind::Connection, "the server did not answer");
+                    self.on_error(&key, &io, &e);
+                }
+                Ok(Err(_)) => {}
+            }
         }
     }
 }
+
+/// How long a session stays quiet before the engine pings its connection.
+const IDLE_PING: Duration = Duration::from_secs(60);
 
 /// Whether `a` and `b` are the same connection object.
 pub(crate) fn same_connection(a: &Arc<dyn Connection>, b: &Arc<dyn Connection>) -> bool {

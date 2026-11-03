@@ -239,6 +239,8 @@ pub struct SqlrApp {
     pub(crate) ending: Option<PendingEnd>,
     /// Idle transactions the user chose to keep open, by their last activity.
     pub(crate) kept_open: HashMap<sqlr_engine::SessionKey, i64>,
+    /// Tabs whose connection was already connected for them once (see `auto_connect_tabs`).
+    pub(crate) auto_connected: std::collections::HashSet<u64>,
     /// The user ended every transaction: the next close request quits.
     pub(crate) quit_confirmed: bool,
     /// Send the close command on the next frame.
@@ -407,6 +409,7 @@ impl SqlrApp {
             confirm: None,
             ending: None,
             kept_open: HashMap::new(),
+            auto_connected: std::collections::HashSet::new(),
             quit_confirmed: false,
             quit_now: false,
             pending_redis: std::collections::HashSet::new(),
@@ -539,6 +542,7 @@ impl SqlrApp {
         self.poll_applies();
         self.guard_quit(ui.ctx());
         self.end_prompts(ui.ctx(), failed);
+        self.auto_connect_tabs();
         self.confirm_ui(ui.ctx());
         // Before the editors, so the palette's keys reach it first.
         self.palette_ui(ui.ctx());
@@ -1673,6 +1677,27 @@ impl SqlrApp {
         }
         self.engine.connect(cfg, secrets, profile);
         true
+    }
+
+    /// Connects the connection of a Redis, object, document or administration tab the first
+    /// time the tab is seen without one, as a SQL tab's Run does. A connection the user
+    /// disconnects later stays disconnected.
+    pub(crate) fn auto_connect_tabs(&mut self) {
+        let wanted: Vec<(u64, String)> = self
+            .dock
+            .iter_all_tabs()
+            .filter(|(_, t)| {
+                t.redis.is_some() || t.object.is_some() || t.doc.is_some() || t.admin.is_some()
+            })
+            .filter_map(|(_, t)| Some((t.key, t.conn.clone()?)))
+            .filter(|(key, _)| !self.auto_connected.contains(key))
+            .collect();
+        for (key, conn) in wanted {
+            self.auto_connected.insert(key);
+            if !self.is_live(&conn) && self.connection(&conn).is_some() {
+                self.connect(&conn);
+            }
+        }
     }
 
     pub(crate) fn is_live(&self, id: &str) -> bool {

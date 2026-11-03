@@ -883,6 +883,23 @@ mod tests {
         wait("the forced disconnect", || fake.open_connections() == 0);
     }
 
+    #[test]
+    fn a_redis_tab_connects_its_connection_once() {
+        let fake = FakeDriver::new(FakeScript::default());
+        let (mut app, _dir) = app_with_fake(fake);
+        let key = app.new_tab(None, Some("c1".into()), "");
+        tab_mut(&mut app.dock, key).unwrap().redis =
+            Some(Box::new(crate::nosql::RedisTab::new(0, ":".into())));
+
+        app.auto_connect_tabs();
+        wait("the connect", || app.is_live("c1"));
+
+        // A disconnect the user asks for later is respected.
+        app.engine.disconnect("c1");
+        app.auto_connect_tabs();
+        assert!(!app.is_live("c1"));
+    }
+
     fn run_in(app: &SqlrApp, key: &SessionKey, sql: &str) {
         let q = app.engine.execute_in(key, None, sql.into(), 100);
         wait(sql, || {
