@@ -234,6 +234,8 @@ pub struct FakeScript {
     /// When set, `execute` fails with `ErrorKind::Connection` for any SQL containing this
     /// text, as if the server had closed the connection.
     pub connection_error_matching: Option<String>,
+    /// Like `connection_error_matching`, but only the first matching statement fails.
+    pub connection_error_once: Option<String>,
     /// The dialect's `ddl_commits_transaction()` (MySQL-like).
     pub ddl_commits_transaction: bool,
     /// The dialect's `error_aborts_transaction()` (PostgreSQL-like).
@@ -331,6 +333,8 @@ struct Shared {
     /// Connections opened so far (each one's id is the count after it opened).
     connections: AtomicUsize,
     admin_calls: Mutex<Vec<String>>,
+    /// `connection_error_once` already fired.
+    once_fired: AtomicBool,
 }
 
 struct Live {
@@ -682,6 +686,7 @@ impl FakeDriver {
                 dml_calls: AtomicUsize::new(0),
                 connections: AtomicUsize::new(0),
                 admin_calls: Mutex::new(Vec::new()),
+                once_fired: AtomicBool::new(false),
             }),
         })
     }
@@ -1023,6 +1028,15 @@ impl RelationalConn for FakeConnection {
         }
         if let Some(pattern) = &self.shared.script.connection_error_matching
             && sql.contains(pattern.as_str())
+        {
+            return Err(DriverError::new(
+                ErrorKind::Connection,
+                "server closed the connection unexpectedly",
+            ));
+        }
+        if let Some(pattern) = &self.shared.script.connection_error_once
+            && sql.contains(pattern.as_str())
+            && !self.shared.once_fired.swap(true, Ordering::SeqCst)
         {
             return Err(DriverError::new(
                 ErrorKind::Connection,

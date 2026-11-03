@@ -1595,6 +1595,8 @@ struct ResultEntry {
     settled: Arc<Notify>,
     /// A read that opens no Manual transaction ([`Engine::read_in`]).
     outside_tx: bool,
+    /// The query was already run again on a fresh connection after a connection error.
+    retried: bool,
 }
 
 /// What a native tool needs from a connection, cloned out of [`Inner`].
@@ -2047,6 +2049,7 @@ impl Shared {
                     recorded: false,
                     settled: Arc::new(Notify::new()),
                     outside_tx: false,
+                    retried: false,
                 },
             );
         }
@@ -2190,6 +2193,7 @@ impl Shared {
                     recorded: false,
                     settled: settled.clone(),
                     outside_tx,
+                    retried: false,
                 },
             );
             (q, connected)
@@ -2682,9 +2686,59 @@ impl Shared {
             self.finish(q, status);
             return;
         }
-        self.run_statement(q, &key, &io, &conn, &sql, &mut slot)
+        let retry = self
+            .run_statement(q, &key, &io, &conn, &sql, &mut slot)
             .await;
         self.clear_active(&key, &io, q);
+        if retry {
+            drop(slot);
+            self.rerun_on_new_connection(q, &key, database);
+        }
+    }
+
+    /// Whether `q` may still be run again after a connection error.
+    fn may_retry(&self, q: QueryId) -> bool {
+        self.inner
+            .lock()
+            .results
+            .get(&q)
+            .is_some_and(|e| !e.retried)
+    }
+
+    /// Runs `q` again on a fresh connection of its session: the one it started on was
+    /// closed by the server while idle, and the statement never took effect.
+    fn rerun_on_new_connection(
+        self: &Arc<Self>,
+        q: QueryId,
+        key: &SessionKey,
+        database: Option<String>,
+    ) {
+        let io = {
+            let mut inner = self.inner.lock();
+            let io = self.live_or_reopen(&mut inner, key);
+            if let (Some(io), Some(entry)) = (&io, inner.results.get_mut(&q)) {
+                entry.io = Some(io.clone());
+                entry.retried = true;
+            }
+            io
+        };
+        let Some(io) = io else {
+            self.finish(q, QueryStatus::Failed(not_connected()));
+            return;
+        };
+        self.add_message(
+            q,
+            RunMessage::new(
+                MessageLevel::Warning,
+                "The connection was lost; reconnected and ran the statement again",
+            ),
+        );
+        self.send(Command::Execute {
+            q,
+            ticket: io.issue_ticket(),
+            database,
+            io,
+        });
     }
 
     /// Runs `sql` under the session's transaction rules: refused when the session is
@@ -2698,11 +2752,11 @@ impl Shared {
         conn: &Arc<dyn Connection>,
         sql: &str,
         slot: &mut StreamSlot,
-    ) {
+    ) -> bool {
         let Some(rel) = conn.relational() else {
             let e = DriverError::new(ErrorKind::Unsupported, "this connection does not run SQL");
             self.finish(q, QueryStatus::Failed(e));
-            return;
+            return false;
         };
         let dialect = rel.dialect();
         let syntax = dialect.syntax();
@@ -2730,7 +2784,7 @@ impl Shared {
                     "This driver does not support transaction controls",
                 )),
             );
-            return;
+            return false;
         }
         let script_class = syntax.classify_script(sql);
         let rules = TxRules {
@@ -2740,7 +2794,7 @@ impl Shared {
             savepoints_replace: dialect.savepoint_names_replace(),
             savepoint_opens: dialect.savepoint_starts_transaction(),
         };
-        let (read_only, begin, elsewhere) = {
+        let (read_only, begin, elsewhere, was_open) = {
             let mut inner = self.inner.lock();
             let outside_tx = inner.results.get(&q).is_some_and(|e| e.outside_tx)
                 && stmt.class == sqlr_core::StatementClass::Read;
@@ -2757,15 +2811,16 @@ impl Shared {
                         s.tx.read_only,
                         !outside_tx && s.tx.needs_begin(&stmt, rules),
                         elsewhere,
+                        s.tx.is_open(),
                     )
                 }
-                None => (false, false, None),
+                None => (false, false, None, false),
             }
         };
         if read_only && script_class.modifies() {
             let e = DriverError::new(ErrorKind::Permission, READ_ONLY);
             self.finish(q, QueryStatus::Failed(e));
-            return;
+            return false;
         }
         if let Some(db) = elsewhere {
             let e = DriverError::new(
@@ -2773,7 +2828,7 @@ impl Shared {
                 format!("A transaction is open on {db}; commit or roll back first"),
             );
             self.finish(q, QueryStatus::Failed(e));
-            return;
+            return false;
         }
         if begin {
             match run_sql(conn, dialect.begin_sql()).await {
@@ -2792,8 +2847,12 @@ impl Shared {
                 }
                 Err(e) => {
                     let lost = self.on_error(key, io, &e);
+                    // Nothing ran: a connection the server closed while idle is replaced.
+                    if e.kind == ErrorKind::Connection && self.may_retry(q) {
+                        return true;
+                    }
                     self.finish_with(q, error_status(e), lost.into_iter().collect());
-                    return;
+                    return false;
                 }
             }
         }
@@ -2804,6 +2863,16 @@ impl Shared {
             .set_statement_savepoint(key, io, conn, &stmt, rules, first)
             .await;
         let outcome = rel.execute(sql).await;
+        // A read on a connection the server closed while idle is run again on a new one.
+        if let Err(e) = &outcome
+            && e.kind == ErrorKind::Connection
+            && stmt.class == sqlr_core::StatementClass::Read
+            && !was_open
+            && self.may_retry(q)
+        {
+            self.on_error(key, io, e);
+            return true;
+        }
         // §7.8: a DDL statement makes the cached catalog stale.
         if outcome.is_ok() && dialect.syntax().is_ddl(sql) {
             self.invalidate_catalog(&key.conn);
@@ -2870,6 +2939,7 @@ impl Shared {
                 self.finish_with(q, error_status(e), notes);
             }
         }
+        false
     }
 
     /// Sets the statement savepoint before a user statement in an open transaction on a

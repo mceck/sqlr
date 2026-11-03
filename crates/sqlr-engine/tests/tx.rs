@@ -565,6 +565,40 @@ fn read_only_runs_the_dialect_sql_and_reapplies_it() {
 }
 
 #[test]
+fn a_read_on_a_dead_connection_runs_again_on_a_new_one() {
+    let script = FakeScript {
+        connection_error_once: Some("select 1".into()),
+        ..writes()
+    };
+    let (engine, fake, key) = setup(script, dev());
+    let q = engine.execute_in(&key, None, "select 1".into(), 100);
+    assert!(matches!(settled(&engine, q), QueryStatus::Ready { .. }));
+    assert_eq!(fake.executed(), ["select 1", "select 1"]);
+    let messages = engine.result(q).unwrap().read().messages.clone();
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.text.contains("reconnected and ran the statement again")),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn a_write_on_a_dead_connection_is_not_run_again() {
+    let script = FakeScript {
+        connection_error_once: Some("insert".into()),
+        ..writes()
+    };
+    let (engine, fake, key) = setup(script, dev());
+    assert!(matches!(
+        run(&engine, &key, "insert into t values (1)"),
+        QueryStatus::Failed(e) if e.kind == ErrorKind::Connection
+    ));
+    assert_eq!(fake.executed(), ["insert into t values (1)"]);
+    ok(&engine, &key, "insert into t values (2)");
+}
+
+#[test]
 fn per_tab_sessions_run_concurrently() {
     let tree = vec![Node {
         path: NodePath(vec!["public".into()]),
