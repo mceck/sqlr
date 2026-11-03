@@ -160,7 +160,7 @@ DROP is offered only when the Driver drops that kind; roles have no templates. T
 | Sequence, index, trigger | Definition, DDL |
 | Schema, database | Properties, Permissions, DDL |
 
-- **Columns**: a virtualized table of columns (a thousand columns stay cheap) with add, duplicate, delete and move (move only when the Driver reorders columns). Each column has name, type (with the Driver's type suggestions), nullability, default, generated expression, identity, collation, comment and MySQL's `ON UPDATE`.
+- **Columns**: a virtualized table of columns (a thousand columns stay cheap) with add, duplicate, delete and move (move only when the Driver reorders columns). Each column has name, type (with the Driver's type suggestions), a PK flag, nullability, default, generated expression, identity, collation, comment and MySQL's `ON UPDATE`. The PK flag adds the column to the table's primary key constraint (creating it, and making the column `NOT NULL`) or removes it (dropping an empty key); it stays in step with the Constraints sub-tab. Every field is one line: long default and generated expressions scroll inside their field instead of wrapping.
 - **Indexes**: columns or expressions with direction and prefix length, unique, method, `INCLUDE` columns and a partial predicate.
 - **Constraints**: primary key, unique and check constraints.
 - **Foreign keys**: the target table picked from the Catalog, then column pairs and `ON DELETE` / `ON UPDATE` actions (no action, restrict, cascade, set null, set default).

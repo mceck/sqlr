@@ -569,7 +569,9 @@ pub(crate) fn expr_field(
     let mut text = value.clone().unwrap_or_default();
     let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap: f32| {
         let mut job = highlighted(ui.ctx(), syntax, buf.as_str());
-        job.wrap.max_width = wrap;
+        // A single-line field never wraps: it scrolls instead.
+        let _ = wrap;
+        job.wrap.max_width = f32::INFINITY;
         ui.fonts_mut(|f| f.layout_job(job))
     };
     let response = crate::text_menu::text_edit(

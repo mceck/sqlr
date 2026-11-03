@@ -2,7 +2,7 @@
 //! built, so a thousand columns stay cheap), with add, duplicate, delete and move.
 
 use egui::{ComboBox, RichText, TextEdit};
-use sqlr_core::{ColumnDef, Identity, ObjectEditing, SqlSyntax, TableDef};
+use sqlr_core::{ColumnDef, ConstraintDef, Identity, ObjectEditing, SqlSyntax, TableDef};
 
 use super::{caption, expr_field, known_type, optional_text};
 use crate::theme::{self, Spacing, icons};
@@ -12,12 +12,13 @@ pub(crate) const ROW: f32 = 26.0;
 
 const W_NUM: f32 = 28.0;
 const W_NAME: f32 = 150.0;
-const W_TYPE: f32 = 130.0;
+const W_TYPE: f32 = 170.0;
+const W_PK: f32 = 36.0;
 const W_NULL: f32 = 44.0;
 /// The type field and its picker button.
 const W_TYPE_CELL: f32 = W_TYPE + 20.0 + Spacing::S;
-const W_EXPR: f32 = 140.0;
-const W_IDENTITY: f32 = 110.0;
+const W_EXPR: f32 = 170.0;
+const W_IDENTITY: f32 = 130.0;
 const W_COMMENT: f32 = 180.0;
 
 fn identity_label(identity: Option<Identity>) -> &'static str {
@@ -144,6 +145,7 @@ pub(super) fn columns_tab(
                 head(ui, "#", W_NUM);
                 head(ui, "Name", W_NAME);
                 head(ui, "Type", W_TYPE_CELL);
+                head(ui, "PK", W_PK);
                 head(ui, "Null", W_NULL);
                 head(ui, "Default", W_EXPR);
                 head(ui, "Generated", W_EXPR);
@@ -172,15 +174,25 @@ pub(super) fn columns_tab(
                     ui.set_min_height(ROW);
                     ui.spacing_mut().item_spacing.x = Spacing::S;
                     let duplicate = names[..i].contains(&names[i]);
+                    let old_name = names[i].clone();
+                    let mut pk = in_primary_key(table, &old_name);
+                    let was_pk = pk;
                     column_row(
                         ui,
                         i,
                         &mut table.columns[i],
+                        &mut pk,
                         selected,
                         duplicate,
                         editing,
                         syntax,
                     );
+                    let new_name = table.columns[i].name.clone();
+                    if pk != was_pk {
+                        set_primary_key(table, &new_name, pk);
+                    } else if new_name != old_name && was_pk {
+                        rename_in_primary_key(table, &old_name, &new_name);
+                    }
                 },
             );
         }
@@ -200,10 +212,70 @@ fn cell(ui: &mut egui::Ui, width: f32, height: f32, add: impl FnOnce(&mut egui::
     );
 }
 
+/// Whether `name` is one of the primary key columns.
+fn in_primary_key(table: &TableDef, name: &str) -> bool {
+    table
+        .primary_key()
+        .is_some_and(|pk| pk.iter().any(|c| c == name))
+}
+
+/// Adds `name` to the primary key (creating it) or removes it (dropping an empty key).
+fn set_primary_key(table: &mut TableDef, name: &str, on: bool) {
+    let at = table
+        .constraints
+        .iter()
+        .position(|c| matches!(c, ConstraintDef::PrimaryKey { .. }));
+    match (at, on) {
+        (Some(i), true) => {
+            if let ConstraintDef::PrimaryKey { columns, .. } = &mut table.constraints[i]
+                && !columns.iter().any(|c| c == name)
+            {
+                columns.push(name.to_string());
+            }
+        }
+        (Some(i), false) => {
+            let empty = match &mut table.constraints[i] {
+                ConstraintDef::PrimaryKey { columns, .. } => {
+                    columns.retain(|c| c != name);
+                    columns.is_empty()
+                }
+                _ => false,
+            };
+            if empty {
+                table.constraints.remove(i);
+            }
+        }
+        (None, true) => table.constraints.insert(
+            0,
+            ConstraintDef::PrimaryKey {
+                name: None,
+                columns: vec![name.to_string()],
+            },
+        ),
+        (None, false) => {}
+    }
+}
+
+/// Keeps the primary key pointing at a renamed column.
+fn rename_in_primary_key(table: &mut TableDef, old: &str, new: &str) {
+    for c in &mut table.constraints {
+        if let ConstraintDef::PrimaryKey { columns, .. } = c {
+            for col in columns.iter_mut().filter(|c| *c == old) {
+                *col = new.to_string();
+            }
+        }
+    }
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one grid row; each argument is distinct state"
+)]
 fn column_row(
     ui: &mut egui::Ui,
     i: usize,
     c: &mut ColumnDef,
+    pk: &mut bool,
     selected: &mut Option<usize>,
     duplicate: bool,
     editing: &ObjectEditing,
@@ -291,6 +363,11 @@ fn column_row(
                 });
         });
     });
+    cell(ui, W_PK, ROW, |ui| {
+        if ui.checkbox(pk, "").on_hover_text("Primary key").changed() && *pk {
+            c.nullable = false;
+        }
+    });
     cell(ui, W_NULL, ROW, |ui| {
         ui.checkbox(&mut c.nullable, "").on_hover_text("Nullable");
     });
@@ -319,5 +396,48 @@ fn column_row(
         cell(ui, W_COMMENT, ROW, |ui| {
             optional_text(ui, &mut c.comment, W_COMMENT, "comment");
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlr_core::TableRef;
+
+    fn table() -> TableDef {
+        let mut t = TableDef::new(TableRef {
+            database: None,
+            schema: None,
+            name: "t".into(),
+        });
+        for n in ["a", "b"] {
+            t.columns.push(ColumnDef {
+                name: n.into(),
+                ..Default::default()
+            });
+        }
+        t
+    }
+
+    #[test]
+    fn flag_creates_extends_and_drops_the_primary_key() {
+        let mut t = table();
+        set_primary_key(&mut t, "a", true);
+        set_primary_key(&mut t, "b", true);
+        assert_eq!(
+            t.primary_key(),
+            Some(&["a".to_string(), "b".to_string()][..])
+        );
+        set_primary_key(&mut t, "a", false);
+        set_primary_key(&mut t, "b", false);
+        assert!(t.primary_key().is_none());
+    }
+
+    #[test]
+    fn rename_keeps_the_key() {
+        let mut t = table();
+        set_primary_key(&mut t, "a", true);
+        rename_in_primary_key(&mut t, "a", "z");
+        assert!(in_primary_key(&t, "z"));
     }
 }
