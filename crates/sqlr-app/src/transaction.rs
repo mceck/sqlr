@@ -900,6 +900,13 @@ mod tests {
         assert!(!app.is_live("c1"));
     }
 
+    #[test]
+    fn a_blank_tab_takes_the_only_connection() {
+        let fake = FakeDriver::new(FakeScript::default());
+        let (mut app, _dir) = app_with_fake(fake);
+        assert_eq!(app.default_tab_connection().as_deref(), Some("c1"));
+    }
+
     fn run_in(app: &SqlrApp, key: &SessionKey, sql: &str) {
         let q = app.engine.execute_in(key, None, sql.into(), 100);
         wait(sql, || {

@@ -1109,7 +1109,8 @@ impl SqlrApp {
                     }
                 }
                 TabCommand::Add => {
-                    self.new_tab(None, None, "");
+                    let conn = self.default_tab_connection();
+                    self.new_tab(None, conn, "");
                 }
                 TabCommand::Redis { tab, command } => self.run_redis_command(tab, command),
                 TabCommand::Object { key, action } => self.object_action(key, action),
@@ -1677,6 +1678,30 @@ impl SqlrApp {
         }
         self.engine.connect(cfg, secrets, profile);
         true
+    }
+
+    /// The connection a tab without one takes: the one selected in the explorer, else the
+    /// active SQL tab's, else the only saved connection that runs SQL.
+    pub(crate) fn default_tab_connection(&mut self) -> Option<String> {
+        let sql = |app: &Self, id: &str| app.connection(id).is_some() && !app.is_nosql(id);
+        if let Some((id, _)) = self.tree.selected.clone()
+            && sql(self, &id)
+        {
+            return Some(id);
+        }
+        if let Some(key) = self.active_key()
+            && let Some(id) = self.tab(key).and_then(|t| t.conn.clone())
+            && sql(self, &id)
+        {
+            return Some(id);
+        }
+        let mut sql_connections = self
+            .connections
+            .iter()
+            .map(|c| c.id.clone())
+            .filter(|id| sql(self, id));
+        let only = sql_connections.next()?;
+        sql_connections.next().is_none().then_some(only)
     }
 
     /// Connects the connection of a Redis, object, document or administration tab the first

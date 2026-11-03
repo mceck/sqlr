@@ -1811,9 +1811,14 @@ impl SqlrApp {
 
     /// The tab's connection, or `None` (and a notice) when it has none.
     fn runnable_conn(&mut self, key: u64) -> Option<String> {
-        let conn = self.tab(key)?.conn.clone();
+        let mut conn = self.tab(key)?.conn.clone();
         if conn.is_none() {
-            self.notify_as(ToastKind::Info, "Choose a connection for this tab first");
+            // A blank tab runs on the connection a new tab would have taken.
+            conn = self.default_tab_connection();
+            match &conn {
+                Some(id) => self.set_tab_conn(key, Some(id.clone())),
+                None => self.notify_as(ToastKind::Info, "Choose a connection for this tab first"),
+            }
         }
         conn
     }
