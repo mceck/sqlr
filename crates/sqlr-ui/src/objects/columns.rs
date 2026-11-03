@@ -142,36 +142,46 @@ pub(super) fn columns_tab(
     });
     ui.add_space(Spacing::S);
 
-    // Header band.
-    let header = ui.available_width();
-    egui::Frame::new()
-        .fill(p.bg_subtle)
-        .corner_radius(Spacing::RADIUS_S)
+    // Header band: it follows the rows' horizontal scroll (the offset of the previous frame).
+    let visible = ui.available_width();
+    let width = visible.max(row_width(editing.comments));
+    let offset_id = egui::Id::new("object_columns_x");
+    let x = ui.data(|d| d.get_temp::<f32>(offset_id)).unwrap_or(0.0);
+    egui::ScrollArea::horizontal()
+        .id_salt("object_columns_head")
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+        .scroll_source(egui::scroll_area::ScrollSource::NONE)
+        .horizontal_scroll_offset(x)
         .show(ui, |ui| {
-            ui.set_min_width(header - 2.0 * ui.spacing().item_spacing.x);
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = Spacing::S;
-                let head = |ui: &mut egui::Ui, text: &str, width: f32| {
-                    cell(ui, width, 22.0, |ui| {
-                        ui.label(
-                            RichText::new(text.to_uppercase())
-                                .small()
-                                .color(p.text_muted),
-                        );
+            egui::Frame::new()
+                .fill(p.bg_subtle)
+                .corner_radius(Spacing::RADIUS_S)
+                .show(ui, |ui| {
+                    ui.set_min_width(width);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = Spacing::S;
+                        let head = |ui: &mut egui::Ui, text: &str, width: f32| {
+                            cell(ui, width, 22.0, |ui| {
+                                ui.label(
+                                    RichText::new(text.to_uppercase())
+                                        .small()
+                                        .color(p.text_muted),
+                                );
+                            });
+                        };
+                        head(ui, "#", W_NUM);
+                        head(ui, "Name", W_NAME);
+                        head(ui, "Type", W_TYPE_CELL);
+                        head(ui, "PK", W_PK);
+                        head(ui, "Null", W_NULL);
+                        head(ui, "Default", W_EXPR);
+                        head(ui, "Generated", W_EXPR);
+                        head(ui, "Identity", W_IDENTITY);
+                        if editing.comments {
+                            head(ui, "Comment", W_COMMENT);
+                        }
                     });
-                };
-                head(ui, "#", W_NUM);
-                head(ui, "Name", W_NAME);
-                head(ui, "Type", W_TYPE_CELL);
-                head(ui, "PK", W_PK);
-                head(ui, "Null", W_NULL);
-                head(ui, "Default", W_EXPR);
-                head(ui, "Generated", W_EXPR);
-                head(ui, "Identity", W_IDENTITY);
-                if editing.comments {
-                    head(ui, "Comment", W_COMMENT);
-                }
-            });
+                });
         });
 
     let mut area = egui::ScrollArea::both()
@@ -183,10 +193,10 @@ pub(super) fn columns_tab(
     let names: Vec<String> = table.columns.iter().map(|c| c.name.clone()).collect();
     // Rows touch, so row `i` starts at `i * ROW` (what `scroll_to` relies on).
     ui.spacing_mut().item_spacing.y = 0.0;
-    area.show_rows(ui, ROW, table.columns.len(), |ui, range| {
+    let out = area.show_rows(ui, ROW, table.columns.len(), |ui, range| {
         for i in range {
             ui.allocate_ui_with_layout(
-                egui::vec2(ui.available_width().max(row_width(editing.comments)), ROW),
+                egui::vec2(width, ROW),
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
                     ui.set_min_height(ROW);
@@ -215,6 +225,11 @@ pub(super) fn columns_tab(
             );
         }
     });
+    let new_x = out.state.offset.x;
+    if (new_x - x).abs() > 0.5 {
+        ui.data_mut(|d| d.insert_temp(offset_id, new_x));
+        ui.ctx().request_repaint();
+    }
 }
 
 /// A fixed-width, vertically centered cell, so header and rows line up.
