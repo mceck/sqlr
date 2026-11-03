@@ -663,6 +663,7 @@ impl Shared {
                 conn_id: conn_id.to_string(),
                 path,
                 io,
+                soft: false,
             });
         }
     }

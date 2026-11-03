@@ -80,6 +80,9 @@ pub(crate) enum Command {
         conn_id: String,
         path: NodePath,
         io: Arc<SessionIo>,
+        /// A loaded node browsed again: its children stay shown until the new ones arrive,
+        /// and an error leaves them as they were.
+        soft: bool,
     },
     /// Runs a task on the runtime (object loads and DDL applies, `crate::objects`).
     Spawn(std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>),
@@ -711,6 +714,7 @@ impl Engine {
                         conn_id: conn_id.to_string(),
                         path,
                         io,
+                        soft: false,
                     });
                 }
             }
@@ -2374,7 +2378,12 @@ impl Shared {
                 self.connect(key, driver, cfg, secrets, io, read_only, tunnel)
                     .await
             }
-            Command::Browse { conn_id, path, io } => self.browse(conn_id, path, io).await,
+            Command::Browse {
+                conn_id,
+                path,
+                io,
+                soft,
+            } => self.browse(conn_id, path, io, soft).await,
             Command::Spawn(task)
             | Command::JobTask { task, .. }
             | Command::DocTask { task, .. } => task.await,
@@ -2573,7 +2582,13 @@ impl Shared {
         }
     }
 
-    async fn browse(self: Arc<Self>, conn_id: String, path: NodePath, io: Arc<SessionIo>) {
+    async fn browse(
+        self: Arc<Self>,
+        conn_id: String,
+        path: NodePath,
+        io: Arc<SessionIo>,
+        soft: bool,
+    ) {
         let key = SessionKey::meta(&conn_id);
         let cancel = Arc::new(Notify::new());
         let operation = self.operations.start(
@@ -2615,9 +2630,13 @@ impl Shared {
                 .explorer
                 .get_mut(&conn_id)
                 .and_then(|cache| cache.get_mut(&path))
-                && *entry == LoadState::Loading
             {
-                *entry = state;
+                match (&*entry, &state) {
+                    (LoadState::Loading, _) => *entry = state,
+                    // A soft refresh replaces what is shown only by a successful load.
+                    (LoadState::Ready(_), LoadState::Ready(_)) if soft => *entry = state,
+                    _ => {}
+                }
             }
         }
         self.repaint();
@@ -2881,9 +2900,10 @@ impl Shared {
             self.on_error(key, io, e);
             return true;
         }
-        // §7.8: a DDL statement makes the cached catalog stale.
+        // §7.8: a DDL statement makes the cached catalog stale, and the explorer tree too.
         if outcome.is_ok() && dialect.syntax().is_ddl(sql) {
             self.invalidate_catalog(&key.conn);
+            self.refresh_loaded_nodes(&key.conn);
         }
         let mut notes = Vec::new();
         let undone = match &outcome {
@@ -3568,6 +3588,34 @@ impl Shared {
         }
     }
 
+    /// Browses again the explorer nodes of `conn_id` that are loaded (the shallowest
+    /// [`REFRESH_NODES`] of them), keeping what they show until the new children arrive.
+    pub(crate) fn refresh_loaded_nodes(self: &Arc<Self>, conn_id: &str) {
+        let Some(io) = self.live_io(conn_id) else {
+            return;
+        };
+        let mut paths: Vec<NodePath> = {
+            let inner = self.inner.lock();
+            inner.explorer.get(conn_id).map_or_else(Vec::new, |cache| {
+                cache
+                    .iter()
+                    .filter(|(_, state)| matches!(state, LoadState::Ready(_)))
+                    .map(|(path, _)| path.clone())
+                    .collect()
+            })
+        };
+        paths.sort_by_key(|p| p.segments().len());
+        paths.truncate(REFRESH_NODES);
+        for path in paths {
+            self.send(Command::Browse {
+                conn_id: conn_id.to_string(),
+                path,
+                io: io.clone(),
+                soft: true,
+            });
+        }
+    }
+
     /// Pings every connected session that has been quiet for [`IDLE_PING`] and holds
     /// neither a transaction nor an open stream; a dead connection fails the session now,
     /// so the next statement reconnects instead of failing on it.
@@ -3613,6 +3661,9 @@ impl Shared {
         }
     }
 }
+
+/// How many loaded explorer nodes a DDL statement browses again.
+const REFRESH_NODES: usize = 50;
 
 /// How long a session stays quiet before the engine pings its connection.
 const IDLE_PING: Duration = Duration::from_secs(60);
