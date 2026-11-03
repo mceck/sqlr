@@ -12,7 +12,7 @@ pub(crate) const ROW: f32 = 26.0;
 
 const W_NUM: f32 = 28.0;
 const W_NAME: f32 = 150.0;
-const W_TYPE: f32 = 170.0;
+const W_TYPE: f32 = 130.0;
 const W_PK: f32 = 36.0;
 const W_NULL: f32 = 44.0;
 /// The type field and its picker button.
@@ -201,15 +201,16 @@ pub(super) fn columns_tab(
 
 /// A fixed-width, vertically centered cell, so header and rows line up.
 fn cell(ui: &mut egui::Ui, width: f32, height: f32, add: impl FnOnce(&mut egui::Ui)) {
-    ui.allocate_ui_with_layout(
-        egui::vec2(width, height),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            ui.set_width(width);
-            ui.spacing_mut().item_spacing.x = Spacing::S;
-            add(ui);
-        },
+    // The cell takes exactly `width`, whatever its content measures, so columns never drift.
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
+    child.set_clip_rect(rect.intersect(ui.clip_rect()));
+    child.spacing_mut().item_spacing.x = Spacing::S;
+    add(&mut child);
 }
 
 /// Whether `name` is one of the primary key columns.
