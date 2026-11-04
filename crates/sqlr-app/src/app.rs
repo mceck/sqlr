@@ -1871,9 +1871,10 @@ impl SqlrApp {
                     .transaction(&session)
                     .is_some_and(|t| t.phase != sqlr_engine::TxPhase::Idle)
             {
-                self.notify_as(
-                    ToastKind::Info,
-                    "Commit or roll back this tab's transaction before switching",
+                // Ends the tab's transaction (asking when it wrote), then switches.
+                self.ask_end(
+                    crate::transaction::EndTarget::SwitchConnection { tab: key, conn },
+                    vec![session],
                 );
                 return;
             }

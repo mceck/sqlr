@@ -997,19 +997,17 @@ fn commit_rollback_buttons_follow_state() {
 }
 
 #[test]
-fn close_tab_with_open_transaction_asks() {
+fn close_tab_with_a_transaction_that_wrote_nothing_rolls_back_silently() {
     let dir = tempfile::tempdir().unwrap();
     let (mut h, driver) = harness_with_profile(&dir, "production");
     open_orders(&mut h);
     step_until(&mut h, "the transaction", |h| !is_disabled(h, "Commit"));
     press(&mut h, Modifiers::COMMAND, Key::W);
-    wait_for_label(&mut h, "Roll back");
-    assert_eq!(h.state().tab_titles(), ["Query 1", "orders"], "still open");
-    h.get_by_label("Roll back").click();
     step_until(&mut h, "the tab to close", |h| {
         h.state().tab_titles() == ["Query 1"]
     });
     assert!(driver.executed().iter().any(|s| s == "ROLLBACK"));
+    assert!(h.query_by_label("Roll back").is_none(), "nothing was asked");
 }
 
 #[test]

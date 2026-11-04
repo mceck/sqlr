@@ -33,6 +33,11 @@ pub(crate) enum EndTarget {
     AutoCommit(SessionKey),
     /// An idle transaction: nothing else happens.
     Idle(SessionKey),
+    /// Point a tab at another connection.
+    SwitchConnection {
+        tab: u64,
+        conn: Option<String>,
+    },
 }
 
 /// A prompt to commit or roll back open transactions, and then do `target`.
@@ -490,6 +495,7 @@ impl SqlrApp {
             }
             EndTarget::AutoCommit(key) => self.engine.set_commit_mode(&key, CommitMode::Auto),
             EndTarget::Idle(_) => {}
+            EndTarget::SwitchConnection { tab, conn } => self.set_tab_conn(tab, conn),
         }
     }
 
@@ -905,6 +911,38 @@ mod tests {
         let fake = FakeDriver::new(FakeScript::default());
         let (mut app, _dir) = app_with_fake(fake);
         assert_eq!(app.default_tab_connection().as_deref(), Some("c1"));
+    }
+
+    #[test]
+    fn switching_a_tab_ends_its_transaction_and_continues() {
+        let fake = FakeDriver::new(FakeScript {
+            affected: Some(1),
+            ..Default::default()
+        });
+        let (mut app, _dir) = app_with_fake(fake);
+        let tab = app.new_tab(None, Some("c1".into()), "");
+        app.connect("c1");
+        wait("the connect", || app.is_live("c1"));
+        let session = app.engine.session("c1", Some(tab));
+        run_in(&app, &session, "begin");
+        run_in(&app, &session, "insert into t values (1)");
+
+        app.set_tab_conn(tab, None);
+
+        let pending = app.ending.as_ref().expect("the user is asked first");
+        assert_eq!(pending.chosen, None);
+        assert_eq!(app.tab(tab).unwrap().conn.as_deref(), Some("c1"));
+
+        app.answer_end(true);
+        wait("the commit", || {
+            app.engine
+                .transaction(&session)
+                .is_some_and(|t| t.phase == TxPhase::Idle)
+        });
+        app.end_prompts(&egui::Context::default(), false);
+
+        assert!(app.ending.is_none());
+        assert_eq!(app.tab(tab).unwrap().conn, None, "the switch went on");
     }
 
     fn run_in(app: &SqlrApp, key: &SessionKey, sql: &str) {

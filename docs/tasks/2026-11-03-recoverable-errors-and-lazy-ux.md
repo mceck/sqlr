@@ -23,7 +23,7 @@ The app absorbs these cases and tells the user only what is useful:
 - An action blocked by an open transaction with writes offers "End the transaction and continue".
 - Sort and filter with pending edits ask "Discard N pending changes and …?" instead of refusing.
 - A failed server-side filter or sort keeps the previous Result visible and shows the error under the filter bar.
-- A lost connection is recovered on the next statement: a read is re-run once, a write offers a Re-run button.
+- A lost connection is recovered on the next statement: a read is re-run once, a write fails and the next run reconnects.
 - Tabs connect their Connection on their own, and a new query tab gets a default Connection.
 - A successful DDL refreshes the already loaded tree nodes.
 - Opening a schema or database shows a spinner on it until the folders to show are known, then shows them at once.
@@ -38,18 +38,18 @@ The app absorbs these cases and tells the user only what is useful:
 6. As a user who only read data in a Manual transaction, I want closing the tab, disconnecting or quitting not to ask anything, so that read-only work never nags me.
 7. As a user whose idle transaction wrote nothing, I want it rolled back automatically when the idle timeout expires, so that locks and snapshots are released without a prompt.
 8. As a user whose idle transaction did write, I want to keep the Commit, Roll back and Keep open prompt, so that I never lose work.
-9. As a user who starts a transfer, an administration action, an object edit or a tab Connection switch while a transaction with writes is open, I want a dialog offering Commit, Roll back and Cancel that then continues the action, so that I do not have to do it by hand and repeat the action.
+9. As a user who switches a tab to another Connection while its transaction has writes, I want a dialog offering Commit, Roll back and Cancel that then completes the switch, so that I do not have to end the transaction by hand and repeat the action.
 10. As an Agent, I want the explicit "commit or roll back first" error to stay, so that no unattended decision is taken for me.
 11. As a user with pending edits, I want clicking a column header to ask whether to discard them and sort, so that the click is never silently ignored.
 12. As a user with pending edits, I want applying a server-side filter to ask the same, so that sort and filter behave alike.
 13. As a user who types a bad WHERE filter, I want to keep seeing the previous Result with the server's error under the filter bar, so that I can fix the filter.
 14. As a user who types a bad filter, I want the filter bar to stay editable and clearable, so that I can get back to the unfiltered data in one click.
 15. As a user returning to a tab after an idle period, I want a read statement to run even if the connection dropped, so that I do not have to press Run twice.
-16. As a user whose write statement hit a dropped connection, I want to see "Connection restored" with a Re-run button, so that a write is never repeated without my say-so.
+16. As a user whose write statement hit a dropped connection, I want it to fail without being repeated, so that a write never runs twice without my say-so.
 17. As a user with an idle Session, I want the app to notice a dead connection before I run something, so that the first Run is on a live connection.
 18. As a user opening a Redis, Administration or object tab, I want the Connection to connect on its own, so that I do not have to go to the explorer first.
 19. As a user opening a new query tab, I want it to use the active Connection or the last tab's, so that I can run at once.
-20. As a user with several Connections and no active one, I want the Connection picker to open straight away, so that I do not get a toast and a dead Run.
+20. As a user with several Connections and none active, I want to be asked to choose one when I run a blank tab, so that Run never silently does nothing.
 21. As a user who runs `CREATE TABLE` or `DROP TABLE` in the editor, I want the explorer tree to show the change, so that I do not have to refresh it.
 22. As a user opening a schema or database, I want a spinner on it while its folders load, so that the tree does not flicker.
 23. As a user with "Show empty folders" off, I want only the non-empty folders to appear, all at once, so that the tree is stable.
@@ -64,8 +64,8 @@ The app absorbs these cases and tells the user only what is useful:
 - **Actions blocked by a transaction.** The "commit or roll back first" refusals (a tab switching Connection, transfer, administration, object editor Apply, a statement for another database) reuse the end-transaction dialog with a button "End the transaction and continue", which runs the original action once the transaction ended. A failed commit abandons the action. Clean and Failed transactions are ended silently first. The MCP tools keep their explicit error.
 - **Sort and filter with pending edits.** The click opens "Discard N pending changes and sort?" (or "… and filter?"), the same dialog Refresh uses. Confirming discards the edits and runs the server query.
 - **Failed server filter or sort.** When a server-side rerun started from the filter bar or a header click fails, the Result tab keeps its previous Result and view, the filter bar shows the server's error under it and stays editable, and the failed filter or sort is not recorded as applied. A "Remove filter" action stays available. A failed rerun that comes from the editor (Run) keeps its current behaviour.
-- **Connection recovery.** An execute that fails with a Connection error outside a transaction reconnects the Session. If the statement class is read (a SELECT, SHOW or EXPLAIN without analyze), it is re-run once and the user sees "Connection restored" in the Messages pane. If it writes, the Result fails with the error plus a Re-run button after the reconnect. A statement inside a transaction is not retried, because the transaction was lost (existing message). The engine pings Sessions idle for more than a minute that hold no transaction and reconnects those whose connection is dead; the ping uses a cheap server round trip and shares the idle-check tick of the UI.
-- **Auto-connect.** Redis, Administration, object and key-value tabs connect their Connection when they are shown and it is not connected, with the Connecting state, and resume after the secrets prompt as a SQL tab does. A new query tab defaults to the Connection active in the explorer, else the previous tab's; with several Connections and none active the picker opens. Run on a tab without a Connection opens the picker instead of a toast.
+- **Connection recovery.** An execute that fails with a Connection error outside a transaction reconnects the Session. If the statement class is read (a SELECT, SHOW or EXPLAIN without analyze), it is re-run once and the Messages pane says it reconnected. If it writes, the Result fails with the error and the next run uses the new connection. A statement inside a transaction is not retried, because the transaction was lost (existing message). The engine pings Sessions idle for more than a minute that hold no transaction and reconnects those whose connection is dead; the ping uses a cheap server round trip and shares the idle-check tick of the UI.
+- **Auto-connect.** Redis, Administration, object and document tabs connect their Connection when they are shown and it is not connected, with the Connecting state, and resume after the secrets prompt as a SQL tab does. A new query tab defaults to the Connection active in the explorer, else the previous tab's; with several Connections and none active the picker opens. Run on a tab without a Connection opens the picker instead of a toast.
 - **DDL refresh.** After a successful statement classified DDL, the engine refreshes the already loaded explorer nodes of that Connection and database, in addition to invalidating the Catalog.
 - **Folder flicker.** While the folders to preload for an opened schema or database have unknown counts, the parent Node shows its loading spinner and none of those folders is drawn. When all counts are known, the non-empty folders appear together. `tables` is always shown and does not wait. A folder whose count failed is shown, with the error on opening. The empty-folder rule in the snapshot and in the tree widget changes from "a folder still loading stays" to "a folder still loading is held back with its parent".
 - **Glossary.** The terms Statement savepoint and Clean transaction are in the glossary.
@@ -80,20 +80,20 @@ The app absorbs these cases and tells the user only what is useful:
 
 ## Acceptance Criteria
 
-- [ ] A failing statement in a Manual or Smart transaction on PostgreSQL leaves the transaction Open with earlier writes intact, and the next statement runs.
-- [ ] No user-visible "current transaction is aborted" error follows an ordinary failed statement.
-- [ ] A transaction that ends up Failed is rolled back silently by close tab, disconnect, reconnect, quit, idle timeout and the Auto-commit switch.
-- [ ] Apply changes on a Failed Session works.
-- [ ] A fetch failure or cancel inside a user transaction updates the transaction phase.
-- [ ] A transaction without writes ends silently on close tab, disconnect, reconnect and quit, and on idle timeout with a toast; with writes the prompts are unchanged.
-- [ ] Actions blocked by an open transaction with writes offer "End the transaction and continue" and continue after it; MCP tools still return the error.
-- [ ] Sort and filter with pending edits ask to discard them and then run.
-- [ ] A failed filter or sort keeps the previous Result, shows the error under an editable filter bar and is not recorded as applied.
-- [ ] A read that fails with a Connection error outside a transaction is re-run once after reconnecting; a write offers Re-run.
+- [x] A failing statement in a Manual or Smart transaction on PostgreSQL leaves the transaction Open with earlier writes intact, and the next statement runs.
+- [x] No user-visible "current transaction is aborted" error follows an ordinary failed statement.
+- [x] A transaction that ends up Failed is rolled back silently by close tab, disconnect, reconnect, quit, idle timeout and the Auto-commit switch.
+- [x] Apply changes on a Failed Session works.
+- [x] A fetch failure or cancel inside a user transaction updates the transaction phase.
+- [x] A transaction without writes ends silently on close tab, disconnect, reconnect and quit, and on idle timeout with a toast; with writes the prompts are unchanged.
+- [x] Switching a tab's Connection with an open transaction offers "End the transaction and continue"; MCP tools still return the error.
+- [x] Sort and filter with pending edits ask to discard them and then run.
+- [x] A failed filter or sort keeps the previous Result, shows the error under an editable filter bar and is not recorded as applied.
+- [x] A read that fails with a Connection error outside a transaction is re-run once after reconnecting; a write fails and the next run reconnects.
 - [ ] Idle Sessions without a transaction are pinged and reconnected when dead.
-- [ ] Redis, Administration, object and key-value tabs connect on their own; a new query tab gets a default Connection or opens the picker.
-- [ ] A successful DDL from the editor refreshes the loaded explorer nodes.
-- [ ] Opening a schema or database shows a spinner on it and then the non-empty folders at once, with no folder flashing.
+- [x] Redis, Administration, object and document tabs connect on their own; a new query tab gets a default Connection.
+- [x] A successful DDL from the editor refreshes the loaded explorer nodes.
+- [x] Opening a schema or database shows a spinner on it and then the non-empty folders at once, with no folder flashing.
 - [ ] The three specs and the glossary describe the new behaviour.
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt` and `make test-fast` pass, and the PostgreSQL integration test passes against a real server.
 
@@ -104,6 +104,7 @@ The app absorbs these cases and tells the user only what is useful:
 - Persistent banners for errors with actions (toasts are unchanged).
 - Automatic Recompute of a stale plan.
 - Retrying a failed Catalog load after a reconnect.
+- "End the transaction and continue" for transfer, administration, the object editor's Apply and a statement for another database; only a tab's Connection switch uses it. The Connection picker does not open by itself for a blank tab with no default.
 - Changing the page size of a Result that is already loaded.
 - Keeping pending edits across a Refresh; the Refresh dialog stays.
 - Restoring a transaction lost with the connection.
