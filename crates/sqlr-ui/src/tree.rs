@@ -91,6 +91,14 @@ pub trait SchemaSource {
             _ => None,
         }
     }
+    /// Whether the children of the folder at `path` are still to be loaded, so its count is
+    /// not known yet and may not be known for a while: false once they loaded or failed.
+    fn count_pending(&self, conn: &str, path: &NodePath) -> bool {
+        matches!(
+            self.children(conn, path),
+            Children::Loading | Children::NotLoaded
+        )
+    }
     /// Whether "Open DDL" can show the `CREATE` statement of `node`'s object.
     fn ddl(&self, _conn: &str, _node: &Node) -> bool {
         false
@@ -606,10 +614,7 @@ impl<'a> Flattener<'a, '_> {
                     && nodes.iter().any(|n| {
                         n.hides_when_empty()
                             && n.has_children
-                            && matches!(
-                                self.source.children(conn, &n.path),
-                                Children::Loading | Children::NotLoaded
-                            )
+                            && self.source.count_pending(conn, &n.path)
                     });
                 for node in nodes {
                     if !self.state.show_empty_folders

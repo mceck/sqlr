@@ -185,6 +185,17 @@ impl SchemaSource for TreeSnapshot<'_> {
         }
     }
 
+    fn count_pending(&self, conn: &str, path: &NodePath) -> bool {
+        // A collapsed folder is not copied each frame: the engine knows how its load went.
+        match self.children.get(conn).and_then(|m| m.get(path)) {
+            Some(state) => matches!(state, LoadState::Loading),
+            None => !matches!(
+                self.engine.children(conn, path),
+                Some(LoadState::Ready(_) | LoadState::Failed(_))
+            ),
+        }
+    }
+
     fn ddl(&self, conn: &str, node: &Node) -> bool {
         self.editing.contains_key(conn)
             && self.connected(conn)
