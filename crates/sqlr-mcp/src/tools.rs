@@ -879,7 +879,14 @@ async fn run_sql_query(
     };
     let class = syntax.classify(statement);
     check_read_only(connection, &class)?;
-    if check_approval(connection, &class) {
+    if check_approval(connection, &class)
+        || policy::ends_manual_transaction(
+            &connection.profile,
+            &syntax,
+            dialect.ddl_commits_transaction(),
+            &statements,
+        )
+    {
         approve(state, ctx, Some(connection), database, &class, statement).await?;
     }
     let q = state
@@ -2530,10 +2537,14 @@ async fn run_query_tab(
     for class in &classes {
         check_read_only(&connection, class)?;
     }
+    let ddl_commits = connection_dialect(state, &connection)?.ddl_commits_transaction();
+    let ends_transaction =
+        policy::ends_manual_transaction(&connection.profile, &syntax, ddl_commits, &statements);
     if let Some(class) = classes
         .iter()
         .filter(|class| check_approval(&connection, class))
         .max_by_key(|class| matches!(class, StatementClass::Destructive(_)))
+        .or_else(|| classes.first().filter(|_| ends_transaction))
     {
         // A script shows every statement being authorised.
         let shown = statements.join(";\n");

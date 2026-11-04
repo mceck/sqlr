@@ -472,6 +472,8 @@ fn read_only_refuses_writes_before_driver() {
         "set x = 1",
         "select 1\ndelete from t",
         "begin delete from t end",
+        "begin read write",
+        "start transaction read write",
     ] {
         let QueryStatus::Failed(e) = run(&engine, &key, sql) else {
             panic!("{sql} ran on a read-only session");

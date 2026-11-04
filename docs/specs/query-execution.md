@@ -149,6 +149,7 @@ A Session is read-only when its profile says so, when the `safety.read_only` Saf
 
 - The server enforces it where it can: PostgreSQL `SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY`, MySQL and MariaDB `SET SESSION TRANSACTION READ ONLY`, SQLite `PRAGMA query_only`, and each document and key-value Driver's own switch. It is applied when the Session connects, again after a reconnect, and on every other-database connection of the Session.
 - The client refuses, before the Driver, every statement whose script-wide class modifies (write, DDL, destructive or other). Statements the classifier cannot place count as modifying.
+- It also refuses a `BEGIN READ WRITE` or `START TRANSACTION READ WRITE`, which would override the server's read-only default for its transaction.
 - Switching it on a live Session runs in the Session's order; the switch takes effect once the server accepted it, and a refusal becomes a notice with the flag unchanged.
 - Results of a read-only Session are not editable.
 
@@ -170,6 +171,8 @@ Before a run, each statement is classified as a whole script (so a write hidden 
 
 1. With **confirm destructive** on, any Destructive statement asks first: "This will `<reason>` on `<Connection>` (`<profile>` profile)." Reasons include `DROP TABLE`, `TRUNCATE`, `DELETE without WHERE`, `UPDATE without WHERE`, `ALTER … DROP`, `REVOKE`, `KILL`, `COPY TO PROGRAM`, `pg_terminate_backend` and `pg_cancel_backend`; Redis `FLUSHDB`, `FLUSHALL`, `FUNCTION FLUSH` and multi-key deletes; Elasticsearch index deletion and an unrestricted delete-by-query.
 2. Otherwise, with **confirm writes** on, any statement that modifies asks: "Run `N` statement(s) that modify data on `<Connection>`?"
+
+3. Independently of the profile's flags, a Session in Manual or Smart commit mode asks, every time and whether or not a transaction is open, before a script runs a statement that ends the transaction on its own: `COMMIT`, `END`, `ROLLBACK`, `ABORT`, or a schema change on a server that commits before DDL (MySQL, MariaDB, Oracle). The prompt says the script would commit or discard changes without the person's decision, and lists those statements; it is shown above any confirmation of rules 1 and 2. There is no option to skip the statements: the person runs the script as written or cancels. Auto mode never asks. The mode is the Session's own (the status-bar choice), not only the profile's.
 
 The dialog, titled "Run on `<Connection>`", lists the first line (up to 100 characters) of up to 10 concerned statements, then "…and `N` more", with Run and Cancel (Cancel focused). A write keyword hidden later in a batch without a separating semicolon (`SELECT 1` then `DELETE FROM t` in T-SQL, or a PL/SQL block) makes the whole batch destructive with the reason "`<KEYWORD>` in a batch of statements", so every profile asks. `EXPLAIN` without `ANALYZE` is a read even when it wraps a write or a modifying CTE; a separate write after its planned query still counts as modifying; `SELECT … FOR UPDATE` is a read; `SELECT … INTO` and writable CTEs are writes. Redis and document commands are confirmed where they are issued with the same rules. Agents' destructive requests go through the in-app Approval instead (see [Agents and terminal](agents-and-terminal.md)).
 

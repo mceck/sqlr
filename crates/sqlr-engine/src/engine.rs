@@ -2759,7 +2759,7 @@ impl Shared {
                 None => (false, false, None),
             }
         };
-        if read_only && script_class.modifies() {
+        if read_only && (script_class.modifies() || syntax.begins_read_write(sql)) {
             let e = DriverError::new(ErrorKind::Permission, READ_ONLY);
             self.finish(q, QueryStatus::Failed(e));
             return;
