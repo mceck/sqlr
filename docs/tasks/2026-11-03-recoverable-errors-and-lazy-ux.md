@@ -94,7 +94,7 @@ The app absorbs these cases and tells the user only what is useful:
 - [x] Redis, Administration, object and document tabs connect on their own; a new query tab gets a default Connection.
 - [x] A successful DDL from the editor refreshes the loaded explorer nodes.
 - [x] Opening a schema or database shows a spinner on it and then the non-empty folders at once, with no folder flashing.
-- [ ] The three specs and the glossary describe the new behaviour.
+- [x] The three specs and the glossary describe the new behaviour.
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt` and `make test-fast` pass, and the PostgreSQL integration test passes against a real server.
 
 ## Out of Scope
