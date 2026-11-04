@@ -770,14 +770,17 @@ fn push_conn<'a>(
     let open = state.is_expanded(conn.id, root);
     rows.push(Row::Conn { conn, depth, open });
     if let ConnBadge::Failed(message) = &conn.badge {
-        // In place of its tree, whose loads failed the same way.
-        for actions in [false, true] {
-            rows.push(Row::ConnFailed {
-                conn,
-                message,
-                depth: depth + 1,
-                actions,
-            });
+        // In place of its tree, whose loads failed the same way; collapsing the connection
+        // hides the error.
+        if open {
+            for actions in [false, true] {
+                rows.push(Row::ConnFailed {
+                    conn,
+                    message,
+                    depth: depth + 1,
+                    actions,
+                });
+            }
         }
         return;
     }
@@ -1124,7 +1127,7 @@ fn render_row(
         Row::Loading { depth } => {
             row_ui(ui, |ui| {
                 ui.add_space(*depth as f32 * INDENT + ARROW_WIDTH);
-                ui.spinner();
+                loading_ring(ui);
                 ui.label(RichText::new("Loading…").color(palette.text_muted));
             });
         }
@@ -1183,6 +1186,36 @@ fn row_ui_hit(ui: &mut egui::Ui, id: Id, add: impl FnOnce(&mut egui::Ui)) -> egu
         },
     );
     ui.interact(inner.response.rect, id, Sense::hover())
+}
+
+/// The ring on a row whose children are loading. It is a row icon across and thin-stroked,
+/// so it fits in the `ROW_TREE` row instead of growing it, and it turns while shown.
+fn loading_ring(ui: &mut egui::Ui) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(
+        vec2(icons::SIZE + Spacing::XS, Spacing::ROW_TREE),
+        Sense::hover(),
+    );
+    response.widget_info(|| WidgetInfo::new(WidgetType::ProgressIndicator));
+    if ui.is_rect_visible(rect) {
+        ui.request_repaint(); // because it is animated
+        let color = ui.visuals().strong_text_color();
+        let ring = Rect::from_center_size(rect.center(), vec2(icons::SIZE, icons::SIZE));
+        let radius = ring.width() / 2.0 - 1.0;
+        let time = ui.input(|i| i.time);
+        let start_angle = time * std::f64::consts::TAU;
+        let sweep = 240f64.to_radians() * time.sin();
+        const POINTS: usize = 24;
+        let points: Vec<egui::Pos2> = (0..=POINTS)
+            .map(|i| {
+                let angle = start_angle + sweep * (i as f64 / POINTS as f64);
+                let (sin, cos) = angle.sin_cos();
+                ring.center() + radius * vec2(cos as f32, sin as f32)
+            })
+            .collect();
+        ui.painter()
+            .add(egui::Shape::line(points, Stroke::new(1.5, color)));
+    }
+    response
 }
 
 /// The expand/collapse arrow; `None` for a leaf (space is kept so names align).

@@ -2,7 +2,7 @@ use egui::{Color32, vec2};
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use sqlr_core::{DatabaseTools, Node, NodeKind, NodePath, ObjectKind, SqlTemplate};
-use sqlr_ui::theme::{self, Palette};
+use sqlr_ui::theme::{self, Palette, Spacing};
 use sqlr_ui::{
     Children, ConnBadge, NodeMenu, SchemaSource, TreeAction, TreeConn, TreeDrop, TreeState,
     schema_tree,
@@ -1164,6 +1164,26 @@ fn tree_hides_loaded_empty_folders_unless_asked() {
     assert!(h.query_by_label("Loading…").is_none());
 }
 
+/// The loading row's spinner is icon-sized, not a full row wide: egui's default spinner
+/// takes the 26 pt interact size and crowds the "Loading…" row.
+#[test]
+fn the_loading_spinner_fits_its_row() {
+    let mut source = StubSource::with_views();
+    source.views = None;
+    let mut h = harness(source);
+    open_prod(&mut h);
+    h.get_by_label("Loading…");
+    let spinner =
+        h.get(egui_kittest::kittest::By::new().role(egui::accesskit::Role::ProgressIndicator));
+    let rect = spinner.rect();
+    assert!(
+        rect.width() < Spacing::ROW_TREE,
+        "the loading spinner takes {} pt of a {} pt row: {rect:?}",
+        rect.width(),
+        Spacing::ROW_TREE
+    );
+}
+
 #[test]
 fn connection_rows_show_their_detail() {
     let mut h = harness(StubSource::new());
@@ -1177,6 +1197,14 @@ fn tree_failed_connection_offers_retry() {
     let mut source = StubSource::new();
     source.local_badge = ConnBadge::Failed("connection refused\n  at 127.0.0.1:5432".into());
     let mut h = harness(source);
+    assert!(
+        h.query_by_label("Retry").is_none(),
+        "collapsed hides the error"
+    );
+    h.state_mut()
+        .state
+        .set_expanded("local", &NodePath::root(), true);
+    h.run_steps(2);
     h.get_by_label("Could not connect: connection refused");
     h.get_by_label("Retry").click();
     h.run_steps(2);
