@@ -234,6 +234,32 @@ fn manual_mode_apply_opens_the_session_transaction() {
 }
 
 #[test]
+fn apply_rolls_back_a_failed_transaction_and_applies_in_a_new_one() {
+    let (engine, fake) = engine_with(FakeScript {
+        error_aborts_transaction: true,
+        fail_matching: Some("oops".into()),
+        fail_also_matching: Some("ROLLBACK TO".into()),
+        ..Default::default()
+    });
+    let key = SessionKey::meta("c");
+    engine.set_commit_mode(&key, CommitMode::Manual);
+    for sql in ["select 1", "select oops"] {
+        let q = engine.execute_in(&key, None, sql.into(), 10);
+        assert!(wait_until(TIMEOUT, || engine
+            .result(q)
+            .is_some_and(|r| r.read().status != QueryStatus::Running)));
+    }
+    assert_eq!(engine.transaction(&key).unwrap().phase, TxPhase::Failed);
+    let before = fake.executed().len();
+    let job = engine.apply_changeset(&key, changeset(vec![update(1, "total", Value::Int(5))]));
+    assert!(matches!(outcome(&engine, job), JobOutcome::Applied(r) if r.failed.is_none()));
+    let run = executed_after(&fake, before);
+    assert_eq!(run.first().map(String::as_str), Some("ROLLBACK"), "{run:?}");
+    assert!(run.iter().any(|s| s == "BEGIN"), "{run:?}");
+    assert_eq!(engine.transaction(&key).unwrap().phase, TxPhase::Open);
+}
+
+#[test]
 fn apply_joins_open_manual_transaction_without_releasing_the_savepoint() {
     // SQL Server and Oracle have no RELEASE SAVEPOINT: the changeset must still apply and
     // keep the user's transaction open, and must not send a statement they reject.

@@ -116,6 +116,12 @@ pub(crate) enum Discard {
     Data,
     /// An action of the users and roles tab.
     Users(crate::admin::UsersDiscard),
+    /// A sort or filter on the server replaces a Result that has pending edits.
+    ServerRerun {
+        q: sqlr_engine::QueryId,
+        order: Option<Vec<(usize, bool)>>,
+        filter: Option<String>,
+    },
     /// An editor tab's result is to run again (Refresh), dropping its changeset.
     Rerun(sqlr_engine::QueryId),
 }
@@ -742,6 +748,22 @@ impl SqlrApp {
         key: u64,
         then: &Discard,
     ) -> Option<(String, &'static str, &'static str, &'static str)> {
+        if let Discard::ServerRerun { q, filter, .. } = then {
+            let pending = tab_mut(&mut self.dock, key)?
+                .grids
+                .get(q)?
+                .edits
+                .as_ref()?
+                .pending();
+            let noun = if pending == 1 { "change" } else { "changes" };
+            let what = if filter.is_some() { "filter" } else { "sort" };
+            return Some((
+                format!("Discard {pending} pending {noun} and {what}?"),
+                "Discard changes",
+                theme::icons::UNDO,
+                if filter.is_some() { "Filter" } else { "Sort" },
+            ));
+        }
         if let Discard::Rerun(q) = then {
             let pending = tab_mut(&mut self.dock, key)?
                 .grids
@@ -815,6 +837,10 @@ impl SqlrApp {
                 {
                     users.perform(engine, action);
                 }
+            }
+            Discard::ServerRerun { q, order, filter } => {
+                self.changes_action(key, q, sqlr_ui::ChangesAction::Discard);
+                self.server_rerun(key, q, order, filter);
             }
             Discard::Rerun(q) => {
                 self.changes_action(key, q, sqlr_ui::ChangesAction::Discard);

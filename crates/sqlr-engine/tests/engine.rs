@@ -101,6 +101,35 @@ fn connect_success_and_failure() {
 }
 
 #[test]
+fn a_ddl_statement_browses_the_loaded_nodes_again() {
+    let tree = vec![node(&["public"], NodeKind::Schema)];
+    let (engine, fake) = connected(FakeScript {
+        tree,
+        affected: Some(0),
+        ..Default::default()
+    });
+    engine.browse("c", NodePath::root());
+    assert!(wait_until(TIMEOUT, || matches!(
+        engine.children("c", &NodePath::root()),
+        Some(LoadState::Ready(_))
+    )));
+    assert_eq!(fake.browse_calls(), 1);
+
+    let q = engine.execute("c", "CREATE TABLE t (a int)".into(), 10);
+    assert!(wait_until(TIMEOUT, || status(&engine, q) != QueryStatus::Running));
+
+    assert!(
+        wait_until(TIMEOUT, || fake.browse_calls() == 2),
+        "the loaded node was not browsed again"
+    );
+    // What the tree showed stays in place while and after the node loads again.
+    assert!(matches!(
+        engine.children("c", &NodePath::root()),
+        Some(LoadState::Ready(_))
+    ));
+}
+
+#[test]
 fn browse_caches_children() {
     let tree = vec![
         node(&["public"], NodeKind::Schema),

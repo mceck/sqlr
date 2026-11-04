@@ -34,11 +34,11 @@ The Explorer is the left-hand tree where the user finds every Connection and, be
 
 **Expanding.** Opening a disconnected or failed Connection connects it and loads its root. Opening a Node loads its children once; while they load the row below says "Loading…". Double-clicking a table, view or materialized view opens its data; double-clicking any other Node toggles it. A Node with no children shows "No objects".
 
-**Lazy loading.** Children load only when their parent is expanded, one browse call per Node, on the explorer session. Each load is an Operation listed in the Operations panel ("Browse <connection>") and can be cancelled there. Loaded children stay in memory, per Connection and Node path, until the subtree is refreshed, the Connection disconnects or its settings change. An expanded Node whose children were dropped (by a refresh, a reconnect or a disconnect) is browsed again as soon as its Session is live. Browsing without a live explorer session fails with "not connected".
+**Lazy loading.** Children load only when their parent is expanded, one browse call per Node, on the explorer session. Each load is an Operation listed in the Operations panel ("Browse <connection>") and can be cancelled there. Loaded children stay in memory, per Connection and Node path, until the subtree is refreshed, the Connection disconnects or its settings change. An expanded Node whose children were dropped (by a refresh, a reconnect or a disconnect) is browsed again as soon as its Session is live. Browsing without a live explorer session fails with "not connected". Redis, Administration, object and key-value tabs connect their Connection when shown, with the Connecting state, and resume after the secrets prompt.
 
 **Counts.** A folder Node shows how many children it holds once they are loaded, open or closed; showing the count never starts a load.
 
-**Empty folders.** A folder Node (except `tables`, which always shows and is not loaded ahead) whose children are loaded and none (a schema's `views`, `materialized views`, `functions` or `sequences` with no objects) is hidden, so the tree lists only what exists. Opening a schema or database loads its folders at once (one browse each, unless the setting below is on), so the empty ones disappear without being opened. A folder still loading stays until its count is known. The setting `explorer.show_empty_folders` (General, off by default) keeps empty folders in the tree.
+**Empty folders.** A folder Node (except `tables`, which always shows and is not loaded ahead) whose children are loaded and none (a schema's `views`, `materialized views`, `functions` or `sequences` with no objects) is hidden, so the tree lists only what exists. Opening a schema or database loads its folders at once (one browse each, unless the setting below is on), so the empty ones disappear without being opened. While the counts of the folders opened with a schema or database are unknown, the parent Node shows its loading spinner and none of those folders is drawn; when all counts are known, the non-empty folders appear together, so the tree never flashes folders that then vanish. A folder whose count failed is shown, with the error on opening. The setting `explorer.show_empty_folders` (General, off by default) keeps empty folders in the tree.
 
 **Filter.** The filter is a case-insensitive substring match over the names of loaded Nodes. A Node is shown when its name matches or when any loaded descendant matches; Nodes with matching descendants open automatically while the filter is set. Only loaded Nodes are searched: the filter never triggers a load.
 
@@ -48,6 +48,8 @@ The Explorer is the left-hand tree where the user finds every Connection and, be
 - A Connection whose Driver is not installed shows a message with **Install…** (the Driver Manager, see [Drivers](drivers.md)) and **Edit**.
 - A failed child load shows the error message on the affected Node, with **Retry**, which refreshes that Node. Other Nodes keep working.
 - A browse error that means the connection was lost also fails the explorer session (see [Query execution](query-execution.md)).
+
+**Refresh after DDL.** A successful DDL statement run from an Editor tab browses again the already loaded Nodes of its Connection and database.
 
 **Refresh.** Refreshing a Node drops its cached subtree and browses it again. Refreshing the Connection's root, or the Node that holds its schemas, also invalidates its Catalog.
 
@@ -319,7 +321,7 @@ flowchart LR
 - **Database drop recovery reuses administration Jobs.** Server session listing and termination follow the same driver permissions and session identity checks as the Sessions and locks panel. Keeping the confirmed drop context makes retries independent of later explorer selection changes.
 - **Applies refuse to run beside an open transaction.** A transaction that wrote on another Session may hold locks the DDL would wait on forever; refusing with a clear message is better than a hang.
 - **The Catalog cache persists only the Connection's own database.** It is what autocomplete needs at startup; other databases' catalogs are cheap to reload and would otherwise grow the store without bound.
-- **Invalidate the whole Catalog after any DDL.** Working out which schemas a statement touched would need a parser per Dialect; reloading a Catalog is cheap and the stale data stays visible meanwhile.
+- **Invalidate the whole Catalog after any DDL, and reload the loaded tree nodes.** Working out which schemas a statement touched would need a parser per Dialect; reloading a Catalog is cheap and the stale data stays visible meanwhile. The loaded nodes of the Connection and database are browsed again for the same reason, so the tree matches what the statement did.
 - **DDL comes from introspection plus the Dialect's generator, except SQLite.** One code path serves the DDL viewer, Copy DDL, Generate SQL CREATE and Schema compare; SQLite's stored statements are already the exact definition, comments included.
 - **Generate SQL templates run as written.** `/* column */ NULL` values and a `1 = 0` condition without a key make a template safe to run by accident.
 

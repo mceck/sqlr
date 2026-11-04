@@ -29,7 +29,10 @@ use crate::session::{LoadState, Session, SessionIo, SessionKey, SessionStatus, S
 use crate::ssh::{self, ConnectReport, SshContext, TunnelSlot};
 use crate::store::{ProfilesState, SharedSecretStore};
 use crate::transfer::{ExportSource, ImportOptions, TransferRun, Work};
-use crate::tx::{MessageLevel, READ_ONLY, RunMessage, Stmt, TxOp, TxRules, TxState, run_sql};
+use crate::tx::{
+    MessageLevel, READ_ONLY, RunMessage, STMT_SAVEPOINT, Stmt, TxOp, TxPhase, TxRules, TxState,
+    run_sql,
+};
 
 pub type Repaint = Arc<dyn Fn() + Send + Sync>;
 
@@ -77,6 +80,9 @@ pub(crate) enum Command {
         conn_id: String,
         path: NodePath,
         io: Arc<SessionIo>,
+        /// A loaded node browsed again: its children stay shown until the new ones arrive,
+        /// and an error leaves them as they were.
+        soft: bool,
     },
     /// Runs a task on the runtime (object loads and DDL applies, `crate::objects`).
     Spawn(std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>),
@@ -233,6 +239,14 @@ impl Engine {
                     .expect("build the engine runtime");
                 rt.block_on(async move {
                     let db_worker = tokio::spawn(run_db_worker(worker.clone(), db, db_jobs));
+                    let pinger = worker.clone();
+                    tokio::spawn(async move {
+                        let mut tick = tokio::time::interval(Duration::from_secs(30));
+                        loop {
+                            tick.tick().await;
+                            pinger.ping_idle_sessions().await;
+                        }
+                    });
                     let mut next_run = 0_u64;
                     while let Some(cmd) = rx.recv().await {
                         next_run += 1;
@@ -700,6 +714,7 @@ impl Engine {
                         conn_id: conn_id.to_string(),
                         path,
                         io,
+                        soft: false,
                     });
                 }
             }
@@ -1592,6 +1607,8 @@ struct ResultEntry {
     settled: Arc<Notify>,
     /// A read that opens no Manual transaction ([`Engine::read_in`]).
     outside_tx: bool,
+    /// The query was already run again on a fresh connection after a connection error.
+    retried: bool,
 }
 
 /// What a native tool needs from a connection, cloned out of [`Inner`].
@@ -2044,6 +2061,7 @@ impl Shared {
                     recorded: false,
                     settled: Arc::new(Notify::new()),
                     outside_tx: false,
+                    retried: false,
                 },
             );
         }
@@ -2187,6 +2205,7 @@ impl Shared {
                     recorded: false,
                     settled: settled.clone(),
                     outside_tx,
+                    retried: false,
                 },
             );
             (q, connected)
@@ -2359,7 +2378,12 @@ impl Shared {
                 self.connect(key, driver, cfg, secrets, io, read_only, tunnel)
                     .await
             }
-            Command::Browse { conn_id, path, io } => self.browse(conn_id, path, io).await,
+            Command::Browse {
+                conn_id,
+                path,
+                io,
+                soft,
+            } => self.browse(conn_id, path, io, soft).await,
             Command::Spawn(task)
             | Command::JobTask { task, .. }
             | Command::DocTask { task, .. } => task.await,
@@ -2558,7 +2582,13 @@ impl Shared {
         }
     }
 
-    async fn browse(self: Arc<Self>, conn_id: String, path: NodePath, io: Arc<SessionIo>) {
+    async fn browse(
+        self: Arc<Self>,
+        conn_id: String,
+        path: NodePath,
+        io: Arc<SessionIo>,
+        soft: bool,
+    ) {
         let key = SessionKey::meta(&conn_id);
         let cancel = Arc::new(Notify::new());
         let operation = self.operations.start(
@@ -2600,9 +2630,13 @@ impl Shared {
                 .explorer
                 .get_mut(&conn_id)
                 .and_then(|cache| cache.get_mut(&path))
-                && *entry == LoadState::Loading
             {
-                *entry = state;
+                match (&*entry, &state) {
+                    (LoadState::Loading, _) => *entry = state,
+                    // A soft refresh replaces what is shown only by a successful load.
+                    (LoadState::Ready(_), LoadState::Ready(_)) if soft => *entry = state,
+                    _ => {}
+                }
             }
         }
         self.repaint();
@@ -2679,9 +2713,59 @@ impl Shared {
             self.finish(q, status);
             return;
         }
-        self.run_statement(q, &key, &io, &conn, &sql, &mut slot)
+        let retry = self
+            .run_statement(q, &key, &io, &conn, &sql, &mut slot)
             .await;
         self.clear_active(&key, &io, q);
+        if retry {
+            drop(slot);
+            self.rerun_on_new_connection(q, &key, database);
+        }
+    }
+
+    /// Whether `q` may still be run again after a connection error.
+    fn may_retry(&self, q: QueryId) -> bool {
+        self.inner
+            .lock()
+            .results
+            .get(&q)
+            .is_some_and(|e| !e.retried)
+    }
+
+    /// Runs `q` again on a fresh connection of its session: the one it started on was
+    /// closed by the server while idle, and the statement never took effect.
+    fn rerun_on_new_connection(
+        self: &Arc<Self>,
+        q: QueryId,
+        key: &SessionKey,
+        database: Option<String>,
+    ) {
+        let io = {
+            let mut inner = self.inner.lock();
+            let io = self.live_or_reopen(&mut inner, key);
+            if let (Some(io), Some(entry)) = (&io, inner.results.get_mut(&q)) {
+                entry.io = Some(io.clone());
+                entry.retried = true;
+            }
+            io
+        };
+        let Some(io) = io else {
+            self.finish(q, QueryStatus::Failed(not_connected()));
+            return;
+        };
+        self.add_message(
+            q,
+            RunMessage::new(
+                MessageLevel::Warning,
+                "The connection was lost; reconnected and ran the statement again",
+            ),
+        );
+        self.send(Command::Execute {
+            q,
+            ticket: io.issue_ticket(),
+            database,
+            io,
+        });
     }
 
     /// Runs `sql` under the session's transaction rules: refused when the session is
@@ -2695,11 +2779,11 @@ impl Shared {
         conn: &Arc<dyn Connection>,
         sql: &str,
         slot: &mut StreamSlot,
-    ) {
+    ) -> bool {
         let Some(rel) = conn.relational() else {
             let e = DriverError::new(ErrorKind::Unsupported, "this connection does not run SQL");
             self.finish(q, QueryStatus::Failed(e));
-            return;
+            return false;
         };
         let dialect = rel.dialect();
         let syntax = dialect.syntax();
@@ -2727,7 +2811,7 @@ impl Shared {
                     "This driver does not support transaction controls",
                 )),
             );
-            return;
+            return false;
         }
         let script_class = syntax.classify_script(sql);
         let rules = TxRules {
@@ -2737,7 +2821,7 @@ impl Shared {
             savepoints_replace: dialect.savepoint_names_replace(),
             savepoint_opens: dialect.savepoint_starts_transaction(),
         };
-        let (read_only, begin, elsewhere) = {
+        let (read_only, begin, elsewhere, was_open) = {
             let mut inner = self.inner.lock();
             let outside_tx = inner.results.get(&q).is_some_and(|e| e.outside_tx)
                 && stmt.class == sqlr_core::StatementClass::Read;
@@ -2754,15 +2838,16 @@ impl Shared {
                         s.tx.read_only,
                         !outside_tx && s.tx.needs_begin(&stmt, rules),
                         elsewhere,
+                        s.tx.is_open(),
                     )
                 }
-                None => (false, false, None),
+                None => (false, false, None, false),
             }
         };
         if read_only && (script_class.modifies() || syntax.begins_read_write(sql)) {
             let e = DriverError::new(ErrorKind::Permission, READ_ONLY);
             self.finish(q, QueryStatus::Failed(e));
-            return;
+            return false;
         }
         if let Some(db) = elsewhere {
             let e = DriverError::new(
@@ -2770,7 +2855,7 @@ impl Shared {
                 format!("A transaction is open on {db}; commit or roll back first"),
             );
             self.finish(q, QueryStatus::Failed(e));
-            return;
+            return false;
         }
         if begin {
             match run_sql(conn, dialect.begin_sql()).await {
@@ -2789,23 +2874,62 @@ impl Shared {
                 }
                 Err(e) => {
                     let lost = self.on_error(key, io, &e);
+                    // Nothing ran: a connection the server closed while idle is replaced.
+                    if e.kind == ErrorKind::Connection && self.may_retry(q) {
+                        return true;
+                    }
                     self.finish_with(q, error_status(e), lost.into_iter().collect());
-                    return;
+                    return false;
                 }
             }
         }
+        // Where an error aborts the transaction, each user statement runs inside a statement
+        // savepoint so a failure is undone alone and the transaction stays open.
+        let first = begin && rules.error_aborts;
+        let guard = self
+            .set_statement_savepoint(key, io, conn, &stmt, rules, first)
+            .await;
         let outcome = rel.execute(sql).await;
-        // §7.8: a DDL statement makes the cached catalog stale.
+        // A read on a connection the server closed while idle is run again on a new one.
+        if let Err(e) = &outcome
+            && e.kind == ErrorKind::Connection
+            && stmt.class == sqlr_core::StatementClass::Read
+            && !was_open
+            && self.may_retry(q)
+        {
+            self.on_error(key, io, e);
+            return true;
+        }
+        // §7.8: a DDL statement makes the cached catalog stale, and the explorer tree too.
         if outcome.is_ok() && dialect.syntax().is_ddl(sql) {
             self.invalidate_catalog(&key.conn);
+            self.refresh_loaded_nodes(&key.conn);
         }
         let mut notes = Vec::new();
+        let undone = match &outcome {
+            Err(e) if e.kind != ErrorKind::Connection && (guard || first) => {
+                self.undo_failed_statement(key, io, conn, guard).await
+            }
+            Ok(Execution::Affected(_)) if guard => {
+                self.release_statement_savepoint(key, io, conn).await;
+                false
+            }
+            _ => false,
+        };
         {
             let mut inner = self.inner.lock();
             if let Some(s) = inner.session(key, io) {
                 let note = match &outcome {
                     Ok(_) => s.tx.after_success(&stmt, rules, now_ms()),
                     Err(e) if e.kind == ErrorKind::Connection => None,
+                    Err(_) if undone && first => {
+                        s.tx.close(now_ms());
+                        Some(RunMessage::new(
+                            MessageLevel::Warning,
+                            "The statement failed and the transaction it opened was rolled back",
+                        ))
+                    }
+                    Err(_) if undone => Some(s.tx.statement_undone(now_ms())),
                     Err(_) => s.tx.after_failure(&stmt, rules, now_ms()),
                 };
                 notes.extend(note);
@@ -2843,6 +2967,101 @@ impl Shared {
                 self.finish_with(q, error_status(e), notes);
             }
         }
+        false
+    }
+
+    /// Sets the statement savepoint before a user statement in an open transaction on a
+    /// server where an error aborts it; releases the one a streaming statement left. True
+    /// when a savepoint is set.
+    async fn set_statement_savepoint(
+        &self,
+        key: &SessionKey,
+        io: &Arc<SessionIo>,
+        conn: &Arc<dyn Connection>,
+        stmt: &Stmt,
+        rules: TxRules,
+        first: bool,
+    ) -> bool {
+        let Some(rel) = conn.relational() else {
+            return false;
+        };
+        if first
+            || !rules.error_aborts
+            || matches!(stmt.class, sqlr_core::StatementClass::Transaction(_))
+        {
+            return false;
+        }
+        let leftover = {
+            let mut inner = self.inner.lock();
+            match inner.session(key, io) {
+                Some(s) if s.tx.phase == TxPhase::Open => std::mem::take(&mut s.tx.stmt_savepoint),
+                _ => return false,
+            }
+        };
+        let dialect = rel.dialect();
+        if leftover && let Some(sql) = dialect.release_savepoint_sql(STMT_SAVEPOINT) {
+            let _ = run_sql(conn, &sql).await;
+        }
+        if run_sql(conn, &dialect.savepoint_sql(STMT_SAVEPOINT))
+            .await
+            .is_err()
+        {
+            return false;
+        }
+        if let Some(s) = self.inner.lock().session(key, io) {
+            s.tx.stmt_savepoint = true;
+        }
+        true
+    }
+
+    /// Releases the statement savepoint of a statement that has no stream to keep open.
+    async fn release_statement_savepoint(
+        &self,
+        key: &SessionKey,
+        io: &Arc<SessionIo>,
+        conn: &Arc<dyn Connection>,
+    ) {
+        let Some(rel) = conn.relational() else {
+            return;
+        };
+        if let Some(sql) = rel.dialect().release_savepoint_sql(STMT_SAVEPOINT) {
+            let _ = run_sql(conn, &sql).await;
+        }
+        if let Some(s) = self.inner.lock().session(key, io) {
+            s.tx.stmt_savepoint = false;
+        }
+    }
+
+    /// Undoes a statement that failed in an open transaction: rolls back to its statement
+    /// savepoint, or (when it was the statement that opened the transaction) rolls the
+    /// transaction back. False when the server refused, so the transaction stays Failed.
+    async fn undo_failed_statement(
+        &self,
+        key: &SessionKey,
+        io: &Arc<SessionIo>,
+        conn: &Arc<dyn Connection>,
+        savepoint: bool,
+    ) -> bool {
+        let Some(rel) = conn.relational() else {
+            return false;
+        };
+        let dialect = rel.dialect();
+        if !savepoint {
+            return run_sql(conn, "ROLLBACK").await.is_ok();
+        }
+        if run_sql(conn, &dialect.rollback_to_sql(STMT_SAVEPOINT))
+            .await
+            .is_err()
+        {
+            return false;
+        }
+        if let Some(sql) = dialect.release_savepoint_sql(STMT_SAVEPOINT) {
+            let _ = run_sql(conn, &sql).await;
+        }
+        if let Some(s) = self.inner.lock().session(key, io) {
+            s.tx.stmt_savepoint = false;
+        }
+        true
     }
 
     /// The session's connection, or (when `database` names another database of the same
@@ -2992,6 +3211,9 @@ impl Shared {
                 PageEnd::Stopped => QueryStatus::Cancelled,
                 PageEnd::Failed(e) => {
                     notes.extend(self.on_error(key, io, &e));
+                    if e.kind != ErrorKind::Connection {
+                        notes.extend(self.after_fetch_failure(key, io).await);
+                    }
                     error_status(e)
                 }
             };
@@ -3018,6 +3240,35 @@ impl Shared {
                 return;
             }
         }
+    }
+
+    /// A fetch failed inside a user transaction: undo the statement through its savepoint,
+    /// or mark the transaction Failed when nothing could.
+    async fn after_fetch_failure(
+        self: &Arc<Self>,
+        key: &SessionKey,
+        io: &Arc<SessionIo>,
+    ) -> Option<RunMessage> {
+        let (conn, savepoint) = {
+            let mut inner = self.inner.lock();
+            let s = inner.session(key, io)?;
+            if s.tx.phase != TxPhase::Open {
+                return None;
+            }
+            (s.tx_conn.clone()?, s.tx.stmt_savepoint)
+        };
+        let rules = TxRules::from_dialect(conn.relational()?.dialect());
+        if savepoint && self.undo_failed_statement(key, io, &conn, true).await {
+            return self
+                .inner
+                .lock()
+                .session(key, io)
+                .map(|s| s.tx.statement_undone(now_ms()));
+        }
+        self.inner
+            .lock()
+            .session(key, io)
+            .and_then(|s| s.tx.fetch_failed(rules, now_ms()))
     }
 
     /// Rows `q` holds now.
@@ -3333,9 +3584,89 @@ impl Shared {
             && session.active == Some(q)
         {
             session.active = None;
+            session.last_used = Instant::now();
+        }
+    }
+
+    /// Browses again the explorer nodes of `conn_id` that are loaded (the shallowest
+    /// [`REFRESH_NODES`] of them), keeping what they show until the new children arrive.
+    pub(crate) fn refresh_loaded_nodes(self: &Arc<Self>, conn_id: &str) {
+        let Some(io) = self.live_io(conn_id) else {
+            return;
+        };
+        let mut paths: Vec<NodePath> = {
+            let inner = self.inner.lock();
+            inner.explorer.get(conn_id).map_or_else(Vec::new, |cache| {
+                cache
+                    .iter()
+                    .filter(|(_, state)| matches!(state, LoadState::Ready(_)))
+                    .map(|(path, _)| path.clone())
+                    .collect()
+            })
+        };
+        paths.sort_by_key(|p| p.segments().len());
+        paths.truncate(REFRESH_NODES);
+        for path in paths {
+            self.send(Command::Browse {
+                conn_id: conn_id.to_string(),
+                path,
+                io: io.clone(),
+                soft: true,
+            });
+        }
+    }
+
+    /// Pings every connected session that has been quiet for [`IDLE_PING`] and holds
+    /// neither a transaction nor an open stream; a dead connection fails the session now,
+    /// so the next statement reconnects instead of failing on it.
+    pub(crate) async fn ping_idle_sessions(self: &Arc<Self>) {
+        let due: Vec<_> = {
+            let inner = self.inner.lock();
+            inner
+                .sessions
+                .iter()
+                .filter(|(_, s)| {
+                    s.is_connected()
+                        && s.active.is_none()
+                        && !s.tx.is_open()
+                        && s.last_used.elapsed() >= IDLE_PING
+                })
+                .filter_map(|(k, s)| Some((k.clone(), s.io.clone(), s.conn.clone()?)))
+                .collect()
+        };
+        for (key, io, conn) in due {
+            let Ok(slot) = io.stream.try_lock() else {
+                continue;
+            };
+            if slot.is_some() {
+                continue;
+            }
+            let ping = tokio::time::timeout(Duration::from_secs(5), conn.ping()).await;
+            drop(slot);
+            match ping {
+                Ok(Ok(_)) => {
+                    if let Some(s) = self.inner.lock().session(&key, &io) {
+                        s.last_used = Instant::now();
+                    }
+                }
+                Ok(Err(e)) if e.kind == ErrorKind::Connection => {
+                    self.on_error(&key, &io, &e);
+                }
+                Err(_) => {
+                    let e = DriverError::new(ErrorKind::Connection, "the server did not answer");
+                    self.on_error(&key, &io, &e);
+                }
+                Ok(Err(_)) => {}
+            }
         }
     }
 }
+
+/// How many loaded explorer nodes a DDL statement browses again.
+const REFRESH_NODES: usize = 50;
+
+/// How long a session stays quiet before the engine pings its connection.
+const IDLE_PING: Duration = Duration::from_secs(60);
 
 /// Whether `a` and `b` are the same connection object.
 pub(crate) fn same_connection(a: &Arc<dyn Connection>, b: &Arc<dyn Connection>) -> bool {

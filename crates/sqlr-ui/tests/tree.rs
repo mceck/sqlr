@@ -1115,6 +1115,7 @@ fn tree_folder_shows_loaded_count() {
     let mut source = StubSource::with_views();
     source.views = None;
     let mut h = harness(source);
+    h.state_mut().state.show_empty_folders = true;
     open_prod(&mut h);
     h.get_by_label("views");
     assert!(h.query_by_label("3").is_none());
@@ -1144,12 +1145,23 @@ fn tree_hides_loaded_empty_folders_unless_asked() {
     open_prod(&mut h);
     h.get_by_label("tables");
 
-    // A folder that is not loaded yet stays: nothing says it is empty.
+    // A folder whose count is not known yet is held back with the spinner of its schema, so
+    // the tree never shows a folder that then disappears; `tables` does not wait.
     let mut source = StubSource::with_views();
     source.views = None;
     let mut h = harness(source);
     open_prod(&mut h);
+    assert!(h.query_by_label("views").is_none());
+    h.get_by_label("Loading…");
+
+    // Empty folders that are shown on request do not wait either.
+    let mut source = StubSource::with_views();
+    source.views = None;
+    let mut h = harness(source);
+    h.state_mut().state.show_empty_folders = true;
+    open_prod(&mut h);
     h.get_by_label("views");
+    assert!(h.query_by_label("Loading…").is_none());
 }
 
 #[test]

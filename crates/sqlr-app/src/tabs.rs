@@ -175,6 +175,14 @@ pub struct ServerView {
     pub filter: String,
 }
 
+/// A server-side sort or filter running while the previous Result stays on screen: it
+/// replaces the Result when it succeeds, and reports its error under the filter bar when it
+/// fails.
+pub struct PendingRerun {
+    pub q: QueryId,
+    pub view: ServerView,
+}
+
 pub struct QueryTab {
     /// Unique for the app's lifetime; the dock and the widgets inside key on it.
     pub key: u64,
@@ -194,6 +202,10 @@ pub struct QueryTab {
     pub plan: PlanPane,
     /// The server-side sort and filter the current run applies.
     pub server: Option<ServerView>,
+    /// The server-side sort or filter being run, if any.
+    pub rerun: Option<PendingRerun>,
+    /// Why the last server-side sort or filter failed; the previous Result stays shown.
+    pub filter_error: Option<String>,
     /// A cell edited in the value panel.
     pub value_edit: Option<(QueryId, sqlr_ui::ValueEdit)>,
     /// Rows per fetch for this tab's results.
@@ -242,6 +254,8 @@ impl QueryTab {
             pane: SinglePane::Result,
             plan: PlanPane::default(),
             server: None,
+            rerun: None,
+            filter_error: None,
             value_edit: None,
             page_size,
             dirty: false,
@@ -368,6 +382,10 @@ impl QueryTab {
 
     /// Closes the previous run's results and forgets its grids and markers.
     pub fn close_run(&mut self, engine: &Engine) {
+        if let Some(rerun) = self.rerun.take() {
+            engine.close_result(rerun.q);
+        }
+        self.filter_error = None;
         match self.run.take() {
             None => {}
             Some(TabRun::Single { q, .. }) => engine.close_result(q),
@@ -414,6 +432,53 @@ impl QueryTab {
         let q = engine.execute_in(&key, self.database.as_deref(), sql, self.page_size);
         self.run = Some(TabRun::Single { q, origin });
         q
+    }
+
+    /// Runs a server-side sort or filter (`sql`) while the current Result stays shown.
+    pub fn start_rerun(&mut self, engine: &Engine, conn: &str, sql: String, view: ServerView) {
+        if let Some(previous) = self.rerun.take() {
+            engine.close_result(previous.q);
+        }
+        self.filter_error = None;
+        let key = self.session(engine, conn);
+        let q = engine.execute_in(&key, self.database.as_deref(), sql, self.page_size);
+        self.rerun = Some(PendingRerun { q, view });
+    }
+
+    /// Swaps in the server-side sort or filter once its first page arrived, or keeps the
+    /// previous Result and remembers the error when it failed.
+    pub fn poll_rerun(&mut self, engine: &Engine) {
+        let Some(q) = self.rerun.as_ref().map(|r| r.q) else {
+            return;
+        };
+        let status = engine.result(q).map(|r| r.read().status.clone());
+        match status {
+            Some(QueryStatus::Running) => {}
+            Some(QueryStatus::Failed(e)) => {
+                self.rerun = None;
+                engine.close_result(q);
+                self.filter_error = Some(e.message);
+            }
+            None | Some(QueryStatus::Cancelled) => {
+                self.rerun = None;
+                engine.close_result(q);
+            }
+            Some(_) => {
+                let Some(rerun) = self.rerun.take() else {
+                    return;
+                };
+                self.close_run(engine);
+                self.pane = SinglePane::Result;
+                self.run = Some(TabRun::Single {
+                    q: rerun.q,
+                    origin: None,
+                });
+                let grid = self.grids.entry(rerun.q).or_default();
+                grid.sort = rerun.view.order.iter().map(|(c, _, d)| (*c, *d)).collect();
+                grid.where_filter = rerun.view.filter.clone();
+                self.server = Some(rerun.view);
+            }
+        }
     }
 
     /// Runs an object's Data page (`sql`, a read) in place of the previous run: it opens no
@@ -733,6 +798,7 @@ impl egui_dock::TabViewer for Viewer<'_> {
         let formats = self.formats.for_conn(tab.conn.as_deref());
         sqlr_ui::set_data_formats(ui.ctx(), formats.clone());
         tab.poll_plan(self.engine);
+        tab.poll_rerun(self.engine);
         if let (Some(redis), Some(conn)) = (tab.redis.as_deref_mut(), tab.conn.as_deref()) {
             crate::nosql::redis_ui(ui, tab.key, conn, redis, self.engine, &mut self.commands);
             return;
@@ -1423,6 +1489,32 @@ fn result_view(
             } else {
                 let more = *status == QueryStatus::Ready { more: true };
                 let edit = tab.edits.get(&q).cloned().unwrap_or_default();
+                if tab.rerun.is_some() {
+                    ui.horizontal(|ui| {
+                        ui.add_space(Spacing::M);
+                        ui.spinner();
+                        ui.label("Applying…");
+                    });
+                }
+                if let Some(error) = tab.filter_error.clone() {
+                    let mut clear = false;
+                    ui.horizontal_wrapped(|ui| {
+                        ui.add_space(Spacing::M);
+                        let p = theme::palette(ui.ctx());
+                        icons::paint(ui, icons::FAILED, p.error);
+                        ui.label(RichText::new(error).color(p.error));
+                        clear = ui.button("Remove filter").clicked();
+                    });
+                    if clear {
+                        tab.filter_error = None;
+                        tab.grids.entry(q).or_default().where_filter.clear();
+                        cx.commands.push(TabCommand::Grid {
+                            tab: tab.key,
+                            q,
+                            action: sqlr_ui::GridAction::FilterOnServer(String::new()),
+                        });
+                    }
+                }
                 let grid = tab.grids.entry(q).or_default();
                 let applying = edit.applying.is_some();
                 let view = ResultBarView {
@@ -1719,9 +1811,14 @@ impl SqlrApp {
 
     /// The tab's connection, or `None` (and a notice) when it has none.
     fn runnable_conn(&mut self, key: u64) -> Option<String> {
-        let conn = self.tab(key)?.conn.clone();
+        let mut conn = self.tab(key)?.conn.clone();
         if conn.is_none() {
-            self.notify_as(ToastKind::Info, "Choose a connection for this tab first");
+            // A blank tab runs on the connection a new tab would have taken.
+            conn = self.default_tab_connection();
+            match &conn {
+                Some(id) => self.set_tab_conn(key, Some(id.clone())),
+                None => self.notify_as(ToastKind::Info, "Choose a connection for this tab first"),
+            }
         }
         conn
     }

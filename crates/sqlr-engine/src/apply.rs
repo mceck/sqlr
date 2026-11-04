@@ -79,13 +79,28 @@ impl Shared {
         if tx.read_only {
             return Err(DriverError::new(ErrorKind::Permission, READ_ONLY));
         }
-        let mode = match tx.phase {
-            TxPhase::Failed => {
-                return Err(DriverError::new(
-                    ErrorKind::Other,
-                    "The transaction failed: roll it back before applying changes",
-                ));
+        // A failed transaction can only be rolled back: do that first and apply in a new one.
+        let phase = if tx.phase == TxPhase::Failed {
+            let failed_conn = tx_conn.clone().unwrap_or_else(|| conn.clone());
+            if let Err(e) = crate::tx::run_sql(&failed_conn, "ROLLBACK").await {
+                self.on_error(key, io, &e);
+                return Err(e);
             }
+            if let Some(s) = self.inner.lock().session(key, io) {
+                s.tx.close(crate::library::now_ms());
+                s.tx_conn = None;
+            }
+            TxPhase::Idle
+        } else {
+            tx.phase.clone()
+        };
+        let tx_conn = if phase == TxPhase::Idle {
+            None
+        } else {
+            tx_conn
+        };
+        let mode = match phase {
+            TxPhase::Failed => unreachable!("a failed transaction was rolled back above"),
             TxPhase::Open => {
                 if let Some(other) = tx_conn.filter(|c| !same_connection(c, &conn)) {
                     let db = other

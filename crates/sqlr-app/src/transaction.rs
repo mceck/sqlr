@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 use egui::{ComboBox, RichText};
 use sqlr_core::CommitMode;
 use sqlr_engine::{SessionKey, Slot, TxPhase, TxState};
-use sqlr_ui::format_when;
 use sqlr_ui::theme::{self, Spacing, icons};
+use sqlr_ui::{ToastKind, format_when};
 
 use crate::app::{SqlrApp, tab_mut};
 
@@ -33,6 +33,11 @@ pub(crate) enum EndTarget {
     AutoCommit(SessionKey),
     /// An idle transaction: nothing else happens.
     Idle(SessionKey),
+    /// Point a tab at another connection.
+    SwitchConnection {
+        tab: u64,
+        conn: Option<String>,
+    },
 }
 
 /// A prompt to commit or roll back open transactions, and then do `target`.
@@ -354,23 +359,34 @@ impl SqlrApp {
     /// Asks to commit or roll back `sessions` before `target`; without open transactions
     /// `target` happens at once.
     pub(crate) fn ask_end(&mut self, target: EndTarget, sessions: Vec<SessionKey>) {
-        let sessions: Vec<SessionKey> = sessions
-            .into_iter()
-            .filter(|k| {
-                self.engine
-                    .transaction(k)
-                    .is_some_and(|t| t.phase != TxPhase::Idle)
-            })
-            .collect();
-        if sessions.is_empty() {
+        let mut all = Vec::new();
+        let mut decide = false;
+        for key in sessions {
+            let Some(tx) = self.engine.transaction(&key) else {
+                continue;
+            };
+            if tx.phase == TxPhase::Idle {
+                continue;
+            }
+            // A failed or clean transaction ends with a rollback and no question.
+            if tx.needs_decision() {
+                decide = true;
+            } else {
+                self.engine.rollback(&key);
+            }
+            all.push(key);
+        }
+        if all.is_empty() {
             self.finish_end(target);
             return;
         }
+        let force_at =
+            (!decide && target.force_on_timeout()).then(|| Instant::now() + FORCE_DISCONNECT);
         self.ending = Some(PendingEnd {
             target,
-            sessions,
-            chosen: None,
-            force_at: None,
+            sessions: all,
+            chosen: (!decide).then_some(false),
+            force_at,
         });
     }
 
@@ -479,6 +495,7 @@ impl SqlrApp {
             }
             EndTarget::AutoCommit(key) => self.engine.set_commit_mode(&key, CommitMode::Auto),
             EndTarget::Idle(_) => {}
+            EndTarget::SwitchConnection { tab, conn } => self.set_tab_conn(tab, conn),
         }
     }
 
@@ -523,12 +540,24 @@ impl SqlrApp {
             })
         {
             self.kept_open.insert(key.clone(), tx.last_activity_ms);
-            self.ending = Some(PendingEnd {
-                target: EndTarget::Idle(key.clone()),
-                sessions: vec![key.clone()],
-                chosen: None,
-                force_at: None,
-            });
+            if tx.needs_decision() {
+                self.ending = Some(PendingEnd {
+                    target: EndTarget::Idle(key.clone()),
+                    sessions: vec![key.clone()],
+                    chosen: None,
+                    force_at: None,
+                });
+            } else {
+                // Nothing was written: let the locks go without asking.
+                let name = self
+                    .connection(&key.conn)
+                    .map_or(key.conn.clone(), |c| c.name.clone());
+                self.engine.rollback(key);
+                self.toasts.push(
+                    ToastKind::Info,
+                    format!("Transaction on {name} closed (idle, no changes)"),
+                );
+            }
         }
         let Some(pending) = &self.ending else {
             return;
@@ -559,9 +588,26 @@ impl SqlrApp {
             }
             return;
         }
+        let asked = pending.sessions.iter().any(|k| {
+            self.engine
+                .transaction(k)
+                .is_some_and(|t| t.needs_decision())
+        });
+        if !asked {
+            // Every transaction ended on its own while the prompt was due.
+            if let Some(pending) = self.ending.take() {
+                self.finish_end(pending.target);
+            }
+            return;
+        }
         let names: Vec<String> = pending
             .sessions
             .iter()
+            .filter(|k| {
+                self.engine
+                    .transaction(k)
+                    .is_some_and(|t| t.needs_decision())
+            })
             .map(|k| {
                 let name = self
                     .connection(&k.conn)
@@ -642,7 +688,16 @@ impl SqlrApp {
         let Some(pending) = &mut self.ending else {
             return;
         };
-        let sessions = pending.sessions.clone();
+        let sessions: Vec<SessionKey> = pending
+            .sessions
+            .iter()
+            .filter(|k| {
+                self.engine
+                    .transaction(k)
+                    .is_some_and(|t| t.needs_decision())
+            })
+            .cloned()
+            .collect();
         let force = pending.target.force_on_timeout();
         for k in &sessions {
             if commit {
@@ -834,6 +889,115 @@ mod tests {
         wait("the forced disconnect", || fake.open_connections() == 0);
     }
 
+    #[test]
+    fn a_redis_tab_connects_its_connection_once() {
+        let fake = FakeDriver::new(FakeScript::default());
+        let (mut app, _dir) = app_with_fake(fake);
+        let key = app.new_tab(None, Some("c1".into()), "");
+        tab_mut(&mut app.dock, key).unwrap().redis =
+            Some(Box::new(crate::nosql::RedisTab::new(0, ":".into())));
+
+        app.auto_connect_tabs();
+        wait("the connect", || app.is_live("c1"));
+
+        // A disconnect the user asks for later is respected.
+        app.engine.disconnect("c1");
+        app.auto_connect_tabs();
+        assert!(!app.is_live("c1"));
+    }
+
+    #[test]
+    fn a_blank_tab_takes_the_only_connection() {
+        let fake = FakeDriver::new(FakeScript::default());
+        let (mut app, _dir) = app_with_fake(fake);
+        assert_eq!(app.default_tab_connection().as_deref(), Some("c1"));
+    }
+
+    #[test]
+    fn switching_a_tab_ends_its_transaction_and_continues() {
+        let fake = FakeDriver::new(FakeScript {
+            affected: Some(1),
+            ..Default::default()
+        });
+        let (mut app, _dir) = app_with_fake(fake);
+        let tab = app.new_tab(None, Some("c1".into()), "");
+        app.connect("c1");
+        wait("the connect", || app.is_live("c1"));
+        let session = app.engine.session("c1", Some(tab));
+        run_in(&app, &session, "begin");
+        run_in(&app, &session, "insert into t values (1)");
+
+        app.set_tab_conn(tab, None);
+
+        let pending = app.ending.as_ref().expect("the user is asked first");
+        assert_eq!(pending.chosen, None);
+        assert_eq!(app.tab(tab).unwrap().conn.as_deref(), Some("c1"));
+
+        app.answer_end(true);
+        wait("the commit", || {
+            app.engine
+                .transaction(&session)
+                .is_some_and(|t| t.phase == TxPhase::Idle)
+        });
+        app.end_prompts(&egui::Context::default(), false);
+
+        assert!(app.ending.is_none());
+        assert_eq!(app.tab(tab).unwrap().conn, None, "the switch went on");
+    }
+
+    fn run_in(app: &SqlrApp, key: &SessionKey, sql: &str) {
+        let q = app.engine.execute_in(key, None, sql.into(), 100);
+        wait(sql, || {
+            app.engine
+                .result(q)
+                .is_some_and(|r| r.read().status != QueryStatus::Running)
+        });
+    }
+
+    #[test]
+    fn a_transaction_that_wrote_nothing_ends_without_asking() {
+        let fake = FakeDriver::new(FakeScript {
+            affected: Some(1),
+            ..Default::default()
+        });
+        let (mut app, _dir) = app_with_fake(fake);
+        app.connect("c1");
+        wait("the connect", || app.is_live("c1"));
+        let key = app.engine.session("c1", None);
+        run_in(&app, &key, "begin");
+        run_in(&app, &key, "select 1");
+
+        app.request_disconnect("c1");
+
+        let pending = app
+            .ending
+            .as_ref()
+            .expect("the disconnect waits for the rollback");
+        assert_eq!(pending.chosen, Some(false), "no question was asked");
+        wait("the rollback", || {
+            app.engine.transaction(&key).unwrap().phase == TxPhase::Idle
+        });
+    }
+
+    #[test]
+    fn a_transaction_with_writes_still_asks() {
+        let fake = FakeDriver::new(FakeScript {
+            affected: Some(1),
+            ..Default::default()
+        });
+        let (mut app, _dir) = app_with_fake(fake);
+        app.connect("c1");
+        wait("the connect", || app.is_live("c1"));
+        let key = app.engine.session("c1", None);
+        run_in(&app, &key, "begin");
+        run_in(&app, &key, "insert into t values (1)");
+
+        app.request_disconnect("c1");
+
+        let pending = app.ending.as_ref().expect("the user is asked");
+        assert_eq!(pending.chosen, None);
+    }
+
     fn tx(phase: TxPhase, statements: u32) -> TxState {
         let depth = u32::from(phase != TxPhase::Idle);
         TxState {
@@ -848,6 +1012,7 @@ mod tests {
             idle_timeout: false,
             wrote: false,
             started_by_savepoint: false,
+            stmt_savepoint: false,
         }
     }
 

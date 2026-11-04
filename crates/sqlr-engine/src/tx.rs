@@ -42,7 +42,13 @@ pub struct TxState {
     /// A top-level `SAVEPOINT` started the transaction (SQLite): releasing the last
     /// savepoint commits it.
     pub started_by_savepoint: bool,
+    /// A statement savepoint is set and not yet released (the last statement streamed rows).
+    pub stmt_savepoint: bool,
 }
+
+/// The savepoint the engine sets around each user statement where an error aborts the
+/// transaction.
+pub(crate) const STMT_SAVEPOINT: &str = "sqlr_stmt";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MessageLevel {
@@ -155,12 +161,20 @@ impl TxState {
             idle_timeout: false,
             wrote: false,
             started_by_savepoint: false,
+            stmt_savepoint: false,
         }
     }
 
     /// Whether a transaction is open (or failed and waiting for a rollback).
     pub fn is_open(&self) -> bool {
         self.phase != TxPhase::Idle
+    }
+
+    /// Whether ending the transaction needs the user's decision: it is open and wrote, or
+    /// holds a savepoint of the user's. A Failed transaction and a clean one (nothing
+    /// written) end silently with a rollback.
+    pub fn needs_decision(&self) -> bool {
+        self.phase == TxPhase::Open && (self.wrote || !self.savepoints.is_empty())
     }
 
     /// Whether the open transaction keeps a DDL apply on another session from running: it
@@ -213,6 +227,7 @@ impl TxState {
         self.last_activity_ms = now_ms;
         self.wrote = false;
         self.started_by_savepoint = false;
+        self.stmt_savepoint = false;
     }
 
     pub(crate) fn close(&mut self, now_ms: i64) {
@@ -224,6 +239,7 @@ impl TxState {
         self.last_activity_ms = now_ms;
         self.wrote = false;
         self.started_by_savepoint = false;
+        self.stmt_savepoint = false;
     }
 
     /// A successful COMMIT ends only the innermost level on servers with nested BEGIN.
@@ -248,6 +264,7 @@ impl TxState {
     /// Keeps only the savepoints up to and including `name` (the target of a rollback).
     /// Duplicate names resolve to the most recent one, as PostgreSQL and SQLite do.
     pub(crate) fn rolled_back_to(&mut self, name: &str) {
+        self.stmt_savepoint = false;
         if let Some(i) = self.savepoints.iter().rposition(|s| s == name) {
             self.savepoints.truncate(i + 1);
         }
@@ -362,6 +379,30 @@ impl TxState {
             self.close(now_ms);
             return Some(RunMessage::new(MessageLevel::Warning, MYSQL_DDL_NOTE));
         }
+        if self.phase == TxPhase::Open && rules.error_aborts {
+            self.phase = TxPhase::Failed;
+            return Some(RunMessage::new(
+                MessageLevel::Warning,
+                "The transaction failed: only Rollback is possible",
+            ));
+        }
+        None
+    }
+
+    /// The statement savepoint undid a failed statement: the transaction stays open.
+    pub(crate) fn statement_undone(&mut self, now_ms: i64) -> RunMessage {
+        self.stmt_savepoint = false;
+        self.last_activity_ms = now_ms;
+        RunMessage::new(
+            MessageLevel::Warning,
+            "The statement failed and was undone; the transaction is still open",
+        )
+    }
+
+    /// A fetch failed after the statement started: on a server where an error aborts the
+    /// transaction and nothing undid it, only a rollback is possible now.
+    pub(crate) fn fetch_failed(&mut self, rules: TxRules, now_ms: i64) -> Option<RunMessage> {
+        self.last_activity_ms = now_ms;
         if self.phase == TxPhase::Open && rules.error_aborts {
             self.phase = TxPhase::Failed;
             return Some(RunMessage::new(
