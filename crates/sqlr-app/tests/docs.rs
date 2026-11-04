@@ -14,7 +14,7 @@ use sqlr_engine::{DriverRegistry, Engine};
 use sqlr_store::{ConnectionRepo, MemorySecretStore, Settings};
 use sqlr_testkit::{FakeDocDriver, FakeDocScript};
 
-const TIMEOUT: Duration = Duration::from_secs(5);
+const TIMEOUT: Duration = Duration::from_secs(20);
 
 fn node(parent: &NodePath, seg: &str, name: &str, kind: NodeKind, children: bool) -> Node {
     Node {

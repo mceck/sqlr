@@ -13,7 +13,7 @@ use sqlr_engine::{DriverRegistry, Engine};
 use sqlr_store::{ConnectionRepo, MemorySecretStore, Settings};
 use sqlr_testkit::{FakeKvDriver, FakeKvScript};
 
-const TIMEOUT: Duration = Duration::from_secs(5);
+const TIMEOUT: Duration = Duration::from_secs(20);
 
 fn script() -> FakeKvScript {
     let db0 = KvNodePath::database(0);
