@@ -1461,6 +1461,33 @@ fn status_bar_add_row_adds_a_pending_row() {
 }
 
 #[test]
+fn an_opened_schema_settles_to_its_non_empty_folders_without_a_stuck_spinner() {
+    let dir = tempfile::tempdir().unwrap();
+    let s = NodePath::root().child("s");
+    let views = node(&s, "views", NodeKind::Folder, true);
+    let functions = node(&s, "functions", NodeKind::Folder, true);
+    let function = node(&functions.path, "f", NodeKind::Function, false);
+    let (mut h, _driver) = harness_with_script(
+        &dir,
+        FakeScript {
+            tree: vec![views, functions, function],
+            ..Default::default()
+        },
+    );
+    h.get_by_label("Expand fake-conn").click();
+    wait_for_label(&mut h, "Expand s");
+    h.get_by_label("Expand s").click();
+    wait_for_label(&mut h, "functions");
+    h.run_steps(20);
+    h.get_by_label("Expand tables");
+    assert!(
+        h.query_by_label("views").is_none(),
+        "the empty folder shows"
+    );
+    assert!(h.query_by_label("Loading…").is_none(), "the spinner stayed");
+}
+
+#[test]
 fn server_filter_asks_before_discarding_pending_changes() {
     let dir = tempfile::tempdir().unwrap();
     let (mut h, driver) = harness_with_script(&dir, orders_table_script());
