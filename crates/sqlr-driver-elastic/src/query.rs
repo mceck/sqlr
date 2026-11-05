@@ -31,7 +31,12 @@ pub(crate) fn json_to_doc(v: &Json) -> DocValue {
                 Ok(i) => DocValue::Int32(i),
                 Err(_) => DocValue::Int64(i),
             },
-            None => DocValue::Double(n.as_f64().unwrap_or(f64::NAN)),
+            // An `unsigned_long` above i64::MAX has no integer DocValue: keep its digits
+            // as text instead of rounding it through a double.
+            None => match n.as_u64() {
+                Some(u) => DocValue::String(u.to_string()),
+                None => DocValue::Double(n.as_f64().unwrap_or(f64::NAN)),
+            },
         },
         Json::String(s) => DocValue::String(s.clone()),
         Json::Array(items) => DocValue::Array(items.iter().map(json_to_doc).collect()),
@@ -64,6 +69,13 @@ fn hit_doc(hit: &Json) -> DocValue {
         }
     }
     DocValue::Document(fields)
+}
+
+/// A `size` given as a JSON number or as a numeric string: Elasticsearch itself coerces
+/// `"size": "5"`, so ignoring it would page through every hit.
+fn json_u64(v: &Json) -> Option<u64> {
+    v.as_u64()
+        .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
 }
 
 fn hits_of(resp: &Json) -> &[Json] {
@@ -448,7 +460,7 @@ impl crate::EsConnection {
         let param = |k: &str| params.iter().find(|(p, _)| p == k).map(|(_, v)| v.clone());
         let size = map
             .get("size")
-            .and_then(Json::as_u64)
+            .and_then(json_u64)
             .or_else(|| param("size").and_then(|s| s.parse().ok()));
         let aggregates = map.contains_key("aggs") || map.contains_key("aggregations");
         let plain = ["from", "search_after", "pit"]
@@ -521,6 +533,23 @@ mod tests {
 
     fn class(text: &str) -> StatementClass {
         classify(&parse_one(text).unwrap())
+    }
+
+    #[test]
+    fn an_unsigned_long_keeps_its_digits() {
+        assert_eq!(
+            json_to_doc(&json!(u64::MAX)),
+            DocValue::String("18446744073709551615".into())
+        );
+        assert_eq!(json_to_doc(&json!(7)), DocValue::Int32(7));
+        assert_eq!(json_to_doc(&json!(-7)), DocValue::Int32(-7));
+    }
+
+    #[test]
+    fn a_size_given_as_a_string_is_a_size() {
+        assert_eq!(json_u64(&json!("5")), Some(5));
+        assert_eq!(json_u64(&json!(5)), Some(5));
+        assert_eq!(json_u64(&json!("not a number")), None);
     }
 
     #[test]

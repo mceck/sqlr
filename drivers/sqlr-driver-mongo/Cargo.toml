@@ -18,6 +18,7 @@ bson.workspace = true
 futures-util.workspace = true
 mongodb.workspace = true
 rustls.workspace = true
+serde_json.workspace = true
 tokio = { workspace = true, features = ["rt", "sync", "time", "macros"] }
 
 [dev-dependencies]

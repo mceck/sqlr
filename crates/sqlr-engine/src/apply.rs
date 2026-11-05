@@ -9,7 +9,7 @@ use sqlr_core::{Changeset, Connection, DriverError, ErrorKind, Execution, TableR
 use crate::engine::{Shared, same_connection};
 use crate::job::{ApplyReport, JobControl, JobOutcome};
 use crate::library::now_ms;
-use crate::session::{LoadState, SessionIo, SessionKey};
+use crate::session::{LoadState, SessionIo, SessionKey, StreamSlot};
 use crate::tx::{READ_ONLY, TxPhase, run_sql};
 
 /// The savepoint that makes a changeset atomic inside the user's open transaction.
@@ -42,11 +42,7 @@ impl Shared {
         let turn = io.wait_turn(ticket).await;
         let mut slot = io.stream.lock().await;
         drop(turn);
-        if let Some((prev, mut stream)) = slot.take() {
-            let _ = stream.close().await;
-            self.mark_complete(prev);
-        }
-        let outcome = match self.apply(&job, &key, &io, &changeset).await {
+        let outcome = match self.apply(&job, &key, &io, &changeset, &mut slot).await {
             Ok(report) => JobOutcome::Applied(report),
             Err(e) if e.kind == ErrorKind::Cancelled => JobOutcome::Cancelled,
             Err(e) => JobOutcome::Failed(e),
@@ -61,6 +57,7 @@ impl Shared {
         key: &SessionKey,
         io: &Arc<SessionIo>,
         changeset: &Changeset,
+        slot: &mut StreamSlot,
     ) -> Result<ApplyReport, DriverError> {
         let cancelled = || DriverError::new(ErrorKind::Cancelled, "The changes were not applied");
         if job.is_cancelled() {
@@ -79,6 +76,27 @@ impl Shared {
         if tx.read_only {
             return Err(DriverError::new(ErrorKind::Permission, READ_ONLY));
         }
+        // A changeset cannot join a transaction open on another database. Refuse before
+        // taking the session's stream, so the previous Result keeps its rows.
+        if tx.phase == TxPhase::Open
+            && let Some(other) = tx_conn.as_ref().filter(|c| !same_connection(c, &conn))
+        {
+            let db = other
+                .database_name()
+                .unwrap_or("another database")
+                .to_string();
+            return Err(DriverError::new(
+                ErrorKind::Other,
+                format!("A transaction is open on {db}; commit or roll back first"),
+            ));
+        }
+        // From here the changeset may run SQL on the connection: it takes the session's
+        // stream over. A cancelled or refused changeset above did not.
+        if let Some((prev, mut stream)) = slot.take() {
+            let _ = stream.close().await;
+            self.mark_complete(prev);
+            self.repaint();
+        }
         // A failed transaction can only be rolled back: do that first and apply in a new one.
         let phase = if tx.phase == TxPhase::Failed {
             let failed_conn = tx_conn.clone().unwrap_or_else(|| conn.clone());
@@ -94,26 +112,9 @@ impl Shared {
         } else {
             tx.phase.clone()
         };
-        let tx_conn = if phase == TxPhase::Idle {
-            None
-        } else {
-            tx_conn
-        };
         let mode = match phase {
             TxPhase::Failed => unreachable!("a failed transaction was rolled back above"),
-            TxPhase::Open => {
-                if let Some(other) = tx_conn.filter(|c| !same_connection(c, &conn)) {
-                    let db = other
-                        .database_name()
-                        .unwrap_or("another database")
-                        .to_string();
-                    return Err(DriverError::new(
-                        ErrorKind::Other,
-                        format!("A transaction is open on {db}; commit or roll back first"),
-                    ));
-                }
-                Mode::Joins
-            }
+            TxPhase::Open => Mode::Joins,
             TxPhase::Idle if tx.mode == sqlr_core::CommitMode::Auto => Mode::Own,
             TxPhase::Idle => Mode::Opens,
         };
