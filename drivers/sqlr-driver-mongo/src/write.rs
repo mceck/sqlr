@@ -7,7 +7,7 @@ use sqlr_core::{DocExecution, DocValue, DriverError, ErrorKind, MongoOp, new_obj
 
 use crate::connect::MongoConnection;
 use crate::errors::kind_for_code;
-use crate::query::{cmd, command, new_tag};
+use crate::query::{cmd, command};
 
 fn s(v: &str) -> DocValue {
     DocValue::String(v.to_string())
@@ -82,12 +82,10 @@ fn with(mut base: DocValue, extra: Vec<(String, DocValue)>) -> DocValue {
 }
 
 fn tagged(base: DocValue, top: Vec<(String, DocValue)>) -> DocValue {
-    let c = with(base, top);
-    if c.get("comment").is_some() {
-        c
-    } else {
-        with(c, vec![("comment".into(), s(&new_tag()))])
-    }
+    let mut c = with(base, top);
+    // A fresh tag every time: see `query::tag_command`.
+    crate::query::tag_command(&mut c);
+    c
 }
 
 /// Inserts `docs`, giving each one without an `_id` a new ObjectId. Returns the number

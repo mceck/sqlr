@@ -130,6 +130,31 @@ fn a_ddl_statement_browses_the_loaded_nodes_again() {
 }
 
 #[test]
+fn a_read_that_mentions_a_ddl_word_does_not_refresh_the_catalog() {
+    let tree = vec![node(&["public"], NodeKind::Schema)];
+    let (engine, fake) = connected(FakeScript {
+        tree,
+        ..Default::default()
+    });
+    engine.browse("c", NodePath::root());
+    assert!(wait_until(TIMEOUT, || matches!(
+        engine.children("c", &NodePath::root()),
+        Some(LoadState::Ready(_))
+    )));
+    assert_eq!(fake.browse_calls(), 1);
+
+    // "comment" is a column name here, not a DDL keyword.
+    let q = engine.execute("c", "SELECT comment FROM posts".into(), 10);
+    assert!(matches!(settled(&engine, q).0, QueryStatus::Ready { .. }));
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(
+        fake.browse_calls(),
+        1,
+        "a read must not refresh the explorer"
+    );
+}
+
+#[test]
 fn browse_caches_children() {
     let tree = vec![
         node(&["public"], NodeKind::Schema),
@@ -217,6 +242,37 @@ fn unknown_database_fails_only_the_query() {
             Some(SessionStatus::Connected(_))
         ),
         "a missing sibling database must not fail the session"
+    );
+}
+
+#[test]
+fn a_refused_statement_does_not_cut_the_previous_result_short() {
+    let (engine, _fake) = connected(FakeScript {
+        rows: 1200,
+        ..Default::default()
+    });
+    let first = engine.execute("c", "SELECT n".into(), 500);
+    assert_eq!(
+        settled(&engine, first),
+        (QueryStatus::Ready { more: true }, 500)
+    );
+    // The new statement is refused before it reaches any connection.
+    let refused = engine.execute_on("c", Some("nope"), "SELECT 1".into(), 500);
+    assert!(matches!(
+        settled(&engine, refused).0,
+        QueryStatus::Failed(_)
+    ));
+
+    assert!(
+        !cut_short(&engine, first),
+        "a refused statement must not cut the previous result short"
+    );
+    assert_eq!(status(&engine, first), QueryStatus::Ready { more: true });
+    engine.fetch_more(first);
+    assert_eq!(
+        settled(&engine, first),
+        (QueryStatus::Ready { more: true }, 1000),
+        "the earlier result must still fetch"
     );
 }
 
@@ -869,6 +925,49 @@ fn back_to_back_executes_run_in_issue_order() {
         );
         assert_eq!(fake.executed(), ["SELECT 1", "SELECT 2"]);
     }
+}
+
+#[test]
+fn a_cancelled_statement_that_reports_rows_affected_ends_cancelled() {
+    let (engine, fake) = connected(FakeScript {
+        affected: Some(1),
+        block_on_execute: true,
+        ..Default::default()
+    });
+    let q = engine.execute("c", "INSERT INTO t VALUES (1)".into(), 10);
+    assert!(wait_until(TIMEOUT, || fake.executed().len() == 1));
+    engine.cancel(q);
+    assert_eq!(settled(&engine, q).0, QueryStatus::Cancelled);
+}
+
+#[test]
+fn a_queued_statement_runs_after_an_earlier_connection_error_reconnects() {
+    let (engine, fake) = connected(FakeScript {
+        rows: 3,
+        connection_error_once: Some("SELECT 1".into()),
+        ..Default::default()
+    });
+    let first = engine.execute("c", "SELECT 1".into(), 10);
+    let second = engine.execute("c", "SELECT 2".into(), 10);
+
+    assert_eq!(
+        settled(&engine, second),
+        (QueryStatus::Ready { more: false }, 3),
+        "the queued statement must run on the reconnected session"
+    );
+    // The later statement supersedes the rerun, which may keep no rows; it must not hang
+    // or fail.
+    assert!(matches!(
+        settled(&engine, first).0,
+        QueryStatus::Ready { more: false }
+    ));
+    let executed = fake.executed();
+    assert_eq!(
+        executed.iter().filter(|sql| *sql == "SELECT 1").count(),
+        2,
+        "{executed:?}"
+    );
+    assert!(executed.iter().any(|sql| sql == "SELECT 2"), "{executed:?}");
 }
 
 #[test]

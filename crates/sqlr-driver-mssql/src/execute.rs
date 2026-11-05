@@ -314,10 +314,63 @@ fn returns_rows(sql: &str) -> bool {
     }
     // `UPDATE … OUTPUT`, `INSERT … OUTPUT` and `DELETE … OUTPUT` return rows. Only a
     // keyword counts: the text " OUTPUT " inside a string or a comment does not.
-    tokens.iter().any(|t| {
+    if tokens.iter().any(|t| {
         matches!(t.kind, TokenKind::Keyword | TokenKind::Ident)
             && sql[t.start..t.end].eq_ignore_ascii_case("OUTPUT")
-    })
+    }) {
+        return true;
+    }
+    // A control-flow batch (`IF … SELECT`, `BEGIN … SELECT`, `WHILE …`) does not start
+    // with SELECT, yet a rowset inside it must stream: `execute` would drop the rows.
+    // A SELECT at parenthesis depth 0 only counts when it is not the source of an
+    // INSERT/UPDATE/DELETE/MERGE, which returns no rowset of its own.
+    let mut depth = 0_usize;
+    let mut in_dml = false;
+    for token in &tokens {
+        if token.kind == TokenKind::Comment {
+            continue;
+        }
+        let word = &sql[token.start..token.end];
+        match word {
+            "(" => {
+                depth += 1;
+                continue;
+            }
+            ")" => {
+                depth = depth.saturating_sub(1);
+                continue;
+            }
+            ";" => {
+                in_dml = false;
+                continue;
+            }
+            _ => {}
+        }
+        if depth > 0 {
+            continue;
+        }
+        if word.eq_ignore_ascii_case("INSERT")
+            || word.eq_ignore_ascii_case("UPDATE")
+            || word.eq_ignore_ascii_case("DELETE")
+            || word.eq_ignore_ascii_case("MERGE")
+        {
+            in_dml = true;
+        } else if word.eq_ignore_ascii_case("IF")
+            || word.eq_ignore_ascii_case("ELSE")
+            || word.eq_ignore_ascii_case("WHILE")
+            || word.eq_ignore_ascii_case("BEGIN")
+        {
+            in_dml = false;
+        } else if !in_dml
+            && (word.eq_ignore_ascii_case("SELECT")
+                || word.eq_ignore_ascii_case("EXEC")
+                || word.eq_ignore_ascii_case("EXECUTE")
+                || word.eq_ignore_ascii_case("VALUES"))
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// A handle to the demand-driven worker; at most one page is in flight.
@@ -391,5 +444,13 @@ mod tests {
         assert!(!returns_rows("UPDATE t SET note = 'a OUTPUT b'"));
         assert!(!returns_rows("UPDATE t SET note = 'x' -- OUTPUT\n"));
         assert!(returns_rows("UPDATE t SET a = 1 OUTPUT inserted.a"));
+        // Rows returned by a control-flow batch must not be thrown away.
+        assert!(returns_rows("IF 1 = 1 SELECT 42 AS n"));
+        assert!(returns_rows("BEGIN SELECT 1 AS n; END"));
+        assert!(returns_rows("WHILE 1 = 1 BEGIN SELECT 1; BREAK; END"));
+        // An INSERT … SELECT inside the same control flow still returns no rowset.
+        assert!(!returns_rows(
+            "IF @@ROWCOUNT = 0 INSERT INTO t SELECT * FROM s"
+        ));
     }
 }

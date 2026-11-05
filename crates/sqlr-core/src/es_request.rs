@@ -337,9 +337,30 @@ const DDL_APIS: &[&str] = &[
 ];
 
 fn matches_all(body: Option<&serde_json::Value>) -> bool {
-    match body.map(|b| &b["query"]) {
-        None | Some(serde_json::Value::Null) => true,
-        Some(q) => q.get("match_all").is_some(),
+    let Some(body) = body else {
+        return true;
+    };
+    let Some(query) = body.get("query") else {
+        return true;
+    };
+    match query {
+        serde_json::Value::Null => true,
+        // Elasticsearch reads `{}` as a match-all query.
+        serde_json::Value::Object(map) if map.is_empty() => true,
+        serde_json::Value::Object(map) => {
+            if map.get("match_all").is_some() {
+                return true;
+            }
+            // A bool query without clauses matches every document too, as does one whose
+            // clauses are all empty.
+            map.get("bool").is_some_and(|bool_query| match bool_query {
+                serde_json::Value::Object(clauses) => clauses.values().all(
+                    |clause| matches!(clause, serde_json::Value::Array(items) if items.is_empty()),
+                ),
+                _ => false,
+            })
+        }
+        _ => false,
     }
 }
 
@@ -447,6 +468,34 @@ mod tests {
                 body: Some(serde_json::json!({"settings": {}}))
             }
         );
+    }
+
+    #[test]
+    fn a_clauseless_query_is_a_match_all_delete() {
+        let delete_all = |body: serde_json::Value| EsRequest::Http {
+            method: "POST".into(),
+            path: "/idx/_delete_by_query".into(),
+            body: Some(body),
+        };
+        for body in [
+            serde_json::json!({"query": {}}),
+            serde_json::json!({"query": {"bool": {}}}),
+            serde_json::json!({"query": {"bool": {"must": [], "should": []}}}),
+        ] {
+            assert!(
+                matches!(
+                    classify(&delete_all(body.clone())),
+                    crate::StatementClass::Destructive(_)
+                ),
+                "{body} deletes every document"
+            );
+        }
+        assert!(matches!(
+            classify(&delete_all(
+                serde_json::json!({"query": {"bool": {"must": [{"term": {"a": 1}}]}}})
+            )),
+            crate::StatementClass::Write
+        ));
     }
 
     #[test]

@@ -7555,6 +7555,7 @@ dependencies = [
  "mongodb",
  "parking_lot",
  "rustls",
+ "serde_json",
  "sqlr-core",
  "sqlr-driver-sdk",
  "sqlr-driver-tests",

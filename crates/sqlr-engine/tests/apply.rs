@@ -253,6 +253,13 @@ fn apply_rolls_back_a_failed_transaction_and_applies_in_a_new_one() {
     let before = fake.executed().len();
     let job = engine.apply_changeset(&key, changeset(vec![update(1, "total", Value::Int(5))]));
     assert!(matches!(outcome(&engine, job), JobOutcome::Applied(r) if r.failed.is_none()));
+    let notices = engine.take_notices();
+    assert!(
+        notices
+            .iter()
+            .any(|n| n.contains("rolled back before applying")),
+        "the user must be told the failed transaction was rolled back: {notices:?}"
+    );
     let run = executed_after(&fake, before);
     assert_eq!(run.first().map(String::as_str), Some("ROLLBACK"), "{run:?}");
     assert!(run.iter().any(|s| s == "BEGIN"), "{run:?}");
@@ -386,6 +393,31 @@ fn cancelled_apply_runs_nothing() {
     assert_eq!(outcome(&engine, job), JobOutcome::Cancelled);
     let run = executed_after(&fake, before);
     assert!(!run.iter().any(|s| s.starts_with("UPDATE")), "{run:?}");
+}
+
+#[test]
+fn a_cancelled_apply_does_not_cut_the_previous_result_short() {
+    let release = Arc::new(tokio::sync::Notify::new());
+    let (engine, fake) = engine_with(FakeScript {
+        rows: 1200,
+        block_fetch_matching: Some("slow".into()),
+        fetch_release: Some(release.clone()),
+        ..Default::default()
+    });
+    let q = engine.execute_in(&tab(), None, "select slow".into(), 10);
+    assert!(wait_until(TIMEOUT, || fake.blocked_fetches() >= 1));
+    // The changeset queues behind the fetch, then is cancelled before its turn.
+    let job = engine.apply_changeset(&tab(), changeset(vec![update(1, "total", Value::Int(5))]));
+    engine.cancel_job(job);
+    release.notify_one();
+    assert_eq!(outcome(&engine, job), JobOutcome::Cancelled);
+
+    let result = engine.result(q).expect("the earlier result");
+    let r = result.read();
+    assert!(
+        !r.cut_short && matches!(r.status, QueryStatus::Ready { more: true }),
+        "a cancelled apply must not cut the previous result short"
+    );
 }
 
 #[test]

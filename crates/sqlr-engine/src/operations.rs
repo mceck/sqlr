@@ -136,6 +136,22 @@ impl Operations {
         id
     }
 
+    /// The operation that already tracks query `q`, marked Running again: the engine moved
+    /// the query to another connection, which is the same piece of work.
+    pub fn resume_query(&self, q: QueryId) -> Option<OperationId> {
+        let mut inner = self.0.lock();
+        let (id, entry) = inner
+            .entries
+            .iter_mut()
+            .find(|(_, entry)| matches!(&entry.target, Target::Query(tracked) if *tracked == q))?;
+        entry.info.state = OperationState::Running;
+        entry.info.started_ms = crate::library::now_ms();
+        entry.info.cancelable = true;
+        entry.start = Instant::now();
+        entry.finished = None;
+        Some(*id)
+    }
+
     pub fn bind(&self, id: OperationId, run: u64, conn: Option<String>) {
         if let Some(entry) = self.0.lock().entries.get_mut(&id) {
             entry.run = Some(run);

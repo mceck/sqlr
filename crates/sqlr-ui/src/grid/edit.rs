@@ -18,6 +18,15 @@ pub enum EditError {
     /// The result mixes columns of several tables.
     #[error("columns from several tables")]
     SeveralTables,
+    /// The result repeats the same table column (a self-join), so the row a value belongs
+    /// to cannot be told apart.
+    #[error("the result repeats {table}.{column}; select it from one alias to edit")]
+    RepeatedColumn {
+        /// The table name.
+        table: String,
+        /// The repeated column name.
+        column: String,
+    },
     /// The table has no primary or unique key.
     #[error("no primary or unique key on {table}")]
     NoRowKey {
@@ -152,6 +161,19 @@ impl EditBuffer {
         };
         if origins.iter().flatten().any(|o| o.table != first.table) {
             return Err(EditError::SeveralTables);
+        }
+        // A self-join reports the same table for both aliases, so two result columns can
+        // share one origin column. The row key could then come from the other alias, and
+        // an edit would write the wrong row: refuse rather than guess.
+        let mut seen: Vec<(TableRef, String)> = Vec::new();
+        for o in origins.iter().flatten() {
+            if seen.iter().any(|(t, c)| *t == o.table && *c == o.column) {
+                return Err(EditError::RepeatedColumn {
+                    table: o.table.name.clone(),
+                    column: o.column.clone(),
+                });
+            }
+            seen.push((o.table.clone(), o.column.clone()));
         }
         let table = &info.table.name;
         let Some(key) = info.row_key() else {
@@ -645,6 +667,20 @@ mod tests {
         }
         buf.push_chunk(b.finish());
         buf
+    }
+
+    #[test]
+    fn a_self_join_that_repeats_a_column_is_read_only() {
+        let columns = [
+            col("id", ColumnKind::Int, Some("id")),
+            col("note", ColumnKind::Text, Some("note")),
+            col("note", ColumnKind::Text, Some("note")),
+        ];
+        let err = EditBuffer::for_table(&columns, &info(&["id"])).unwrap_err();
+        assert!(
+            matches!(err, EditError::RepeatedColumn { .. }),
+            "an alias could be written through the other alias's key: {err:?}"
+        );
     }
 
     #[test]

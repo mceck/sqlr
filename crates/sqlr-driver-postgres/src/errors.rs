@@ -11,7 +11,10 @@ use tokio_postgres::error::ErrorPosition;
 )]
 pub(crate) fn map_error(e: tokio_postgres::Error) -> DriverError {
     if let Some(db) = e.as_db_error() {
-        let mut err = DriverError::new(kind_for_sqlstate(db.code().code()), db.message());
+        let mut err = DriverError::new(
+            kind_for_sqlstate(db.code().code(), db.message()),
+            db.message(),
+        );
         if let Some(ErrorPosition::Original(p)) = db.position() {
             err = err.with_position((*p as usize).saturating_sub(1));
         }
@@ -40,7 +43,7 @@ pub(crate) fn map_error(e: tokio_postgres::Error) -> DriverError {
 
 /// 57P01-57P03 (admin shutdown, crash shutdown, cannot connect now) end the session like a
 /// lost connection.
-fn kind_for_sqlstate(code: &str) -> ErrorKind {
+fn kind_for_sqlstate(code: &str, message: &str) -> ErrorKind {
     if code.starts_with("28") {
         ErrorKind::Auth
     } else if code == "42501" {
@@ -48,7 +51,12 @@ fn kind_for_sqlstate(code: &str) -> ErrorKind {
     } else if code.starts_with("42") {
         ErrorKind::Syntax
     } else if code == "57014" {
-        ErrorKind::Cancelled
+        // The same state covers a user/service cancel and the server's statement_timeout.
+        if message.contains("statement timeout") {
+            ErrorKind::Timeout
+        } else {
+            ErrorKind::Cancelled
+        }
     } else if code.starts_with("08") || ["57P01", "57P02", "57P03"].contains(&code) {
         ErrorKind::Connection
     } else {
@@ -63,12 +71,20 @@ mod tests {
     #[test]
     fn server_shutdown_and_termination_are_connection_errors() {
         for code in ["57P01", "57P02", "57P03", "08006"] {
-            assert_eq!(kind_for_sqlstate(code), ErrorKind::Connection, "{code}");
+            assert_eq!(kind_for_sqlstate(code, ""), ErrorKind::Connection, "{code}");
         }
-        assert_eq!(kind_for_sqlstate("57014"), ErrorKind::Cancelled);
-        assert_eq!(kind_for_sqlstate("28P01"), ErrorKind::Auth);
-        assert_eq!(kind_for_sqlstate("42501"), ErrorKind::Permission);
-        assert_eq!(kind_for_sqlstate("42601"), ErrorKind::Syntax);
-        assert_eq!(kind_for_sqlstate("22012"), ErrorKind::Other);
+        assert_eq!(
+            kind_for_sqlstate("57014", "canceling statement due to user request"),
+            ErrorKind::Cancelled
+        );
+        assert_eq!(
+            kind_for_sqlstate("57014", "canceling statement due to statement timeout"),
+            ErrorKind::Timeout,
+            "a server-side statement timeout is not a user cancel"
+        );
+        assert_eq!(kind_for_sqlstate("28P01", ""), ErrorKind::Auth);
+        assert_eq!(kind_for_sqlstate("42501", ""), ErrorKind::Permission);
+        assert_eq!(kind_for_sqlstate("42601", ""), ErrorKind::Syntax);
+        assert_eq!(kind_for_sqlstate("22012", ""), ErrorKind::Other);
     }
 }

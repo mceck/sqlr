@@ -241,16 +241,26 @@ fn merge(command: &mut DocValue, options: Option<&DocValue>) {
     }
 }
 
-/// The comment of `command` (to tag it), adding a fresh one when it has none.
-fn tag_command(command: &mut DocValue) -> String {
-    if let Some(DocValue::String(c)) = command.get("comment") {
-        return c.clone();
-    }
+/// Tags `command` for cancellation and returns the tag. The tag is always fresh: cancel
+/// kills every operation whose comment equals it, so reusing a user's comment would let a
+/// cancel in one tab stop another tab's (or another client's) operation carrying it.
+/// A user comment is kept as a prefix of the tag.
+pub(crate) fn tag_command(command: &mut DocValue) -> String {
     let tag = new_tag();
-    if let DocValue::Document(f) = command {
-        f.push(("comment".into(), DocValue::String(tag.clone())));
+    let existing = match command.get("comment") {
+        Some(DocValue::String(c)) if !c.is_empty() => Some(c.clone()),
+        _ => None,
+    };
+    let comment = existing.map_or_else(|| tag.clone(), |c| format!("{c} {tag}"));
+    if let DocValue::Document(fields) = command {
+        match fields.iter_mut().find(|(k, _)| k == "comment") {
+            Some((_, value)) => *value = DocValue::String(comment.clone()),
+            None => fields.push(("comment".into(), DocValue::String(comment.clone()))),
+        }
     }
-    tag
+    // Cancellation matches `command.comment` exactly, and the comment is what the command
+    // carries: return it, suffix included.
+    comment
 }
 
 impl MongoConnection {
@@ -615,6 +625,19 @@ impl DocumentConn for MongoConnection {
 mod tests {
     use super::*;
     use sqlr_core::doc_field_value;
+
+    #[test]
+    fn tagging_keeps_the_user_comment_but_uses_a_fresh_tag() {
+        let mut first =
+            DocValue::Document(vec![("comment".into(), DocValue::String("nightly".into()))]);
+        let tag = tag_command(&mut first);
+        assert!(tag.starts_with("nightly sqlr:"), "{tag}");
+        assert_eq!(first.get("comment"), Some(&DocValue::String(tag.clone())));
+        // The same user comment in another request must not share the cancel tag.
+        let mut second =
+            DocValue::Document(vec![("comment".into(), DocValue::String("nightly".into()))]);
+        assert_ne!(tag_command(&mut second), tag);
+    }
 
     #[test]
     fn distinct_cells_read_like_the_document_table() {

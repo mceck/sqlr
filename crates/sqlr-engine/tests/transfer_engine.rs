@@ -626,6 +626,50 @@ fn the_rejected_file_is_complete_when_the_load_stops() {
     );
 }
 
+#[test]
+fn the_default_stops_a_load_after_one_thousand_rejected_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = two_dbs(dir.path());
+    run(
+        &engine,
+        "b",
+        "CREATE TABLE dst (id INTEGER PRIMARY KEY, name TEXT, score REAL)",
+    );
+    // A thousand and one more rows on both sides, all conflicting.
+    for conn in ["a", "b"] {
+        let table = if conn == "a" { "src" } else { "dst" };
+        run(
+            &engine,
+            conn,
+            &format!(
+                "WITH RECURSIVE c(x) AS (SELECT 1000 UNION ALL SELECT x + 1 FROM c WHERE x < 2000) \
+                 INSERT INTO {table} SELECT x, 'n', 0 FROM c"
+            ),
+        );
+    }
+    let mut s = spec(
+        Endpoint::Query {
+            conn: "a".into(),
+            database: None,
+            sql: "SELECT id, name, score FROM src ORDER BY id".into(),
+        },
+        Endpoint::Table {
+            conn: "b".into(),
+            table: table("dst"),
+        },
+    );
+    s.options.skip_bad_rows = true;
+    let job = engine.transfer(s);
+    let JobOutcome::Failed(e) = finished(&engine, job) else {
+        panic!("the load must stop at the default rejected-row limit");
+    };
+    assert!(
+        e.message.contains("Stopped after 1000 rejected rows"),
+        "{}",
+        e.message
+    );
+}
+
 /// A CSV of `n` rows (`id,name`).
 fn big_csv(dir: &Path, n: usize) -> PathBuf {
     let path = dir.join("big.csv");
@@ -670,6 +714,37 @@ fn cancel_in_commit_once_mode_rolls_everything_back() {
     assert_eq!(
         rows(&engine, "b", "SELECT count(*) FROM dst")[0][0],
         Value::Int(0)
+    );
+}
+
+#[test]
+fn per_batch_commits_never_wait_past_the_engine_batch_cap() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = two_dbs(dir.path());
+    run(&engine, "b", "CREATE TABLE dst (id INTEGER, name TEXT)");
+    let mut s = spec(
+        csv_source(big_csv(dir.path(), 400_000)),
+        Endpoint::Table {
+            conn: "b".into(),
+            table: table("dst"),
+        },
+    );
+    // The dialog allows 100,000 rows per batch; reads still happen in 10,000-row batches.
+    s.options.batch = 100_000;
+    s.options.commit_per_batch = true;
+    let job = engine.transfer(s);
+    assert!(wait_until(TIMEOUT * 6, || engine.job(job).is_some_and(
+        |j| j.progress.rows >= 25_000 || j.outcome.is_some()
+    )));
+    engine.cancel_job(job);
+    assert_eq!(finished(&engine, job), JobOutcome::Cancelled);
+    let kept = match rows(&engine, "b", "SELECT count(*) FROM dst")[0][0] {
+        Value::Int(n) => n,
+        ref other => panic!("{other:?}"),
+    };
+    assert!(
+        kept >= 20_000 && kept % 10_000 == 0,
+        "commits follow the 10,000-row engine batches: {kept} rows kept"
     );
 }
 

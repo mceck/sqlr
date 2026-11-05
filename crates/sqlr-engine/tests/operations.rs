@@ -1,6 +1,8 @@
 use crate::support;
 use sqlr_core::Secrets;
-use sqlr_engine::{DriverRegistry, Engine, OperationKind, OperationState, SessionStatus};
+use sqlr_engine::{
+    DriverRegistry, Engine, OperationKind, OperationState, QueryStatus, SessionStatus,
+};
 use sqlr_testkit::{FakeDriver, FakeScript};
 use std::{sync::Arc, time::Duration};
 use support::{TIMEOUT, config, dev, no_repaint, wait_until};
@@ -40,6 +42,30 @@ fn cancel_hung_connect_ends_cancelled_within_1s() {
         |o| o.kind == OperationKind::Connect && o.id != op.id && o.state == OperationState::Running
     )));
 }
+#[test]
+fn a_retried_query_keeps_one_operation() {
+    let fake = FakeDriver::new(FakeScript {
+        connection_error_once: Some("select 1".into()),
+        ..Default::default()
+    });
+    let mut drivers = DriverRegistry::default();
+    drivers.register(fake);
+    let engine = Engine::new(drivers, no_repaint());
+    engine.connect(config("c", "fake"), Secrets::default(), dev());
+    let q = engine.execute("c", "select 1".into(), 10);
+    assert!(wait_until(TIMEOUT, || matches!(
+        engine.result(q).map(|r| r.read().status.clone()),
+        Some(QueryStatus::Ready { .. })
+    )));
+    let ops: Vec<_> = engine
+        .operations()
+        .into_iter()
+        .filter(|o| o.kind == OperationKind::Query && o.label == "select 1")
+        .collect();
+    assert_eq!(ops.len(), 1, "{ops:?}");
+    assert_eq!(ops[0].state, OperationState::Done { ok: true });
+}
+
 #[test]
 fn an_engine_task_panic_fails_that_query_and_the_engine_keeps_running() {
     use sqlr_engine::QueryStatus;

@@ -4,7 +4,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use sqlr_core::{
-    CommitMode, ConnectionProfile, DriverError, ErrorKind, Node, NodeKind, NodePath, Secrets,
+    BEGIN_COMMITS_NOTE, CommitMode, ConnectionProfile, DriverError, ErrorKind,
+    IMPLICIT_COMMIT_NOTE, Node, NodeKind, NodePath, Secrets,
 };
 use sqlr_engine::{
     DriverRegistry, Engine, LoadState, MessageLevel, QueryId, QueryStatus, SessionKey,
@@ -170,6 +171,33 @@ fn a_failed_commit_ends_the_transaction_on_a_postgres_like_driver() {
 }
 
 #[test]
+fn only_a_failed_transaction_command_is_reported_as_a_failure() {
+    let (engine, _, key) = setup(writes(), profile(CommitMode::Manual));
+    ok(&engine, &key, "insert into t values (1)");
+    engine.commit(&key);
+    wait_phase(&engine, &key, &TxPhase::Idle);
+    assert!(
+        !engine.take_tx_failure(),
+        "a successful commit is not a failure"
+    );
+
+    let (engine, _, key) = setup(
+        FakeScript {
+            fail_matching: Some("COMMIT".into()),
+            error_aborts_transaction: true,
+            affected: Some(1),
+            ..Default::default()
+        },
+        profile(CommitMode::Manual),
+    );
+    ok(&engine, &key, "insert into t values (1)");
+    engine.commit(&key);
+    wait_phase(&engine, &key, &TxPhase::Idle);
+    assert!(wait_until(TIMEOUT, || engine.take_tx_failure()));
+    assert!(!engine.take_tx_failure(), "the failure is reported once");
+}
+
+#[test]
 fn a_failed_rollback_to_marks_the_transaction_failed() {
     let (engine, fake, key) = setup(
         FakeScript {
@@ -259,10 +287,11 @@ fn read_only_survives_a_connect_that_fails_while_switching() {
             .is_some_and(|t| t.read_only)),
         "the read-only request was lost with the failed connect"
     );
-    assert!(matches!(
+    // The queued statement follows the session's reconnect; every connect fails here.
+    assert!(wait_until(TIMEOUT, || matches!(
         engine.result(q).map(|r| r.read().status.clone()),
         Some(QueryStatus::Failed(_))
-    ));
+    )));
 }
 
 #[test]
@@ -578,9 +607,7 @@ fn a_read_on_a_dead_connection_runs_again_on_a_new_one() {
     assert_eq!(fake.executed(), ["select 1", "select 1"]);
     let messages = engine.result(q).unwrap().read().messages.clone();
     assert!(
-        messages
-            .iter()
-            .any(|m| m.text.contains("reconnected and ran the statement again")),
+        messages.iter().any(|m| m.text == "Connection restored"),
         "{messages:?}"
     );
 }
@@ -598,6 +625,23 @@ fn a_write_on_a_dead_connection_is_not_run_again() {
     ));
     assert_eq!(fake.executed(), ["insert into t values (1)"]);
     ok(&engine, &key, "insert into t values (2)");
+}
+
+#[test]
+fn a_batch_with_a_hidden_write_is_not_run_again_after_a_connection_error() {
+    let script = FakeScript {
+        connection_error_once: Some("select 1".into()),
+        ..writes()
+    };
+    let (engine, fake, key) = setup(script, dev());
+    // The first statement is a read, but the batch also writes: after a lost connection
+    // the engine cannot know whether the write took effect, so it must not run it again.
+    let q = engine.execute_in(&key, None, "select 1\ndelete from t".into(), 100);
+    assert!(matches!(
+        settled(&engine, q),
+        QueryStatus::Failed(e) if e.kind == ErrorKind::Connection
+    ));
+    assert_eq!(fake.executed(), ["select 1\ndelete from t"]);
 }
 
 #[test]
@@ -803,6 +847,40 @@ fn a_fetch_that_fails_inside_a_transaction_is_undone_alone() {
         .iter()
         .any(|s| s.contains("ROLLBACK TO"))));
     assert_eq!(phase(&engine, &key), TxPhase::Open);
+    let messages = engine.result(q).unwrap().read().messages.clone();
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.text.contains("canceling statement")),
+        "the fetch failure is missing from the messages: {messages:?}"
+    );
+    assert!(
+        messages.iter().any(|m| m.text.contains("was undone")),
+        "the transaction note is missing from the messages: {messages:?}"
+    );
+}
+
+#[test]
+fn a_cancelled_fetch_inside_a_transaction_leaves_only_rollback() {
+    let script = FakeScript {
+        error_aborts_transaction: true,
+        rows: 1200,
+        block_fetch_matching: Some("select n".into()),
+        block_after_chunks: Some(1),
+        ..Default::default()
+    };
+    let (engine, fake, key) = setup(script, profile(CommitMode::Manual));
+    ok(&engine, &key, "select 1");
+    let q = engine.execute_in(&key, None, "select n".into(), 500);
+    assert!(matches!(
+        settled(&engine, q),
+        QueryStatus::Ready { more: true }
+    ));
+    engine.fetch_more(q);
+    assert!(wait_until(TIMEOUT, || fake.blocked_fetches() >= 1));
+    engine.cancel(q);
+    assert_eq!(settled(&engine, q), QueryStatus::Cancelled);
+    wait_phase(&engine, &key, &TxPhase::Failed);
 }
 
 #[test]
@@ -1031,5 +1109,132 @@ fn messages_record_each_statement() {
     assert!(
         texts[1].starts_with("insert into t values (1) · 1 rows affected · "),
         "{texts:?}"
+    );
+}
+
+/// A fake dialect that models the MySQL/MariaDB transaction quirks.
+fn mysql(script: FakeScript) -> FakeScript {
+    FakeScript {
+        ddl_commits_transaction: true,
+        ..script
+    }
+}
+
+fn texts(engine: &Engine, q: QueryId) -> Vec<String> {
+    engine
+        .result(q)
+        .unwrap()
+        .read()
+        .messages
+        .iter()
+        .map(|m| m.text.clone())
+        .collect()
+}
+
+#[test]
+fn a_typed_begin_on_mysql_starts_a_new_transaction() {
+    for begin in ["BEGIN", "START TRANSACTION"] {
+        let (engine, _, key) = setup(mysql(writes()), profile(CommitMode::Manual));
+        ok(&engine, &key, "insert into t values (1)");
+        engine.savepoint(&key, "s1".into());
+        assert!(wait_until(TIMEOUT, || engine
+            .transaction(&key)
+            .is_some_and(|t| t.savepoints == ["s1"])));
+
+        let q = engine.execute_in(&key, None, begin.into(), 100);
+        assert!(matches!(settled(&engine, q), QueryStatus::Ready { .. }));
+        let tx = engine.transaction(&key).unwrap();
+        assert_eq!(tx.phase, TxPhase::Open, "{begin}");
+        assert_eq!(
+            tx.statements, 0,
+            "{begin}: the new transaction counts from zero"
+        );
+        assert!(
+            !tx.wrote,
+            "{begin}: the committed transaction's writes are not this one's"
+        );
+        assert!(
+            tx.savepoints.is_empty(),
+            "{begin}: the old savepoints are gone"
+        );
+        assert!(
+            texts(&engine, q).iter().any(|t| t == BEGIN_COMMITS_NOTE),
+            "{begin}: {:?}",
+            texts(&engine, q)
+        );
+    }
+}
+
+#[test]
+fn a_temporary_table_does_not_commit_the_open_transaction() {
+    let (engine, _, key) = setup(mysql(writes()), profile(CommitMode::Manual));
+    ok(&engine, &key, "insert into t values (1)");
+    let q = engine.execute_in(&key, None, "CREATE TEMPORARY TABLE x (a int)".into(), 100);
+    assert!(matches!(settled(&engine, q), QueryStatus::Ready { .. }));
+    wait_phase(&engine, &key, &TxPhase::Open);
+    assert_eq!(engine.transaction(&key).unwrap().statements, 2);
+    assert!(
+        !texts(&engine, q)
+            .iter()
+            .any(|t| t.contains("committed the open transaction")),
+        "{:?}",
+        texts(&engine, q)
+    );
+}
+
+#[test]
+fn an_analyze_table_commits_the_open_transaction() {
+    let (engine, _, key) = setup(mysql(writes()), profile(CommitMode::Manual));
+    ok(&engine, &key, "insert into t values (1)");
+    let q = engine.execute_in(&key, None, "ANALYZE TABLE t".into(), 100);
+    assert!(matches!(settled(&engine, q), QueryStatus::Ready { .. }));
+    wait_phase(&engine, &key, &TxPhase::Idle);
+    assert!(
+        texts(&engine, q).iter().any(|t| t == IMPLICIT_COMMIT_NOTE),
+        "{:?}",
+        texts(&engine, q)
+    );
+}
+
+#[test]
+fn an_implicitly_committing_statement_commits_even_when_it_fails() {
+    let script = FakeScript {
+        fail_matching: Some("ANALYZE".into()),
+        ..mysql(writes())
+    };
+    let (engine, _, key) = setup(script, profile(CommitMode::Manual));
+    ok(&engine, &key, "insert into t values (1)");
+    let q = engine.execute_in(&key, None, "ANALYZE TABLE t".into(), 100);
+    assert!(matches!(settled(&engine, q), QueryStatus::Failed(_)));
+    wait_phase(&engine, &key, &TxPhase::Idle);
+    assert!(
+        texts(&engine, q).iter().any(|t| t == IMPLICIT_COMMIT_NOTE),
+        "{:?}",
+        texts(&engine, q)
+    );
+}
+
+#[test]
+fn set_autocommit_commits_only_when_autocommit_was_off() {
+    let (engine, _, key) = setup(mysql(writes()), profile(CommitMode::Manual));
+    ok(&engine, &key, "insert into t values (1)");
+
+    let q = engine.execute_in(&key, None, "SET autocommit = 1".into(), 100);
+    assert!(matches!(settled(&engine, q), QueryStatus::Ready { .. }));
+    assert_eq!(
+        phase(&engine, &key),
+        TxPhase::Open,
+        "autocommit was already on: the server did not commit"
+    );
+
+    ok(&engine, &key, "SET autocommit = 0");
+    assert_eq!(phase(&engine, &key), TxPhase::Open);
+    let q = engine.execute_in(&key, None, "SET autocommit = 1".into(), 100);
+    assert!(matches!(settled(&engine, q), QueryStatus::Ready { .. }));
+    wait_phase(&engine, &key, &TxPhase::Idle);
+    assert!(
+        texts(&engine, q).iter().any(|t| t == IMPLICIT_COMMIT_NOTE),
+        "{:?}",
+        texts(&engine, q)
     );
 }

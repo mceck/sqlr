@@ -101,6 +101,9 @@ pub(crate) enum Command {
         ticket: u64,
         database: Option<String>,
         io: Arc<SessionIo>,
+        /// The engine moved the query to another connection after a connection error or a
+        /// replaced session: it continues the operation of the first attempt.
+        resumed: bool,
     },
     Fetch {
         q: QueryId,
@@ -208,6 +211,7 @@ impl Engine {
             include_sql: AtomicBool::new(true),
             row_cap: AtomicUsize::new(DEFAULT_ROW_CAP),
             result_byte_cap: AtomicUsize::new(DEFAULT_RESULT_BYTES),
+            tx_failure: AtomicBool::new(false),
             result_budget: crate::result_memory::ResultBudget::new(DEFAULT_TOTAL_RESULT_BYTES),
             spill_lock: tokio::sync::Mutex::new(()),
             conn_settings: Mutex::new(HashMap::new()),
@@ -1271,6 +1275,12 @@ impl Engine {
         self.shared.take_notices()
     }
 
+    /// Whether a transaction command failed since the last call. The end-transaction prompt
+    /// abandons its action only for this, not for an unrelated persistence notice.
+    pub fn take_tx_failure(&self) -> bool {
+        self.shared.tx_failure.swap(false, Ordering::Relaxed)
+    }
+
     /// Describes `table` (columns and keys) on the session `key` in the background; the
     /// result lands in [`Engine::table_info`]. A no-op while it is loading.
     pub fn describe(&self, key: &SessionKey, table: TableRef) {
@@ -1511,6 +1521,17 @@ impl Engine {
         id
     }
 
+    /// Copies a file the engine produced (an import's rejected rows) to `to`.
+    pub fn copy_file(&self, from: PathBuf, to: PathBuf) -> JobId {
+        let job = self.shared.jobs.create(JobKind::Export);
+        let id = job.id;
+        self.send(Command::Transfer(TransferRun {
+            job,
+            work: Work::CopyFile { from, to },
+        }));
+        id
+    }
+
     /// The I/O handle of a live session.
     pub(crate) fn live_io(&self, key: &SessionKey) -> Option<Arc<SessionIo>> {
         let inner = self.shared.inner.lock();
@@ -1609,6 +1630,11 @@ struct ResultEntry {
     outside_tx: bool,
     /// The query was already run again on a fresh connection after a connection error.
     retried: bool,
+    /// The session was replaced under the queued query and it was moved to the new one.
+    rebounded: bool,
+    /// The statement reached the connection and closed the previous stream: only then does
+    /// it cut an earlier Result short.
+    took_stream: bool,
 }
 
 /// What a native tool needs from a connection, cloned out of [`Inner`].
@@ -1847,6 +1873,8 @@ pub(crate) struct Shared {
     /// Rows a `fetch_all` may keep before it truncates the result.
     row_cap: AtomicUsize,
     result_byte_cap: AtomicUsize,
+    /// A transaction command (commit, rollback, savepoint) failed since the app last asked.
+    pub(crate) tx_failure: AtomicBool,
     result_budget: Arc<crate::result_memory::ResultBudget>,
     spill_lock: tokio::sync::Mutex<()>,
     /// Per-connection overrides of the settings above.
@@ -2062,6 +2090,8 @@ impl Shared {
                     settled: Arc::new(Notify::new()),
                     outside_tx: false,
                     retried: false,
+                    rebounded: false,
+                    took_stream: true,
                 },
             );
         }
@@ -2190,6 +2220,7 @@ impl Shared {
                     ticket: io.issue_ticket(),
                     database,
                     io: io.clone(),
+                    resumed: false,
                 });
             }
             inner.results.insert(
@@ -2206,6 +2237,8 @@ impl Shared {
                     settled: settled.clone(),
                     outside_tx,
                     retried: false,
+                    rebounded: false,
+                    took_stream: false,
                 },
             );
             (q, connected)
@@ -2330,8 +2363,20 @@ impl Shared {
             )),
             _ => None,
         };
+        // An Execute the engine moved to another connection continues the operation of
+        // the attempt that was interrupted, instead of adding a second entry.
+        let resumed = matches!(cmd, Command::Execute { resumed: true, .. });
         let tracked = description.map(|(kind, label, conn, target)| {
-            let id = self.operations.start(kind, label, conn, target.clone());
+            let existing = if resumed {
+                match &target {
+                    Target::Query(q) => self.operations.resume_query(*q),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            let id = existing
+                .unwrap_or_else(|| self.operations.start(kind, label, conn, target.clone()));
             (id, target)
         });
         let shared = self.clone();
@@ -2339,15 +2384,17 @@ impl Shared {
         if let Some((id, target)) = tracked {
             let state = match target {
                 Target::Query(q) => {
-                    shared
-                        .result(q)
-                        .map_or(S::Cancelled, |r| match &r.read().status {
-                            QueryStatus::Cancelled => S::Cancelled,
-                            QueryStatus::Failed(e) => S::Failed(e.to_string()),
-                            _ => S::Done { ok: true },
-                        })
+                    let status = shared.result(q).map(|r| r.read().status.clone());
+                    match status {
+                        // The command handed the query to another connection: the
+                        // operation stays Running until that attempt settles it.
+                        Some(QueryStatus::Running) => None,
+                        Some(QueryStatus::Cancelled) | None => Some(S::Cancelled),
+                        Some(QueryStatus::Failed(e)) => Some(S::Failed(e.to_string())),
+                        Some(QueryStatus::Ready { .. }) => Some(S::Done { ok: true }),
+                    }
                 }
-                Target::Script(id) => shared.scripts.state(id).map_or(S::Cancelled, |s| {
+                Target::Script(id) => Some(shared.scripts.state(id).map_or(S::Cancelled, |s| {
                     let s = s.read();
                     if s.cancelled {
                         S::Cancelled
@@ -2356,10 +2403,12 @@ impl Shared {
                     } else {
                         S::Done { ok: true }
                     }
-                }),
-                _ => S::Done { ok: true },
+                })),
+                _ => Some(S::Done { ok: true }),
             };
-            shared.operations.finish(id, state);
+            if let Some(state) = state {
+                shared.operations.finish(id, state);
+            }
             shared.repaint();
         }
     }
@@ -2392,6 +2441,7 @@ impl Shared {
                 ticket,
                 database,
                 io,
+                resumed: _,
             } => self.execute(q, ticket, database, io).await,
             Command::Fetch { q, all } => self.fetch(q, all).await,
             Command::Cancel(handle) => {
@@ -2671,11 +2721,48 @@ impl Shared {
             self.finish(q, QueryStatus::Cancelled);
             return;
         }
-        // Review Focus 1: a session holds one open stream, so the previous one is closed.
-        if let Some((prev, mut stream)) = slot.take() {
-            let _ = stream.close().await;
-            self.mark_complete(prev);
-            self.repaint();
+        // An earlier statement on the session may have lost the connection and made the
+        // engine replace it; this command still carries the retired I/O. Move the queued
+        // statement to the session's current connection instead of failing "not
+        // connected": it keeps its place in the issue order.
+        let rebound = {
+            let mut inner = self.inner.lock();
+            let stale = match inner.sessions.get(&key) {
+                Some(s) if s.is_connected() && Arc::ptr_eq(&s.io, &io) => false,
+                Some(s) if s.is_live() => true,
+                Some(s) => matches!(s.status, SessionStatus::Failed(_)),
+                None => false,
+            };
+            if !stale {
+                None
+            } else {
+                let first = match inner.results.get_mut(&q) {
+                    Some(entry) if !entry.rebounded => {
+                        entry.rebounded = true;
+                        true
+                    }
+                    _ => false,
+                };
+                if first {
+                    let io = self.live_or_reopen(&mut inner, &key);
+                    if let (Some(io), Some(entry)) = (&io, inner.results.get_mut(&q)) {
+                        entry.io = Some(io.clone());
+                    }
+                    io
+                } else {
+                    None
+                }
+            }
+        };
+        if let Some(io) = rebound {
+            self.send(Command::Execute {
+                q,
+                ticket: io.issue_ticket(),
+                database,
+                io,
+                resumed: true,
+            });
+            return;
         }
         let conn = match self
             .query_connection(&key, &io, q, database.as_deref())
@@ -2718,8 +2805,10 @@ impl Shared {
             .await;
         self.clear_active(&key, &io, q);
         if retry {
-            drop(slot);
+            // Dispatch the rerun before releasing the old stream: a statement queued
+            // behind this one must not get to the new connection first.
             self.rerun_on_new_connection(q, &key, database);
+            drop(slot);
         }
     }
 
@@ -2755,16 +2844,14 @@ impl Shared {
         };
         self.add_message(
             q,
-            RunMessage::new(
-                MessageLevel::Warning,
-                "The connection was lost; reconnected and ran the statement again",
-            ),
+            RunMessage::new(MessageLevel::Warning, "Connection restored"),
         );
         self.send(Command::Execute {
             q,
             ticket: io.issue_ticket(),
             database,
             io,
+            resumed: true,
         });
     }
 
@@ -2801,6 +2888,9 @@ impl Shared {
         if let Some(class) = dialect.statement_class(sql) {
             stmt.class = class;
         }
+        // The Dialect decides which statements make the server commit before they run
+        // (MySQL's DDL and administrative statements, `SET autocommit`).
+        stmt.impact = dialect.transaction_impact(sql);
         if matches!(stmt.class, sqlr_core::StatementClass::Transaction(_))
             && !self.inner.lock().supports_transactions(&key.conn)
         {
@@ -2814,13 +2904,7 @@ impl Shared {
             return false;
         }
         let script_class = syntax.classify_script(sql);
-        let rules = TxRules {
-            ddl_commits: dialect.ddl_commits_transaction(),
-            error_aborts: dialect.error_aborts_transaction(),
-            nested_begin: dialect.nested_begin_increments_depth(),
-            savepoints_replace: dialect.savepoint_names_replace(),
-            savepoint_opens: dialect.savepoint_starts_transaction(),
-        };
+        let rules = TxRules::from_dialect(dialect);
         let (read_only, begin, elsewhere, was_open) = {
             let mut inner = self.inner.lock();
             let outside_tx = inner.results.get(&q).is_some_and(|e| e.outside_tx)
@@ -2857,6 +2941,17 @@ impl Shared {
             self.finish(q, QueryStatus::Failed(e));
             return false;
         }
+        // Every local refusal above leaves the previous Result streaming: only a statement
+        // that actually reaches the connection takes its stream over. A session holds one
+        // open stream, so close the previous one now, before the first SQL runs.
+        if let Some((prev, mut stream)) = slot.take() {
+            let _ = stream.close().await;
+            self.mark_complete(prev);
+            self.repaint();
+        }
+        if let Some(entry) = self.inner.lock().results.get_mut(&q) {
+            entry.took_stream = true;
+        }
         if begin {
             match run_sql(conn, dialect.begin_sql()).await {
                 Ok(()) => {
@@ -2891,9 +2986,11 @@ impl Shared {
             .await;
         let outcome = rel.execute(sql).await;
         // A read on a connection the server closed while idle is run again on a new one.
+        // The whole script must be a read: a batch whose first statement reads but which
+        // also writes may have taken effect before the link dropped, so it is never rerun.
         if let Err(e) = &outcome
             && e.kind == ErrorKind::Connection
-            && stmt.class == sqlr_core::StatementClass::Read
+            && matches!(script_class, sqlr_core::StatementClass::Read)
             && !was_open
             && self.may_retry(q)
         {
@@ -2953,7 +3050,23 @@ impl Shared {
                 if let Some(result) = self.result(q) {
                     result.write().affected = Some(n);
                 }
-                self.finish_with(q, QueryStatus::Ready { more: false }, notes);
+                // A statement the driver ran to the end despite a cancel (Oracle has no
+                // server cancel) still ends Cancelled when the user pressed Stop.
+                let cancelled = self
+                    .inner
+                    .lock()
+                    .results
+                    .get(&q)
+                    .is_some_and(|entry| entry.cancel_requested);
+                self.finish_with(
+                    q,
+                    if cancelled {
+                        QueryStatus::Cancelled
+                    } else {
+                        QueryStatus::Ready { more: false }
+                    },
+                    notes,
+                );
             }
             Ok(Execution::Rows(stream)) => {
                 if let Some(result) = self.result(q) {
@@ -3208,10 +3321,15 @@ impl Shared {
                     self.mark_cut_short(q);
                     QueryStatus::Ready { more: false }
                 }
-                PageEnd::Stopped => QueryStatus::Cancelled,
+                PageEnd::Stopped => {
+                    notes.extend(self.after_fetch_cancelled(key, io));
+                    QueryStatus::Cancelled
+                }
                 PageEnd::Failed(e) => {
                     notes.extend(self.on_error(key, io, &e));
-                    if e.kind != ErrorKind::Connection {
+                    if e.kind == ErrorKind::Cancelled {
+                        notes.extend(self.after_fetch_cancelled(key, io));
+                    } else if e.kind != ErrorKind::Connection {
                         notes.extend(self.after_fetch_failure(key, io).await);
                     }
                     error_status(e)
@@ -3240,6 +3358,20 @@ impl Shared {
                 return;
             }
         }
+    }
+
+    /// A fetch was cancelled inside a user transaction. On a server where an error aborts
+    /// the transaction, the cancellation did too: only a rollback is possible now.
+    fn after_fetch_cancelled(&self, key: &SessionKey, io: &Arc<SessionIo>) -> Option<RunMessage> {
+        let mut inner = self.inner.lock();
+        let s = inner.session(key, io)?;
+        if s.tx.phase != TxPhase::Open {
+            return None;
+        }
+        let conn = s.tx_conn.clone()?;
+        let rules = TxRules::from_dialect(conn.relational()?.dialect());
+        s.tx.stmt_savepoint = false;
+        s.tx.fetch_failed(rules, now_ms())
     }
 
     /// A fetch failed inside a user transaction: undo the statement through its savepoint,
@@ -3485,25 +3617,48 @@ impl Shared {
     /// Like [`Shared::finish`]; the first time the status leaves `Running` the outcome
     /// message and then `notes` are added to the result's messages.
     fn finish_with(self: &Arc<Self>, q: QueryId, status: QueryStatus, notes: Vec<RunMessage>) {
+        let terminal = status != QueryStatus::Running;
         let entry = {
             let mut inner = self.inner.lock();
             let conn = inner.results.get(&q).map(|e| e.key.conn.clone());
             let driver = conn.as_deref().and_then(|conn| inner.driver_of(conn));
             inner.results.get_mut(&q).map(|e| {
-                let first = !e.recorded && status != QueryStatus::Running;
+                let first = !e.recorded && terminal;
                 e.recorded |= first;
+                let took_stream = e.took_stream;
                 let first = first.then(|| (e.key.conn.clone(), e.started_at_ms, e.settled.clone()));
-                (e.result.clone(), e.started, first, driver, conn)
+                (
+                    e.result.clone(),
+                    e.started,
+                    first,
+                    driver,
+                    conn,
+                    took_stream,
+                )
             })
         };
-        if let Some((result, started, first, driver, conn)) = entry {
+        if let Some((result, started, first, driver, conn, took_stream)) = entry {
+            // A query that never reached the connection (a refused statement, an unknown
+            // database) must not make an earlier Result look cut short.
+            if terminal && !took_stream {
+                for e in self.inner.lock().results.values_mut() {
+                    if e.superseded_by == Some(q) {
+                        e.superseded_by = None;
+                    }
+                }
+            }
             let mut failure = None;
             let history = {
                 let mut r = result.write();
                 let settled = r.status == QueryStatus::Running && status != QueryStatus::Running;
                 r.status = status;
                 r.elapsed = started.elapsed();
-                if first.is_some() {
+                // The outcome and the notes belong to the Result the first time it leaves
+                // Running, and again when a later fetch settles it for good (its error,
+                // its cancellation, or its final row count).
+                let report = first.is_some()
+                    || (settled && !matches!(r.status, QueryStatus::Ready { more: true }));
+                if report {
                     let outcome = outcome_message(&r);
                     r.messages.push(outcome);
                     r.messages.extend(notes);

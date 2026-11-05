@@ -96,6 +96,26 @@ fn bson_error(e: bson::error::Error) -> DriverError {
     )
 }
 
+/// Plain JSON (a serde value) as a `DocValue`, for the types read through serde.
+fn from_json(v: &serde_json::Value) -> DocValue {
+    match v {
+        serde_json::Value::Null => DocValue::Null,
+        serde_json::Value::Bool(b) => DocValue::Bool(*b),
+        serde_json::Value::Number(n) => match n.as_i64() {
+            Some(i) => match i32::try_from(i) {
+                Ok(i) => DocValue::Int32(i),
+                Err(_) => DocValue::Int64(i),
+            },
+            None => DocValue::Double(n.as_f64().unwrap_or(f64::NAN)),
+        },
+        serde_json::Value::String(s) => DocValue::String(s.clone()),
+        serde_json::Value::Array(items) => DocValue::Array(items.iter().map(from_json).collect()),
+        serde_json::Value::Object(map) => {
+            DocValue::Document(map.iter().map(|(k, v)| (k.clone(), from_json(v))).collect())
+        }
+    }
+}
+
 pub(crate) fn from_raw(v: RawBsonRef<'_>) -> Result<DocValue, DriverError> {
     Ok(match v {
         RawBsonRef::Double(d) => DocValue::Double(d),
@@ -140,7 +160,18 @@ pub(crate) fn from_raw(v: RawBsonRef<'_>) -> Result<DocValue, DriverError> {
         RawBsonRef::Undefined => DocValue::Undefined,
         RawBsonRef::MaxKey => DocValue::MaxKey,
         RawBsonRef::MinKey => DocValue::MinKey,
-        RawBsonRef::DbPointer(_) => DocValue::Document(vec![("$dbPointer".into(), DocValue::Null)]),
+        RawBsonRef::DbPointer(pointer) => {
+            // The raw pointer's fields are crate-private: take its Extended JSON shape
+            // (`{"$dbPointer": {"$ref": …, "$id": …}}`) through serde, which is not the
+            // BSON serializer's special-cased DbPointer element.
+            let json = serde_json::to_value(pointer).map_err(|e| {
+                DriverError::new(
+                    ErrorKind::Protocol,
+                    format!("invalid BSON from the server: {e}"),
+                )
+            })?;
+            from_json(&json)
+        }
     })
 }
 
@@ -153,6 +184,56 @@ pub(crate) fn from_document(doc: &Document) -> Result<DocValue, DriverError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_db_pointer_keeps_its_namespace_and_id() {
+        // A DBPointer element: type 0x0C, key "p", a string namespace and a 12-byte id.
+        let namespace = "db.c";
+        let oid = [7_u8; 12];
+        let mut body = Vec::new();
+        body.push(0x0C);
+        body.extend_from_slice(b"p\0");
+        body.extend_from_slice(&((namespace.len() as i32) + 1).to_le_bytes());
+        body.extend_from_slice(namespace.as_bytes());
+        body.push(0);
+        body.extend_from_slice(&oid);
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&((body.len() + 5) as i32).to_le_bytes());
+        bytes.extend_from_slice(&body);
+        bytes.push(0);
+        let raw = RawDocumentBuf::from_bytes(bytes).unwrap();
+
+        let value = from_raw_doc(&raw).unwrap();
+        assert_eq!(value.unmodelled(), Some("a DBPointer"));
+        let DocValue::Document(fields) = &value else {
+            panic!("{value:?}")
+        };
+        assert_eq!(fields[0].0, "p");
+        let DocValue::Document(wrapper) = &fields[0].1 else {
+            panic!("{:?}", fields[0].1)
+        };
+        assert_eq!(wrapper[0].0, "$dbPointer");
+        let DocValue::Document(pointer) = &wrapper[0].1 else {
+            panic!("{:?}", wrapper[0].1)
+        };
+        assert_eq!(
+            pointer.iter().find(|(k, _)| k == "$ref").map(|(_, v)| v),
+            Some(&DocValue::String(namespace.into()))
+        );
+        // serde renders the ObjectId as its Extended JSON wrapper.
+        let DocValue::Document(id) = pointer
+            .iter()
+            .find(|(k, _)| k == "$id")
+            .map(|(_, v)| v)
+            .expect("$id")
+        else {
+            panic!("$id is not a document")
+        };
+        assert_eq!(
+            id.iter().find(|(k, _)| k == "$oid").map(|(_, v)| v),
+            Some(&DocValue::String("070707070707070707070707".into()))
+        );
+    }
 
     #[test]
     fn every_type_round_trips_through_raw_bson() {

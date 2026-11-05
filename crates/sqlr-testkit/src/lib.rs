@@ -200,6 +200,9 @@ pub struct FakeScript {
     pub panic_matching: Option<String>,
     /// When set, `execute` returns `Execution::Affected` with this count instead of rows.
     pub affected: Option<u64>,
+    /// With [`FakeScript::affected`], `execute` waits for a cancel before returning the row
+    /// count, as a driver without server cancel does.
+    pub block_on_execute: bool,
     /// `next_chunk` waits until cancelled, then returns `ErrorKind::Cancelled`.
     pub block_on_fetch: bool,
     /// With `block_on_fetch`, wait only after this many chunks have been returned.
@@ -1049,6 +1052,14 @@ impl RelationalConn for FakeConnection {
             return Ok(Execution::Affected(0));
         }
         if let Some(n) = self.shared.script.affected {
+            if self.shared.script.block_on_execute {
+                // Register before checking the flag so a concurrent cancel is never missed.
+                let mut notified = pin!(self.shared.cancel.notified());
+                notified.as_mut().enable();
+                if !self.shared.cancelled.load(Ordering::SeqCst) {
+                    notified.await;
+                }
+            }
             return Ok(Execution::Affected(n));
         }
         // A cancel targets the currently running query, so a new one starts clean.
@@ -1551,6 +1562,19 @@ impl Dialect for FakeDialect {
 
     fn ddl_commits_transaction(&self) -> bool {
         self.ddl_commits_transaction
+    }
+
+    fn begin_commits_transaction(&self) -> bool {
+        // The fake models the MySQL-family quirks whenever its DDL commits.
+        self.ddl_commits_transaction
+    }
+
+    fn transaction_impact(&self, sql: &str) -> sqlr_core::TransactionImpact {
+        if self.ddl_commits_transaction {
+            sqlr_core::mysql_transaction_impact(&sqlr_core::SqlSyntax::ansi(), sql)
+        } else {
+            sqlr_core::TransactionImpact::None
+        }
     }
 
     fn error_aborts_transaction(&self) -> bool {

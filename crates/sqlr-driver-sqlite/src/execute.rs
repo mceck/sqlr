@@ -87,6 +87,10 @@ pub(crate) fn run(
     reply: oneshot::Sender<Result<Started, DriverError>>,
     cut: &HashSet<u64>,
 ) -> Ended {
+    // A cancel that arrives while the statement is prepared or bound must not be lost: the
+    // statement counts as stepping from here, and the flag is released only when it waits
+    // for fetch commands (between fetches nothing runs).
+    let running_guard = Running::start(running);
     let mut stmt = match conn.prepare(sql) {
         Ok(stmt) => stmt,
         Err(e) => {
@@ -113,7 +117,6 @@ pub(crate) fn run(
     }
     if stmt.column_count() == 0 {
         let before = conn.total_changes();
-        let _running = Running::start(running);
         let result = stmt.raw_execute().map(|_| {
             // DDL leaves `changes()` at the last DML's count.
             if conn.total_changes() == before {
@@ -128,6 +131,7 @@ pub(crate) fn run(
 
     let columns = column_metas(declared(&stmt));
     let mut rows = stmt.raw_query();
+    drop(running_guard);
     if reply
         .send(Ok(Started::Rows {
             stream,

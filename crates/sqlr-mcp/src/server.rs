@@ -253,7 +253,7 @@ impl ServerHandler for McpService {
             .map(str::to_owned);
         let span = tracing::info_span!("mcp_tool", tool = %request.name, conn = conn.as_deref());
         let started = std::time::Instant::now();
-        self.state.begin_call(&session_id);
+        let _call = self.state.begin_call_guard(&session_id);
         let outcome = crate::tools::call(
             &self.state,
             &tool_ctx,
@@ -261,7 +261,6 @@ impl ServerHandler for McpService {
             request.arguments.as_ref(),
         );
         let outcome = tracing::Instrument::instrument(outcome, span).await;
-        self.state.end_call(&session_id);
         let ok = outcome.is_ok();
         let error_code = outcome.as_ref().err().map(|error| error.code);
         tracing::info!(

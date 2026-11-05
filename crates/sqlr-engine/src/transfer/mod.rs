@@ -125,6 +125,11 @@ pub(crate) enum Work {
         path: PathBuf,
         text: String,
     },
+    /// Copies a file the engine produced (the rejected rows of an import) to a chosen path.
+    CopyFile {
+        from: PathBuf,
+        to: PathBuf,
+    },
     /// A transfer between endpoints (`pipeline`).
     Endpoints(Box<pipeline::EndpointWork>),
     /// Looking into a transfer source (`Engine::probe_source`).
@@ -392,6 +397,7 @@ impl Shared {
                 format,
             } => self.copy(&job, q, rows, cols, format).await,
             Work::SaveText { path, text } => save_text(path, text).await,
+            Work::CopyFile { from, to } => copy_file(from, to).await,
             Work::Endpoints(work) => self.clone().run_endpoints(&job, *work).await,
             Work::Probe { source, options } => self.clone().run_probe(&job, source, options).await,
         };
@@ -1055,7 +1061,9 @@ impl Load<'_> {
         let mut in_batch = 0usize;
         let mut rejected: Vec<(u64, String)> = Vec::new();
         let mut rejected_count = 0u64;
-        let batch = options.batch.max(1);
+        // The engine reads and writes at most 10,000 rows per batch; committing must not
+        // wait for more than the dialog asked for or than one batch holds.
+        let batch = options.batch.clamp(1, 10_000);
         let kept_note = |committed: u64| {
             if committed > 0 {
                 format!("; {committed} rows committed by earlier batches stay")
@@ -1248,6 +1256,17 @@ pub(crate) struct NewTable {
 }
 
 /// Writes `text` to `path` (through a partial file, like an export).
+/// Copies an engine-produced file (the rejected rows of an import) to `to`.
+async fn copy_file(from: PathBuf, to: PathBuf) -> JobOutcome {
+    match tokio::fs::copy(&from, &to).await {
+        Ok(_) => JobOutcome::Exported { rows: 0, path: to },
+        Err(e) => JobOutcome::Failed(DriverError::new(
+            ErrorKind::Other,
+            format!("Could not save the rejected rows: {e}"),
+        )),
+    }
+}
+
 async fn save_text(path: PathBuf, text: String) -> JobOutcome {
     let lines = text.lines().count() as u64;
     let mut out = match OutFile::create(path).await {
