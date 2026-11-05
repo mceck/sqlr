@@ -253,6 +253,13 @@ fn apply_rolls_back_a_failed_transaction_and_applies_in_a_new_one() {
     let before = fake.executed().len();
     let job = engine.apply_changeset(&key, changeset(vec![update(1, "total", Value::Int(5))]));
     assert!(matches!(outcome(&engine, job), JobOutcome::Applied(r) if r.failed.is_none()));
+    let notices = engine.take_notices();
+    assert!(
+        notices
+            .iter()
+            .any(|n| n.contains("rolled back before applying")),
+        "the user must be told the failed transaction was rolled back: {notices:?}"
+    );
     let run = executed_after(&fake, before);
     assert_eq!(run.first().map(String::as_str), Some("ROLLBACK"), "{run:?}");
     assert!(run.iter().any(|s| s == "BEGIN"), "{run:?}");

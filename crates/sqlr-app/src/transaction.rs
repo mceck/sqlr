@@ -1039,6 +1039,7 @@ mod tests {
             wrote: false,
             started_by_savepoint: false,
             stmt_savepoint: false,
+            autocommit_off: false,
         }
     }
 

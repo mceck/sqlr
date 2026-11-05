@@ -51,7 +51,7 @@ pub(crate) fn refresh_editability(
     let Some(conn) = tab.conn.clone() else {
         return;
     };
-    let columns = {
+    let (columns, sql) = {
         let Some(result) = engine.result(q) else {
             return;
         };
@@ -59,8 +59,9 @@ pub(crate) fn refresh_editability(
         if r.rows.columns().is_empty() || matches!(r.status, sqlr_engine::QueryStatus::Failed(_)) {
             return;
         }
-        r.rows.columns().to_vec()
+        (r.rows.columns().to_vec(), r.sql.clone())
     };
+    let syntax = tab.editor.syntax().clone();
     let key = tab.session(engine, &conn);
     let mut origins = columns.iter().filter_map(|c| c.origin.as_ref());
     let first = origins.next();
@@ -79,17 +80,27 @@ pub(crate) fn refresh_editability(
                 if table.database.is_none() {
                     table.database = tab.database.clone();
                 }
-                match engine.table_info(&conn, &table) {
-                    None => {
-                        engine.describe(&key, table.clone());
-                        Editability::Pending(table)
+                if sqlr_core::repeats_table(&sql, &syntax, &table.name) {
+                    // The statement refers to this table from more than one relation (a
+                    // self-join): a row's key cannot be attributed to the edited alias, and
+                    // writing it could modify the wrong row. Refuse rather than guess.
+                    Editability::ReadOnly(format!(
+                        "the statement joins {} to itself; edit the table on its own",
+                        table.name
+                    ))
+                } else {
+                    match engine.table_info(&conn, &table) {
+                        None => {
+                            engine.describe(&key, table.clone());
+                            Editability::Pending(table)
+                        }
+                        Some(LoadState::Loading) => Editability::Pending(table),
+                        Some(LoadState::Failed(e)) => Editability::ReadOnly(format!(
+                            "the description of {} failed: {}",
+                            table.name, e.message
+                        )),
+                        Some(LoadState::Ready(info)) => Editability::Editable(table, info),
                     }
-                    Some(LoadState::Loading) => Editability::Pending(table),
-                    Some(LoadState::Failed(e)) => Editability::ReadOnly(format!(
-                        "the description of {} failed: {}",
-                        table.name, e.message
-                    )),
-                    Some(LoadState::Ready(info)) => Editability::Editable(table, info),
                 }
             }
         }

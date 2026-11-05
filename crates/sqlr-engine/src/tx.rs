@@ -4,8 +4,8 @@
 use std::sync::Arc;
 
 use sqlr_core::{
-    CommitMode, Connection, Dialect, DriverError, ErrorKind, Execution, SqlSyntax, StatementClass,
-    TxVerb,
+    BEGIN_COMMITS_NOTE, CommitMode, Connection, DDL_COMMITS_NOTE, Dialect, DriverError, ErrorKind,
+    Execution, IMPLICIT_COMMIT_NOTE, SqlSyntax, StatementClass, TransactionImpact, TxVerb,
 };
 
 use crate::engine::{Shared, apply_read_only};
@@ -44,6 +44,8 @@ pub struct TxState {
     pub started_by_savepoint: bool,
     /// A statement savepoint is set and not yet released (the last statement streamed rows).
     pub stmt_savepoint: bool,
+    /// The session ran `SET autocommit = 0`: `SET autocommit = 1` then commits.
+    pub autocommit_off: bool,
 }
 
 /// The savepoint the engine sets around each user statement where an error aborts the
@@ -77,13 +79,14 @@ impl RunMessage {
 }
 
 pub(crate) const READ_ONLY: &str = "The session is read-only";
-pub(crate) const MYSQL_DDL_NOTE: &str = "MySQL committed the open transaction before DDL";
 
 /// What the dialect says about transactions, for the state machine.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct TxRules {
     /// The server commits an open transaction before DDL (MySQL).
     pub ddl_commits: bool,
+    /// A typed BEGIN inside an open transaction commits it first (MySQL, MariaDB).
+    pub begin_commits: bool,
     /// A failed statement aborts the open transaction (PostgreSQL).
     pub error_aborts: bool,
     /// BEGIN inside an open transaction adds a level that COMMIT must remove.
@@ -98,6 +101,7 @@ impl TxRules {
     pub(crate) fn from_dialect(dialect: &dyn Dialect) -> Self {
         Self {
             ddl_commits: dialect.ddl_commits_transaction(),
+            begin_commits: dialect.begin_commits_transaction(),
             error_aborts: dialect.error_aborts_transaction(),
             nested_begin: dialect.nested_begin_increments_depth(),
             savepoints_replace: dialect.savepoint_names_replace(),
@@ -116,6 +120,30 @@ pub(crate) struct Stmt {
     /// It changes the schema or privileges ([`SqlSyntax::is_schema_change`]): the statements
     /// a server with `ddl_commits` commits an open transaction before.
     pub schema_change: bool,
+    /// What the Dialect says the statement does to an open transaction before running
+    /// (MySQL's implicit commits, `SET autocommit`).
+    pub impact: TransactionImpact,
+}
+
+impl Stmt {
+    /// Whether the server committed the open transaction before this statement.
+    fn commits_before(&self, rules: TxRules) -> bool {
+        match self.impact {
+            TransactionImpact::Commits(_) => true,
+            // No Dialect answered (a bare syntax in a unit test): the generic DDL rule.
+            TransactionImpact::Unspecified => rules.ddl_commits && self.schema_change,
+            _ => false,
+        }
+    }
+
+    /// The warning when the server committed the open transaction before this statement.
+    fn commit_note(&self, rules: TxRules) -> Option<&'static str> {
+        match self.impact {
+            TransactionImpact::Commits(note) => Some(note),
+            _ if self.commits_before(rules) => Some(DDL_COMMITS_NOTE),
+            _ => None,
+        }
+    }
 }
 
 impl Stmt {
@@ -143,6 +171,8 @@ impl Stmt {
             class,
             chain,
             schema_change: syntax.is_schema_change(sql),
+            // The Dialect fills this in; a bare syntax has no transaction rules.
+            impact: TransactionImpact::Unspecified,
         }
     }
 }
@@ -162,6 +192,7 @@ impl TxState {
             wrote: false,
             started_by_savepoint: false,
             stmt_savepoint: false,
+            autocommit_off: false,
         }
     }
 
@@ -192,7 +223,10 @@ impl TxState {
     /// with no transaction open they name no savepoint, and opening one only to fail would
     /// leave a failed transaction behind, so the server reports the error instead.
     pub(crate) fn needs_begin(&self, stmt: &Stmt, rules: TxRules) -> bool {
-        if self.is_open() || (rules.ddl_commits && stmt.schema_change) {
+        if self.is_open()
+            || stmt.commits_before(rules)
+            || matches!(stmt.impact, TransactionImpact::Autocommit(_))
+        {
             return false;
         }
         let class = &stmt.class;
@@ -287,6 +321,10 @@ impl TxState {
                     self.open(now_ms);
                 } else if rules.nested_begin {
                     self.depth += 1;
+                } else if rules.begin_commits {
+                    // MySQL/MariaDB commit the pending transaction and start a new one.
+                    self.open(now_ms);
+                    return Some(RunMessage::new(MessageLevel::Warning, BEGIN_COMMITS_NOTE));
                 }
                 Some(RunMessage::new(MessageLevel::Info, "Transaction started"))
             }
@@ -348,11 +386,26 @@ impl TxState {
                 }
                 None
             }
-            _ if self.is_open() && rules.ddl_commits && stmt.schema_change => {
-                self.close(now_ms);
-                Some(RunMessage::new(MessageLevel::Warning, MYSQL_DDL_NOTE))
-            }
             _ => {
+                // The server committed before this statement, whatever it then did.
+                if let Some(note) = stmt.commit_note(rules) {
+                    if self.is_open() {
+                        self.close(now_ms);
+                        return Some(RunMessage::new(MessageLevel::Warning, note));
+                    }
+                    return None;
+                }
+                if let TransactionImpact::Autocommit(value) = stmt.impact {
+                    // `SET autocommit = 1` commits only when autocommit was off; the
+                    // setting itself outlives the transaction.
+                    let committed = value && self.autocommit_off && self.is_open();
+                    if committed {
+                        self.close(now_ms);
+                    }
+                    self.autocommit_off = !value;
+                    return committed
+                        .then(|| RunMessage::new(MessageLevel::Warning, IMPLICIT_COMMIT_NOTE));
+                }
                 if self.is_open() {
                     self.statements += 1;
                     self.wrote |= stmt.class.modifies();
@@ -371,13 +424,17 @@ impl TxState {
         now_ms: i64,
     ) -> Option<RunMessage> {
         self.last_activity_ms = now_ms;
+        // The implicit commit happens before the statement, so it stands even when the
+        // statement then failed. `SET autocommit` that failed changed nothing.
+        if let Some(note) = stmt.commit_note(rules)
+            && self.is_open()
+        {
+            self.close(now_ms);
+            return Some(RunMessage::new(MessageLevel::Warning, note));
+        }
         // A failed write may still hold the locks it took.
         if self.is_open() {
             self.wrote |= stmt.class.modifies();
-        }
-        if self.is_open() && rules.ddl_commits && stmt.schema_change {
-            self.close(now_ms);
-            return Some(RunMessage::new(MessageLevel::Warning, MYSQL_DDL_NOTE));
         }
         if self.phase == TxPhase::Open && rules.error_aborts {
             self.phase = TxPhase::Failed;
@@ -417,6 +474,8 @@ impl TxState {
     pub(crate) fn lost(&mut self, reason: &str, now_ms: i64) -> Option<RunMessage> {
         let was_open = self.is_open();
         self.close(now_ms);
+        // A new server connection starts with autocommit on.
+        self.autocommit_off = false;
         was_open.then(|| {
             RunMessage::new(
                 MessageLevel::Error,
@@ -814,7 +873,7 @@ mod tests {
         let note = tx
             .after_failure(&class("create table t (a int)"), mysql, 1)
             .unwrap();
-        assert_eq!(note.text, MYSQL_DDL_NOTE);
+        assert_eq!(note.text, DDL_COMMITS_NOTE);
         assert_eq!(tx.phase, TxPhase::Idle);
         // Without the implicit commit a failing DML statement leaves it open.
         tx.open(2);

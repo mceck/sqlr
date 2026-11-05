@@ -98,7 +98,7 @@ A relational Driver's Dialect provides:
 - **default schemas**, and whether a database is a schema (MySQL);
 - **placeholders** for bound parameters;
 - **qualified names**, **string, boolean and bytes literals**;
-- **transaction statements**: the begin statement, savepoint, rollback-to and release statements, the read-only on/off statements, and transaction quirks (DDL commits the open transaction; an error aborts the transaction; a nested `BEGIN` increments a depth; savepoint names replace each other; a savepoint starts a transaction; `BEGIN` starts a PL/SQL block);
+- **transaction statements**: the begin statement, savepoint, rollback-to and release statements, the read-only on/off statements, and transaction quirks (DDL and some administrative statements commit the open transaction; a typed `BEGIN` commits it; an error aborts the transaction; a nested `BEGIN` increments a depth; savepoint names replace each other; a savepoint starts a transaction; `BEGIN` starts a PL/SQL block);
 - **statement classification** into Statement classes, used by read-only sessions, confirmations and Smart commit mode;
 - **wrapping** a query for server-side sort and filter (`SELECT * FROM (<query>) sqlr_q ORDER BY … NULLS LAST` and `… WHERE …`, with trailing semicolons removed outside literals and comments);
 - **DML generation** for the Changeset, including `INSERT … DEFAULT VALUES`, upserts and `MERGE` statements used by imports;

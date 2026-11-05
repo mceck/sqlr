@@ -1564,6 +1564,19 @@ impl Dialect for FakeDialect {
         self.ddl_commits_transaction
     }
 
+    fn begin_commits_transaction(&self) -> bool {
+        // The fake models the MySQL-family quirks whenever its DDL commits.
+        self.ddl_commits_transaction
+    }
+
+    fn transaction_impact(&self, sql: &str) -> sqlr_core::TransactionImpact {
+        if self.ddl_commits_transaction {
+            sqlr_core::mysql_transaction_impact(&sqlr_core::SqlSyntax::ansi(), sql)
+        } else {
+            sqlr_core::TransactionImpact::None
+        }
+    }
+
     fn error_aborts_transaction(&self) -> bool {
         self.error_aborts_transaction
     }

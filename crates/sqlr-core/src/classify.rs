@@ -5,6 +5,155 @@
 
 use crate::syntax::{LexState, SqlSyntax, TokenKind};
 
+/// Whether `sql` refers to `table` more than once as a relation (`FROM`, `JOIN`, a comma
+/// or a schema dot before the name), so a row's relation instance is ambiguous: a
+/// self-join. A column that happens to share the table's name is not a relation mention.
+pub fn repeats_table(sql: &str, syntax: &SqlSyntax, table: &str) -> bool {
+    let mut tokens = Vec::new();
+    syntax.lex(sql, LexState::Normal, &mut tokens);
+    let significant: Vec<_> = tokens
+        .iter()
+        .filter(|t| t.kind != TokenKind::Comment)
+        .collect();
+    let mut count = 0;
+    for (i, token) in significant.iter().enumerate() {
+        if !matches!(
+            token.kind,
+            TokenKind::Ident | TokenKind::QuotedIdent | TokenKind::Keyword
+        ) {
+            continue;
+        }
+        let text = &sql[token.start..token.end];
+        let name = text.trim_matches(|c| matches!(c, '"' | '\'' | '`' | '[' | ']'));
+        if !name.eq_ignore_ascii_case(table) {
+            continue;
+        }
+        let Some(previous) = i.checked_sub(1).map(|p| &significant[p]) else {
+            continue;
+        };
+        let previous = &sql[previous.start..previous.end];
+        let referenced = previous.eq_ignore_ascii_case("FROM")
+            || previous.eq_ignore_ascii_case("JOIN")
+            || previous.eq_ignore_ascii_case("UPDATE")
+            || previous.eq_ignore_ascii_case("INTO")
+            || previous.eq_ignore_ascii_case("TABLE")
+            || previous == ","
+            || previous == ".";
+        if referenced {
+            count += 1;
+        }
+    }
+    count > 1
+}
+
+/// What a statement does to an already-open transaction before it runs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TransactionImpact {
+    /// No Dialect answered; the generic DDL rule applies.
+    #[default]
+    Unspecified,
+    /// The Dialect says the statement changes nothing before it runs.
+    None,
+    /// The server commits the open transaction first; the text is the warning to show.
+    Commits(&'static str),
+    /// `SET autocommit = value`; `true` commits when autocommit was off.
+    Autocommit(bool),
+}
+
+/// The warning for a server that commits an open transaction before DDL.
+pub const DDL_COMMITS_NOTE: &str = "MySQL committed the open transaction before DDL";
+
+/// The warning for the other statements MySQL implicitly commits on.
+pub const IMPLICIT_COMMIT_NOTE: &str = "MySQL committed the open transaction before the statement";
+
+/// The warning for a typed `BEGIN` that commits the open transaction on MySQL.
+pub const BEGIN_COMMITS_NOTE: &str = "Beginning a transaction committed the open transaction";
+
+/// MySQL and MariaDB implicitly commit an open transaction before DDL, except for
+/// temporary tables, and before some administrative statements. `SET autocommit = 1`
+/// commits only when autocommit was off.
+pub fn mysql_transaction_impact(syntax: &SqlSyntax, sql: &str) -> TransactionImpact {
+    let mut tokens = Vec::new();
+    syntax.lex(sql, LexState::Normal, &mut tokens);
+    let words: Vec<&str> = tokens
+        .iter()
+        .filter(|t| t.kind != TokenKind::Comment)
+        .map(|t| &sql[t.start..t.end])
+        .collect();
+    let first = words.first().copied().unwrap_or("");
+    let second = words.get(1).copied().unwrap_or("");
+    let some = |word: &str| first.eq_ignore_ascii_case(word);
+    if (some("CREATE") || some("DROP")) && second.eq_ignore_ascii_case("TEMPORARY") {
+        // `CREATE/DROP TEMPORARY TABLE` does not commit the open transaction.
+        return TransactionImpact::None;
+    }
+    if (some("ANALYZE") || some("OPTIMIZE") || some("REPAIR"))
+        && second.eq_ignore_ascii_case("TABLE")
+    {
+        return TransactionImpact::Commits(IMPLICIT_COMMIT_NOTE);
+    }
+    if some("LOCK") && second.eq_ignore_ascii_case("TABLES") {
+        return TransactionImpact::Commits(IMPLICIT_COMMIT_NOTE);
+    }
+    if some("FLUSH") {
+        return TransactionImpact::Commits(IMPLICIT_COMMIT_NOTE);
+    }
+    if some("SET") {
+        return match mysql_set_autocommit(&words) {
+            Some(value) => TransactionImpact::Autocommit(value),
+            None => TransactionImpact::None,
+        };
+    }
+    if [
+        "CREATE", "ALTER", "DROP", "TRUNCATE", "COMMENT", "GRANT", "REVOKE", "RENAME",
+    ]
+    .iter()
+    .any(|word| first.eq_ignore_ascii_case(word))
+    {
+        return TransactionImpact::Commits(DDL_COMMITS_NOTE);
+    }
+    TransactionImpact::None
+}
+
+/// The value of a session `SET autocommit = …`, or `None` for another `SET` (a global
+/// autocommit does not affect the session).
+fn mysql_set_autocommit(words: &[&str]) -> Option<bool> {
+    let mut i = 1;
+    if words
+        .get(i)
+        .is_some_and(|w| w.eq_ignore_ascii_case("SESSION") || w.eq_ignore_ascii_case("LOCAL"))
+    {
+        i += 1;
+    } else if words
+        .get(i)
+        .is_some_and(|w| w.eq_ignore_ascii_case("GLOBAL"))
+    {
+        return None;
+    }
+    let lower = words.get(i)?.to_ascii_lowercase();
+    let mut name = lower.strip_prefix("@@").unwrap_or(&lower);
+    if name.starts_with("global.") {
+        return None;
+    }
+    name = name
+        .strip_prefix("session.")
+        .or_else(|| name.strip_prefix("local."))
+        .unwrap_or(name);
+    if name != "autocommit" {
+        return None;
+    }
+    i += 1;
+    if words.get(i).is_some_and(|w| *w == "=" || *w == ":=") {
+        i += 1;
+    }
+    let value = words.get(i)?.to_ascii_uppercase();
+    match value.as_str() {
+        "1" | "ON" | "TRUE" => Some(true),
+        "0" | "OFF" | "FALSE" => Some(false),
+        _ => None,
+    }
+}
+
 /// A transaction-control verb of a statement.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TxVerb {
@@ -772,6 +921,74 @@ mod tests {
         ] {
             assert!(!syntax.is_schema_change(sql), "{sql}");
         }
+    }
+
+    #[test]
+    fn mysql_implicit_commits_follow_the_server_rules() {
+        let s = SqlSyntax::ansi();
+        assert_eq!(
+            mysql_transaction_impact(&s, "CREATE TEMPORARY TABLE x (a int)"),
+            TransactionImpact::None,
+            "temporary tables do not commit"
+        );
+        assert_eq!(
+            mysql_transaction_impact(&s, "DROP TEMPORARY TABLE x"),
+            TransactionImpact::None
+        );
+        assert!(matches!(
+            mysql_transaction_impact(&s, "CREATE TABLE x (a int)"),
+            TransactionImpact::Commits(_)
+        ));
+        assert!(matches!(
+            mysql_transaction_impact(&s, "ALTER TABLE x ADD b int"),
+            TransactionImpact::Commits(_)
+        ));
+        for sql in [
+            "ANALYZE TABLE x",
+            "OPTIMIZE TABLE x",
+            "REPAIR TABLE x",
+            "LOCK TABLES x READ",
+            "FLUSH TABLES",
+        ] {
+            assert!(matches!(
+                mysql_transaction_impact(&s, sql),
+                TransactionImpact::Commits(_)
+            ));
+        }
+        assert_eq!(
+            mysql_transaction_impact(&s, "SET autocommit = 0"),
+            TransactionImpact::Autocommit(false)
+        );
+        assert_eq!(
+            mysql_transaction_impact(&s, "SET autocommit = 1"),
+            TransactionImpact::Autocommit(true)
+        );
+        assert_eq!(
+            mysql_transaction_impact(&s, "SET GLOBAL autocommit = 1"),
+            TransactionImpact::None,
+            "the global setting does not touch this session"
+        );
+        assert_eq!(
+            mysql_transaction_impact(&s, "SET sql_mode = 'x'"),
+            TransactionImpact::None
+        );
+    }
+
+    #[test]
+    fn a_self_join_repeats_the_table_as_a_relation() {
+        let s = SqlSyntax::ansi();
+        assert!(repeats_table(
+            "SELECT a.id, b.name FROM people a JOIN people b ON b.id = a.manager_id",
+            &s,
+            "people"
+        ));
+        assert!(repeats_table(
+            "SELECT * FROM public.people WHERE id IN (SELECT id FROM public.people)",
+            &s,
+            "people"
+        ));
+        assert!(!repeats_table("SELECT id, name FROM people", &s, "people"));
+        assert!(!repeats_table("SELECT people FROM other", &s, "people"));
     }
 
     #[test]

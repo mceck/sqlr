@@ -4,7 +4,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use sqlr_core::{
-    CommitMode, ConnectionProfile, DriverError, ErrorKind, Node, NodeKind, NodePath, Secrets,
+    BEGIN_COMMITS_NOTE, CommitMode, ConnectionProfile, DriverError, ErrorKind,
+    IMPLICIT_COMMIT_NOTE, Node, NodeKind, NodePath, Secrets,
 };
 use sqlr_engine::{
     DriverRegistry, Engine, LoadState, MessageLevel, QueryId, QueryStatus, SessionKey,
@@ -1108,5 +1109,132 @@ fn messages_record_each_statement() {
     assert!(
         texts[1].starts_with("insert into t values (1) · 1 rows affected · "),
         "{texts:?}"
+    );
+}
+
+/// A fake dialect that models the MySQL/MariaDB transaction quirks.
+fn mysql(script: FakeScript) -> FakeScript {
+    FakeScript {
+        ddl_commits_transaction: true,
+        ..script
+    }
+}
+
+fn texts(engine: &Engine, q: QueryId) -> Vec<String> {
+    engine
+        .result(q)
+        .unwrap()
+        .read()
+        .messages
+        .iter()
+        .map(|m| m.text.clone())
+        .collect()
+}
+
+#[test]
+fn a_typed_begin_on_mysql_starts_a_new_transaction() {
+    for begin in ["BEGIN", "START TRANSACTION"] {
+        let (engine, _, key) = setup(mysql(writes()), profile(CommitMode::Manual));
+        ok(&engine, &key, "insert into t values (1)");
+        engine.savepoint(&key, "s1".into());
+        assert!(wait_until(TIMEOUT, || engine
+            .transaction(&key)
+            .is_some_and(|t| t.savepoints == ["s1"])));
+
+        let q = engine.execute_in(&key, None, begin.into(), 100);
+        assert!(matches!(settled(&engine, q), QueryStatus::Ready { .. }));
+        let tx = engine.transaction(&key).unwrap();
+        assert_eq!(tx.phase, TxPhase::Open, "{begin}");
+        assert_eq!(
+            tx.statements, 0,
+            "{begin}: the new transaction counts from zero"
+        );
+        assert!(
+            !tx.wrote,
+            "{begin}: the committed transaction's writes are not this one's"
+        );
+        assert!(
+            tx.savepoints.is_empty(),
+            "{begin}: the old savepoints are gone"
+        );
+        assert!(
+            texts(&engine, q).iter().any(|t| t == BEGIN_COMMITS_NOTE),
+            "{begin}: {:?}",
+            texts(&engine, q)
+        );
+    }
+}
+
+#[test]
+fn a_temporary_table_does_not_commit_the_open_transaction() {
+    let (engine, _, key) = setup(mysql(writes()), profile(CommitMode::Manual));
+    ok(&engine, &key, "insert into t values (1)");
+    let q = engine.execute_in(&key, None, "CREATE TEMPORARY TABLE x (a int)".into(), 100);
+    assert!(matches!(settled(&engine, q), QueryStatus::Ready { .. }));
+    wait_phase(&engine, &key, &TxPhase::Open);
+    assert_eq!(engine.transaction(&key).unwrap().statements, 2);
+    assert!(
+        !texts(&engine, q)
+            .iter()
+            .any(|t| t.contains("committed the open transaction")),
+        "{:?}",
+        texts(&engine, q)
+    );
+}
+
+#[test]
+fn an_analyze_table_commits_the_open_transaction() {
+    let (engine, _, key) = setup(mysql(writes()), profile(CommitMode::Manual));
+    ok(&engine, &key, "insert into t values (1)");
+    let q = engine.execute_in(&key, None, "ANALYZE TABLE t".into(), 100);
+    assert!(matches!(settled(&engine, q), QueryStatus::Ready { .. }));
+    wait_phase(&engine, &key, &TxPhase::Idle);
+    assert!(
+        texts(&engine, q).iter().any(|t| t == IMPLICIT_COMMIT_NOTE),
+        "{:?}",
+        texts(&engine, q)
+    );
+}
+
+#[test]
+fn an_implicitly_committing_statement_commits_even_when_it_fails() {
+    let script = FakeScript {
+        fail_matching: Some("ANALYZE".into()),
+        ..mysql(writes())
+    };
+    let (engine, _, key) = setup(script, profile(CommitMode::Manual));
+    ok(&engine, &key, "insert into t values (1)");
+    let q = engine.execute_in(&key, None, "ANALYZE TABLE t".into(), 100);
+    assert!(matches!(settled(&engine, q), QueryStatus::Failed(_)));
+    wait_phase(&engine, &key, &TxPhase::Idle);
+    assert!(
+        texts(&engine, q).iter().any(|t| t == IMPLICIT_COMMIT_NOTE),
+        "{:?}",
+        texts(&engine, q)
+    );
+}
+
+#[test]
+fn set_autocommit_commits_only_when_autocommit_was_off() {
+    let (engine, _, key) = setup(mysql(writes()), profile(CommitMode::Manual));
+    ok(&engine, &key, "insert into t values (1)");
+
+    let q = engine.execute_in(&key, None, "SET autocommit = 1".into(), 100);
+    assert!(matches!(settled(&engine, q), QueryStatus::Ready { .. }));
+    assert_eq!(
+        phase(&engine, &key),
+        TxPhase::Open,
+        "autocommit was already on: the server did not commit"
+    );
+
+    ok(&engine, &key, "SET autocommit = 0");
+    assert_eq!(phase(&engine, &key), TxPhase::Open);
+    let q = engine.execute_in(&key, None, "SET autocommit = 1".into(), 100);
+    assert!(matches!(settled(&engine, q), QueryStatus::Ready { .. }));
+    wait_phase(&engine, &key, &TxPhase::Idle);
+    assert!(
+        texts(&engine, q).iter().any(|t| t == IMPLICIT_COMMIT_NOTE),
+        "{:?}",
+        texts(&engine, q)
     );
 }

@@ -670,6 +670,9 @@ pub(crate) struct ImportDialog {
     save_job: Option<JobId>,
     saved: Option<Result<String, SaveRejectsError>>,
     error: Option<String>,
+    /// The complete rejected-rows file the engine wrote for this run (values included),
+    /// copied when the user saves it.
+    rejected_path: Option<PathBuf>,
 }
 
 impl ImportDialog {
@@ -703,6 +706,7 @@ impl ImportDialog {
             save_job: None,
             saved: None,
             error: None,
+            rejected_path: None,
         }
     }
 
@@ -994,6 +998,18 @@ impl ImportDialog {
             .map(|(i, t)| (i, t.clone()))
             .collect();
         self.error = None;
+        // With "skip bad rows" on, the engine writes the complete rejected CSV (values
+        // included) as it goes; the dialog copies that file when the user saves it.
+        let mut options = self.options.clone();
+        self.rejected_path = None;
+        if options.skip_bad_rows && self.collection.is_none() {
+            let file =
+                std::env::temp_dir().join(format!("sqlr-rejected-{}.csv", uuid::Uuid::new_v4()));
+            options.rejected_file = Some(file.clone());
+            self.rejected_path = Some(file);
+        } else {
+            options.rejected_file = None;
+        }
         if let Some(target) = &self.collection {
             self.run = Some(engine.transfer(TransferSpec {
                 source: Endpoint::File {
@@ -1006,7 +1022,7 @@ impl ImportDialog {
                     query: None,
                 },
                 mapping: mapping.into_iter().map(Into::into).collect(),
-                options: self.options.clone(),
+                options,
             }));
             return;
         }
@@ -1016,7 +1032,7 @@ impl ImportDialog {
             self.text_format(),
             self.target.clone(),
             mapping,
-            self.options.clone(),
+            options,
         ));
     }
 
@@ -1038,12 +1054,18 @@ impl ImportDialog {
         {
             self.save_rejected = None;
             if let (Some(path), Some((_, _, rejected))) = (answer, &self.summary) {
-                let mut text = String::from("line,reason\n");
-                for (line, reason) in rejected {
-                    text.push_str(&format!("{line},\"{}\"\n", reason.replace('"', "\"\"")));
-                }
                 self.saved = None;
-                self.save_job = Some(engine.save_text(path, text));
+                if let Some(source) = &self.rejected_path {
+                    // The engine wrote the complete CSV (line, reason and the source
+                    // values) during the import: copy it rather than rebuild a poorer one.
+                    self.save_job = Some(engine.copy_file(source.clone(), path));
+                } else {
+                    let mut text = String::from("line,reason\n");
+                    for (line, reason) in rejected {
+                        text.push_str(&format!("{line},\"{}\"\n", reason.replace('"', "\"\"")));
+                    }
+                    self.save_job = Some(engine.save_text(path, text));
+                }
             }
         }
         if let Some(job) = self.save_job

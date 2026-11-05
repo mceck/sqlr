@@ -108,6 +108,12 @@ impl Shared {
                 s.tx.close(crate::library::now_ms());
                 s.tx_conn = None;
             }
+            // Say so: the changes made before the failure are gone with the rollback the
+            // failed transaction could only end in.
+            self.notice(format!(
+                "The failed transaction on {} was rolled back before applying",
+                key.conn
+            ));
             TxPhase::Idle
         } else {
             tx.phase.clone()

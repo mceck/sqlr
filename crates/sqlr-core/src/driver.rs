@@ -275,6 +275,20 @@ pub trait Dialect: Send + Sync {
     fn savepoint_names_replace(&self) -> bool {
         false
     }
+    /// Whether a successful typed `BEGIN`/`START TRANSACTION` inside an open transaction
+    /// commits it first and starts a new one (MySQL, MariaDB).
+    fn begin_commits_transaction(&self) -> bool {
+        false
+    }
+    /// What `sql` does to an open transaction before it runs: the default is DDL on a
+    /// dialect whose DDL commits, and nothing elsewhere.
+    fn transaction_impact(&self, sql: &str) -> crate::TransactionImpact {
+        if self.ddl_commits_transaction() && self.syntax().is_schema_change(sql) {
+            crate::TransactionImpact::Commits(crate::DDL_COMMITS_NOTE)
+        } else {
+            crate::TransactionImpact::None
+        }
+    }
     /// Whether a top-level `SAVEPOINT` starts a transaction by itself (SQLite).
     fn savepoint_starts_transaction(&self) -> bool {
         false

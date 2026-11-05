@@ -186,6 +186,17 @@ impl Dialect for MyDialect {
         true
     }
 
+    fn begin_commits_transaction(&self) -> bool {
+        true
+    }
+
+    /// MySQL commits an open transaction before most DDL, before some administrative
+    /// statements, and on `SET autocommit = 1` when autocommit was off; temporary tables
+    /// and `SET autocommit = 0` do not commit.
+    fn transaction_impact(&self, sql: &str) -> sqlr_core::TransactionImpact {
+        sqlr_core::mysql_transaction_impact(&self.syntax(), sql)
+    }
+
     fn savepoint_names_replace(&self) -> bool {
         true
     }

@@ -1521,6 +1521,17 @@ impl Engine {
         id
     }
 
+    /// Copies a file the engine produced (an import's rejected rows) to `to`.
+    pub fn copy_file(&self, from: PathBuf, to: PathBuf) -> JobId {
+        let job = self.shared.jobs.create(JobKind::Export);
+        let id = job.id;
+        self.send(Command::Transfer(TransferRun {
+            job,
+            work: Work::CopyFile { from, to },
+        }));
+        id
+    }
+
     /// The I/O handle of a live session.
     pub(crate) fn live_io(&self, key: &SessionKey) -> Option<Arc<SessionIo>> {
         let inner = self.shared.inner.lock();
@@ -2877,6 +2888,9 @@ impl Shared {
         if let Some(class) = dialect.statement_class(sql) {
             stmt.class = class;
         }
+        // The Dialect decides which statements make the server commit before they run
+        // (MySQL's DDL and administrative statements, `SET autocommit`).
+        stmt.impact = dialect.transaction_impact(sql);
         if matches!(stmt.class, sqlr_core::StatementClass::Transaction(_))
             && !self.inner.lock().supports_transactions(&key.conn)
         {
@@ -2890,13 +2904,7 @@ impl Shared {
             return false;
         }
         let script_class = syntax.classify_script(sql);
-        let rules = TxRules {
-            ddl_commits: dialect.ddl_commits_transaction(),
-            error_aborts: dialect.error_aborts_transaction(),
-            nested_begin: dialect.nested_begin_increments_depth(),
-            savepoints_replace: dialect.savepoint_names_replace(),
-            savepoint_opens: dialect.savepoint_starts_transaction(),
-        };
+        let rules = TxRules::from_dialect(dialect);
         let (read_only, begin, elsewhere, was_open) = {
             let mut inner = self.inner.lock();
             let outside_tx = inner.results.get(&q).is_some_and(|e| e.outside_tx)

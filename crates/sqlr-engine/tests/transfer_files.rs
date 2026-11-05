@@ -394,3 +394,23 @@ fn readers_handle_parquet_nulls_and_decimals() {
     assert_eq!(got[0], vec![t("one"), t("12.34"), Value::Null], "{got:?}");
     assert_eq!(got[1], vec![Value::Null, Value::Null, Value::Null]);
 }
+
+#[test]
+fn saving_the_rejected_rows_copies_the_engine_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let engine = engine(&dir.path().join("db.db"));
+    // The engine's rejected file already holds the source values.
+    let source = dir.path().join("rejected.csv");
+    std::fs::write(&source, "line,reason,id\n2,\"bad\",7\n").unwrap();
+    let target = dir.path().join("saved.csv");
+    let job = engine.copy_file(source.clone(), target.clone());
+    assert!(matches!(
+        finished(&engine, job),
+        JobOutcome::Exported { path, .. } if path == target
+    ));
+    assert_eq!(
+        std::fs::read_to_string(&target).unwrap(),
+        std::fs::read_to_string(&source).unwrap(),
+        "the saved file is the complete engine file"
+    );
+}
