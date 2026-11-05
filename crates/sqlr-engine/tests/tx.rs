@@ -819,6 +819,17 @@ fn a_fetch_that_fails_inside_a_transaction_is_undone_alone() {
         .iter()
         .any(|s| s.contains("ROLLBACK TO"))));
     assert_eq!(phase(&engine, &key), TxPhase::Open);
+    let messages = engine.result(q).unwrap().read().messages.clone();
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.text.contains("canceling statement")),
+        "the fetch failure is missing from the messages: {messages:?}"
+    );
+    assert!(
+        messages.iter().any(|m| m.text.contains("was undone")),
+        "the transaction note is missing from the messages: {messages:?}"
+    );
 }
 
 #[test]

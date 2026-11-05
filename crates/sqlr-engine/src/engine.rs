@@ -1614,6 +1614,9 @@ struct ResultEntry {
     retried: bool,
     /// The session was replaced under the queued query and it was moved to the new one.
     rebounded: bool,
+    /// The statement reached the connection and closed the previous stream: only then does
+    /// it cut an earlier Result short.
+    took_stream: bool,
 }
 
 /// What a native tool needs from a connection, cloned out of [`Inner`].
@@ -2068,6 +2071,7 @@ impl Shared {
                     outside_tx: false,
                     retried: false,
                     rebounded: false,
+                    took_stream: true,
                 },
             );
         }
@@ -2214,6 +2218,7 @@ impl Shared {
                     outside_tx,
                     retried: false,
                     rebounded: false,
+                    took_stream: false,
                 },
             );
             (q, connected)
@@ -2739,12 +2744,6 @@ impl Shared {
             });
             return;
         }
-        // Review Focus 1: a session holds one open stream, so the previous one is closed.
-        if let Some((prev, mut stream)) = slot.take() {
-            let _ = stream.close().await;
-            self.mark_complete(prev);
-            self.repaint();
-        }
         let conn = match self
             .query_connection(&key, &io, q, database.as_deref())
             .await
@@ -2924,6 +2923,17 @@ impl Shared {
             );
             self.finish(q, QueryStatus::Failed(e));
             return false;
+        }
+        // Every local refusal above leaves the previous Result streaming: only a statement
+        // that actually reaches the connection takes its stream over. A session holds one
+        // open stream, so close the previous one now, before the first SQL runs.
+        if let Some((prev, mut stream)) = slot.take() {
+            let _ = stream.close().await;
+            self.mark_complete(prev);
+            self.repaint();
+        }
+        if let Some(entry) = self.inner.lock().results.get_mut(&q) {
+            entry.took_stream = true;
         }
         if begin {
             match run_sql(conn, dialect.begin_sql()).await {
@@ -3590,25 +3600,48 @@ impl Shared {
     /// Like [`Shared::finish`]; the first time the status leaves `Running` the outcome
     /// message and then `notes` are added to the result's messages.
     fn finish_with(self: &Arc<Self>, q: QueryId, status: QueryStatus, notes: Vec<RunMessage>) {
+        let terminal = status != QueryStatus::Running;
         let entry = {
             let mut inner = self.inner.lock();
             let conn = inner.results.get(&q).map(|e| e.key.conn.clone());
             let driver = conn.as_deref().and_then(|conn| inner.driver_of(conn));
             inner.results.get_mut(&q).map(|e| {
-                let first = !e.recorded && status != QueryStatus::Running;
+                let first = !e.recorded && terminal;
                 e.recorded |= first;
+                let took_stream = e.took_stream;
                 let first = first.then(|| (e.key.conn.clone(), e.started_at_ms, e.settled.clone()));
-                (e.result.clone(), e.started, first, driver, conn)
+                (
+                    e.result.clone(),
+                    e.started,
+                    first,
+                    driver,
+                    conn,
+                    took_stream,
+                )
             })
         };
-        if let Some((result, started, first, driver, conn)) = entry {
+        if let Some((result, started, first, driver, conn, took_stream)) = entry {
+            // A query that never reached the connection (a refused statement, an unknown
+            // database) must not make an earlier Result look cut short.
+            if terminal && !took_stream {
+                for e in self.inner.lock().results.values_mut() {
+                    if e.superseded_by == Some(q) {
+                        e.superseded_by = None;
+                    }
+                }
+            }
             let mut failure = None;
             let history = {
                 let mut r = result.write();
                 let settled = r.status == QueryStatus::Running && status != QueryStatus::Running;
                 r.status = status;
                 r.elapsed = started.elapsed();
-                if first.is_some() {
+                // The outcome and the notes belong to the Result the first time it leaves
+                // Running, and again when a later fetch settles it for good (its error,
+                // its cancellation, or its final row count).
+                let report = first.is_some()
+                    || (settled && !matches!(r.status, QueryStatus::Ready { more: true }));
+                if report {
                     let outcome = outcome_message(&r);
                     r.messages.push(outcome);
                     r.messages.extend(notes);

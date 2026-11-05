@@ -118,6 +118,9 @@ pub struct ConnDialog {
     outbox: Vec<StoreOp>,
     /// A save was sent and has not been answered.
     saving: bool,
+    /// The connection id that save was for (a fresh one for a new connection), so a store
+    /// reply about another connection is not mistaken for this dialog's.
+    saving_id: Option<String>,
 }
 
 /// The editable state of a data source that is not the active one.
@@ -270,6 +273,7 @@ impl ConnDialog {
             others: HashMap::new(),
             outbox: Vec::new(),
             saving: false,
+            saving_id: None,
         };
         if let Some(folder) = folder {
             dialog.form.group = folder.to_string();
@@ -340,6 +344,7 @@ impl ConnDialog {
             others: HashMap::new(),
             outbox: Vec::new(),
             saving: false,
+            saving_id: None,
         }
     }
 
@@ -396,15 +401,16 @@ impl ConnDialog {
     /// The store answered this dialog's save: `Err` keeps the dialog open with the error.
     pub(crate) fn save_failed(&mut self, id: &str, e: &str) {
         self.saving = false;
+        self.saving_id = None;
         tracing::warn!(conn = %id, error = %e, "saving the connection failed");
         self.error = Some(format!("Could not save: {e}"));
         // Review Focus 5: the config may be saved even though the secret was not.
         self.editing = Some(id.to_string());
     }
 
-    /// Whether a save is on its way to the store.
-    pub(crate) fn is_saving(&self) -> bool {
-        self.saving
+    /// Whether this dialog is waiting for the store's answer about connection `id`.
+    pub(crate) fn is_saving_id(&self, id: &str) -> bool {
+        self.saving && self.saving_id.as_deref() == Some(id)
     }
 
     fn test_status(&self, engine: &Engine) -> Option<TestStatus> {
@@ -882,6 +888,7 @@ impl ConnDialog {
             }
         }
         self.saving = true;
+        self.saving_id = Some(cfg.id.clone());
         self.outbox.push(StoreOp::Save {
             cfg,
             secrets,
@@ -1268,7 +1275,7 @@ impl SqlrApp {
     ) {
         match result {
             Ok(()) => {
-                if let Some(mut dialog) = self.conn_dialog.take_if(|d| d.is_saving()) {
+                if let Some(mut dialog) = self.conn_dialog.take_if(|d| d.is_saving_id(id)) {
                     dialog.finish(&self.engine);
                 }
                 if editing {
@@ -1280,8 +1287,12 @@ impl SqlrApp {
                 if id == crate::demo::DEMO_ID {
                     self.demo = None;
                 }
+                // Only the dialog that saved this connection keeps its error; a reply about
+                // another connection (an agent's save, say) must not touch its identity.
                 match &mut self.conn_dialog {
-                    Some(dialog) if dialog.is_saving() => dialog.save_failed(id, &e.to_string()),
+                    Some(dialog) if dialog.is_saving_id(id) => {
+                        dialog.save_failed(id, &e.to_string());
+                    }
                     _ => self.notify(format!("Could not save the connection: {e}")),
                 }
             }
@@ -1429,15 +1440,39 @@ mod tests {
         assert!(dialog.error.as_deref().unwrap().contains("keychain locked"));
         dialog.form.name = "renamed".into();
         assert_eq!(dialog.save(&manifest), DialogEvent::None);
-        assert!(dialog.is_saving());
+        assert!(dialog.saving);
         pump(&mut dialog, &repo);
-        assert!(!dialog.is_saving());
+        assert!(!dialog.saving);
 
         assert_eq!(repo.list().unwrap()[0].name, "renamed");
         assert!(
             keychain.writes.lock().is_empty(),
             "the stored password must be left alone: {:?}",
             keychain.writes.lock()
+        );
+    }
+
+    #[test]
+    fn a_save_reply_is_matched_to_the_connection_the_dialog_saved() {
+        let manifest = FakeDriver::new(FakeScript::default()).manifest().clone();
+        let cfg = ConnectionConfig {
+            id: "c1".into(),
+            name: "one".into(),
+            driver: manifest.id.clone(),
+            group: None,
+            color: None,
+            values: Default::default(),
+            profile: None,
+            save_secrets: true,
+            agent_access: Default::default(),
+        };
+        let mut dialog = ConnDialog::open_edit(&cfg, &manifest);
+        assert!(!dialog.is_saving_id("c1"));
+        assert_eq!(dialog.save(&manifest), DialogEvent::None);
+        assert!(dialog.is_saving_id("c1"));
+        assert!(
+            !dialog.is_saving_id("c2"),
+            "another connection's reply must not be taken for this dialog's"
         );
     }
 

@@ -246,6 +246,37 @@ fn unknown_database_fails_only_the_query() {
 }
 
 #[test]
+fn a_refused_statement_does_not_cut_the_previous_result_short() {
+    let (engine, _fake) = connected(FakeScript {
+        rows: 1200,
+        ..Default::default()
+    });
+    let first = engine.execute("c", "SELECT n".into(), 500);
+    assert_eq!(
+        settled(&engine, first),
+        (QueryStatus::Ready { more: true }, 500)
+    );
+    // The new statement is refused before it reaches any connection.
+    let refused = engine.execute_on("c", Some("nope"), "SELECT 1".into(), 500);
+    assert!(matches!(
+        settled(&engine, refused).0,
+        QueryStatus::Failed(_)
+    ));
+
+    assert!(
+        !cut_short(&engine, first),
+        "a refused statement must not cut the previous result short"
+    );
+    assert_eq!(status(&engine, first), QueryStatus::Ready { more: true });
+    engine.fetch_more(first);
+    assert_eq!(
+        settled(&engine, first),
+        (QueryStatus::Ready { more: true }, 1000),
+        "the earlier result must still fetch"
+    );
+}
+
+#[test]
 fn execute_first_page_then_more() {
     let (engine, _fake) = connected(FakeScript {
         rows: 1200,
