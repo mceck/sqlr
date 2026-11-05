@@ -535,7 +535,9 @@ impl SqlrApp {
         self.open_pending_redis();
         self.forget_failed_secrets();
         let failures = self.engine.take_notices();
-        let failed = !failures.is_empty();
+        // Only a failed transaction command abandons the end-transaction action: an
+        // unrelated persistence notice must not cancel a confirmed disconnect or close.
+        let failed = self.engine.take_tx_failure();
         for notice in failures {
             self.notify(notice);
         }

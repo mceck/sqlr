@@ -25,13 +25,11 @@ pub fn dispatch_actions(
         actions
     })
 }
-/// Whether `action` waits while a modal dialog is open: a chord pressed under a prompt never
-/// reaches the tab behind it.
-pub(crate) fn waits_for_modals(action: ActionId) -> bool {
-    matches!(
-        action,
-        ActionId::Apply | ActionId::Discard | ActionId::Refresh | ActionId::ReopenClosedTab
-    )
+/// Whether `action` waits while a modal dialog is open. Every global chord waits: a chord
+/// pressed under a prompt never reaches the tab behind it, so it cannot close the tab,
+/// switch connection or replace the action the prompt is resolving.
+pub(crate) fn waits_for_modals(_action: ActionId) -> bool {
+    true
 }
 
 impl SqlrApp {
@@ -226,6 +224,27 @@ impl AppCommand {
             Self::Refresh => i::REFRESH,
             Self::ReopenClosedTab => i::UNDO,
             Self::Key(_) => i::COMMAND,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_global_chord_waits_under_a_modal() {
+        for action in [
+            ActionId::CloseTab,
+            ActionId::Quit,
+            ActionId::RunStatement,
+            ActionId::NextTab,
+            ActionId::SaveSnippet,
+        ] {
+            assert!(
+                waits_for_modals(action),
+                "{action:?} must not reach the tab behind a prompt"
+            );
         }
     }
 }

@@ -27,6 +27,19 @@ struct Batches<'a> {
     skip_bad: bool,
     written: u64,
     rejected: Vec<(u64, String)>,
+    /// Every rejection seen, including those past the stored file's cap.
+    rejected_count: u64,
+    /// Stop the transfer at this many rejected documents.
+    max_rejected: u64,
+}
+
+/// The error that stops a load after too many rejected documents.
+fn too_many_rejected(count: u64, line: u64, reason: &str) -> DriverError {
+    let rows = if count == 1 { "row" } else { "rows" };
+    DriverError::new(
+        ErrorKind::Other,
+        format!("Stopped after {count} rejected {rows} (line {line}: {reason})"),
+    )
 }
 
 impl Batches<'_> {
@@ -44,8 +57,12 @@ impl Batches<'_> {
                     if !self.skip_bad {
                         return Err(DriverError::new(ErrorKind::Unsupported, reason));
                     }
+                    self.rejected_count += 1;
                     if self.rejected.len() < MAX_REJECTED {
-                        self.rejected.push((line, reason));
+                        self.rejected.push((line, reason.clone()));
+                    }
+                    if self.rejected_count >= self.max_rejected {
+                        return Err(too_many_rejected(self.rejected_count, line, &reason));
                     }
                 }
             }
@@ -63,8 +80,12 @@ impl Batches<'_> {
                     Ok(_) => self.written += 1,
                     Err(e) if e.kind == ErrorKind::Connection => return Err(e),
                     Err(e) => {
+                        self.rejected_count += 1;
                         if self.rejected.len() < MAX_REJECTED {
-                            self.rejected.push((line, e.message));
+                            self.rejected.push((line, e.message.clone()));
+                        }
+                        if self.rejected_count >= self.max_rejected {
+                            return Err(too_many_rejected(self.rejected_count, line, &e.message));
                         }
                     }
                 }
@@ -125,13 +146,15 @@ impl Shared {
             ));
         };
         job.set_cancel(Some(conn.cancel_handle()));
-        let batch = options.batch.max(1);
+        let batch = options.batch.clamp(1, 10_000);
         let mut out = Batches {
             doc,
             target,
             skip_bad: options.skip_bad_rows,
             written: 0,
             rejected: Vec::new(),
+            rejected_count: 0,
+            max_rejected: options.max_rejected.unwrap_or(MAX_REJECTED as u64),
         };
         let mut read = 0u64;
         let mut pending: Vec<(u64, DocValue)> = Vec::new();

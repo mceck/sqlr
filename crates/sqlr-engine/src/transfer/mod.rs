@@ -1055,7 +1055,9 @@ impl Load<'_> {
         let mut in_batch = 0usize;
         let mut rejected: Vec<(u64, String)> = Vec::new();
         let mut rejected_count = 0u64;
-        let batch = options.batch.max(1);
+        // The engine reads and writes at most 10,000 rows per batch; committing must not
+        // wait for more than the dialog asked for or than one batch holds.
+        let batch = options.batch.clamp(1, 10_000);
         let kept_note = |committed: u64| {
             if committed > 0 {
                 format!("; {committed} rows committed by earlier batches stay")

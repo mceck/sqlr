@@ -48,7 +48,8 @@ impl Default for ImportOptions {
             upsert_key: None,
             disable_constraints: false,
             rejected_file: None,
-            max_rejected: None,
+            // The transfer stops after 1,000 rejected rows unless a caller says otherwise.
+            max_rejected: Some(1000),
             encoding: None,
         }
     }
@@ -218,14 +219,22 @@ impl Endpoint {
 /// One mapping per source column: to the target column of the same name (compared ignoring
 /// case), or skipped when there is none.
 pub fn auto_mapping(source: &[String], target: &[String]) -> Vec<ColumnMapping> {
+    // A target column takes one source column: a repeated header name leaves the second
+    // source column skipped instead of building a mapping that fails at run time.
+    let mut taken: Vec<String> = Vec::new();
     source
         .iter()
         .enumerate()
         .map(|(i, name)| {
             let found = target
                 .iter()
-                .find(|t| t.eq_ignore_ascii_case(name))
+                .find(|t| {
+                    t.eq_ignore_ascii_case(name) && !taken.iter().any(|u| u.eq_ignore_ascii_case(t))
+                })
                 .cloned();
+            if let Some(t) = &found {
+                taken.push(t.clone());
+            }
             ColumnMapping::new(i, found)
         })
         .collect()
@@ -730,6 +739,18 @@ mod tests {
         assert_eq!(
             mapping.iter().map(|m| m.source).collect::<Vec<_>>(),
             [0, 1, 2]
+        );
+    }
+
+    #[test]
+    fn a_repeated_source_header_maps_the_target_once() {
+        let source = ["id", "id"].map(String::from);
+        let target = ["id", "name"].map(String::from);
+        let mapping = auto_mapping(&source, &target);
+        assert_eq!(mapping[0].target.as_deref(), Some("id"));
+        assert_eq!(
+            mapping[1].target, None,
+            "the second `id` stays skipped instead of mapping the same target twice"
         );
     }
 

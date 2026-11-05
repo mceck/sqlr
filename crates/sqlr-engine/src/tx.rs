@@ -601,6 +601,8 @@ impl Shared {
                     TxOp::RollbackTo(_) => "Rollback to savepoint",
                     TxOp::SetReadOnly(_) => "Switching read-only mode",
                 };
+                self.tx_failure
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
                 self.notice(format!("{what} failed on {}: {}", key.conn, e.message));
             }
         }

@@ -170,6 +170,33 @@ fn a_failed_commit_ends_the_transaction_on_a_postgres_like_driver() {
 }
 
 #[test]
+fn only_a_failed_transaction_command_is_reported_as_a_failure() {
+    let (engine, _, key) = setup(writes(), profile(CommitMode::Manual));
+    ok(&engine, &key, "insert into t values (1)");
+    engine.commit(&key);
+    wait_phase(&engine, &key, &TxPhase::Idle);
+    assert!(
+        !engine.take_tx_failure(),
+        "a successful commit is not a failure"
+    );
+
+    let (engine, _, key) = setup(
+        FakeScript {
+            fail_matching: Some("COMMIT".into()),
+            error_aborts_transaction: true,
+            affected: Some(1),
+            ..Default::default()
+        },
+        profile(CommitMode::Manual),
+    );
+    ok(&engine, &key, "insert into t values (1)");
+    engine.commit(&key);
+    wait_phase(&engine, &key, &TxPhase::Idle);
+    assert!(wait_until(TIMEOUT, || engine.take_tx_failure()));
+    assert!(!engine.take_tx_failure(), "the failure is reported once");
+}
+
+#[test]
 fn a_failed_rollback_to_marks_the_transaction_failed() {
     let (engine, fake, key) = setup(
         FakeScript {

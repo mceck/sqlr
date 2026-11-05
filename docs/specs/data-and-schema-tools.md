@@ -115,7 +115,7 @@ A transfer whose table or query source sits on the same Connection as a table ta
 
 #### Column mapping
 
-The mapping step lists every source column with a chosen target column of the same name, matched without regard to case. Columns with no match start skipped. The user can map any source column to any target column, skip a column, apply a Transform (trim, upper, lower, blank to NULL, constant), and set an explicit target type for the conversion. A target column that receives no source column is left to its default or nullability rules.
+The mapping step lists every source column with a chosen target column of the same name, matched without regard to case. Columns with no match start skipped. A target column takes at most one source column: a repeated source header leaves the later source column skipped. The user can map any source column to any target column, skip a column, apply a Transform (trim, upper, lower, blank to NULL, constant), and set an explicit target type for the conversion. A target column that receives no source column is left to its default or nullability rules.
 
 When the target is an existing table, the target columns and their types come from the table itself. When the target is a new table, the target types come from the type mapping below and every generated column is nullable.
 

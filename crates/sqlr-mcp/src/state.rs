@@ -42,7 +42,7 @@ pub struct ServerState {
     /// The in-memory verifier; rotation replaces it without rebinding.
     pub token: RwLock<String>,
     pub sessions: Mutex<HashMap<String, SessionInfo>>,
-    pub inflight: Mutex<HashMap<String, usize>>,
+    pub inflight: Arc<Inflight>,
     /// The Connection ids each MCP session created: that session may keep writing them
     /// while they are not exposed.
     pub created: Mutex<HashMap<String, HashSet<String>>>,
@@ -52,6 +52,44 @@ pub struct ServerState {
 
 /// One MCP session opens at most this many tabs.
 pub const MAX_AGENT_TABS: usize = 5;
+
+/// The tool calls each MCP session has in flight.
+#[derive(Default)]
+pub struct Inflight(Mutex<HashMap<String, usize>>);
+
+impl Inflight {
+    fn begin(&self, session: &str) {
+        *self.0.lock().entry(session.to_string()).or_default() += 1;
+    }
+
+    fn end(&self, session: &str) {
+        if let Some(count) = self.0.lock().get_mut(session) {
+            *count = count.saturating_sub(1);
+        }
+    }
+
+    pub fn is_idle(&self, session: &str) -> bool {
+        self.0.lock().get(session).copied().unwrap_or(0) == 0
+    }
+
+    fn remove(&self, session: &str) {
+        self.0.lock().remove(session);
+    }
+}
+
+/// Decrements a session's in-flight count when the tool call ends. It does so on drop too,
+/// so a call whose future is dropped (client disconnect, aborted request) cannot leave the
+/// session permanently busy and keep the idle sweep from reaping it.
+pub(crate) struct CallGuard {
+    inflight: Arc<Inflight>,
+    session: String,
+}
+
+impl Drop for CallGuard {
+    fn drop(&mut self) {
+        self.inflight.end(&self.session);
+    }
+}
 
 /// The tabs each MCP session opened, counted with the openings still in flight, so
 /// concurrent calls of one session never go past [`MAX_AGENT_TABS`].
@@ -117,7 +155,7 @@ impl ServerState {
             url,
             token: RwLock::new(token),
             sessions: Mutex::new(HashMap::new()),
-            inflight: Mutex::new(HashMap::new()),
+            inflight: Arc::new(Inflight::default()),
             created: Mutex::new(HashMap::new()),
             tabs_opened: TabCounts::default(),
         }
@@ -152,18 +190,14 @@ impl ServerState {
         }
     }
 
-    pub fn begin_call(&self, id: &str) {
+    /// Counts a tool call on `id` until the returned guard drops.
+    pub(crate) fn begin_call_guard(self: &Arc<Self>, id: &str) -> CallGuard {
         self.touch_session(id);
-        *self.inflight.lock().entry(id.to_string()).or_default() += 1;
-    }
-
-    pub fn end_call(&self, id: &str) {
-        let mut inflight = self.inflight.lock();
-        if let Some(count) = inflight.get_mut(id) {
-            *count = count.saturating_sub(1);
+        self.inflight.begin(id);
+        CallGuard {
+            inflight: self.inflight.clone(),
+            session: id.to_string(),
         }
-        drop(inflight);
-        self.touch_session(id);
     }
 
     pub fn session_ids(&self) -> Vec<String> {
@@ -172,7 +206,7 @@ impl ServerState {
 
     pub fn remove_session(&self, id: &str) {
         self.sessions.lock().remove(id);
-        self.inflight.lock().remove(id);
+        self.inflight.remove(id);
         self.created.lock().remove(id);
         self.tabs_opened.forget(id);
     }
@@ -207,14 +241,12 @@ impl ServerState {
 
     /// Sessions idle for 30 minutes with no in-flight call and no result used recently.
     pub fn idle_sessions(&self, idle_for: std::time::Duration) -> Vec<String> {
-        let inflight = self.inflight.lock().clone();
         let now = Instant::now();
         self.sessions
             .lock()
             .iter()
             .filter(|(id, session)| {
-                inflight.get(*id).copied().unwrap_or(0) == 0
-                    && now.duration_since(session.last_activity) >= idle_for
+                self.inflight.is_idle(id) && now.duration_since(session.last_activity) >= idle_for
             })
             .map(|(id, _)| id.clone())
             .collect()
@@ -245,6 +277,20 @@ impl ServerState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_dropped_call_releases_its_session() {
+        let inflight = Arc::new(Inflight::default());
+        inflight.begin("s");
+        let call = CallGuard {
+            inflight: inflight.clone(),
+            session: "s".into(),
+        };
+        assert!(!inflight.is_idle("s"));
+        // The tool future was dropped (client gone): the guard still ends the call.
+        drop(call);
+        assert!(inflight.is_idle("s"));
+    }
 
     #[test]
     fn tab_slots_are_reserved_atomically_and_released_unless_kept() {

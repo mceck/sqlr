@@ -211,6 +211,7 @@ impl Engine {
             include_sql: AtomicBool::new(true),
             row_cap: AtomicUsize::new(DEFAULT_ROW_CAP),
             result_byte_cap: AtomicUsize::new(DEFAULT_RESULT_BYTES),
+            tx_failure: AtomicBool::new(false),
             result_budget: crate::result_memory::ResultBudget::new(DEFAULT_TOTAL_RESULT_BYTES),
             spill_lock: tokio::sync::Mutex::new(()),
             conn_settings: Mutex::new(HashMap::new()),
@@ -1274,6 +1275,12 @@ impl Engine {
         self.shared.take_notices()
     }
 
+    /// Whether a transaction command failed since the last call. The end-transaction prompt
+    /// abandons its action only for this, not for an unrelated persistence notice.
+    pub fn take_tx_failure(&self) -> bool {
+        self.shared.tx_failure.swap(false, Ordering::Relaxed)
+    }
+
     /// Describes `table` (columns and keys) on the session `key` in the background; the
     /// result lands in [`Engine::table_info`]. A no-op while it is loading.
     pub fn describe(&self, key: &SessionKey, table: TableRef) {
@@ -1855,6 +1862,8 @@ pub(crate) struct Shared {
     /// Rows a `fetch_all` may keep before it truncates the result.
     row_cap: AtomicUsize,
     result_byte_cap: AtomicUsize,
+    /// A transaction command (commit, rollback, savepoint) failed since the app last asked.
+    pub(crate) tx_failure: AtomicBool,
     result_budget: Arc<crate::result_memory::ResultBudget>,
     spill_lock: tokio::sync::Mutex<()>,
     /// Per-connection overrides of the settings above.

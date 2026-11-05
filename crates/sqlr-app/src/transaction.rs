@@ -359,6 +359,11 @@ impl SqlrApp {
     /// Asks to commit or roll back `sessions` before `target`; without open transactions
     /// `target` happens at once.
     pub(crate) fn ask_end(&mut self, target: EndTarget, sessions: Vec<SessionKey>) {
+        // One end prompt at a time. A second request while one is being resolved (a chord,
+        // the connection chip, a menu) must not replace the action the user chose.
+        if self.ending.is_some() {
+            return;
+        }
         let mut all = Vec::new();
         let mut decide = false;
         for key in sessions {
@@ -837,6 +842,27 @@ mod tests {
                 "unexpected {label} control"
             );
         }
+    }
+
+    #[test]
+    fn a_second_end_request_does_not_replace_the_pending_one() {
+        let (mut app, _dir) = app_with_fake(FakeDriver::new(FakeScript::default()));
+        app.ending = Some(PendingEnd {
+            target: EndTarget::Disconnect("c1".into()),
+            sessions: Vec::new(),
+            chosen: None,
+            force_at: None,
+        });
+        app.ask_end(EndTarget::Quit, Vec::new());
+        assert!(
+            matches!(
+                app.ending.as_ref().map(|p| &p.target),
+                Some(EndTarget::Disconnect(c)) if c == "c1"
+            ),
+            "the pending disconnect must keep the prompt: {:?}",
+            app.ending.as_ref().map(|p| &p.target)
+        );
+        assert!(!app.quit_now, "the quit must wait for the pending prompt");
     }
 
     #[test]

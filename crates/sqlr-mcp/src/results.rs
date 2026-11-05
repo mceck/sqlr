@@ -356,7 +356,9 @@ pub async fn tabular_page(
                 })
                 .collect();
             let encoded = serde_json::to_string(&row).map_or(0, |s| s.len());
-            if bytes + encoded > MAX_PAGE_BYTES {
+            // The first item is always included, even when it alone exceeds the budget:
+            // otherwise the offset could never advance past it.
+            if !rows.is_empty() && bytes + encoded > MAX_PAGE_BYTES {
                 truncated = true;
                 break;
             }
@@ -496,7 +498,8 @@ pub async fn document_page(
             };
             let value = doc_json(&doc);
             let encoded = serde_json::to_string(&value).map_or(0, |s| s.len());
-            if bytes + encoded > MAX_PAGE_BYTES {
+            // As for rows: one oversize document must still be reachable.
+            if !documents.is_empty() && bytes + encoded > MAX_PAGE_BYTES {
                 truncated = true;
                 break;
             }
@@ -812,6 +815,62 @@ mod tests {
         assert_eq!(
             cell_json(Cell::Bytes(&[0, 255]), DisplayHint::Binary),
             json!("AP8=")
+        );
+    }
+
+    #[tokio::test]
+    async fn an_oversize_row_is_still_reachable_from_the_first_page() {
+        use sqlr_core::{
+            ColumnKind, ColumnMeta, ConnectionConfig, ConnectionProfile, DisplayHint, Secrets,
+        };
+        use sqlr_engine::{DriverRegistry, Engine, SessionStatus};
+        use sqlr_testkit::{FakeDriver, FakeResult, FakeScript};
+
+        let columns = vec![ColumnMeta::new(
+            "v",
+            "text",
+            ColumnKind::Text,
+            DisplayHint::Plain,
+        )];
+        let rows = vec![vec![sqlr_core::Value::Text("x".repeat(300_000))]];
+        let fake = FakeDriver::new(FakeScript {
+            result: Some(FakeResult { columns, rows }),
+            ..Default::default()
+        });
+        let mut drivers = DriverRegistry::default();
+        drivers.register(fake);
+        let engine = Engine::new(drivers, std::sync::Arc::new(|| {}));
+        engine.connect(
+            ConnectionConfig {
+                id: "c".into(),
+                name: "c".into(),
+                driver: "fake".into(),
+                group: None,
+                color: None,
+                values: Default::default(),
+                profile: None,
+                save_secrets: true,
+                agent_access: Default::default(),
+            },
+            Secrets::default(),
+            ConnectionProfile::development(),
+        );
+        for _ in 0..500 {
+            if matches!(
+                engine.session_status("c"),
+                Some(SessionStatus::Connected(_))
+            ) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let q = engine.execute("c", "select 1".into(), 200);
+        wait_ready(&engine, q, Duration::from_secs(2)).await;
+        let (_, _, _, page) = tabular_page(&engine, q, 0, 200).await.unwrap();
+        assert_eq!(page.rows.len(), 1, "the oversize row must be returned");
+        assert!(
+            !page.truncated,
+            "the page holds the whole result, so nothing was cut"
         );
     }
 
