@@ -101,6 +101,9 @@ pub(crate) enum Command {
         ticket: u64,
         database: Option<String>,
         io: Arc<SessionIo>,
+        /// The engine moved the query to another connection after a connection error or a
+        /// replaced session: it continues the operation of the first attempt.
+        resumed: bool,
     },
     Fetch {
         q: QueryId,
@@ -1609,6 +1612,8 @@ struct ResultEntry {
     outside_tx: bool,
     /// The query was already run again on a fresh connection after a connection error.
     retried: bool,
+    /// The session was replaced under the queued query and it was moved to the new one.
+    rebounded: bool,
 }
 
 /// What a native tool needs from a connection, cloned out of [`Inner`].
@@ -2062,6 +2067,7 @@ impl Shared {
                     settled: Arc::new(Notify::new()),
                     outside_tx: false,
                     retried: false,
+                    rebounded: false,
                 },
             );
         }
@@ -2190,6 +2196,7 @@ impl Shared {
                     ticket: io.issue_ticket(),
                     database,
                     io: io.clone(),
+                    resumed: false,
                 });
             }
             inner.results.insert(
@@ -2206,6 +2213,7 @@ impl Shared {
                     settled: settled.clone(),
                     outside_tx,
                     retried: false,
+                    rebounded: false,
                 },
             );
             (q, connected)
@@ -2330,8 +2338,20 @@ impl Shared {
             )),
             _ => None,
         };
+        // An Execute the engine moved to another connection continues the operation of
+        // the attempt that was interrupted, instead of adding a second entry.
+        let resumed = matches!(cmd, Command::Execute { resumed: true, .. });
         let tracked = description.map(|(kind, label, conn, target)| {
-            let id = self.operations.start(kind, label, conn, target.clone());
+            let existing = if resumed {
+                match &target {
+                    Target::Query(q) => self.operations.resume_query(*q),
+                    _ => None,
+                }
+            } else {
+                None
+            };
+            let id = existing
+                .unwrap_or_else(|| self.operations.start(kind, label, conn, target.clone()));
             (id, target)
         });
         let shared = self.clone();
@@ -2339,15 +2359,17 @@ impl Shared {
         if let Some((id, target)) = tracked {
             let state = match target {
                 Target::Query(q) => {
-                    shared
-                        .result(q)
-                        .map_or(S::Cancelled, |r| match &r.read().status {
-                            QueryStatus::Cancelled => S::Cancelled,
-                            QueryStatus::Failed(e) => S::Failed(e.to_string()),
-                            _ => S::Done { ok: true },
-                        })
+                    let status = shared.result(q).map(|r| r.read().status.clone());
+                    match status {
+                        // The command handed the query to another connection: the
+                        // operation stays Running until that attempt settles it.
+                        Some(QueryStatus::Running) => None,
+                        Some(QueryStatus::Cancelled) | None => Some(S::Cancelled),
+                        Some(QueryStatus::Failed(e)) => Some(S::Failed(e.to_string())),
+                        Some(QueryStatus::Ready { .. }) => Some(S::Done { ok: true }),
+                    }
                 }
-                Target::Script(id) => shared.scripts.state(id).map_or(S::Cancelled, |s| {
+                Target::Script(id) => Some(shared.scripts.state(id).map_or(S::Cancelled, |s| {
                     let s = s.read();
                     if s.cancelled {
                         S::Cancelled
@@ -2356,10 +2378,12 @@ impl Shared {
                     } else {
                         S::Done { ok: true }
                     }
-                }),
-                _ => S::Done { ok: true },
+                })),
+                _ => Some(S::Done { ok: true }),
             };
-            shared.operations.finish(id, state);
+            if let Some(state) = state {
+                shared.operations.finish(id, state);
+            }
             shared.repaint();
         }
     }
@@ -2392,6 +2416,7 @@ impl Shared {
                 ticket,
                 database,
                 io,
+                resumed: _,
             } => self.execute(q, ticket, database, io).await,
             Command::Fetch { q, all } => self.fetch(q, all).await,
             Command::Cancel(handle) => {
@@ -2671,6 +2696,49 @@ impl Shared {
             self.finish(q, QueryStatus::Cancelled);
             return;
         }
+        // An earlier statement on the session may have lost the connection and made the
+        // engine replace it; this command still carries the retired I/O. Move the queued
+        // statement to the session's current connection instead of failing "not
+        // connected": it keeps its place in the issue order.
+        let rebound = {
+            let mut inner = self.inner.lock();
+            let stale = match inner.sessions.get(&key) {
+                Some(s) if s.is_connected() && Arc::ptr_eq(&s.io, &io) => false,
+                Some(s) if s.is_live() => true,
+                Some(s) => matches!(s.status, SessionStatus::Failed(_)),
+                None => false,
+            };
+            if !stale {
+                None
+            } else {
+                let first = match inner.results.get_mut(&q) {
+                    Some(entry) if !entry.rebounded => {
+                        entry.rebounded = true;
+                        true
+                    }
+                    _ => false,
+                };
+                if first {
+                    let io = self.live_or_reopen(&mut inner, &key);
+                    if let (Some(io), Some(entry)) = (&io, inner.results.get_mut(&q)) {
+                        entry.io = Some(io.clone());
+                    }
+                    io
+                } else {
+                    None
+                }
+            }
+        };
+        if let Some(io) = rebound {
+            self.send(Command::Execute {
+                q,
+                ticket: io.issue_ticket(),
+                database,
+                io,
+                resumed: true,
+            });
+            return;
+        }
         // Review Focus 1: a session holds one open stream, so the previous one is closed.
         if let Some((prev, mut stream)) = slot.take() {
             let _ = stream.close().await;
@@ -2718,8 +2786,10 @@ impl Shared {
             .await;
         self.clear_active(&key, &io, q);
         if retry {
-            drop(slot);
+            // Dispatch the rerun before releasing the old stream: a statement queued
+            // behind this one must not get to the new connection first.
             self.rerun_on_new_connection(q, &key, database);
+            drop(slot);
         }
     }
 
@@ -2755,16 +2825,14 @@ impl Shared {
         };
         self.add_message(
             q,
-            RunMessage::new(
-                MessageLevel::Warning,
-                "The connection was lost; reconnected and ran the statement again",
-            ),
+            RunMessage::new(MessageLevel::Warning, "Connection restored"),
         );
         self.send(Command::Execute {
             q,
             ticket: io.issue_ticket(),
             database,
             io,
+            resumed: true,
         });
     }
 
@@ -2891,9 +2959,11 @@ impl Shared {
             .await;
         let outcome = rel.execute(sql).await;
         // A read on a connection the server closed while idle is run again on a new one.
+        // The whole script must be a read: a batch whose first statement reads but which
+        // also writes may have taken effect before the link dropped, so it is never rerun.
         if let Err(e) = &outcome
             && e.kind == ErrorKind::Connection
-            && stmt.class == sqlr_core::StatementClass::Read
+            && matches!(script_class, sqlr_core::StatementClass::Read)
             && !was_open
             && self.may_retry(q)
         {
@@ -2953,7 +3023,23 @@ impl Shared {
                 if let Some(result) = self.result(q) {
                     result.write().affected = Some(n);
                 }
-                self.finish_with(q, QueryStatus::Ready { more: false }, notes);
+                // A statement the driver ran to the end despite a cancel (Oracle has no
+                // server cancel) still ends Cancelled when the user pressed Stop.
+                let cancelled = self
+                    .inner
+                    .lock()
+                    .results
+                    .get(&q)
+                    .is_some_and(|entry| entry.cancel_requested);
+                self.finish_with(
+                    q,
+                    if cancelled {
+                        QueryStatus::Cancelled
+                    } else {
+                        QueryStatus::Ready { more: false }
+                    },
+                    notes,
+                );
             }
             Ok(Execution::Rows(stream)) => {
                 if let Some(result) = self.result(q) {
@@ -3208,10 +3294,15 @@ impl Shared {
                     self.mark_cut_short(q);
                     QueryStatus::Ready { more: false }
                 }
-                PageEnd::Stopped => QueryStatus::Cancelled,
+                PageEnd::Stopped => {
+                    notes.extend(self.after_fetch_cancelled(key, io));
+                    QueryStatus::Cancelled
+                }
                 PageEnd::Failed(e) => {
                     notes.extend(self.on_error(key, io, &e));
-                    if e.kind != ErrorKind::Connection {
+                    if e.kind == ErrorKind::Cancelled {
+                        notes.extend(self.after_fetch_cancelled(key, io));
+                    } else if e.kind != ErrorKind::Connection {
                         notes.extend(self.after_fetch_failure(key, io).await);
                     }
                     error_status(e)
@@ -3240,6 +3331,20 @@ impl Shared {
                 return;
             }
         }
+    }
+
+    /// A fetch was cancelled inside a user transaction. On a server where an error aborts
+    /// the transaction, the cancellation did too: only a rollback is possible now.
+    fn after_fetch_cancelled(&self, key: &SessionKey, io: &Arc<SessionIo>) -> Option<RunMessage> {
+        let mut inner = self.inner.lock();
+        let s = inner.session(key, io)?;
+        if s.tx.phase != TxPhase::Open {
+            return None;
+        }
+        let conn = s.tx_conn.clone()?;
+        let rules = TxRules::from_dialect(conn.relational()?.dialect());
+        s.tx.stmt_savepoint = false;
+        s.tx.fetch_failed(rules, now_ms())
     }
 
     /// A fetch failed inside a user transaction: undo the statement through its savepoint,

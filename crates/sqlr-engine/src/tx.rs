@@ -478,7 +478,10 @@ impl Shared {
             // next reconnect starts read-only, instead of silently dropping it.
             if let TxOp::SetReadOnly(on) = &op {
                 let mut inner = self.inner.lock();
-                if let Some(s) = inner.session(&key, &io) {
+                // The session may already have been replaced by a reconnect that raced
+                // the switch: keep the choice on the session there now as well as in the
+                // preferences the next reconnect reads.
+                if let Some(s) = inner.sessions.get_mut(&key) {
                     s.tx.read_only = *on;
                     let mode = s.tx.mode;
                     inner.prefs.insert(key.clone(), (mode, *on));

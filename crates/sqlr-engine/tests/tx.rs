@@ -259,10 +259,11 @@ fn read_only_survives_a_connect_that_fails_while_switching() {
             .is_some_and(|t| t.read_only)),
         "the read-only request was lost with the failed connect"
     );
-    assert!(matches!(
+    // The queued statement follows the session's reconnect; every connect fails here.
+    assert!(wait_until(TIMEOUT, || matches!(
         engine.result(q).map(|r| r.read().status.clone()),
         Some(QueryStatus::Failed(_))
-    ));
+    )));
 }
 
 #[test]
@@ -578,9 +579,7 @@ fn a_read_on_a_dead_connection_runs_again_on_a_new_one() {
     assert_eq!(fake.executed(), ["select 1", "select 1"]);
     let messages = engine.result(q).unwrap().read().messages.clone();
     assert!(
-        messages
-            .iter()
-            .any(|m| m.text.contains("reconnected and ran the statement again")),
+        messages.iter().any(|m| m.text == "Connection restored"),
         "{messages:?}"
     );
 }
@@ -598,6 +597,23 @@ fn a_write_on_a_dead_connection_is_not_run_again() {
     ));
     assert_eq!(fake.executed(), ["insert into t values (1)"]);
     ok(&engine, &key, "insert into t values (2)");
+}
+
+#[test]
+fn a_batch_with_a_hidden_write_is_not_run_again_after_a_connection_error() {
+    let script = FakeScript {
+        connection_error_once: Some("select 1".into()),
+        ..writes()
+    };
+    let (engine, fake, key) = setup(script, dev());
+    // The first statement is a read, but the batch also writes: after a lost connection
+    // the engine cannot know whether the write took effect, so it must not run it again.
+    let q = engine.execute_in(&key, None, "select 1\ndelete from t".into(), 100);
+    assert!(matches!(
+        settled(&engine, q),
+        QueryStatus::Failed(e) if e.kind == ErrorKind::Connection
+    ));
+    assert_eq!(fake.executed(), ["select 1\ndelete from t"]);
 }
 
 #[test]
@@ -803,6 +819,29 @@ fn a_fetch_that_fails_inside_a_transaction_is_undone_alone() {
         .iter()
         .any(|s| s.contains("ROLLBACK TO"))));
     assert_eq!(phase(&engine, &key), TxPhase::Open);
+}
+
+#[test]
+fn a_cancelled_fetch_inside_a_transaction_leaves_only_rollback() {
+    let script = FakeScript {
+        error_aborts_transaction: true,
+        rows: 1200,
+        block_fetch_matching: Some("select n".into()),
+        block_after_chunks: Some(1),
+        ..Default::default()
+    };
+    let (engine, fake, key) = setup(script, profile(CommitMode::Manual));
+    ok(&engine, &key, "select 1");
+    let q = engine.execute_in(&key, None, "select n".into(), 500);
+    assert!(matches!(
+        settled(&engine, q),
+        QueryStatus::Ready { more: true }
+    ));
+    engine.fetch_more(q);
+    assert!(wait_until(TIMEOUT, || fake.blocked_fetches() >= 1));
+    engine.cancel(q);
+    assert_eq!(settled(&engine, q), QueryStatus::Cancelled);
+    wait_phase(&engine, &key, &TxPhase::Failed);
 }
 
 #[test]
