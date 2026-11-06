@@ -1,7 +1,11 @@
 //! The native ClickHouse driver through the engine's public session interface.
-use crate::support::{TIMEOUT, config, dev, no_repaint, wait_until};
+use crate::support::{config, dev, no_repaint, wait_until};
 use sqlr_core::{Cell, NodePath, Secrets};
 use sqlr_engine::{DriverRegistry, Engine, LoadState, QueryStatus, SessionStatus};
+use std::time::Duration;
+
+/// Under the full suite the server is shared with other tests, so connecting can be slow.
+const TIMEOUT: Duration = Duration::from_secs(20);
 
 #[test]
 fn native_session_fetches_pages_and_browses_the_catalog() {
