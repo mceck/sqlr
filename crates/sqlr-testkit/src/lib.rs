@@ -239,6 +239,18 @@ pub struct FakeScript {
     pub connection_error_matching: Option<String>,
     /// Like `connection_error_matching`, but only the first matching statement fails.
     pub connection_error_once: Option<String>,
+    /// A cancelled blocking fetch fails with `ErrorKind::Connection`, as a driver that
+    /// cancels by ending the server session (SQL Server's `KILL`) reports it.
+    pub cancel_closes_connection: bool,
+    /// Closing the stream of any SQL containing this text fails with
+    /// `ErrorKind::Connection`, as closing a cursor on a connection the server ended.
+    pub close_fails_matching: Option<String>,
+    /// When set, `execute` fails for any SQL containing this text with MySQL's parse error
+    /// (`ErrorKind::Syntax`, "You have an error in your SQL syntax…").
+    pub parse_error_matching: Option<String>,
+    /// When set, `execute` never answers for any SQL containing this text, not even when
+    /// cancelled, as over a network that dropped without closing the socket.
+    pub hang_matching: Option<String>,
     /// The dialect's `ddl_commits_transaction()` (MySQL-like).
     pub ddl_commits_transaction: bool,
     /// The dialect's `error_aborts_transaction()` (PostgreSQL-like).
@@ -1007,6 +1019,11 @@ impl RelationalConn for FakeConnection {
         if let Some(echo) = &self.echo {
             echo_ping(&mut *echo.lock().await).await?;
         }
+        if let Some(pattern) = &self.shared.script.hang_matching
+            && sql.contains(pattern.as_str())
+        {
+            std::future::pending::<()>().await;
+        }
         if let Some(e) = &self.shared.script.query_error {
             return Err(e.clone());
         }
@@ -1028,6 +1045,16 @@ impl RelationalConn for FakeConnection {
                     format!("syntax error near \"{pattern}\""),
                 ));
             }
+        }
+        if let Some(pattern) = &self.shared.script.parse_error_matching
+            && sql.contains(pattern.as_str())
+        {
+            return Err(DriverError::new(
+                ErrorKind::Syntax,
+                format!(
+                    "You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use near '{pattern}'"
+                ),
+            ));
         }
         if let Some(pattern) = &self.shared.script.connection_error_matching
             && sql.contains(pattern.as_str())
@@ -1095,6 +1122,12 @@ impl RelationalConn for FakeConnection {
             block,
             block_after: self.shared.script.block_after_chunks.unwrap_or(0),
             release: self.shared.script.fetch_release.clone(),
+            close_fails: self
+                .shared
+                .script
+                .close_fails_matching
+                .as_ref()
+                .is_some_and(|p| sql.contains(p.as_str())),
         })))
     }
 
@@ -1431,6 +1464,8 @@ struct FakeStream {
     block_after: usize,
     /// Lets a blocked fetch continue without a cancel.
     release: Option<Arc<Notify>>,
+    /// `close` fails as a lost connection.
+    close_fails: bool,
 }
 
 #[async_trait::async_trait]
@@ -1446,16 +1481,16 @@ impl RowStream for FakeStream {
             let mut notified = pin!(self.shared.cancel.notified());
             notified.as_mut().enable();
             if self.shared.cancelled.load(Ordering::SeqCst) {
-                return Err(DriverError::new(ErrorKind::Cancelled, "cancelled"));
+                return Err(self.cancelled());
             }
             if let Some(release) = &self.release {
                 tokio::select! {
-                    _ = notified => return Err(DriverError::new(ErrorKind::Cancelled, "cancelled")),
+                    _ = notified => return Err(self.cancelled()),
                     _ = release.notified() => {}
                 }
             } else {
                 notified.await;
-                return Err(DriverError::new(ErrorKind::Cancelled, "cancelled"));
+                return Err(self.cancelled());
             }
         }
         if let Some((n, err)) = &self.shared.script.fail_after_chunks
@@ -1483,7 +1518,24 @@ impl RowStream for FakeStream {
             self.closed = true;
             self.shared.closed.fetch_add(1, Ordering::SeqCst);
         }
+        if self.close_fails {
+            return Err(DriverError::new(
+                ErrorKind::Connection,
+                "server closed the connection unexpectedly",
+            ));
+        }
         Ok(())
+    }
+}
+
+impl FakeStream {
+    /// The error a cancelled blocking fetch ends with.
+    fn cancelled(&self) -> DriverError {
+        if self.shared.script.cancel_closes_connection {
+            DriverError::new(ErrorKind::Connection, "the server session was ended")
+        } else {
+            DriverError::new(ErrorKind::Cancelled, "cancelled")
+        }
     }
 }
 
@@ -1567,6 +1619,10 @@ impl Dialect for FakeDialect {
     fn begin_commits_transaction(&self) -> bool {
         // The fake models the MySQL-family quirks whenever its DDL commits.
         self.ddl_commits_transaction
+    }
+
+    fn refused_before_running(&self, error: &DriverError) -> bool {
+        self.ddl_commits_transaction && sqlr_core::mysql_refused_while_parsing(error)
     }
 
     fn transaction_impact(&self, sql: &str) -> sqlr_core::TransactionImpact {

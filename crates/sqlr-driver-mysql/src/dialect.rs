@@ -197,6 +197,10 @@ impl Dialect for MyDialect {
         sqlr_core::mysql_transaction_impact(&self.syntax(), sql)
     }
 
+    fn refused_before_running(&self, error: &sqlr_core::DriverError) -> bool {
+        sqlr_core::mysql_refused_while_parsing(error)
+    }
+
     fn savepoint_names_replace(&self) -> bool {
         true
     }

@@ -25,7 +25,9 @@ use crate::library::{HistoryChannel, HistoryView, Library, history_entry, now_ms
 use crate::registry::DriverRegistry;
 use crate::result::{QueryId, QueryResult, QueryStatus};
 use crate::script::{ScriptId, ScriptOnError, ScriptRun, ScriptState, Scripts};
-use crate::session::{LoadState, Session, SessionIo, SessionKey, SessionStatus, Slot, StreamSlot};
+use crate::session::{
+    Abandoned, LoadState, Session, SessionIo, SessionKey, SessionStatus, Slot, StreamSlot,
+};
 use crate::ssh::{self, ConnectReport, SshContext, TunnelSlot};
 use crate::store::{ProfilesState, SharedSecretStore};
 use crate::transfer::{ExportSource, ImportOptions, TransferRun, Work};
@@ -110,6 +112,13 @@ pub(crate) enum Command {
         all: bool,
     },
     Cancel(Arc<dyn CancelHandle>),
+    /// Gives the session's connection up when `q` still runs once the cancel grace has
+    /// passed (the server never answered the cancel).
+    WatchCancel {
+        key: SessionKey,
+        io: Arc<SessionIo>,
+        q: QueryId,
+    },
     /// Closes the session's open stream (only if it belongs to `only`, when given).
     CloseStream {
         io: Arc<SessionIo>,
@@ -208,6 +217,7 @@ impl Engine {
             repaint,
             per_tab: AtomicBool::new(true),
             connect_timeout_s: AtomicU64::new(15),
+            cancel_grace_ms: AtomicU64::new(DEFAULT_CANCEL_GRACE.as_millis() as u64),
             include_sql: AtomicBool::new(true),
             row_cap: AtomicUsize::new(DEFAULT_ROW_CAP),
             result_byte_cap: AtomicUsize::new(DEFAULT_RESULT_BYTES),
@@ -334,6 +344,15 @@ impl Engine {
         self.shared
             .connect_timeout_s
             .store(u64::from(seconds.max(1)), Ordering::Relaxed);
+    }
+
+    /// How long a cancelled or closed query may keep running before the engine gives its
+    /// connection up (default 5 s): a server that never answers the cancel (a dropped
+    /// network) must not hold the session's later statements forever.
+    pub fn set_cancel_grace(&self, grace: Duration) {
+        self.shared
+            .cancel_grace_ms
+            .store(grace.as_millis() as u64, Ordering::Relaxed);
     }
 
     /// Whether failed statements are included in failure log lines. The application's one
@@ -1632,9 +1651,6 @@ struct ResultEntry {
     retried: bool,
     /// The session was replaced under the queued query and it was moved to the new one.
     rebounded: bool,
-    /// The statement reached the connection and closed the previous stream: only then does
-    /// it cut an earlier Result short.
-    took_stream: bool,
 }
 
 /// What a native tool needs from a connection, cloned out of [`Inner`].
@@ -1795,6 +1811,9 @@ impl CommandContext {
                 )
             }
             Command::Cancel(_) => ("cancel", None, None, None, None),
+            Command::WatchCancel { key, q, .. } => {
+                ("cancel", Some(key.conn.clone()), Some(q.0), None, None)
+            }
             Command::CloseStream { .. } => ("close_stream", None, None, None, None),
             Command::LoadCatalog { conn_id, .. } => {
                 ("browse", Some(conn_id.clone()), None, None, None)
@@ -1868,6 +1887,8 @@ pub(crate) struct Shared {
     repaint: Repaint,
     per_tab: AtomicBool,
     connect_timeout_s: AtomicU64,
+    /// How long a cancelled query may keep its session before the connection is given up.
+    cancel_grace_ms: AtomicU64,
     /// Failed SQL is recorded in failure lines (the app's privacy setting).
     include_sql: AtomicBool,
     /// Rows a `fetch_all` may keep before it truncates the result.
@@ -2091,7 +2112,6 @@ impl Shared {
                     outside_tx: false,
                     retried: false,
                     rebounded: false,
-                    took_stream: true,
                 },
             );
         }
@@ -2238,7 +2258,6 @@ impl Shared {
                     outside_tx,
                     retried: false,
                     rebounded: false,
-                    took_stream: false,
                 },
             );
             (q, connected)
@@ -2251,25 +2270,44 @@ impl Shared {
         (q, settled)
     }
 
-    /// Interrupts a running query; a no-op if it is not running.
-    pub(crate) fn cancel_query(&self, q: QueryId) {
-        let mut inner = self.inner.lock();
-        let inner = &mut *inner;
-        let Some(entry) = inner.results.get_mut(&q) else {
-            return;
+    /// Interrupts a running query; a no-op if it is not running. A query still waiting for
+    /// its turn ends Cancelled at once; one the server does not stop within the cancel grace
+    /// gives its connection up.
+    pub(crate) fn cancel_query(self: &Arc<Self>, q: QueryId) {
+        let queued = {
+            let mut guard = self.inner.lock();
+            let inner = &mut *guard;
+            let Some(entry) = inner.results.get_mut(&q) else {
+                return;
+            };
+            if entry.result.read_recursive().status != QueryStatus::Running {
+                return;
+            }
+            // A task that has not started the query yet sees this flag and skips it.
+            entry.cancel_requested = true;
+            match inner
+                .sessions
+                .get(&entry.key)
+                .filter(|s| s.active == Some(q))
+            {
+                Some(session) => {
+                    if let Some(handle) = session.cancel.clone() {
+                        self.send(Command::Cancel(handle));
+                        self.send(Command::WatchCancel {
+                            key: entry.key.clone(),
+                            io: session.io.clone(),
+                            q,
+                        });
+                    }
+                    false
+                }
+                None => true,
+            }
         };
-        if entry.result.read_recursive().status != QueryStatus::Running {
-            return;
-        }
-        // A task that has not started the query yet sees this flag and skips it.
-        entry.cancel_requested = true;
-        let handle = inner
-            .sessions
-            .get(&entry.key)
-            .filter(|s| s.active == Some(q))
-            .and_then(|s| s.cancel.clone());
-        if let Some(handle) = handle {
-            self.send(Command::Cancel(handle));
+        if queued {
+            // Behind a statement that may never end: waiting for its turn would keep the
+            // result Running until then.
+            self.finish(q, QueryStatus::Cancelled);
         }
     }
 
@@ -2285,6 +2323,11 @@ impl Shared {
                 && let Some(handle) = &session.cancel
             {
                 self.send(Command::Cancel(handle.clone()));
+                self.send(Command::WatchCancel {
+                    key: entry.key.clone(),
+                    io: session.io.clone(),
+                    q,
+                });
             }
             if !entry.recorded {
                 // Its status will never leave `Running` now: wake whoever waits for it.
@@ -2303,10 +2346,11 @@ impl Shared {
     fn stop(&self, q: QueryId) -> Option<PageEnd> {
         let mut inner = self.inner.lock();
         if let Some(superseder) = inner.results.get(&q).and_then(|e| e.superseded_by) {
-            let still_coming = inner
-                .results
-                .get(&superseder)
-                .is_some_and(|e| !e.cancel_requested);
+            // A later query that was cancelled, closed, or settled without reaching the
+            // connection (a refused statement) is not coming: the next one still queued is.
+            let still_coming = inner.results.get(&superseder).is_some_and(|e| {
+                !e.cancel_requested && e.result.read().status == QueryStatus::Running
+            });
             if !still_coming {
                 let io = inner.results.get(&q).and_then(|entry| entry.io.as_ref());
                 let next = inner
@@ -2448,6 +2492,7 @@ impl Shared {
                 // A failed cancel leaves the query running; there is no one to report it to.
                 let _ = handle.cancel().await;
             }
+            Command::WatchCancel { key, io, q } => self.watch_cancel(key, io, q).await,
             Command::CloseStream { io, only } => self.close_stream(io, only).await,
             Command::LoadCatalog {
                 conn_id,
@@ -2699,11 +2744,48 @@ impl Shared {
         database: Option<String>,
         io: Arc<SessionIo>,
     ) {
-        io.connect_finished().await;
-        let turn = io.wait_turn(ticket).await;
-        let mut slot = io.stream.lock().await;
+        let turn = tokio::select! {
+            biased;
+            how = io.abandoned() => {
+                self.after_abandon(q, how, database);
+                // Later tickets of the session still wait for this one.
+                let _turn = io.wait_turn(ticket).await;
+                return;
+            }
+            turn = async {
+                io.connect_finished().await;
+                io.wait_turn(ticket).await
+            } => turn,
+        };
+        let slot = tokio::select! {
+            biased;
+            how = io.abandoned() => {
+                drop(turn);
+                self.after_abandon(q, how, database);
+                return;
+            }
+            slot = io.stream.lock() => slot,
+        };
         // The next execute may now queue on the stream lock, behind this one.
         drop(turn);
+        // A statement the server never answers (a dropped network) is dropped here once its
+        // connection is given up, which releases the session's stream.
+        tokio::select! {
+            biased;
+            how = io.abandoned() => self.after_abandon(q, how, database),
+            () = self.clone().execute_locked(q, database.clone(), &io, slot) => {}
+        }
+    }
+
+    /// Runs `q` holding the session's stream lock (`slot`).
+    async fn execute_locked(
+        self: Arc<Self>,
+        q: QueryId,
+        database: Option<String>,
+        io: &Arc<SessionIo>,
+        mut slot: tokio::sync::MutexGuard<'_, StreamSlot>,
+    ) {
+        let io = io.clone();
         let (key, sql, cancelled) = {
             let inner = self.inner.lock();
             let Some(entry) = inner.results.get(&q) else {
@@ -2724,7 +2806,13 @@ impl Shared {
         // An earlier statement on the session may have lost the connection and made the
         // engine replace it; this command still carries the retired I/O. Move the queued
         // statement to the session's current connection instead of failing "not
-        // connected": it keeps its place in the issue order.
+        // connected": it keeps its place in the issue order. A statement queued inside a
+        // transaction the lost connection took with it is not moved: on a new connection it
+        // would run outside that transaction (and commit on its own in Auto mode).
+        if io.lost_transaction() {
+            self.finish(q, QueryStatus::Failed(lost_with_transaction()));
+            return;
+        }
         let rebound = {
             let mut inner = self.inner.lock();
             let stale = match inner.sessions.get(&key) {
@@ -2807,18 +2895,82 @@ impl Shared {
         if retry {
             // Dispatch the rerun before releasing the old stream: a statement queued
             // behind this one must not get to the new connection first.
-            self.rerun_on_new_connection(q, &key, database);
+            self.rerun_on_new_connection(q, &key, database, RERUN_NOTE);
             drop(slot);
         }
     }
 
-    /// Whether `q` may still be run again after a connection error.
+    /// Ends `q` after its session's connection was given up before (or while) it ran: a
+    /// cancelled query ends Cancelled; one still waiting for its turn runs on a new
+    /// connection when no transaction was open, else fails with the connection error.
+    fn after_abandon(self: &Arc<Self>, q: QueryId, how: Abandoned, database: Option<String>) {
+        let state = {
+            let inner = self.inner.lock();
+            inner.results.get(&q).map(|e| {
+                (
+                    e.key.clone(),
+                    e.cancel_requested,
+                    e.result.read().status == QueryStatus::Running,
+                )
+            })
+        };
+        match state {
+            Some((_, true, _)) => self.finish(q, QueryStatus::Cancelled),
+            Some((key, false, true)) if how.rerun && self.may_retry(q) => {
+                self.rerun_on_new_connection(q, &key, database, QUEUED_RERUN_NOTE);
+            }
+            Some((_, false, true)) => self.finish(q, QueryStatus::Failed(unanswered_cancel())),
+            _ => {}
+        }
+    }
+
+    /// Gives the session's connection up when `q` still runs on it once the cancel grace
+    /// has passed: the server never answered the cancel (typically a network that dropped
+    /// without closing the socket). The session fails like a lost connection, `q` ends
+    /// Cancelled, and the statements waiting behind it move to a new connection.
+    async fn watch_cancel(self: Arc<Self>, key: SessionKey, io: Arc<SessionIo>, q: QueryId) {
+        let grace = Duration::from_millis(self.cancel_grace_ms.load(Ordering::Relaxed));
+        tokio::time::sleep(grace).await;
+        let rerun = {
+            let mut inner = self.inner.lock();
+            match inner.session(&key, &io) {
+                Some(s) if s.active == Some(q) && s.is_connected() => !s.tx.is_open(),
+                _ => return,
+            }
+        };
+        let e = unanswered_cancel();
+        let mut notes = vec![RunMessage::new(MessageLevel::Warning, ABANDONED_NOTE)];
+        notes.extend(self.on_error(&key, &io, &e));
+        self.finish_with(q, QueryStatus::Cancelled, notes);
+        io.abandon(Abandoned { rerun });
+    }
+
+    /// Whether `q` may still be run again after a connection error: not twice, and never
+    /// once the user cancelled it (a driver may cancel by closing the connection).
     fn may_retry(&self, q: QueryId) -> bool {
         self.inner
             .lock()
             .results
             .get(&q)
-            .is_some_and(|e| !e.retried)
+            .is_some_and(|e| !e.retried && !e.cancel_requested)
+    }
+
+    /// The status `q` ends with after `e`: a lost connection after a cancel is how some
+    /// drivers stop a statement (SQL Server ends the server session, a sidecar driver that
+    /// ignores the cancel is killed), so the query ends Cancelled.
+    fn failure_status(&self, q: QueryId, e: DriverError) -> QueryStatus {
+        let cancelled = e.kind == ErrorKind::Connection
+            && self
+                .inner
+                .lock()
+                .results
+                .get(&q)
+                .is_some_and(|e| e.cancel_requested);
+        if cancelled {
+            QueryStatus::Cancelled
+        } else {
+            error_status(e)
+        }
     }
 
     /// Runs `q` again on a fresh connection of its session: the one it started on was
@@ -2828,6 +2980,7 @@ impl Shared {
         q: QueryId,
         key: &SessionKey,
         database: Option<String>,
+        note: &str,
     ) {
         let io = {
             let mut inner = self.inner.lock();
@@ -2842,10 +2995,7 @@ impl Shared {
             self.finish(q, QueryStatus::Failed(not_connected()));
             return;
         };
-        self.add_message(
-            q,
-            RunMessage::new(MessageLevel::Warning, "Connection restored"),
-        );
+        self.add_message(q, RunMessage::new(MessageLevel::Warning, note));
         self.send(Command::Execute {
             q,
             ticket: io.issue_ticket(),
@@ -2945,12 +3095,23 @@ impl Shared {
         // that actually reaches the connection takes its stream over. A session holds one
         // open stream, so close the previous one now, before the first SQL runs.
         if let Some((prev, mut stream)) = slot.take() {
-            let _ = stream.close().await;
+            let closed = stream.close().await;
             self.mark_complete(prev);
             self.repaint();
-        }
-        if let Some(entry) = self.inner.lock().results.get_mut(&q) {
-            entry.took_stream = true;
+            // The server ended the connection while the result sat open (an idle timeout
+            // ends a PostgreSQL cursor's transaction). This statement has not reached it:
+            // without an open transaction it runs on a new connection, whatever it does.
+            if let Err(e) = closed
+                && e.kind == ErrorKind::Connection
+            {
+                let lost = self.on_error(key, io, &e);
+                if !was_open && self.may_retry(q) {
+                    return true;
+                }
+                let status = self.failure_status(q, e);
+                self.finish_with(q, status, lost.into_iter().collect());
+                return false;
+            }
         }
         if begin {
             match run_sql(conn, dialect.begin_sql()).await {
@@ -2973,7 +3134,8 @@ impl Shared {
                     if e.kind == ErrorKind::Connection && self.may_retry(q) {
                         return true;
                     }
-                    self.finish_with(q, error_status(e), lost.into_iter().collect());
+                    let status = self.failure_status(q, e);
+                    self.finish_with(q, status, lost.into_iter().collect());
                     return false;
                 }
             }
@@ -3027,7 +3189,12 @@ impl Shared {
                         ))
                     }
                     Err(_) if undone => Some(s.tx.statement_undone(now_ms())),
-                    Err(_) => s.tx.after_failure(&stmt, rules, now_ms()),
+                    Err(e) => s.tx.after_failure(
+                        &stmt,
+                        rules,
+                        dialect.refused_before_running(e),
+                        now_ms(),
+                    ),
                 };
                 notes.extend(note);
                 if !s.tx.is_open() {
@@ -3058,6 +3225,18 @@ impl Shared {
                     .results
                     .get(&q)
                     .is_some_and(|entry| entry.cancel_requested);
+                if cancelled {
+                    // Its changes happened: saying only "cancelled" invites running it again.
+                    notes.insert(
+                        0,
+                        RunMessage::new(
+                            MessageLevel::Warning,
+                            format!(
+                                "The statement finished before it could be stopped: {n} rows affected"
+                            ),
+                        ),
+                    );
+                }
                 self.finish_with(
                     q,
                     if cancelled {
@@ -3077,7 +3256,8 @@ impl Shared {
             }
             Err(e) => {
                 notes.extend(self.on_error(key, io, &e));
-                self.finish_with(q, error_status(e), notes);
+                let status = self.failure_status(q, e);
+                self.finish_with(q, status, notes);
             }
         }
         false
@@ -3249,7 +3429,47 @@ impl Shared {
             };
             (entry.key.clone(), io)
         };
-        let mut slot = io.stream.lock().await;
+        let slot = tokio::select! {
+            biased;
+            _ = io.abandoned() => {
+                self.fetch_abandoned(q);
+                return;
+            }
+            slot = io.stream.lock() => slot,
+        };
+        tokio::select! {
+            biased;
+            _ = io.abandoned() => self.fetch_abandoned(q),
+            () = self.clone().fetch_locked(q, all, &key, &io, slot) => {}
+        }
+    }
+
+    /// A fetch of `q` whose session's connection was given up: its stream is gone.
+    fn fetch_abandoned(self: &Arc<Self>, q: QueryId) {
+        let cancelled = self
+            .inner
+            .lock()
+            .results
+            .get(&q)
+            .is_some_and(|e| e.cancel_requested);
+        if cancelled {
+            self.finish(q, QueryStatus::Cancelled);
+        } else {
+            self.mark_cut_short(q);
+            self.finish(q, QueryStatus::Ready { more: false });
+        }
+    }
+
+    /// Fetches `q` holding the session's stream lock (`slot`).
+    async fn fetch_locked(
+        self: Arc<Self>,
+        q: QueryId,
+        all: bool,
+        key: &SessionKey,
+        io: &Arc<SessionIo>,
+        mut slot: tokio::sync::MutexGuard<'_, StreamSlot>,
+    ) {
+        let (key, io) = (key.clone(), io.clone());
         let connected = {
             let mut inner = self.inner.lock();
             match inner.session(&key, &io).filter(|s| s.is_connected()) {
@@ -3332,7 +3552,7 @@ impl Shared {
                     } else if e.kind != ErrorKind::Connection {
                         notes.extend(self.after_fetch_failure(key, io).await);
                     }
-                    error_status(e)
+                    self.failure_status(q, e)
                 }
             };
             let running = status == QueryStatus::Running;
@@ -3551,7 +3771,12 @@ impl Shared {
         if only.is_some_and(|q| q != owner) {
             return;
         }
-        close_if_owned(&mut slot, owner).await;
+        if io.is_abandoned() {
+            // Closing would talk to a server that stopped answering: the stream is dropped.
+            slot.take();
+        } else {
+            close_if_owned(&mut slot, owner).await;
+        }
         self.mark_complete(owner);
         self.repaint();
     }
@@ -3584,7 +3809,11 @@ impl Shared {
             session.tunnel = None;
             (session.tx.lost(&e.message, now_ms()), driver, database)
         };
-        tracing::error!(
+        if lost.is_some() {
+            io.mark_lost_transaction();
+        }
+        // An expected failure (architecture spec: Connection logs at warn), not an incident.
+        tracing::warn!(
             target: "sqlr_engine::operation",
             op = "connection_lost",
             conn = key.conn,
@@ -3625,28 +3854,11 @@ impl Shared {
             inner.results.get_mut(&q).map(|e| {
                 let first = !e.recorded && terminal;
                 e.recorded |= first;
-                let took_stream = e.took_stream;
                 let first = first.then(|| (e.key.conn.clone(), e.started_at_ms, e.settled.clone()));
-                (
-                    e.result.clone(),
-                    e.started,
-                    first,
-                    driver,
-                    conn,
-                    took_stream,
-                )
+                (e.result.clone(), e.started, first, driver, conn)
             })
         };
-        if let Some((result, started, first, driver, conn, took_stream)) = entry {
-            // A query that never reached the connection (a refused statement, an unknown
-            // database) must not make an earlier Result look cut short.
-            if terminal && !took_stream {
-                for e in self.inner.lock().results.values_mut() {
-                    if e.superseded_by == Some(q) {
-                        e.superseded_by = None;
-                    }
-                }
-            }
+        if let Some((result, started, first, driver, conn)) = entry {
             let mut failure = None;
             let history = {
                 let mut r = result.write();
@@ -3819,6 +4031,36 @@ impl Shared {
 
 /// How many loaded explorer nodes a DDL statement browses again.
 const REFRESH_NODES: usize = 50;
+
+/// How long a cancelled query may keep its session before the engine gives the connection
+/// up ([`Engine::set_cancel_grace`]).
+const DEFAULT_CANCEL_GRACE: Duration = Duration::from_secs(5);
+
+/// The Messages line of a read run again after its connection was lost.
+const RERUN_NOTE: &str = "Connection restored";
+
+/// The Messages line of a statement that waited behind one whose connection was given up.
+const QUEUED_RERUN_NOTE: &str =
+    "The connection was given up before this statement ran; it ran on a new connection";
+
+/// The Messages line of a query whose connection was given up after an unanswered cancel.
+const ABANDONED_NOTE: &str = "The server did not answer the cancel: the connection was closed, and the next statement reconnects";
+
+/// The error of a statement queued inside a transaction its connection lost.
+fn lost_with_transaction() -> DriverError {
+    DriverError::new(
+        ErrorKind::Connection,
+        "the connection was lost with the open transaction this statement belonged to; it did not run",
+    )
+}
+
+/// The error of a session whose connection was given up after an unanswered cancel.
+fn unanswered_cancel() -> DriverError {
+    DriverError::new(
+        ErrorKind::Connection,
+        "the server did not answer the cancel; the connection was closed",
+    )
+}
 
 /// How long a session stays quiet before the engine pings its connection.
 const IDLE_PING: Duration = Duration::from_secs(60);

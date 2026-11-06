@@ -164,8 +164,16 @@ impl CancelHandle for DuckdbCancel {
 )]
 pub(crate) fn map_error(error: duckdb::Error) -> DriverError {
     let message = error.to_string();
+    DriverError::new(kind_of(&message), message)
+}
+
+/// The kind of a DuckDB error, from its message.
+fn kind_of(message: &str) -> ErrorKind {
     let lower = message.to_ascii_lowercase();
-    let kind = if lower.contains("interrupt") {
+    if lower.contains("database has been invalidated") {
+        // After a fatal error DuckDB refuses everything until the database is opened again.
+        ErrorKind::Connection
+    } else if lower.contains("interrupt") {
         ErrorKind::Cancelled
     } else if lower.contains("parser error") || lower.contains("syntax error") {
         ErrorKind::Syntax
@@ -176,6 +184,25 @@ pub(crate) fn map_error(error: duckdb::Error) -> DriverError {
         ErrorKind::Permission
     } else {
         ErrorKind::Other
-    };
-    DriverError::new(kind, message)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_invalidated_database_is_a_lost_connection() {
+        let message = "FATAL Error: Failed: database has been invalidated because of a previous \
+                       fatal error. The database must be restarted prior to being used again.";
+        assert_eq!(kind_of(message), ErrorKind::Connection);
+        assert_eq!(
+            kind_of("INTERRUPT Error: Interrupted!"),
+            ErrorKind::Cancelled
+        );
+        assert_eq!(
+            kind_of("Parser Error: syntax error at end of input"),
+            ErrorKind::Syntax
+        );
+    }
 }

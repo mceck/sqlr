@@ -409,6 +409,12 @@ impl Process {
             .unwrap_or_else(|| protocol_error(format!("driver {} is not running", self.id)))
     }
 
+    /// The error of a request that never reached the dead process: a lost connection, so
+    /// the session reconnects (starting the process again) on its next statement.
+    fn gone_error(&self) -> DriverError {
+        DriverError::new(ErrorKind::Connection, self.dead_error().message)
+    }
+
     fn deliver(&self, id: u64, event: Event) {
         if let Some(tx) = self.pending.lock().get(&id) {
             let _ = tx.send(event);
@@ -447,7 +453,7 @@ impl Process {
     /// Sends `request` and registers for its answers.
     pub(crate) fn begin(self: &Arc<Self>, request: &Request) -> Result<Pending, DriverError> {
         if !self.alive() {
-            return Err(self.dead_error());
+            return Err(self.gone_error());
         }
         let id = self.next_request.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::unbounded_channel();
@@ -462,10 +468,10 @@ impl Process {
         let mut frame = Vec::new();
         encode_frame(CONTROL, id, &encode(request), &mut frame)
             .map_err(|e| protocol_error(e.to_string()))?;
-        self.out.send(frame).map_err(|_| self.dead_error())?;
+        self.out.send(frame).map_err(|_| self.gone_error())?;
         // The process may have died between the check and the registration.
         if !self.alive() {
-            return Err(self.dead_error());
+            return Err(self.gone_error());
         }
         Ok(pending)
     }

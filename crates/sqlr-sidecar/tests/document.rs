@@ -193,7 +193,8 @@ async fn document_client_supports_editing_targets_and_local_language() {
     doc.set_read_only(false);
     assert_eq!(doc.delete_doc(&target, id).await.unwrap(), 1);
     driver.restart();
-    assert_eq!(conn.ping().await.unwrap_err().kind, ErrorKind::Protocol);
+    // A connection of the stopped process is lost: its session reconnects.
+    assert_eq!(conn.ping().await.unwrap_err().kind, ErrorKind::Connection);
 }
 
 #[tokio::test]

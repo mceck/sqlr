@@ -41,7 +41,7 @@ pub struct ServerState {
     pub url: String,
     /// The in-memory verifier; rotation replaces it without rebinding.
     pub token: RwLock<String>,
-    pub sessions: Mutex<HashMap<String, SessionInfo>>,
+    pub sessions: Arc<Mutex<HashMap<String, SessionInfo>>>,
     pub inflight: Arc<Inflight>,
     /// The Connection ids each MCP session created: that session may keep writing them
     /// while they are not exposed.
@@ -79,14 +79,19 @@ impl Inflight {
 
 /// Decrements a session's in-flight count when the tool call ends. It does so on drop too,
 /// so a call whose future is dropped (client disconnect, aborted request) cannot leave the
-/// session permanently busy and keep the idle sweep from reaping it.
+/// session permanently busy and keep the idle sweep from reaping it. The end of a call is
+/// activity: a call longer than the idle timeout must not get its session reaped at once.
 pub(crate) struct CallGuard {
     inflight: Arc<Inflight>,
+    sessions: Arc<Mutex<HashMap<String, SessionInfo>>>,
     session: String,
 }
 
 impl Drop for CallGuard {
     fn drop(&mut self) {
+        if let Some(session) = self.sessions.lock().get_mut(&self.session) {
+            session.last_activity = Instant::now();
+        }
         self.inflight.end(&self.session);
     }
 }
@@ -154,7 +159,7 @@ impl ServerState {
             port,
             url,
             token: RwLock::new(token),
-            sessions: Mutex::new(HashMap::new()),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
             inflight: Arc::new(Inflight::default()),
             created: Mutex::new(HashMap::new()),
             tabs_opened: TabCounts::default(),
@@ -196,6 +201,7 @@ impl ServerState {
         self.inflight.begin(id);
         CallGuard {
             inflight: self.inflight.clone(),
+            sessions: self.sessions.clone(),
             session: id.to_string(),
         }
     }
@@ -284,12 +290,37 @@ mod tests {
         inflight.begin("s");
         let call = CallGuard {
             inflight: inflight.clone(),
+            sessions: Arc::default(),
             session: "s".into(),
         };
         assert!(!inflight.is_idle("s"));
         // The tool future was dropped (client gone): the guard still ends the call.
         drop(call);
         assert!(inflight.is_idle("s"));
+    }
+
+    #[test]
+    fn the_end_of_a_long_call_counts_as_activity() {
+        let inflight = Arc::new(Inflight::default());
+        let sessions: Arc<Mutex<HashMap<String, SessionInfo>>> = Arc::default();
+        let long_ago = Instant::now() - std::time::Duration::from_secs(3600);
+        sessions.lock().insert(
+            "s".into(),
+            SessionInfo {
+                last_activity: long_ago,
+                client_name: "c".into(),
+                client_version: "1".into(),
+            },
+        );
+        inflight.begin("s");
+        drop(CallGuard {
+            inflight,
+            sessions: sessions.clone(),
+            session: "s".into(),
+        });
+        // A query or an approval that ran past the idle timeout just ended: the session
+        // was used now, not when the call started.
+        assert!(sessions.lock()["s"].last_activity > long_ago);
     }
 
     #[test]

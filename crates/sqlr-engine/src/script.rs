@@ -293,7 +293,7 @@ impl Shared {
         self.repaint();
     }
 
-    pub(crate) fn cancel_script(&self, id: ScriptId) {
+    pub(crate) fn cancel_script(self: &Arc<Self>, id: ScriptId) {
         let current = {
             let mut st = self.scripts.state.lock();
             let Some(entry) = st.scripts.get_mut(&id) else {

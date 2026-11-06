@@ -938,6 +938,14 @@ fn a_cancelled_statement_that_reports_rows_affected_ends_cancelled() {
     assert!(wait_until(TIMEOUT, || fake.executed().len() == 1));
     engine.cancel(q);
     assert_eq!(settled(&engine, q).0, QueryStatus::Cancelled);
+    // The write took effect: the Messages say so, so nobody runs it a second time.
+    let messages = engine.result(q).unwrap().read().messages.clone();
+    assert!(
+        messages.iter().any(|m| m
+            .text
+            .contains("finished before it could be stopped: 1 rows affected")),
+        "{messages:?}"
+    );
 }
 
 #[test]

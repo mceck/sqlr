@@ -41,8 +41,9 @@ pub(crate) fn map_error(e: tokio_postgres::Error) -> DriverError {
     DriverError::new(kind, message)
 }
 
-/// 57P01-57P03 (admin shutdown, crash shutdown, cannot connect now) end the session like a
-/// lost connection.
+/// 57P01-57P05 (admin shutdown, crash shutdown, cannot connect now, database dropped, idle
+/// session timeout) and 25P03 (idle in transaction timeout) end the session like a lost
+/// connection.
 fn kind_for_sqlstate(code: &str, message: &str) -> ErrorKind {
     if code.starts_with("28") {
         ErrorKind::Auth
@@ -57,7 +58,9 @@ fn kind_for_sqlstate(code: &str, message: &str) -> ErrorKind {
         } else {
             ErrorKind::Cancelled
         }
-    } else if code.starts_with("08") || ["57P01", "57P02", "57P03"].contains(&code) {
+    } else if code.starts_with("08")
+        || ["57P01", "57P02", "57P03", "57P04", "57P05", "25P03"].contains(&code)
+    {
         ErrorKind::Connection
     } else {
         ErrorKind::Other
@@ -70,7 +73,9 @@ mod tests {
 
     #[test]
     fn server_shutdown_and_termination_are_connection_errors() {
-        for code in ["57P01", "57P02", "57P03", "08006"] {
+        for code in [
+            "57P01", "57P02", "57P03", "57P04", "57P05", "25P03", "08006",
+        ] {
             assert_eq!(kind_for_sqlstate(code, ""), ErrorKind::Connection, "{code}");
         }
         assert_eq!(

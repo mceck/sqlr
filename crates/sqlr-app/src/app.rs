@@ -40,7 +40,7 @@ use crate::shell::status::{
 };
 use crate::store_worker::{Listing, StoreOp, StoreReply};
 use crate::tabs::{QueryTab, TabCommand, Viewer};
-use crate::transaction::PendingEnd;
+use crate::transaction::{EndTarget, PendingEnd};
 use crate::tree_snapshot::TreeSnapshot;
 
 /// The store's sibling position for a tree drop target.
@@ -237,6 +237,8 @@ pub struct SqlrApp {
     pub(crate) confirm: Option<PendingRun>,
     /// Open transactions to commit or roll back before something else happens.
     pub(crate) ending: Option<PendingEnd>,
+    /// End requests that came while `ending` was being resolved, asked once it is.
+    pub(crate) queued_ends: std::collections::VecDeque<(EndTarget, Vec<sqlr_engine::SessionKey>)>,
     /// Idle transactions the user chose to keep open, by their last activity.
     pub(crate) kept_open: HashMap<sqlr_engine::SessionKey, i64>,
     /// Tabs whose connection was already connected for them once (see `auto_connect_tabs`).
@@ -408,6 +410,7 @@ impl SqlrApp {
             graphics_backend: None,
             confirm: None,
             ending: None,
+            queued_ends: std::collections::VecDeque::new(),
             kept_open: HashMap::new(),
             auto_connected: std::collections::HashSet::new(),
             quit_confirmed: false,
@@ -1609,11 +1612,21 @@ impl SqlrApp {
     }
 
     /// Entered secrets of a connection whose connect failed are forgotten, so the next
-    /// connect asks again (a mistyped password is not retried forever).
+    /// connect asks again (a mistyped password is not retried forever). A lost or
+    /// unreachable server says nothing about the secrets: they are kept, so the next run
+    /// reconnects without asking.
     pub(crate) fn forget_failed_secrets(&mut self) {
         let engine = &self.engine;
         self.entered_secrets
-            .retain(|id, _| !matches!(engine.session_status(id), Some(SessionStatus::Failed(_))));
+            .retain(|id, _| match engine.session_status(id) {
+                Some(SessionStatus::Failed(e)) => matches!(
+                    e.kind,
+                    sqlr_core::ErrorKind::Connection
+                        | sqlr_core::ErrorKind::Timeout
+                        | sqlr_core::ErrorKind::Cancelled
+                ),
+                _ => true,
+            });
     }
 
     /// Connects the connection's explorer session; the engine reads saved secrets from the
@@ -2192,6 +2205,101 @@ mod tests {
             diagnostics_warning: None,
         };
         SqlrApp::new(deps, &egui::Context::default())
+    }
+
+    /// An app on a fake driver that wants the password `pw`, with the saved connection "c1"
+    /// that does not save its secrets.
+    fn app_asking_secrets(dir: &tempfile::TempDir, script: FakeScript) -> SqlrApp {
+        let mut drivers = DriverRegistry::default();
+        drivers.register(FakeDriver::new(FakeScript {
+            password: Some("pw".into()),
+            ..script
+        }));
+        let repo =
+            ConnectionRepo::open(dir.path(), Box::new(MemorySecretStore::default())).unwrap();
+        let cfg = ConnectionConfig {
+            id: "c1".into(),
+            name: "db".into(),
+            driver: "fake".into(),
+            group: None,
+            color: None,
+            values: Default::default(),
+            profile: None,
+            save_secrets: false,
+            agent_access: Default::default(),
+        };
+        repo.save(&cfg, &Secrets::default()).unwrap();
+        let deps = AppDeps {
+            check_updates: false,
+            engine: Engine::new(drivers, Arc::new(|| {})),
+            repo,
+            settings: Settings::default(),
+            config_dir: dir.path().to_path_buf(),
+            data_dir: None,
+            startup_notice: None,
+            storage_warning: None,
+            mcp_token_store: None,
+            diagnostics: None,
+            diagnostics_warning: None,
+        };
+        SqlrApp::new(deps, &egui::Context::default())
+    }
+
+    fn entered(password: &str) -> Secrets {
+        Secrets([("password".to_string(), password.to_string())].into())
+    }
+
+    #[test]
+    fn a_lost_connection_keeps_the_entered_password() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_asking_secrets(
+            &dir,
+            FakeScript {
+                connection_error_matching: Some("boom".into()),
+                ..Default::default()
+            },
+        );
+        app.entered_secrets.insert("c1".into(), entered("pw"));
+        assert!(app.connect("c1"));
+        wait("the connect", || app.is_live("c1"));
+        let q = app.engine.execute("c1", "select boom".into(), 10);
+        wait("the lost connection", || {
+            matches!(
+                app.engine.session_status("c1"),
+                Some(SessionStatus::Failed(_))
+            )
+        });
+        app.engine.close_result(q);
+
+        app.forget_failed_secrets();
+        // The next Run reconnects with what the user typed instead of asking again.
+        assert!(app.entered_secrets.contains_key("c1"));
+        assert!(app.connect("c1"));
+        assert!(app.secret_prompt.is_none());
+        wait("the reconnect", || {
+            matches!(
+                app.engine.session_status("c1"),
+                Some(SessionStatus::Connected(_))
+            )
+        });
+    }
+
+    #[test]
+    fn a_refused_password_is_asked_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = app_asking_secrets(&dir, FakeScript::default());
+        app.entered_secrets.insert("c1".into(), entered("typo"));
+        assert!(app.connect("c1"));
+        wait("the failed connect", || {
+            matches!(
+                app.engine.session_status("c1"),
+                Some(SessionStatus::Failed(_))
+            )
+        });
+        app.forget_failed_secrets();
+        assert!(!app.entered_secrets.contains_key("c1"));
+        assert!(!app.connect("c1"), "the prompt opens instead");
+        assert!(app.secret_prompt.is_some());
     }
 
     #[test]
