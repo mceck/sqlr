@@ -18,6 +18,7 @@ mod objects;
 mod operations;
 mod oracle_apply;
 mod script;
+mod session_recovery;
 mod ssh;
 mod store;
 mod support;

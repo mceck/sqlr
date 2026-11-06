@@ -27,6 +27,11 @@ pub(crate) fn map_error(error: Error) -> DriverError {
             1017 | 28000 | 28001 => ErrorKind::Auth,
             54 | 4021 | 30036 => ErrorKind::Timeout,
             1031 | 1033 | 1045 | 1046 | 1071 => ErrorKind::Permission,
+            // The session is gone (killed, not logged on, idle time exceeded, end of file
+            // or lost contact on the channel, instance down): only a reconnect helps.
+            28 | 1012 | 1034 | 1089 | 1092 | 2396 | 3113 | 3114 | 3135 | 12537 | 12547 => {
+                ErrorKind::Connection
+            }
             900..=1099 => ErrorKind::Syntax,
             12154 | 12505 | 12514 | 12541 | 12545 => ErrorKind::Connection,
             _ => ErrorKind::Other,
@@ -66,6 +71,24 @@ mod tests {
 
     fn kind(error: Error) -> ErrorKind {
         map_error(error).kind
+    }
+
+    #[test]
+    fn a_session_the_server_ended_is_a_lost_connection() {
+        for code in [
+            28, 1012, 1034, 1089, 1092, 2396, 3113, 3114, 3135, 12537, 12547,
+        ] {
+            let error = Error::OracleError {
+                code,
+                message: "session ended".into(),
+            };
+            assert_eq!(kind(error), ErrorKind::Connection, "ORA-{code:05}");
+        }
+        let still_syntax = Error::OracleError {
+            code: 904,
+            message: "invalid identifier".into(),
+        };
+        assert_eq!(kind(still_syntax), ErrorKind::Syntax);
     }
 
     #[test]

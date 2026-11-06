@@ -360,8 +360,14 @@ impl SqlrApp {
     /// `target` happens at once.
     pub(crate) fn ask_end(&mut self, target: EndTarget, sessions: Vec<SessionKey>) {
         // One end prompt at a time. A second request while one is being resolved (a chord,
-        // the connection chip, a menu) must not replace the action the user chose.
-        if self.ending.is_some() {
+        // the connection chip, a menu, a window close) must not replace the action the
+        // user chose, nor be lost: it is asked once the pending one is resolved.
+        if let Some(pending) = &self.ending {
+            let repeated = pending.target == target
+                || self.queued_ends.iter().any(|(queued, _)| *queued == target);
+            if !repeated {
+                self.queued_ends.push_back((target, sessions));
+            }
             return;
         }
         let mut all = Vec::new();
@@ -538,6 +544,13 @@ impl SqlrApp {
         let open = self.engine.open_transactions();
         if !open.is_empty() {
             ctx.request_repaint_after(IDLE_CHECK);
+        }
+        // A request that waited for the previous prompt is asked now, with the
+        // transactions as they are now (it may need no prompt at all any more).
+        while self.ending.is_none()
+            && let Some((target, sessions)) = self.queued_ends.pop_front()
+        {
+            self.ask_end(target, sessions);
         }
         if self.ending.is_none()
             && let Some((key, tx)) = open.iter().find(|(k, tx)| {
@@ -863,6 +876,13 @@ mod tests {
             app.ending.as_ref().map(|p| &p.target)
         );
         assert!(!app.quit_now, "the quit must wait for the pending prompt");
+        // The quit is not lost: it runs once the pending prompt is resolved.
+        app.ending = None;
+        app.end_prompts(&egui::Context::default(), false);
+        assert!(
+            app.quit_now,
+            "the queued quit runs after the pending prompt"
+        );
     }
 
     #[test]

@@ -280,6 +280,13 @@ pub trait Dialect: Send + Sync {
     fn begin_commits_transaction(&self) -> bool {
         false
     }
+    /// Whether the server refused the statement that failed with `error` before running it
+    /// (while parsing), so none of what it does before it runs, such as an implicit commit,
+    /// happened. The default knows no such errors.
+    fn refused_before_running(&self, error: &crate::DriverError) -> bool {
+        let _ = error;
+        false
+    }
     /// What `sql` does to an open transaction before it runs: the default is DDL on a
     /// dialect whose DDL commits, and nothing elsewhere.
     fn transaction_impact(&self, sql: &str) -> crate::TransactionImpact {

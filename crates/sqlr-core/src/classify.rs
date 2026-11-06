@@ -83,7 +83,18 @@ pub fn mysql_transaction_impact(syntax: &SqlSyntax, sql: &str) -> TransactionImp
     let first = words.first().copied().unwrap_or("");
     let second = words.get(1).copied().unwrap_or("");
     let some = |word: &str| first.eq_ignore_ascii_case(word);
-    if (some("CREATE") || some("DROP")) && second.eq_ignore_ascii_case("TEMPORARY") {
+    // MariaDB's `CREATE OR REPLACE TEMPORARY TABLE` names the kind after `OR REPLACE`.
+    let kind = if some("CREATE")
+        && second.eq_ignore_ascii_case("OR")
+        && words
+            .get(2)
+            .is_some_and(|w| w.eq_ignore_ascii_case("REPLACE"))
+    {
+        words.get(3).copied().unwrap_or("")
+    } else {
+        second
+    };
+    if (some("CREATE") || some("DROP")) && kind.eq_ignore_ascii_case("TEMPORARY") {
         // `CREATE/DROP TEMPORARY TABLE` does not commit the open transaction.
         return TransactionImpact::None;
     }
@@ -113,6 +124,15 @@ pub fn mysql_transaction_impact(syntax: &SqlSyntax, sql: &str) -> TransactionImp
         return TransactionImpact::Commits(DDL_COMMITS_NOTE);
     }
     TransactionImpact::None
+}
+
+/// Whether MySQL refused `error`'s statement while parsing it (ER_PARSE_ERROR, 1064): it
+/// never ran, so the implicit commit a statement of its kind makes did not happen either.
+pub fn mysql_refused_while_parsing(error: &crate::DriverError) -> bool {
+    error.kind == crate::ErrorKind::Syntax
+        && error
+            .message
+            .contains("You have an error in your SQL syntax")
 }
 
 /// The value of a session `SET autocommit = …`, or `None` for another `SET` (a global
@@ -935,6 +955,15 @@ mod tests {
             mysql_transaction_impact(&s, "DROP TEMPORARY TABLE x"),
             TransactionImpact::None
         );
+        assert_eq!(
+            mysql_transaction_impact(&s, "CREATE OR REPLACE TEMPORARY TABLE x (a int)"),
+            TransactionImpact::None,
+            "MariaDB's replacing form of a temporary table does not commit either"
+        );
+        assert!(matches!(
+            mysql_transaction_impact(&s, "CREATE OR REPLACE TABLE x (a int)"),
+            TransactionImpact::Commits(_)
+        ));
         assert!(matches!(
             mysql_transaction_impact(&s, "CREATE TABLE x (a int)"),
             TransactionImpact::Commits(_)

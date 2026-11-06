@@ -1795,7 +1795,16 @@ fn import_saves_its_rejected_rows() {
         &format!("Saved the rejected rows to {}", saved.display()),
     );
     let text = std::fs::read_to_string(&saved).unwrap();
-    assert!(text.starts_with("line,reason\n3,"), "{text}");
+    // The engine's file: line, reason and the source values, ready to fix and import again.
+    let mut lines = text.lines();
+    assert_eq!(
+        lines.next(),
+        Some("line,reason,column 1,column 2"),
+        "{text}"
+    );
+    let row = lines.next().unwrap_or_default();
+    assert!(row.starts_with("3,") && row.ends_with(",abc,80"), "{text}");
+    assert_eq!(lines.next(), None, "{text}");
 }
 
 /// Renders the configuration windows to `docs/media/screenshots/` (needs a GPU adapter):

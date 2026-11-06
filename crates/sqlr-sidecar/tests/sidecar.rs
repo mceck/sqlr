@@ -210,9 +210,16 @@ async fn crash_fails_only_its_connections() {
     assert_eq!(e.kind, ErrorKind::Protocol, "{e:?}");
     assert!(e.message.contains("echo"), "{}", e.message);
     assert!(!driver.is_running());
-    // Every connection of the dead process fails with the same kind of error…
-    assert_eq!(other.ping().await.err().unwrap().kind, ErrorKind::Protocol);
-    assert_eq!(conn.ping().await.err().unwrap().kind, ErrorKind::Protocol);
+    // Every later request on a connection of the dead process fails as a lost connection,
+    // so its session reconnects (starting a new process) instead of failing for good…
+    let later = other.ping().await.err().unwrap();
+    assert_eq!(later.kind, ErrorKind::Connection);
+    assert!(
+        later.message.contains("exited unexpectedly"),
+        "{}",
+        later.message
+    );
+    assert_eq!(conn.ping().await.err().unwrap().kind, ErrorKind::Connection);
     // …while a connection to another driver is untouched…
     assert_eq!(sqlite.ping().await.unwrap().product, "SQLite");
     // …and the driver recovers on the next connect.
@@ -224,7 +231,13 @@ async fn crash_fails_only_its_connections() {
     // restart() kills the process on demand; connections fail, connect works again.
     driver.restart();
     assert!(!driver.is_running());
-    assert_eq!(again.ping().await.err().unwrap().kind, ErrorKind::Protocol);
+    let restarted = again.ping().await.err().unwrap();
+    assert_eq!(restarted.kind, ErrorKind::Connection);
+    assert!(
+        restarted.message.contains("was restarted"),
+        "{}",
+        restarted.message
+    );
     let fresh = driver
         .connect(&config(), &Secrets::default())
         .await

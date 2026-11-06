@@ -416,17 +416,21 @@ impl TxState {
     }
 
     /// Follows `stmt` after it failed (not by a lost connection). A server that commits
-    /// before DDL has done so even when the DDL then failed.
+    /// before DDL has done so even when the DDL then failed, unless it refused the
+    /// statement while parsing it (`unparsed`).
     pub(crate) fn after_failure(
         &mut self,
         stmt: &Stmt,
         rules: TxRules,
+        unparsed: bool,
         now_ms: i64,
     ) -> Option<RunMessage> {
         self.last_activity_ms = now_ms;
         // The implicit commit happens before the statement, so it stands even when the
-        // statement then failed. `SET autocommit` that failed changed nothing.
-        if let Some(note) = stmt.commit_note(rules)
+        // statement then failed. `SET autocommit` that failed changed nothing, and neither
+        // did a statement the server could not parse.
+        if !unparsed
+            && let Some(note) = stmt.commit_note(rules)
             && self.is_open()
         {
             self.close(now_ms);
@@ -812,13 +816,16 @@ mod tests {
             error_aborts: true,
             ..TxRules::default()
         };
-        assert!(pg.after_failure(&class("select oops"), aborts, 1).is_some());
+        assert!(
+            pg.after_failure(&class("select oops"), aborts, false, 1)
+                .is_some()
+        );
         assert_eq!(pg.phase, TxPhase::Failed);
         let mut mysql = TxState::new(CommitMode::Manual, false, 0);
         mysql.open(0);
         assert!(
             mysql
-                .after_failure(&class("select oops"), TxRules::default(), 1)
+                .after_failure(&class("select oops"), TxRules::default(), false, 1)
                 .is_none()
         );
         assert_eq!(mysql.phase, TxPhase::Open);
@@ -871,14 +878,14 @@ mod tests {
         let mut tx = TxState::new(CommitMode::Manual, false, 0);
         tx.open(0);
         let note = tx
-            .after_failure(&class("create table t (a int)"), mysql, 1)
+            .after_failure(&class("create table t (a int)"), mysql, false, 1)
             .unwrap();
         assert_eq!(note.text, DDL_COMMITS_NOTE);
         assert_eq!(tx.phase, TxPhase::Idle);
         // Without the implicit commit a failing DML statement leaves it open.
         tx.open(2);
         assert!(
-            tx.after_failure(&class("delete from t"), mysql, 3)
+            tx.after_failure(&class("delete from t"), mysql, false, 3)
                 .is_none()
         );
         assert_eq!(tx.phase, TxPhase::Open);

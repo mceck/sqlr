@@ -25,7 +25,7 @@ The connection dialog creates and edits Connections. Its left list shows the sav
 - **Duplicate** saves a copy right after the original, named "`<name>` copy", then "`<name>` copy 2" and so on (compared case-insensitively), with the original's stored secrets when it saves them.
 - **Delete** asks for confirmation, removes the Connection from the explorer at once, disconnects it, drops its Catalog cache, recent entry and recent objects, then deletes it and its secret fields on the store worker. A failed delete lists it again. The worker deletes the secret fields before removing the saved Connection; a vault failure keeps its id available for retry.
 
-When "Save password" is off, connecting asks for the secrets in a "Connect to `<name>`" prompt: the Driver's secret fields, plus the SSH password or key passphrase when the tunnel uses that method. Entered secrets stay in memory until sqlr quits. A run that triggered the connect starts once the prompt is answered; Cancel drops the connect.
+When "Save password" is off, connecting asks for the secrets in a "Connect to `<name>`" prompt: the Driver's secret fields, plus the SSH password or key passphrase when the tunnel uses that method. Entered secrets stay in memory until sqlr quits. A connect that fails for any other reason than the network (refused credentials, a configuration error) forgets them, so the next connect asks again. A timeout, an unreachable server, a lost connection or a cancelled connect keeps them, so the next run reconnects without asking. A run that triggered the connect starts once the prompt is answered; Cancel drops the connect.
 
 ### Folders and ordering
 

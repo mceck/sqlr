@@ -146,7 +146,7 @@ A Connection error on a Session fails that Session, closes its open stream, forg
 No Driver failure crashes the UI:
 
 - Each engine command task runs under a panic guard. A panic fails the query, script or Job it belonged to, fails every Operation that task started, and records one `engine_panic` Incident; every other Operation keeps running. The app's global panic hook recognises panics inside engine tasks and leaves them to the engine, so one event produces one Incident.
-- A Sidecar driver runs in its own process. When it crashes, only its own Connections fail with a Protocol error and offer Restart driver.
+- A Sidecar driver runs in its own process. When it crashes, only its own Connections fail: the statements it was running end with a Protocol error and offer Restart driver, and later requests on those Connections fail as lost connections, so their Sessions reconnect (starting a fresh process) on their next statement.
 - A database (`sqlr.db`) that cannot be opened falls back to an in-memory one with a warning; unreadable settings fall back to defaults.
 
 Logging, Incidents and crash reports follow [Diagnostics](diagnostics.md): exactly one log line is written when an Operation settles, at the level in the table above, and `error` is reserved for unexpected failures.

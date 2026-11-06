@@ -119,6 +119,11 @@ final class Bridge {
         if (state.equals("57014") || state.equals("HY008") || state.equals("70100") || state.equals("JZ0KB")) return "Cancelled";
         if (state.startsWith("28")) return "Auth";
         if (state.startsWith("08")) return "Connection";
+        // Drivers that report a dead connection without an 08 state (ojdbc's "Closed
+        // Connection", ORA-17008) still raise these: only a reconnect helps.
+        if (e instanceof java.sql.SQLRecoverableException
+                || e instanceof java.sql.SQLNonTransientConnectionException
+                || e instanceof java.sql.SQLTransientConnectionException) return "Connection";
         if (state.startsWith("42")) return state.equals("42501") ? "Permission" : "Syntax";
         if (state.startsWith("0A")) return "Unsupported";
         return "Other";
@@ -154,7 +159,7 @@ final class Bridge {
         switch (name) {
             case "Hello": return MsgPack.variant("Welcome", MsgPack.map("protocol", PROTOCOL, "manifest", Manifest.of(preset)));
             case "Connect": return connect(num(b, "conn"), b);
-            case "Ping": return MsgPack.variant("Pong", serverInfo(session(b).conn));
+            case "Ping": return MsgPack.variant("Pong", ping(session(b).conn));
             case "Browse": return MsgPack.variant("Nodes", session(b).meta.browse(strings(b.get("path"))));
             case "Execute": return execute(session(b), num(b, "conn"), text(b, "sql"), (List<Object>) b.get("params"));
             case "Fetch": return fetch(id, num(b, "stream"), (int) num(b, "max"));
@@ -183,6 +188,15 @@ final class Bridge {
         List<String> out = new ArrayList<>();
         if (o instanceof List) for (Object e : (List<Object>) o) out.add(String.valueOf(e));
         return out;
+    }
+
+    /** The server info of a live connection: {@code getMetaData} is usually cached, so the
+     *  ping is {@code isValid}'s answer, and a dead connection fails like a lost one. */
+    private static Map<String, Object> ping(Connection c) throws SQLException {
+        if (!c.isValid(5)) {
+            throw new java.sql.SQLNonTransientConnectionException("the connection is no longer valid", "08003");
+        }
+        return serverInfo(c);
     }
 
     private static Map<String, Object> serverInfo(Connection c) throws SQLException {

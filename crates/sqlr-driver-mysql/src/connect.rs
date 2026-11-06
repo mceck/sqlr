@@ -213,6 +213,9 @@ impl Driver for MysqlDriver {
             .pass(secrets.0.get("password").cloned())
             .db_name(database.clone())
             .prefer_socket(false)
+            // A network that drops without closing the socket fails a waiting statement
+            // instead of holding the session forever.
+            .tcp_keepalive(Some(Duration::from_secs(60)))
             // Affected rows count matched rows: an UPDATE to a value the row already holds
             // still affects 1, so applied edits can tell it from a concurrent change.
             .client_found_rows(true);

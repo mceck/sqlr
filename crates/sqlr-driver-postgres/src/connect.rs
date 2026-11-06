@@ -219,7 +219,13 @@ impl Driver for PostgresDriver {
             .dbname(&database)
             .user(text("user")?)
             .ssl_mode(ssl_mode.wire())
-            .connect_timeout(Duration::from_secs(10));
+            .connect_timeout(Duration::from_secs(10))
+            // A network that drops without closing the socket fails a waiting statement
+            // in about two minutes instead of the system's two hours.
+            .keepalives(true)
+            .keepalives_idle(KEEPALIVE_IDLE)
+            .keepalives_interval(KEEPALIVE_INTERVAL)
+            .keepalives_retries(KEEPALIVE_RETRIES);
         if let Some(name) = cfg.values.get("property.application_name") {
             pg.application_name(name);
         }
@@ -257,6 +263,11 @@ impl Driver for PostgresDriver {
         ))
     }
 }
+
+/// TCP keepalive: probes after a minute of silence, every 10 s, five times.
+const KEEPALIVE_IDLE: Duration = Duration::from_secs(60);
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
+const KEEPALIVE_RETRIES: u32 = 5;
 
 /// Opens one client. Its connection task forwards server notices to `notices` when given.
 async fn open(

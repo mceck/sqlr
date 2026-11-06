@@ -234,7 +234,14 @@ impl Inner {
             return Ok(());
         }
         // The console's connection may be the one that is blocked: kill it from another.
-        let mut control = self.open(self.configured_db, Role::Browse).await?;
+        let control = self.open(self.configured_db, Role::Browse).await;
+        // Even when the kill cannot be sent, the next console command must not queue behind
+        // the blocked one: it opens a new connection.
+        self.slots
+            .lock()
+            .await
+            .retain(|(_, role), _| *role != Role::Console);
+        let mut control = control?;
         for id in ids {
             let _ = redis::cmd("CLIENT")
                 .arg("KILL")
@@ -243,10 +250,6 @@ impl Inner {
                 .query_async::<Value>(&mut control)
                 .await;
         }
-        self.slots
-            .lock()
-            .await
-            .retain(|(_, role), _| *role != Role::Console);
         Ok(())
     }
 }

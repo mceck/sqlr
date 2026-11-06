@@ -45,7 +45,7 @@ Stopping the server stops accepting requests, cancels in-flight tool calls, deni
 
 Changing the port restarts the listener and drops active MCP sessions. Rotating the token replaces its vault value, updates the in-memory verifier, drops every MCP session and Agent Session, and keeps the listener bound. Both actions are explicit Settings actions that state their effect before they run.
 
-The server accepts at most eight MCP sessions at once. A ninth connection receives a structured error. Only session identifiers issued by the capped session manager select a managed MCP session; unregistered identifiers share the stateless context and its tab budget. A session is idle when it has no in-flight tool call and no recent Result activity for 30 minutes; an idle sweep runs every 60 seconds, closes idle sessions, and closes Results older than their TTL.
+The server accepts at most eight MCP sessions at once. A ninth connection receives a structured error. Only session identifiers issued by the capped session manager select a managed MCP session; unregistered identifiers share the stateless context and its tab budget. A session is idle when it has no in-flight tool call and no recent Result activity for 30 minutes; the end of a tool call counts as activity, so a call that ran longer than that does not get its session closed right after it returns; an idle sweep runs every 60 seconds, closes idle sessions, and closes Results older than their TTL.
 
 ### Endpoint security
 

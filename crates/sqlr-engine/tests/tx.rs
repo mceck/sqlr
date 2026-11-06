@@ -1238,3 +1238,26 @@ fn set_autocommit_commits_only_when_autocommit_was_off() {
         texts(&engine, q)
     );
 }
+
+#[test]
+fn a_statement_mysql_could_not_parse_commits_nothing() {
+    let script = FakeScript {
+        parse_error_matching: Some("TABLEZ".into()),
+        ..mysql(writes())
+    };
+    let (engine, _, key) = setup(script, profile(CommitMode::Manual));
+    ok(&engine, &key, "insert into t values (1)");
+    // FLUSH commits implicitly, but only once the server has parsed it.
+    let q = engine.execute_in(&key, None, "FLUSH TABLEZ".into(), 100);
+    assert!(matches!(settled(&engine, q), QueryStatus::Failed(_)));
+    assert_eq!(
+        phase(&engine, &key),
+        TxPhase::Open,
+        "the server still holds the transaction and its insert"
+    );
+    assert!(
+        !texts(&engine, q).iter().any(|t| t == IMPLICIT_COMMIT_NOTE),
+        "{:?}",
+        texts(&engine, q)
+    );
+}

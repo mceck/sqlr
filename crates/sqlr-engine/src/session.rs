@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use sqlr_core::{CancelHandle, Connection, DriverError, RowStream, ServerInfo};
 use tokio::sync::watch;
@@ -41,6 +41,20 @@ pub(crate) struct SessionIo {
     /// allowed to take the stream lock next.
     next_ticket: AtomicU64,
     turn: watch::Sender<u64>,
+    /// Set once the engine gave the connection up (the server never answered a cancel):
+    /// every execute and fetch still holding or waiting for this I/O stops.
+    abandoned: watch::Sender<Option<Abandoned>>,
+    /// The connection was lost with a transaction open: statements still queued on this
+    /// I/O belonged to it and must not run on a new connection.
+    lost_transaction: AtomicBool,
+}
+
+/// How the engine gave a session's connection up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Abandoned {
+    /// No transaction was open, so a statement still waiting for its turn may run on a
+    /// new connection instead.
+    pub rerun: bool,
 }
 
 /// Holds an execute's turn; dropping it lets the next ticket go.
@@ -60,6 +74,8 @@ impl SessionIo {
             connect_done: watch::Sender::new(false),
             next_ticket: AtomicU64::new(0),
             turn: watch::Sender::new(0),
+            abandoned: watch::Sender::new(None),
+            lost_transaction: AtomicBool::new(false),
         })
     }
 
@@ -72,6 +88,40 @@ impl SessionIo {
         let mut rx = self.connect_done.subscribe();
         // The sender lives in `self`, so this cannot fail while we hold `self`.
         let _ = rx.wait_for(|done| *done).await;
+    }
+
+    /// Gives the connection up (once): tasks still on this I/O stop.
+    pub fn abandon(&self, how: Abandoned) {
+        self.abandoned.send_if_modified(|current| {
+            let first = current.is_none();
+            if first {
+                *current = Some(how);
+            }
+            first
+        });
+    }
+
+    pub fn mark_lost_transaction(&self) {
+        self.lost_transaction.store(true, Ordering::SeqCst);
+    }
+
+    pub fn lost_transaction(&self) -> bool {
+        self.lost_transaction.load(Ordering::SeqCst)
+    }
+
+    pub fn is_abandoned(&self) -> bool {
+        self.abandoned.borrow().is_some()
+    }
+
+    /// Waits until the connection is given up; never returns for a session that keeps it.
+    pub async fn abandoned(&self) -> Abandoned {
+        let mut rx = self.abandoned.subscribe();
+        // The sender lives in `self`, so this cannot fail while we hold `self`.
+        let how = rx.wait_for(Option::is_some).await.ok().and_then(|how| *how);
+        match how {
+            Some(how) => how,
+            None => std::future::pending().await,
+        }
     }
 
     /// The next execute ticket; every ticket must later be waited for with `wait_turn`.
