@@ -1,13 +1,16 @@
 ---
 name: rust-async-patterns
-description: Master Rust async programming with Tokio, async traits, error handling, and concurrent patterns. Use when building async Rust applications, implementing concurrent systems, or debugging async code.
+description: "Master Rust async programming with Tokio, async traits, error handling, and concurrent patterns. Use when building async Rust applications, implementing concurrent systems, or debugging async code."
+risk: safe
+source: community
+date_added: "2026-02-27"
 ---
 
 # Rust Async Patterns
 
 Production patterns for async Rust programming with Tokio runtime, including tasks, channels, streams, and error handling.
 
-## When to Use This Skill
+## Use this skill when
 
 - Building async Rust applications
 - Implementing concurrent network services
@@ -16,80 +19,23 @@ Production patterns for async Rust programming with Tokio runtime, including tas
 - Debugging async code issues
 - Optimizing async performance
 
-## Core Concepts
+## Do not use this skill when
 
-### 1. Async Execution Model
+- The task is unrelated to rust async patterns
+- You need a different domain or tool outside this scope
 
-```
-Future (lazy) → poll() → Ready(value) | Pending
-                ↑           ↓
-              Waker ← Runtime schedules
-```
+## Instructions
 
-### 2. Key Abstractions
+- Clarify goals, constraints, and required inputs.
+- Apply relevant best practices and validate outcomes.
+- Provide actionable steps and verification.
+- If detailed examples are required, open `resources/implementation-playbook.md`.
 
-| Concept    | Purpose                                  |
-| ---------- | ---------------------------------------- |
-| `Future`   | Lazy computation that may complete later |
-| `async fn` | Function returning impl Future           |
-| `await`    | Suspend until future completes           |
-| `Task`     | Spawned future running concurrently      |
-| `Runtime`  | Executor that polls futures              |
+## Resources
 
-## Quick Start
+- `resources/implementation-playbook.md` for detailed patterns and examples.
 
-```toml
-# Cargo.toml
-[dependencies]
-tokio = { version = "1", features = ["full"] }
-futures = "0.3"
-async-trait = "0.1"
-anyhow = "1.0"
-tracing = "0.1"
-tracing-subscriber = "0.3"
-```
-
-```rust
-use tokio::time::{sleep, Duration};
-use anyhow::Result;
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    // Initialize tracing
-    tracing_subscriber::fmt::init();
-
-    // Async operations
-    let result = fetch_data("https://api.example.com").await?;
-    println!("Got: {}", result);
-
-    Ok(())
-}
-
-async fn fetch_data(url: &str) -> Result<String> {
-    // Simulated async operation
-    sleep(Duration::from_millis(100)).await;
-    Ok(format!("Data from {}", url))
-}
-```
-
-## Detailed patterns and worked examples
-
-Detailed pattern documentation lives in `references/details.md`. Read that file when the navigation tier above is insufficient.
-
-## Best Practices
-
-### Do's
-
-- **Use `tokio::select!`** - For racing futures
-- **Prefer channels** - Over shared state when possible
-- **Use `JoinSet`** - For managing multiple tasks
-- **Instrument with tracing** - For debugging async code
-- **Handle cancellation** - Check `CancellationToken`
-
-### Don'ts
-
-- **Don't block** - Never use `std::thread::sleep` in async
-- **Don't hold locks across awaits** - Causes deadlocks
-- **Don't spawn unboundedly** - Use semaphores for limits
-- **Don't ignore errors** - Propagate with `?` or log
-- **Don't forget Send bounds** - For spawned futures
+## Limitations
+- Use this skill only when the task clearly matches the scope described above.
+- Do not treat the output as a substitute for environment-specific validation, testing, or expert review.
+- Stop and ask for clarification if required inputs, permissions, safety boundaries, or success criteria are missing.

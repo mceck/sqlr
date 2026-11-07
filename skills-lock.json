@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "skills": {
+    "rust-async-patterns": {
+      "source": "sickn33/agentic-awesome-skills",
+      "sourceType": "github",
+      "skillPath": "skills/rust-async-patterns/SKILL.md",
+      "computedHash": "b6bd865adfacbbd141fb5f3c5b514e734b24cbe60e6a08d5f92574aa9ad94910"
+    },
+    "rust-best-practices": {
+      "source": "apollographql/skills",
+      "sourceType": "github",
+      "skillPath": "skills/rust-best-practices/SKILL.md",
+      "computedHash": "a3db351ec552ed9d36b59e547d6c1d94077867eb5bcb98b3f802dfebb0a8a248"
+    }
+  }
+}

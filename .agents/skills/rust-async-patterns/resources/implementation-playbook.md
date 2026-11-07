@@ -1,4 +1,75 @@
-# rust-async-patterns — detailed patterns and worked examples
+# Rust Async Patterns Implementation Playbook
+
+This file contains detailed patterns, checklists, and code samples referenced by the skill.
+
+# Rust Async Patterns
+
+Production patterns for async Rust programming with Tokio runtime, including tasks, channels, streams, and error handling.
+
+## When to Use This Skill
+
+- Building async Rust applications
+- Implementing concurrent network services
+- Using Tokio for async I/O
+- Handling async errors properly
+- Debugging async code issues
+- Optimizing async performance
+
+## Core Concepts
+
+### 1. Async Execution Model
+
+```
+Future (lazy) → poll() → Ready(value) | Pending
+                ↑           ↓
+              Waker ← Runtime schedules
+```
+
+### 2. Key Abstractions
+
+| Concept | Purpose |
+|---------|---------|
+| `Future` | Lazy computation that may complete later |
+| `async fn` | Function returning impl Future |
+| `await` | Suspend until future completes |
+| `Task` | Spawned future running concurrently |
+| `Runtime` | Executor that polls futures |
+
+## Quick Start
+
+```toml
+# Cargo.toml
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+async-trait = "0.1"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+```
+
+```rust
+use tokio::time::{sleep, Duration};
+use anyhow::Result;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Initialize tracing
+    tracing_subscriber::fmt::init();
+
+    // Async operations
+    let result = fetch_data("https://api.example.com").await?;
+    println!("Got: {}", result);
+
+    Ok(())
+}
+
+async fn fetch_data(url: &str) -> Result<String> {
+    // Simulated async operation
+    sleep(Duration::from_millis(100)).await;
+    Ok(format!("Data from {}", url))
+}
+```
 
 ## Patterns
 
@@ -34,6 +105,7 @@ async fn fetch_all_concurrent(urls: Vec<String>) -> Result<Vec<String>> {
 use futures::stream::{self, StreamExt};
 
 async fn fetch_with_limit(urls: Vec<String>, limit: usize) -> Vec<Result<String>> {
+    assert!(limit > 0, "concurrency limit must be positive");
     stream::iter(urls)
         .map(|url| async move { fetch_data(&url).await })
         .buffer_unordered(limit) // Max concurrent tasks
@@ -67,6 +139,7 @@ async fn mpsc_example() {
         tx2.send("Hello".to_string()).await.unwrap();
     });
 
+    drop(tx); // receiver terminates once the producer clone is dropped
     // Consume
     while let Some(msg) = rx.recv().await {
         println!("Got: {}", msg);
@@ -316,7 +389,8 @@ async fn process_stream() {
 async fn process_in_chunks() {
     let stream = numbers_stream();
 
-    let mut chunks = stream.chunks(3);
+    let chunks = stream.chunks(3);
+    futures::pin_mut!(chunks);
 
     while let Some(chunk) = chunks.next().await {
         println!("Processing chunk: {:?}", chunk);
@@ -362,20 +436,20 @@ impl Cache {
 // Connection pool with semaphore
 struct Pool {
     semaphore: Semaphore,
-    connections: Mutex<Vec<Connection>>,
+    connections: std::sync::Mutex<Vec<Connection>>,
 }
 
 impl Pool {
     fn new(size: usize) -> Self {
         Self {
             semaphore: Semaphore::new(size),
-            connections: Mutex::new((0..size).map(|_| Connection::new()).collect()),
+            connections: std::sync::Mutex::new((0..size).map(|_| Connection::new()).collect()),
         }
     }
 
     async fn acquire(&self) -> PooledConnection<'_> {
         let permit = self.semaphore.acquire().await.unwrap();
-        let conn = self.connections.lock().await.pop().unwrap();
+        let conn = self.connections.lock().unwrap().pop().unwrap();
         PooledConnection { pool: self, conn: Some(conn), _permit: permit }
     }
 }
@@ -389,10 +463,8 @@ struct PooledConnection<'a> {
 impl Drop for PooledConnection<'_> {
     fn drop(&mut self) {
         if let Some(conn) = self.conn.take() {
-            let pool = self.pool;
-            tokio::spawn(async move {
-                pool.connections.lock().await.push(conn);
-            });
+            // Return the connection synchronously before the permit field is dropped.
+            self.pool.connections.lock().unwrap().push(conn);
         }
     }
 }
@@ -421,3 +493,27 @@ tokio::spawn(async move {
     // Enters span when polled
 }.instrument(span));
 ```
+
+## Best Practices
+
+### Do's
+- **Use `tokio::select!`** - For racing futures
+- **Prefer channels** - Over shared state when possible
+- **Use `JoinSet`** - For managing multiple tasks
+- **Instrument with tracing** - For debugging async code
+- **Handle cancellation** - Check `CancellationToken`
+
+### Don'ts
+- **Don't block** - Never use `std::thread::sleep` in async
+- **Don't hold locks across awaits** - Causes deadlocks
+- **Don't spawn unboundedly** - Use semaphores for limits
+- **Don't ignore errors** - Propagate with `?` or log
+- **Don't forget Send bounds** - For spawned futures
+
+## Resources
+
+- [Tokio Tutorial](https://tokio.rs/tokio/tutorial)
+- [Async Book](https://rust-lang.github.io/async-book/)
+- [Tokio Console](https://github.com/tokio-rs/console)
+
+Fragments omit application types and dependencies (including thiserror, reqwest, sqlx, tokio-util and async-stream); they are not a complete compilable crate. The pool uses a short synchronous mutex section with no await to avoid a borrowed non-static reference in spawned Drop and a permit/connection return race; production pools need poisoning, closure, health and cancellation handling. Retain task handles and await shutdown with a bounded timeout rather than assuming a sleep joins workers. JoinSet example currently logs failures and returns partial results: expose that partial-success contract or propagate errors. select/timeout drop losing futures but may not undo external effects or stop spawn_blocking work. Async mutex guards may intentionally span await under carefully designed ownership; this is not universally a deadlock.
