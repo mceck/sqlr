@@ -488,6 +488,40 @@ impl SqlrApp {
         let _ = self.dock.remove_tab(path);
     }
 
+    /// Closes the tabs left of `key` in its leaf, nearest first. Each close asks first when
+    /// its own transaction is open, like a click on its close button.
+    pub(crate) fn close_tabs_left(&mut self, key: u64) {
+        for key in self.tabs_beside(key, true) {
+            self.request_close_tab(key);
+        }
+    }
+
+    /// Closes the tabs right of `key` in its leaf, nearest first.
+    pub(crate) fn close_tabs_right(&mut self, key: u64) {
+        for key in self.tabs_beside(key, false) {
+            self.request_close_tab(key);
+        }
+    }
+
+    /// The keys of the tabs left (or right) of `key` in its leaf, nearest first.
+    fn tabs_beside(&self, key: u64, left: bool) -> Vec<u64> {
+        let Some(path) = self.dock.find_tab_from(|t| t.key == key) else {
+            return Vec::new();
+        };
+        let Some(leaf) = self.dock[path.node_path()].get_leaf() else {
+            return Vec::new();
+        };
+        let Some(index) = leaf.tabs().iter().position(|t| t.key == key) else {
+            return Vec::new();
+        };
+        let tabs = leaf.tabs();
+        if left {
+            tabs[..index].iter().rev().map(|t| t.key).collect()
+        } else {
+            tabs[index + 1..].iter().map(|t| t.key).collect()
+        }
+    }
+
     fn finish_end(&mut self, target: EndTarget) {
         match target {
             EndTarget::CloseTab(key) => self.close_tab_now(key),

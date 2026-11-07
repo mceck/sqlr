@@ -49,6 +49,8 @@ The central area is a dockable tab area. Tabs can be reordered and split into si
 
 A tab holds an Editor script, an object editor, a result with its panes, an ER diagram, a migration script or another tool surface. Closing the last tab brings back the welcome screen.
 
+A tab's context menu closes it, closes the tabs to its left or right in the same group, or ejects it into its own window. The neighbour closes use the clicked tab as the reference, are disabled when there is nothing on that side, and take the same path as the tab's close button, so an open transaction or pending edits are asked about first.
+
 ### Chrome
 
 #### Toolbar
@@ -378,6 +380,7 @@ Updates are a background state machine in the app: idle, checking, offering, dow
 - **One apply chord for every kind of pending edit.** Users press ⌘S out of habit wherever they changed something. Routing it to the active surface's own Apply or Save keeps one rule to learn and reuses that surface's confirmations, instead of giving each editor its own chord.
 - **Discard has no default chord.** Discarding throws work away and cannot be undone, so it stays a Palette command until the user binds it.
 - **Closed tabs are remembered for the session only, without their data.** Reopening a mistake should be instant, but keeping Results or pending edits alive after a close would hold memory and sessions the user asked to release; the recipe to open the tab again is enough.
+- **Close to the left and right stay inside the tab group.** A group is what its tab bar shows, so the neighbours are the tabs the user sees next to the clicked one; closing across split groups would close tabs the menu never showed.
 - **Conflicts only when scopes overlap.** The same chord can legitimately mean different things in the Editor, the Result grid and the Explorer (⌘D selects the next occurrence in the editor and duplicates rows in the grid), so conflict detection compares scopes rather than the whole window.
 - **A custom accent with contrast correction.** Users want their own color, and an unreadable button is worse than a slightly adjusted brand color.
 - **Bundled fonts with lazy system fallbacks.** A consistent interface does not depend on what is installed, and CJK or emoji text still renders without loading megabytes of fallback fonts at startup.

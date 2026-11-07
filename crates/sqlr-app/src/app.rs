@@ -1056,6 +1056,11 @@ impl SqlrApp {
             .iter_leaves()
             .filter_map(|(_, leaf)| leaf.tabs.get(leaf.active.0).map(|t| t.key))
             .collect();
+        let leaves: HashMap<egui_dock::NodePath, Vec<u64>> = self
+            .dock
+            .iter_leaves()
+            .map(|(path, leaf)| (path, leaf.tabs().iter().map(|t| t.key).collect()))
+            .collect();
         let tints = self.profile_tints();
         let drivers = self.engine.drivers();
         let editable: std::collections::HashSet<String> = self
@@ -1089,6 +1094,7 @@ impl SqlrApp {
             show_value_panel: self.show_value_panel,
             include_sql: self.settings.include_sql_in_diagnostics,
             active,
+            leaves: &leaves,
             palette: theme::palette(ui.ctx()),
             icon_font: theme::fonts::icons(ui.ctx(), icons::SIZE),
             commands: Vec::new(),
@@ -1107,6 +1113,8 @@ impl SqlrApp {
                 TabCommand::OpenResultTable { tab, q } => self.open_result_table(tab, q),
                 TabCommand::SaveSnippet(key) => self.save_as_snippet_for(key),
                 TabCommand::RequestClose(key) => self.request_close_tab(key),
+                TabCommand::CloseTabsLeft(key) => self.close_tabs_left(key),
+                TabCommand::CloseTabsRight(key) => self.close_tabs_right(key),
                 TabCommand::RevealConnection(key) => self.reveal_tab_connection(key),
                 TabCommand::ChangeDatabase { tab, database } => {
                     if let Some(tab) = tab_mut(&mut self.dock, tab) {

@@ -630,6 +630,10 @@ pub enum TabCommand {
     },
     /// The tab's close button: the app asks first when its transaction is open.
     RequestClose(u64),
+    /// "Close tabs to the left" from the tab's context menu.
+    CloseTabsLeft(u64),
+    /// "Close tabs to the right" from the tab's context menu.
+    CloseTabsRight(u64),
     /// "Save as snippet…" from the tab's editor context menu.
     SaveSnippet(u64),
     /// The breadcrumb's connection or database: select the tab's connection in the explorer.
@@ -689,6 +693,9 @@ pub struct Viewer<'a> {
     pub include_sql: bool,
     /// The keys of each leaf's active tab (their titles are underlined).
     pub active: HashSet<u64>,
+    /// Each leaf's tab keys, left to right, so the tab context menu knows whether there
+    /// are neighbours to close.
+    pub leaves: &'a HashMap<egui_dock::NodePath, Vec<u64>>,
     pub palette: Palette,
     /// The icon font of tab titles.
     pub icon_font: FontId,
@@ -918,6 +925,12 @@ impl egui_dock::TabViewer for Viewer<'_> {
         egui_dock::tab_viewer::OnCloseResponse::Ignore
     }
 
+    /// "Close tabs to the left" and "Close tabs to the right"; the dock follows them with
+    /// Eject and Close.
+    fn context_menu(&mut self, ui: &mut egui::Ui, tab: &mut QueryTab, path: egui_dock::NodePath) {
+        tab_context_menu(ui, tab.key, path, self.leaves, &mut self.commands);
+    }
+
     fn on_add(&mut self, _path: egui_dock::NodePath) {
         self.commands.push(TabCommand::Add);
     }
@@ -926,6 +939,36 @@ impl egui_dock::TabViewer for Viewer<'_> {
     fn scroll_bars(&self, _tab: &QueryTab) -> [bool; 2] {
         [false, false]
     }
+}
+
+/// The neighbour closes in a tab's context menu. A tab with nothing on its side is
+/// disabled; the dock draws Eject and Close after these.
+fn tab_context_menu(
+    ui: &mut egui::Ui,
+    key: u64,
+    path: egui_dock::NodePath,
+    leaves: &HashMap<egui_dock::NodePath, Vec<u64>>,
+    commands: &mut Vec<TabCommand>,
+) {
+    let keys = leaves.get(&path).map_or(&[][..], Vec::as_slice);
+    let index = keys.iter().position(|tab| *tab == key);
+    let left = index.is_some_and(|i| i > 0);
+    let right = index.is_some_and(|i| i + 1 < keys.len());
+    if ui
+        .add_enabled(left, egui::Button::new("Close tabs to the left"))
+        .clicked()
+    {
+        commands.push(TabCommand::CloseTabsLeft(key));
+        ui.close();
+    }
+    if ui
+        .add_enabled(right, egui::Button::new("Close tabs to the right"))
+        .clicked()
+    {
+        commands.push(TabCommand::CloseTabsRight(key));
+        ui.close();
+    }
+    ui.separator();
 }
 
 impl Viewer<'_> {
@@ -2680,5 +2723,54 @@ mod tests {
                 .is_some()
         });
         h.get_by_label("Retry");
+    }
+
+    #[test]
+    fn tab_context_menu_offers_the_neighbour_closes() {
+        use egui_kittest::kittest::{NodeT, Queryable};
+
+        let path = egui_dock::NodePath::MAIN_ROOT;
+        let leaves = HashMap::from([(path, vec![1, 2, 3])]);
+        let mut commands = Vec::new();
+        let mut h = egui_kittest::Harness::new_ui(|ui| {
+            tab_context_menu(ui, 1, path, &leaves, &mut commands);
+        });
+        h.run_steps(2);
+        // The first tab has a right neighbour but nothing on its left.
+        assert!(
+            h.get_by_label("Close tabs to the left")
+                .accesskit_node()
+                .is_disabled()
+        );
+        assert!(
+            !h.get_by_label("Close tabs to the right")
+                .accesskit_node()
+                .is_disabled()
+        );
+        h.get_by_label("Close tabs to the right").click();
+        h.run_steps(2);
+        drop(h);
+        assert!(matches!(
+            commands.as_slice(),
+            [TabCommand::CloseTabsRight(1)]
+        ));
+    }
+
+    #[test]
+    fn closing_tabs_beside_keeps_the_reference_tab() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut app = sqlite_app(dir.path());
+        app.dock = egui_dock::DockState::new(vec![]);
+        app.new_tab(Some("a".into()), None, "");
+        let second = app.new_tab(Some("b".into()), None, "");
+        app.new_tab(Some("c".into()), None, "");
+        app.close_tabs_left(second);
+        assert_eq!(app.tab_titles(), ["b", "c"]);
+        app.close_tabs_right(second);
+        assert_eq!(app.tab_titles(), ["b"]);
+        // Nothing left to close on either side.
+        app.close_tabs_left(second);
+        app.close_tabs_right(second);
+        assert_eq!(app.tab_titles(), ["b"]);
     }
 }
