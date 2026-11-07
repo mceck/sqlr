@@ -4,9 +4,13 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use sqlr_core::{CommitMode, ConnectionProfile, ErrorKind, Secrets};
+use sqlr_core::{
+    CommitMode, ConnectionProfile, DriverError, Endpoint, ErrorKind, Secrets, TableColumn,
+    TableInfo, TableRef, TransferOptions,
+};
 use sqlr_engine::{
-    DriverRegistry, Engine, QueryId, QueryStatus, SessionKey, SessionStatus, TxPhase,
+    DriverRegistry, Engine, JobOutcome, LoadState, QueryId, QueryStatus, SessionKey, SessionStatus,
+    TxPhase,
 };
 use sqlr_testkit::{FakeDriver, FakeScript};
 
@@ -326,4 +330,149 @@ fn a_statement_queued_inside_a_transaction_the_connection_lost_does_not_run() {
         fake.executed()
     );
     assert_eq!(engine.transaction(&key).unwrap().phase, TxPhase::Idle);
+}
+
+#[test]
+fn a_transfer_preview_reruns_a_read_the_server_closed_while_idle() {
+    let fake = FakeDriver::new(FakeScript {
+        rows: 3,
+        connection_error_once: Some("SELECT * FROM".into()),
+        ..Default::default()
+    });
+    let mut drivers = DriverRegistry::default();
+    drivers.register(fake.clone());
+    let engine = Engine::new(drivers, no_repaint());
+    engine.connect(config("c", "fake"), Secrets::default(), dev());
+    assert!(wait_until(TIMEOUT, || matches!(
+        engine.session_status("c"),
+        Some(SessionStatus::Connected(_))
+    )));
+
+    let job = engine.probe_source(
+        Endpoint::Table {
+            conn: "c".into(),
+            table: TableRef {
+                database: None,
+                schema: None,
+                name: "t".into(),
+            },
+        },
+        TransferOptions::default(),
+    );
+    assert!(wait_until(TIMEOUT, || engine
+        .job(job)
+        .is_some_and(|j| j.outcome.is_some())));
+    match engine.job(job).unwrap().outcome.unwrap() {
+        JobOutcome::Probed(probe) => assert_eq!(probe.rows.len(), 3),
+        other => panic!("the preview must recover on a new connection: {other:?}"),
+    }
+    assert_eq!(
+        fake.executed()
+            .iter()
+            .filter(|sql| sql.starts_with("SELECT * FROM"))
+            .count(),
+        2,
+        "{:?}",
+        fake.executed()
+    );
+    assert_eq!(fake.connects().len(), 2, "the explorer session reconnected");
+}
+
+#[test]
+fn a_preview_that_loses_the_connection_while_reading_fails_the_session() {
+    let fake = FakeDriver::new(FakeScript {
+        rows: 3,
+        fail_after_chunks: Some((
+            0,
+            DriverError::new(
+                ErrorKind::Connection,
+                "server closed the connection unexpectedly",
+            ),
+        )),
+        ..Default::default()
+    });
+    let mut drivers = DriverRegistry::default();
+    drivers.register(fake);
+    let engine = Engine::new(drivers, no_repaint());
+    engine.connect(config("c", "fake"), Secrets::default(), dev());
+    assert!(wait_until(TIMEOUT, || matches!(
+        engine.session_status("c"),
+        Some(SessionStatus::Connected(_))
+    )));
+
+    let job = engine.probe_source(
+        Endpoint::Table {
+            conn: "c".into(),
+            table: TableRef {
+                database: None,
+                schema: None,
+                name: "t".into(),
+            },
+        },
+        TransferOptions::default(),
+    );
+    assert!(wait_until(TIMEOUT, || engine
+        .job(job)
+        .is_some_and(|j| j.outcome.is_some())));
+    match engine.job(job).unwrap().outcome.unwrap() {
+        JobOutcome::Failed(e) => assert_eq!(e.kind, ErrorKind::Connection, "{e:?}"),
+        other => panic!("the read must report the connection it lost: {other:?}"),
+    }
+    assert!(
+        matches!(engine.session_status("c"), Some(SessionStatus::Failed(_))),
+        "the next preview must reconnect"
+    );
+}
+
+#[test]
+fn describing_a_table_after_a_lost_connection_reconnects() {
+    let table = TableRef {
+        database: None,
+        schema: None,
+        name: "orders".into(),
+    };
+    let info = TableInfo {
+        table: table.clone(),
+        columns: vec![TableColumn {
+            automatic: false,
+            name: "id".into(),
+            type_name: "int8".into(),
+            nullable: false,
+            default: None,
+            generated: false,
+        }],
+        primary_key: vec!["id".into()],
+        unique_keys: Vec::new(),
+    };
+    let fake = FakeDriver::new(FakeScript {
+        tables: vec![info.clone()],
+        connection_error_matching: Some("select fail".into()),
+        ..Default::default()
+    });
+    let mut drivers = DriverRegistry::default();
+    drivers.register(fake);
+    let engine = Engine::new(drivers, no_repaint());
+    engine.connect(config("c", "fake"), Secrets::default(), dev());
+    assert!(wait_until(TIMEOUT, || matches!(
+        engine.session_status("c"),
+        Some(SessionStatus::Connected(_))
+    )));
+
+    let lost = engine.execute("c", "select fail".into(), 100);
+    assert!(matches!(settled(&engine, lost), QueryStatus::Failed(_)));
+    assert!(wait_until(TIMEOUT, || matches!(
+        engine.session_status("c"),
+        Some(SessionStatus::Failed(_))
+    )));
+
+    engine.describe(&SessionKey::meta("c"), table.clone());
+    assert!(
+        wait_until(TIMEOUT, || matches!(
+            engine.table_info("c", &table),
+            Some(LoadState::Ready(_))
+        )),
+        "describing the target must reconnect: {:?}",
+        engine.table_info("c", &table)
+    );
+    assert_eq!(engine.table_info("c", &table), Some(LoadState::Ready(info)));
 }

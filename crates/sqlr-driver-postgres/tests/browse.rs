@@ -27,6 +27,26 @@ async fn connect_and_ping() {
     assert!(!info.version.is_empty());
 }
 
+/// The idle ping keeps the explorer client alive; a query client the server closed must
+/// still be noticed, or the next statement (and a transfer preview) fails on it.
+#[tokio::test]
+async fn ping_checks_the_query_client() {
+    sqlr_testkit::skip_container_tests!("POSTGRES");
+    let (_c, cfg, sec) = pg_isolated().await;
+    let conn = PostgresDriver::new().connect(&cfg, &sec).await.unwrap();
+    {
+        let admin = conn.relational().unwrap().admin().expect("admin support");
+        let ids = admin.session_ids();
+        assert_eq!(ids.len(), 2, "the explorer and query clients");
+        admin.terminate_session(&ids[1], None).await.unwrap();
+    }
+    let err = conn
+        .ping()
+        .await
+        .expect_err("the query client was terminated");
+    assert_eq!(err.kind, ErrorKind::Connection, "{err:?}");
+}
+
 #[tokio::test]
 async fn wrong_password_is_auth_error() {
     sqlr_testkit::skip_container_tests!("POSTGRES");

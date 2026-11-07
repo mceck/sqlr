@@ -328,9 +328,21 @@ impl Connection for PgConnection {
             .query_one("SHOW server_version", &[])
             .await
             .map_err(map_error)?;
+        let version: String = row.get(0);
+        // The explorer client above stays alive on its own; check the one user statements
+        // run on too, or an idle server timeout would only show up as a failed statement
+        // (and as a preview that never loads) instead of a reconnect. A busy query client
+        // is not idle: its statement reports its own failure.
+        if let Ok(query) = self.query.try_lock() {
+            query
+                .client
+                .simple_query("SELECT 1")
+                .await
+                .map_err(map_error)?;
+        }
         Ok(ServerInfo {
             product: "PostgreSQL".into(),
-            version: row.get(0),
+            version,
         })
     }
 

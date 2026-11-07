@@ -100,7 +100,9 @@ flowchart LR
 
 A UTF-8 byte-order mark is accepted even when the input arrives in separate buffers. For CSV and TSV, blank lines before a header are preamble. Without a header, leading blank lines are rows only when the data has one column; a file consisting entirely of blank lines is one column of blank fields. Every delimited row has the discovered column count, with short records padded by NULLs.
 
-A source on a file, a collection or the generator is probed to discover its columns and types, with up to 100 rows for a preview. A connection-backed source is probed from the live connection. The wizard probes automatically shortly after the source and its connection are complete, and offers a Load preview action otherwise.
+A source on a file, a collection or the generator is probed to discover its columns and types, with up to 100 rows for a preview. A connection-backed source is probed from the live connection. The wizard probes automatically shortly after the source and its connection are complete, and offers a Load preview action otherwise. A source read that fails because the server closed the connection while idle is re-run once on a new connection, as an editor read is; the preview then loads without another click.
+
+When the Connection lists databases above its schemas (PostgreSQL with **Show all databases**), the table and query source and the table target offer a **Database** picker beside Schema, defaulting to the connection's own database. Choosing another database reads its schemas and tables through that database's own connection. MySQL-like Drivers list databases as schemas, so the Schema field names them and there is no separate picker.
 
 #### Targets
 

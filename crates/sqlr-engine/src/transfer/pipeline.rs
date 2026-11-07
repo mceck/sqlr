@@ -93,12 +93,8 @@ impl Engine {
             Some(conn) => {
                 let key = SessionKey::meta(&conn);
                 let io = {
-                    let inner = self.shared.inner.lock();
-                    inner
-                        .sessions
-                        .get(&key)
-                        .filter(|s| s.is_live())
-                        .map(|s| s.io.clone())
+                    let mut inner = self.shared.inner.lock();
+                    self.shared.live_or_reopen(&mut inner, &key)
                 };
                 match io {
                     None => {
@@ -192,7 +188,10 @@ impl Shared {
             match reader.recv().await {
                 Some(Ok(batch)) => rows.extend(batch.into_iter().map(|(_, row)| row)),
                 Some(Err(e)) => {
-                    return JobOutcome::Failed(DriverError::new(ErrorKind::Other, e.to_string()));
+                    return JobOutcome::Failed(match e {
+                        TransferFileError::Source(e) => e,
+                        other => DriverError::new(ErrorKind::Other, other.to_string()),
+                    });
                 }
                 None => break,
             }
@@ -425,7 +424,8 @@ impl Shared {
                 continue;
             }
             let conn = target_conn.ok_or_else(not_connected)?;
-            let io = self.live_io(conn).ok_or_else(not_connected)?;
+            let io = self.live_io_or_reopen(conn).ok_or_else(not_connected)?;
+            io.connect_finished().await;
             // Introspection names a foreign key's target without its database: it lives in
             // the database of the table being filled, which need not be the connection's own.
             let database = table.database.as_deref().or(spec.table.database.as_deref());
@@ -508,9 +508,14 @@ impl Shared {
     }
 
     /// Every row of `table` on `conn`'s explorer session.
-    async fn table_rows(&self, conn: &str, table: &TableRef) -> Result<Records, DriverError> {
+    async fn table_rows(
+        self: &Arc<Self>,
+        conn: &str,
+        table: &TableRef,
+    ) -> Result<Records, DriverError> {
         let key = SessionKey::meta(conn);
-        let io = self.live_io(conn).ok_or_else(not_connected)?;
+        let io = self.live_io_or_reopen(conn).ok_or_else(not_connected)?;
+        io.connect_finished().await;
         let connection = self
             .session_connection(&key, &io, table.database.as_deref())
             .await?;
@@ -525,65 +530,126 @@ impl Shared {
         self.query_rows(conn, table.database.as_deref(), &sql).await
     }
 
-    /// The rows of `sql` (a statement that only reads) on `conn`'s explorer session.
+    /// The rows of `sql` (a statement that only reads) on `conn`'s explorer session. A
+    /// connection the server closed while idle is replaced and the read runs once more,
+    /// as a statement from the editor does.
     async fn query_rows(
-        &self,
+        self: &Arc<Self>,
         conn: &str,
         database: Option<&str>,
         sql: &str,
     ) -> Result<Records, DriverError> {
         let key = SessionKey::meta(conn);
-        let io = self.live_io(conn).ok_or_else(not_connected)?;
-        let connection = self.session_connection(&key, &io, database).await?;
-        let rel = connection.relational().ok_or_else(|| {
-            DriverError::new(ErrorKind::Unsupported, "this connection does not run SQL")
-        })?;
-        if rel.dialect().syntax().classify_script(sql) != StatementClass::Read {
-            return Err(DriverError::new(
-                ErrorKind::Permission,
-                "Only a statement that only reads can be a transfer source",
-            ));
-        }
-        let mut stream = match rel.execute(sql).await? {
-            Execution::Rows(stream) => stream,
-            Execution::Affected(_) => {
+        let mut retried = false;
+        let mut lost: Option<DriverError> = None;
+        loop {
+            let Some(io) = self.live_io_or_reopen(conn) else {
+                return Err(lost.unwrap_or_else(not_connected));
+            };
+            io.connect_finished().await;
+            let connection = match self.session_connection(&key, &io, database).await {
+                Ok(connection) => connection,
+                Err(e) => {
+                    // Only a database connection that failed while the session itself is
+                    // up is worth another try; a session that did not connect would only be
+                    // asked to connect twice.
+                    if e.kind == ErrorKind::Connection
+                        && !retried
+                        && self.session_is_connected(&key, &io)
+                        && !self.session_in_transaction(&key, &io)
+                    {
+                        lost = Some(e);
+                        retried = true;
+                        continue;
+                    }
+                    return Err(lost.unwrap_or(e));
+                }
+            };
+            let rel = connection.relational().ok_or_else(|| {
+                DriverError::new(ErrorKind::Unsupported, "this connection does not run SQL")
+            })?;
+            if rel.dialect().syntax().classify_script(sql) != StatementClass::Read {
                 return Err(DriverError::new(
-                    ErrorKind::Other,
-                    "the statement returned no rows to transfer",
+                    ErrorKind::Permission,
+                    "Only a statement that only reads can be a transfer source",
                 ));
             }
-        };
-        let columns: Vec<ColumnMeta> = stream.columns().to_vec();
-        let (tx, rx) = mpsc::channel(2);
-        let width = columns.len();
-        tokio::spawn(async move {
-            let mut line = 0u64;
-            loop {
-                let batch = match stream.next_chunk(super::EXPORT_CHUNK).await {
-                    Ok(Some(chunk)) => Ok((0..chunk.len())
-                        .map(|r| {
-                            line += 1;
-                            let row = (0..width)
-                                .map(|c| Value::from_cell(chunk.cell(r, c)))
-                                .collect();
-                            (line, row)
-                        })
-                        .collect()),
-                    Ok(None) => break,
-                    Err(e) => Err(e.into()),
-                };
-                let failed = batch.is_err();
-                if tx.send(batch).await.is_err() || failed {
-                    break;
+            let mut stream = match rel.execute(sql).await {
+                Ok(Execution::Rows(stream)) => stream,
+                Ok(Execution::Affected(_)) => {
+                    return Err(DriverError::new(
+                        ErrorKind::Other,
+                        "the statement returned no rows to transfer",
+                    ));
                 }
-            }
-            let _ = stream.close().await;
-        });
-        Ok(Records::Rows {
-            columns,
-            reader: rx,
-            typed_text: false,
-        })
+                Err(e) => {
+                    if e.kind == ErrorKind::Connection {
+                        let was_open = self.session_in_transaction(&key, &io);
+                        self.on_error(&key, &io, &e);
+                        if !retried && !was_open {
+                            lost = Some(e);
+                            retried = true;
+                            continue;
+                        }
+                        return Err(lost.unwrap_or(e));
+                    }
+                    return Err(e);
+                }
+            };
+            let columns: Vec<ColumnMeta> = stream.columns().to_vec();
+            let (tx, rx) = mpsc::channel(2);
+            let width = columns.len();
+            let shared = self.clone();
+            tokio::spawn(async move {
+                let mut line = 0u64;
+                loop {
+                    let batch = match stream.next_chunk(super::EXPORT_CHUNK).await {
+                        Ok(Some(chunk)) => Ok((0..chunk.len())
+                            .map(|r| {
+                                line += 1;
+                                let row = (0..width)
+                                    .map(|c| Value::from_cell(chunk.cell(r, c)))
+                                    .collect();
+                                (line, row)
+                            })
+                            .collect()),
+                        Ok(None) => break,
+                        Err(e) => {
+                            if e.kind == ErrorKind::Connection {
+                                shared.on_error(&key, &io, &e);
+                            }
+                            Err(e.into())
+                        }
+                    };
+                    let failed = batch.is_err();
+                    if tx.send(batch).await.is_err() || failed {
+                        break;
+                    }
+                }
+                let _ = stream.close().await;
+            });
+            return Ok(Records::Rows {
+                columns,
+                reader: rx,
+                typed_text: false,
+            });
+        }
+    }
+
+    /// Whether the session `key` with I/O `io` holds an open transaction.
+    fn session_in_transaction(&self, key: &SessionKey, io: &Arc<SessionIo>) -> bool {
+        self.inner
+            .lock()
+            .session(key, io)
+            .is_some_and(|s| s.tx.is_open())
+    }
+
+    /// Whether the session `key` is the one `io` belongs to and it is connected.
+    fn session_is_connected(&self, key: &SessionKey, io: &Arc<SessionIo>) -> bool {
+        self.inner
+            .lock()
+            .session(key, io)
+            .is_some_and(|s| s.is_connected())
     }
 
     /// The rows of a file: its columns from the first rows, then every row in batches.

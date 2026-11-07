@@ -90,7 +90,7 @@ The app absorbs these cases and tells the user only what is useful:
 - [x] Sort and filter with pending edits ask to discard them and then run.
 - [x] A failed filter or sort keeps the previous Result, shows the error under an editable filter bar and is not recorded as applied.
 - [x] A read that fails with a Connection error outside a transaction is re-run once after reconnecting; a write fails and the next run reconnects.
-- [ ] Idle Sessions without a transaction are pinged and reconnected when dead.
+- [x] Idle Sessions without a transaction are pinged and reconnected when dead.
 - [x] Redis, Administration, object and document tabs connect on their own; a new query tab gets a default Connection.
 - [x] A successful DDL from the editor refreshes the loaded explorer nodes.
 - [x] Opening a schema or database shows a spinner on it and then the non-empty folders at once, with no folder flashing.

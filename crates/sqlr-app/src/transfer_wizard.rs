@@ -123,9 +123,9 @@ fn default_schema(driver: &str) -> &'static str {
     }
 }
 
-fn table_ref(schema: &str, name: &str) -> TableRef {
+fn table_ref(database: &str, schema: &str, name: &str) -> TableRef {
     TableRef {
-        database: None,
+        database: Some(database.trim().to_string()).filter(|s| !s.is_empty()),
         schema: Some(schema.trim().to_string()).filter(|s| !s.is_empty()),
         name: name.trim().to_string(),
     }
@@ -149,6 +149,7 @@ pub(crate) struct TransferWizard {
     step: usize,
     source_kind: SourceKind,
     s_conn: String,
+    s_database: String,
     s_schema: String,
     s_table: String,
     s_sql: String,
@@ -159,6 +160,7 @@ pub(crate) struct TransferWizard {
     s_encoding: String,
     target_kind: TargetKind,
     t_conn: String,
+    t_database: String,
     t_schema: String,
     t_table: String,
     t_path: String,
@@ -205,6 +207,7 @@ impl TransferWizard {
             step: 0,
             source_kind: SourceKind::Table,
             s_conn: id.clone(),
+            s_database: String::new(),
             s_schema: default_schema(driver).into(),
             s_table: String::new(),
             s_sql: String::new(),
@@ -215,6 +218,7 @@ impl TransferWizard {
             s_encoding: String::new(),
             target_kind: TargetKind::Existing,
             t_conn: conns.get(1).map_or(id, |c| c.id.clone()),
+            t_database: String::new(),
             t_schema: default_schema(conns.get(1).map_or(driver, |c| c.driver.as_str())).into(),
             t_table: String::new(),
             t_path: String::new(),
@@ -252,6 +256,7 @@ impl TransferWizard {
     pub fn for_table(conns: &[ConnChoice], conn: &str, table: TableRef) -> Self {
         let mut wizard = Self::new(conns);
         wizard.s_conn = conn.to_string();
+        wizard.s_database = table.database.clone().unwrap_or_default();
         wizard.s_schema = table.schema.clone().unwrap_or_default();
         // Copying into a table of the same name is the usual wish.
         wizard.t_table = table.name.clone();
@@ -281,7 +286,7 @@ impl TransferWizard {
                 }
                 Some(Endpoint::Table {
                     conn: self.s_conn.clone(),
-                    table: table_ref(&self.s_schema, &self.s_table),
+                    table: table_ref(&self.s_database, &self.s_schema, &self.s_table),
                 })
             }
             SourceKind::Query => {
@@ -290,7 +295,7 @@ impl TransferWizard {
                 }
                 Some(Endpoint::Query {
                     conn: self.s_conn.clone(),
-                    database: None,
+                    database: Some(self.s_database.trim().to_string()).filter(|d| !d.is_empty()),
                     sql: self.s_sql.trim().to_string(),
                 })
             }
@@ -336,7 +341,7 @@ impl TransferWizard {
                 if self.t_conn.is_empty() || self.t_table.trim().is_empty() {
                     return None;
                 }
-                let table = table_ref(&self.t_schema, &self.t_table);
+                let table = table_ref(&self.t_database, &self.t_schema, &self.t_table);
                 Some(if self.target_kind == TargetKind::Existing {
                     Endpoint::Table {
                         conn: self.t_conn.clone(),
@@ -426,9 +431,10 @@ impl TransferWizard {
     /// Identifies the source inputs, so a stale probe is dropped when they change.
     fn source_key(&self) -> String {
         format!(
-            "{:?}|{}|{}|{}|{}|{}|{:?}|{:?}|{}|{}",
+            "{:?}|{}|{}|{}|{}|{}|{}|{:?}|{:?}|{}|{}",
             self.source_kind,
             self.s_conn,
+            self.s_database,
             self.s_schema,
             self.s_table,
             self.s_sql,
@@ -469,7 +475,7 @@ impl TransferWizard {
         if self.target_kind != TargetKind::Existing {
             return Some(Vec::new());
         }
-        let table = table_ref(&self.t_schema, &self.t_table);
+        let table = table_ref(&self.t_database, &self.t_schema, &self.t_table);
         match engine.table_info(&self.t_conn, &table)? {
             sqlr_engine::LoadState::Ready(info) => Some(info.columns),
             _ => None,
@@ -527,8 +533,10 @@ impl TransferWizard {
                     if self.target_kind != TargetKind::Existing {
                         return None;
                     }
-                    match engine.table_info(&self.t_conn, &table_ref(&self.t_schema, &self.t_table))
-                    {
+                    match engine.table_info(
+                        &self.t_conn,
+                        &table_ref(&self.t_database, &self.t_schema, &self.t_table),
+                    ) {
                         Some(sqlr_engine::LoadState::Ready(_)) => None,
                         Some(sqlr_engine::LoadState::Failed(e)) => {
                             Some(format!("Target table is unavailable: {}", e.message))
@@ -615,10 +623,12 @@ impl TransferWizard {
             && self.probe_job.is_none()
             && self.probe_for != key
             && (self.autoprobe || now - self.observed_source.1 >= 0.35)
-            && self
-                .needed_connections()
-                .iter()
-                .all(|id| matches!(engine.session_status(id), Some(SessionStatus::Connected(_))))
+            && self.needed_connections().iter().all(|id| {
+                matches!(
+                    engine.session_status(id),
+                    Some(SessionStatus::Connected(_) | SessionStatus::Failed(_))
+                )
+            })
         {
             self.autoprobe = false;
             self.start_probe(engine);
@@ -838,6 +848,51 @@ impl TransferWizard {
         changed
     }
 
+    /// The database picker of a connection that lists databases above its schemas (a
+    /// PostgreSQL connection with "Show all databases"). The connection's own database is
+    /// the empty value. Returns whether it changed.
+    fn database_combo(
+        ui: &mut egui::Ui,
+        id: &str,
+        engine: &Engine,
+        conn: &str,
+        current: &mut String,
+    ) -> bool {
+        let databases = crate::catalog_picker::database_names(engine, conn);
+        if databases.is_empty() {
+            return false;
+        }
+        let own = engine
+            .session_database(conn)
+            .unwrap_or_else(|| "own database".to_string());
+        let shown = if current.is_empty() {
+            own.as_str()
+        } else {
+            current.as_str()
+        };
+        ui.label("Database");
+        let mut changed = false;
+        ComboBox::from_id_salt(id)
+            .selected_text(shown)
+            .width(180.0)
+            .show_ui(ui, |ui| {
+                if ui.selectable_label(current.is_empty(), &own).clicked() {
+                    current.clear();
+                    changed = true;
+                }
+                for database in databases.iter().filter(|d| d.as_str() != own.as_str()) {
+                    if ui
+                        .selectable_label(current.as_str() == database.as_str(), database)
+                        .clicked()
+                    {
+                        *current = database.clone();
+                        changed = true;
+                    }
+                }
+            });
+        changed
+    }
+
     fn source_ui(
         &mut self,
         ui: &mut egui::Ui,
@@ -860,15 +915,33 @@ impl TransferWizard {
                 ui.horizontal(|ui| {
                     ui.label("Connection");
                     if Self::conn_combo(ui, "tw-source-conn", conns, &mut self.s_conn) {
+                        self.s_database.clear();
                         self.s_schema = default_schema(self.driver_of(conns, &self.s_conn)).into();
+                        self.s_table.clear();
+                        self.mapping.clear();
+                        self.described = None;
                     }
                     Self::conn_state(ui, engine, &self.s_conn);
                 });
+                if Self::database_combo(
+                    ui,
+                    "tw-source-db",
+                    engine,
+                    &self.s_conn,
+                    &mut self.s_database,
+                ) {
+                    self.s_schema = default_schema(self.driver_of(conns, &self.s_conn)).into();
+                    self.s_table.clear();
+                    self.mapping.clear();
+                    self.described = None;
+                }
                 if self.source_kind == SourceKind::Table {
+                    let database = self.s_database.trim().to_string();
+                    let database = (!database.is_empty()).then_some(database.as_str());
                     ui.horizontal(|ui| {
                         ui.label("Schema");
                         let schemas =
-                            crate::catalog_picker::schema_names(engine, &self.s_conn, None);
+                            crate::catalog_picker::schema_names(engine, &self.s_conn, database);
                         crate::catalog_picker::name(
                             ui,
                             "source_schema",
@@ -881,6 +954,7 @@ impl TransferWizard {
                         let tables = crate::catalog_picker::table_names(
                             engine,
                             &self.s_conn,
+                            database,
                             &self.s_schema,
                         );
                         crate::catalog_picker::name(
@@ -1050,15 +1124,32 @@ impl TransferWizard {
                 ui.horizontal(|ui| {
                     ui.label("Connection");
                     if Self::conn_combo(ui, "tw-target-conn", conns, &mut self.t_conn) {
+                        self.t_database.clear();
                         self.t_schema = default_schema(self.driver_of(conns, &self.t_conn)).into();
+                        self.t_table.clear();
                         self.mapping.clear();
                         self.described = None;
                     }
                     Self::conn_state(ui, engine, &self.t_conn);
                 });
+                if Self::database_combo(
+                    ui,
+                    "tw-target-db",
+                    engine,
+                    &self.t_conn,
+                    &mut self.t_database,
+                ) {
+                    self.t_schema = default_schema(self.driver_of(conns, &self.t_conn)).into();
+                    self.t_table.clear();
+                    self.mapping.clear();
+                    self.described = None;
+                }
+                let database = self.t_database.trim().to_string();
+                let database = (!database.is_empty()).then_some(database.as_str());
                 ui.horizontal(|ui| {
                     ui.label("Schema");
-                    let schemas = crate::catalog_picker::schema_names(engine, &self.t_conn, None);
+                    let schemas =
+                        crate::catalog_picker::schema_names(engine, &self.t_conn, database);
                     crate::catalog_picker::name(
                         ui,
                         "target_schema",
@@ -1068,8 +1159,12 @@ impl TransferWizard {
                         160.0,
                     );
                     ui.label("Table");
-                    let tables =
-                        crate::catalog_picker::table_names(engine, &self.t_conn, &self.t_schema);
+                    let tables = crate::catalog_picker::table_names(
+                        engine,
+                        &self.t_conn,
+                        database,
+                        &self.t_schema,
+                    );
                     if crate::catalog_picker::name(
                         ui,
                         "target_table",
@@ -1083,7 +1178,7 @@ impl TransferWizard {
                     }
                 });
                 if self.target_kind == TargetKind::Existing && !self.t_table.trim().is_empty() {
-                    let table = table_ref(&self.t_schema, &self.t_table);
+                    let table = table_ref(&self.t_database, &self.t_schema, &self.t_table);
                     let key = (self.t_conn.clone(), table.clone());
                     if self.described.as_ref() != Some(&key) {
                         engine.describe(&SessionKey::meta(&self.t_conn), table.clone());
@@ -1151,7 +1246,7 @@ impl TransferWizard {
         };
         let source = probe.columns.clone();
         if self.target_kind == TargetKind::Existing {
-            let table = table_ref(&self.t_schema, &self.t_table);
+            let table = table_ref(&self.t_database, &self.t_schema, &self.t_table);
             let key = (self.t_conn.clone(), table.clone());
             if self.described.as_ref() != Some(&key) {
                 engine.describe(&SessionKey::meta(&self.t_conn), table);
@@ -1163,9 +1258,10 @@ impl TransferWizard {
                 ui.spinner();
                 ui.label("Reading the table's columns…");
             });
-            if let Some(sqlr_engine::LoadState::Failed(e)) =
-                engine.table_info(&self.t_conn, &table_ref(&self.t_schema, &self.t_table))
-            {
+            if let Some(sqlr_engine::LoadState::Failed(e)) = engine.table_info(
+                &self.t_conn,
+                &table_ref(&self.t_database, &self.t_schema, &self.t_table),
+            ) {
                 ui.colored_label(theme::palette(ui.ctx()).error, e.message);
             }
             return;
@@ -1277,7 +1373,7 @@ impl TransferWizard {
             })
             .collect();
         let (mut def, warnings) = new_table_def(
-            &table_ref(&self.t_schema, &self.t_table),
+            &table_ref(&self.t_database, &self.t_schema, &self.t_table),
             &from,
             &to,
             &columns,
@@ -1500,8 +1596,8 @@ impl SqlrApp {
         let Some(wizard) = &mut self.transfer_wizard else {
             return;
         };
-        // A connection never connected in this run is connected for the wizard; one that
-        // failed stays failed (its error shows beside the picker).
+        // A connection never connected in this run is connected for the wizard; a session
+        // that failed reconnects when the preview runs (its error shows beside the picker).
         let needed = wizard.needed_connections();
         for id in needed {
             if self.engine.session_status(&id).is_none() {
@@ -1693,10 +1789,61 @@ mod tests {
             spec.source,
             Endpoint::Table {
                 conn: "a".into(),
-                table: table_ref("main", "src")
+                table: table_ref("", "main", "src")
             }
         );
         assert!(matches!(spec.target, Endpoint::Table { .. }));
+    }
+
+    #[test]
+    fn a_table_source_and_target_keep_their_database() {
+        let mut wizard = TransferWizard::for_table(
+            &conns(),
+            "a",
+            TableRef {
+                database: Some("other".into()),
+                schema: Some("public".into()),
+                name: "src".into(),
+            },
+        );
+        assert_eq!(wizard.s_database, "other");
+        assert_eq!(
+            wizard.source_endpoint(),
+            Some(Endpoint::Table {
+                conn: "a".into(),
+                table: TableRef {
+                    database: Some("other".into()),
+                    schema: Some("public".into()),
+                    name: "src".into(),
+                },
+            })
+        );
+        wizard.t_database = "reports".into();
+        wizard.t_table = "dst".into();
+        wizard.mapping = vec![ColumnMapping::new(0, Some("id".into()))];
+        let spec = wizard.spec().unwrap();
+        assert_eq!(
+            spec.source,
+            Endpoint::Table {
+                conn: "a".into(),
+                table: TableRef {
+                    database: Some("other".into()),
+                    schema: Some("public".into()),
+                    name: "src".into(),
+                },
+            }
+        );
+        assert_eq!(
+            spec.target,
+            Endpoint::Table {
+                conn: "b".into(),
+                table: TableRef {
+                    database: Some("reports".into()),
+                    schema: Some("public".into()),
+                    name: "dst".into(),
+                },
+            }
+        );
     }
 
     #[test]
@@ -2058,7 +2205,7 @@ mod tests {
             describe(
                 Some(&Endpoint::Table {
                     conn: "a".into(),
-                    table: table_ref("main", "src"),
+                    table: table_ref("", "main", "src"),
                 }),
                 &conns
             ),
@@ -2068,7 +2215,7 @@ mod tests {
             describe(
                 Some(&Endpoint::NewTable {
                     conn: "b".into(),
-                    table: table_ref("", "dst"),
+                    table: table_ref("", "", "dst"),
                     ddl: None,
                 }),
                 &conns

@@ -50,8 +50,8 @@ Open the command palette with ⌘⇧P and choose **Transfer data…**. The wizar
 
 ![Data transfer wizard with source and target choices](images/moving-data/transfer.png)
 
-1. In **Source**, choose a table, read-only query or file. Check the preview before continuing. File sources include CSV, TSV, JSON, JSON Lines, Excel `.xlsx` sheets and Parquet.
-2. In **Target**, choose an existing table, a new table or a file. For a new table, enter its name and review the generated column types.
+1. In **Source**, choose a table, read-only query or file. When the connection is set to show all databases, choose the **Database** first; the schema and table lists follow it. Check the preview before continuing. File sources include CSV, TSV, JSON, JSON Lines, Excel `.xlsx` sheets and Parquet.
+2. In **Target**, choose an existing table, a new table or a file, and choose its database the same way when the connection shows several. For a new table, enter its name and review the generated column types.
 3. In **Mapping**, choose the destination for each source column, or skip it. You can trim text, change case, turn blank text into NULL, supply a constant or request a type conversion. This step appears for table targets.
 4. In **Options**, choose the batch size and write behavior.
 5. In **Review**, check both endpoints, column mappings, warnings and any new-table DDL. Choose **Run transfer**.

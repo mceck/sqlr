@@ -357,17 +357,27 @@ impl MyConnection {
 #[async_trait::async_trait]
 impl Connection for MyConnection {
     async fn ping(&self) -> Result<ServerInfo, DriverError> {
-        let mut meta = self.meta.lock().await;
-        let version: Option<String> = meta
-            .query_first("SELECT VERSION()")
-            .await
-            .map_err(map_error)?;
-        let version = version.unwrap_or_default();
-        let product = if version.to_ascii_lowercase().contains("mariadb") {
-            "MariaDB"
-        } else {
-            "MySQL"
+        let (version, product) = {
+            let mut meta = self.meta.lock().await;
+            let version: Option<String> = meta
+                .query_first("SELECT VERSION()")
+                .await
+                .map_err(map_error)?;
+            let version = version.unwrap_or_default();
+            let product = if version.to_ascii_lowercase().contains("mariadb") {
+                "MariaDB"
+            } else {
+                "MySQL"
+            };
+            (version, product)
         };
+        // The explorer connection above stays alive on its own; check the one user
+        // statements run on too, or an idle server timeout would only show up as a failed
+        // statement (and as a preview that never loads) instead of a reconnect. A busy
+        // query connection is not idle: its statement reports its own failure.
+        if let Ok(mut query) = self.query.try_lock() {
+            query.ping(&self.killer).await?;
+        }
         Ok(ServerInfo {
             product: product.into(),
             version,

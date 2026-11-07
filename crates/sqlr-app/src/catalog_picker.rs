@@ -1,6 +1,6 @@
 //! Catalog-backed suggestions for schema and table names, with a typed fallback.
 use egui::TextEdit;
-use sqlr_core::CatalogNeed;
+use sqlr_core::{CatalogNeed, NodeKind, NodePath};
 use sqlr_engine::{Engine, LoadState};
 
 pub(crate) fn schema_names(engine: &Engine, conn: &str, database: Option<&str>) -> Vec<String> {
@@ -14,13 +14,38 @@ pub(crate) fn schema_names(engine: &Engine, conn: &str, database: Option<&str>) 
     }
 }
 
-pub(crate) fn table_names(engine: &Engine, conn: &str, schema: &str) -> Vec<String> {
-    let catalog = engine.catalog(conn);
+/// The databases a connection lists above its schemas, when its explorer does (PostgreSQL
+/// with "Show all databases"). Empty when the root lists schemas, which name databases
+/// themselves on MySQL-like Drivers.
+pub(crate) fn database_names(engine: &Engine, conn: &str) -> Vec<String> {
+    let root = NodePath::root();
+    let nodes = match engine.children(conn, &root) {
+        Some(LoadState::Ready(nodes)) => nodes,
+        Some(_) => return Vec::new(),
+        None => {
+            engine.browse(conn, root);
+            return Vec::new();
+        }
+    };
+    nodes
+        .iter()
+        .filter(|n| n.kind == NodeKind::Database)
+        .map(|n| n.name.clone())
+        .collect()
+}
+
+pub(crate) fn table_names(
+    engine: &Engine,
+    conn: &str,
+    database: Option<&str>,
+    schema: &str,
+) -> Vec<String> {
+    let catalog = engine.catalog_in(conn, database);
     if catalog
         .as_ref()
         .is_none_or(|c| !c.schema.contains_key(schema))
     {
-        engine.load_catalog(conn, CatalogNeed::Schema(schema.into()));
+        engine.load_catalog_in(conn, database, CatalogNeed::Schema(schema.into()));
     }
     match catalog.and_then(|c| c.schema.get(schema).cloned()) {
         Some(LoadState::Ready(schema)) => schema.relations.iter().map(|r| r.name.clone()).collect(),
@@ -87,4 +112,97 @@ pub(crate) fn name(
         });
     });
     changed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    use sqlr_core::{ConnectionConfig, ConnectionProfile, Node, Secrets};
+    use sqlr_engine::{DriverRegistry, SessionStatus};
+    use sqlr_testkit::{FakeDriver, FakeScript};
+
+    fn node(name: &str, kind: NodeKind) -> Node {
+        Node {
+            path: NodePath::root().child(name),
+            name: name.into(),
+            kind,
+            has_children: true,
+            detail: None,
+        }
+    }
+
+    fn engine_with(tree: Vec<Node>) -> Engine {
+        let fake = FakeDriver::new(FakeScript {
+            tree,
+            own_database: Some("app".into()),
+            ..Default::default()
+        });
+        let mut drivers = DriverRegistry::default();
+        drivers.register(fake);
+        let engine = Engine::new(drivers, Arc::new(|| {}));
+        engine.connect(
+            ConnectionConfig {
+                id: "c".into(),
+                name: "c".into(),
+                driver: "fake".into(),
+                group: None,
+                color: None,
+                values: Default::default(),
+                profile: None,
+                save_secrets: true,
+                agent_access: Default::default(),
+            },
+            Secrets::default(),
+            ConnectionProfile::development(),
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !matches!(
+            engine.session_status("c"),
+            Some(SessionStatus::Connected(_))
+        ) {
+            assert!(
+                Instant::now() < deadline,
+                "the fake session never connected"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        engine
+    }
+
+    #[test]
+    fn database_names_lists_databases_the_explorer_shows() {
+        let engine = engine_with(vec![
+            node("app", NodeKind::Database),
+            node("other", NodeKind::Database),
+        ]);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut names = Vec::new();
+        while names.is_empty() {
+            names = database_names(&engine, "c");
+            assert!(Instant::now() < deadline, "the root never loaded");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(names, ["app", "other"]);
+    }
+
+    #[test]
+    fn database_names_is_empty_when_the_root_lists_schemas() {
+        let engine = engine_with(vec![
+            node("app", NodeKind::Schema),
+            node("other", NodeKind::Schema),
+        ]);
+        database_names(&engine, "c");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !matches!(
+            engine.children("c", &NodePath::root()),
+            Some(LoadState::Ready(_))
+        ) {
+            assert!(Instant::now() < deadline, "the root never loaded");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(database_names(&engine, "c").is_empty());
+    }
 }

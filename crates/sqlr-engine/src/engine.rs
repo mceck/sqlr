@@ -1309,11 +1309,7 @@ impl Engine {
             if inner.tables.get(&entry) == Some(&LoadState::Loading) {
                 return;
             }
-            let io = inner
-                .sessions
-                .get(key)
-                .filter(|s| s.is_live())
-                .map(|s| s.io.clone());
+            let io = self.shared.live_or_reopen(&mut inner, key);
             match io {
                 None => {
                     inner
@@ -1989,6 +1985,13 @@ impl Shared {
             .get(&SessionKey::meta(conn_id))
             .filter(|s| s.is_live())
             .map(|s| s.io.clone())
+    }
+
+    /// The I/O handle of the connection's explorer session, reopening it when it failed
+    /// (a lost connection the idle ping noticed reconnects on the next job).
+    pub(crate) fn live_io_or_reopen(&self, conn_id: &str) -> Option<Arc<SessionIo>> {
+        let mut inner = self.inner.lock();
+        self.live_or_reopen(&mut inner, &SessionKey::meta(conn_id))
     }
 
     /// The session a result runs on.

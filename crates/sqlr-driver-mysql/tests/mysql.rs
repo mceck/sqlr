@@ -34,6 +34,7 @@ macro_rules! suite {
 
 suite!(
     connect_and_ping,
+    ping_checks_the_query_connection,
     wrong_password_is_auth_error,
     browse_tree_with_system_folder,
     browse_only_current_database,
@@ -166,6 +167,24 @@ async fn connect_and_ping(server: Server) {
     assert_eq!(info.product, server.product(), "{info:?}");
     assert!(!info.version.is_empty());
     assert_eq!(conn.database_name(), Some(cfg.values["database"].as_str()));
+}
+
+/// The idle ping keeps the explorer connection alive; a query connection the server closed
+/// must still be noticed, or the next statement (and a transfer preview) fails on it.
+async fn ping_checks_the_query_connection(server: Server) {
+    let (_c, cfg, sec) = start_isolated(server).await;
+    let conn = connect(&cfg, &sec).await;
+    {
+        let admin = conn.relational().unwrap().admin().expect("admin support");
+        let ids = admin.session_ids();
+        assert_eq!(ids.len(), 2, "the explorer and query connections");
+        admin.terminate_session(&ids[1], None).await.unwrap();
+    }
+    let err = conn
+        .ping()
+        .await
+        .expect_err("the query connection was killed");
+    assert_eq!(err.kind, ErrorKind::Connection, "{err:?}");
 }
 
 #[tokio::test]

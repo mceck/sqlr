@@ -87,6 +87,14 @@ impl QueryConn {
         }
     }
 
+    /// Checks the query connection itself: the explorer connection the idle ping uses
+    /// otherwise stays alive, and a query connection the server closed while idle would go
+    /// unnoticed until the next statement failed on it.
+    pub(crate) async fn ping(&mut self, killer: &Killer) -> Result<(), DriverError> {
+        self.finish(killer).await;
+        self.conn.ping().await.map_err(map_error)
+    }
+
     /// Ends the previous statement: stops it when rows were left unread, then drains it.
     /// Errors belong to that statement (most often "query execution was interrupted") and
     /// are only logged.
